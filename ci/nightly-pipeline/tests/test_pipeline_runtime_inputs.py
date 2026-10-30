@@ -13,12 +13,20 @@ VARIANTS = ('Jenkinsfile_nd_jenkins_script',)
 @pytest.mark.parametrize('variant', VARIANTS)
 @pytest.mark.parametrize('source_ok', (True, False))
 def test_two_rounds_use_one_complete_snapshot_and_fresh_working_copies(groovy_runner, variant, source_ok):
+    def setup(workspace):
+        collection = workspace / 'collection'
+        collection.mkdir()
+        subprocess.run(['git', 'init', '-q', str(collection)], check=True)
+        subprocess.run(['git', '-C', str(collection), 'remote', 'add', 'origin',
+                        'https://github.com/CiscoDevNet/ansible-nd.git'], check=True)
+
     groovy_runner('def sourceOk = ' + str(source_ok).lower() + '\n' + r'''
 script.prepareStructuredReporting()
 context.COLLECTIONS_DIRECTORY = new File(workspace, 'collection').absolutePath
 new File(context.COLLECTIONS_DIRECTORY).mkdirs()
 script.binding.setVariable('pwd', workspace.absolutePath)
 context.ND_GIT_BRANCH = 'feature/fixture'
+context.ND_GIT_REPOSITORY = 'https://github.com/CiscoDevNet/ansible-nd.git'
 context.ND_GIT_COMMIT = 'a' * 40
 context.BASE_DIRECTORY = new File(context.HOME, 'ansible').absolutePath
 context.PATH = '/usr/bin:/bin'
@@ -76,13 +84,13 @@ assert !new File(context.COLLECTIONS_DIRECTORY, 'requirements.txt').exists()
 assert !new File(context.COLLECTIONS_DIRECTORY, 'nd_report.py').exists()
 assert requests.every { !it.url.contains('requirements.') }
 }
-''', jenkinsfile=ROOT / variant)
+''', setup=setup, jenkinsfile=ROOT / variant)
 
 
 @pytest.mark.parametrize('variant', VARIANTS)
 def test_branch_parameter_uses_the_actual_blank_fallback_expression(groovy_runner, variant):
     groovy_runner(r'''
-def expression = (source =~ /ND_GIT_BRANCH = "\$\{([^}]+)\}"/)
+def expression = (source =~ /def selection = ([^\r\n]+)/)
 assert expression.find()
 def code = expression.group(1)
 [[null, 'develop'], ['', 'develop'], ['   ', 'develop'],

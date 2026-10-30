@@ -8,7 +8,7 @@ import groovy.transform.Field
 @Field String SKIPLIST_DETAILS_BUF = ''
 @Field String BUILD_FAILURE_REASON_BUF = ''
 @Field String LINT_SUMMARY_BUF = ''
-@Field String ND_REPORTING_REVISION = 'selected-branch-pipeline-20261029'
+@Field String ND_REPORTING_REVISION = 'interface-selection-restored-20261030'
 
 // ============================================================================
 // WEBEX NOTIFICATION TARGET - both Webex space room IDs live here so the
@@ -266,11 +266,14 @@ pipeline {
         }
     }
 
-    // Branch and debug inputs are user-facing; topology and module selections stay fixed.
+    // Branch, interface and debug inputs are user-facing; module selections stay fixed.
     parameters {
         booleanParam(name: 'DEBUG', defaultValue: false, description: 'Enable debug logging')
         string(name: 'DEBUG_MODULES', defaultValue: '', description: 'With DEBUG enabled, comma-separated module names to debug; empty selects all')
-        string(name: 'ND_GIT_BRANCH', defaultValue: 'develop', description: 'ansible-nd branch to run. Leave blank to use develop.')
+        string(name: 'WEBEX_CUSTOM_MESSAGE', defaultValue: '', description: 'Optional note below the Webex title (up to 1,200 characters).')
+        string(name: 'ND_GIT_BRANCH', defaultValue: 'develop', description: 'ansible-nd branch, or GitHub fork as owner:branch. Leave blank to use develop.')
+        string(name: 'ND_INTERFACE_TEST_SWITCH_IP', defaultValue: '', description: 'Single-switch interface-test target IP. Blank uses its profile default; vPC keeps its declared pairs. The chosen leaf must support the profile ports.')
+        string(name: 'ND_SUBIF_ETHERNET_PARENT', defaultValue: '', description: 'Ethernet parent for subinterface tests, for example Ethernet1/35. Blank uses the profile default. The port must be declared and pass live availability checks.')
     }
 
     environment {
@@ -285,7 +288,6 @@ pipeline {
         BASE_DIRECTORY = "$HOME/ansible"
         COLLECTIONS_DIRECTORY = "$HOME/ansible/collections/ansible_collections/cisco/nd"
         COLL_DIR = "$HOME/ansible/collections/ansible_collections/cisco"
-        ND_GIT_BRANCH = "${params.ND_GIT_BRANCH?.trim() ?: 'develop'}"
         FABRIC_NAME = 'VXLAN_EVPN_Fabric'
         MESSAGE = "ND NIGHTLY NOTIFICATION \n"
     }
@@ -413,18 +415,29 @@ pipeline {
             steps {
                 script {
                     env.ND_GIT_COMMIT = ''
+                    def selection = (params.ND_GIT_BRANCH ?: '').toString().trim() ?: 'develop'
+                    def sourceParts = selection.split(':', -1)
+                    if (sourceParts.size() > 2 || !sourceParts[-1] ||
+                        (sourceParts.size() == 2 && !(sourceParts[0] ==~ /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/))) {
+                        error('Branch input must be a branch name or owner:branch with a valid GitHub owner')
+                    }
+                    env.ND_GIT_SELECTION = selection
+                    env.ND_GIT_BRANCH = sourceParts[-1]
+                    def sourceOwner = sourceParts.size() == 2 ? sourceParts[0] : 'CiscoDevNet'
+                    env.ND_GIT_REPOSITORY = "https://github.com/${sourceOwner}/ansible-nd.git"
                 }
                 // echo timestamp when stage starts
                 echo "⏱ Stage 'Clone Repository' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
                 sh '''#!/bin/bash
                 set -euo pipefail
                 export GIT_DISCOVERY_ACROSS_FILESYSTEM=1
+                export GIT_TERMINAL_PROMPT=0
 
                 : "${COLL_DIR:?COLL_DIR must be set}"
                 : "${BASE_DIRECTORY:?BASE_DIRECTORY must be set}"
                 : "${ND_GIT_BRANCH:?ND_GIT_BRANCH must be set}"
 
-                REPO_URL="https://github.com/CiscoDevNet/ansible-nd.git"
+                REPO_URL="${ND_GIT_REPOSITORY:-https://github.com/CiscoDevNet/ansible-nd.git}"
                 TARGET_DIR="${COLL_DIR}/nd"
                 BACKUP_ROOT="${COLL_DIR}/.nd-backups"
                 STAGING_DIR=""
@@ -528,8 +541,9 @@ pipeline {
 
                 [ -d "${COLL_DIR}" ] || fail "Collections parent does not exist: ${COLL_DIR}"
                 [ -r "${BASE_DIRECTORY}/venv/bin/activate" ] || fail "Virtual environment is not available"
-                git check-ref-format --branch "${ND_GIT_BRANCH}" >/dev/null 2>&1 || \
+                VALIDATED_BRANCH=$(git check-ref-format --branch "${ND_GIT_BRANCH}" 2>/dev/null) || \
                     fail "Invalid Git branch name: ${ND_GIT_BRANCH}"
+                [ "${VALIDATED_BRANCH}" = "${ND_GIT_BRANCH}" ] || fail "Branch input must be a literal branch name"
 
                 # Resolve and validate the requested branch before modifying the checkout.
                 if ! REMOTE_OUTPUT=$(git ls-remote --exit-code --refs "${REPO_URL}" "refs/heads/${ND_GIT_BRANCH}"); then
@@ -592,9 +606,9 @@ pipeline {
                     echo "🔍 Local tree: ${LOCAL_TREE}; Remote tree: ${REMOTE_TREE}"
                     echo "🔍 Local branch: ${LOCAL_BRANCH:-detached}; Expected branch: ${ND_GIT_BRANCH}"
                     if [ "${LOCAL_ORIGIN}" = "${REPO_URL}" ]; then
-                        echo "✅ Local origin matches the canonical repository"
+                        echo "✅ Local origin matches the selected repository"
                     else
-                        echo "⚠️ Local origin does not match the canonical repository (URL withheld)"
+                        echo "⚠️ Local origin does not match the selected repository (URL withheld)"
                     fi
 
                     if [ -n "${TRACKED_STATUS}" ]; then
@@ -890,6 +904,10 @@ git -C "${COLLECTIONS_DIRECTORY}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null
                                                         setFailureFlag(failureFlagName, true)
                                                         env.PIPELINE_FAILED = 'true'
                                                         recordUnstartedRound(ndfcConfig, e.getMessage() ?: 'round stopped before module execution')
+                                                        def roundFailureReason = (e.getMessage() ?: 'round stopped before module execution').toString()
+                                                            .replace('\r', ' ').replace('\n', ' ')
+                                                            .replaceAll('(?i)\\b(?:password|passwd|pwd|token|secret|authorization|credentials?|community|username|api[_-]?key)\\b.*', '[credential details redacted]').take(500)
+                                                        BUILD_FAILURE_REASON_BUF = (BUILD_FAILURE_REASON_BUF + "\nRound ND ${ndfcConfig.version} ${ndfcConfig.round_label} (${ndfcConfig.fabric_name}): ${roundFailureReason}").take(2400)
                                                         echo "NDP_FABRIC_ROUND_FAILED: ${ndfcConfig.round_label}: ${e.getMessage()}"
                                                         throw e
                                                     }
@@ -984,8 +1002,11 @@ git -C "${COLLECTIONS_DIRECTORY}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null
                     // The current pipeline runs ND 4.3; use the active-version
                     // environment value so the version is shown once in the title.
                     def activeNdVersions = (env.ACTIVE_DCNM_VERSIONS ?: '4.3').trim()
-                    def notificationTitle = "ND ${activeNdVersions} NIGHTLY NOTIFICATION"
-                    def selectedBranch = (env.ND_GIT_BRANCH ?: 'develop').trim() ?: 'develop'
+                    def activeRounds = (env.ACTIVE_FABRIC_ROUNDS ?: '').trim()
+                    def roundsSuffix = activeRounds ? " (${activeRounds})" : ''
+                    def notificationTitle = "ND ${activeNdVersions}${roundsSuffix} NIGHTLY NOTIFICATION"
+                    def customWebexMessage = (params.WEBEX_CUSTOM_MESSAGE ?: '').toString().trim().take(1200).replaceAll('[\\uD800-\\uDBFF]$', '')
+                    def selectedBranch = (env.ND_GIT_SELECTION ?: env.ND_GIT_BRANCH ?: params.ND_GIT_BRANCH ?: 'develop').trim() ?: 'develop'
                     def selectedCommit = (env.ND_GIT_COMMIT ?: '').trim() ?: 'unavailable'
                     def caseTotals = moduleCaseTotals(MODULE_ACTIVITY_RESULTS.values().toList())
                     def totalPassed = caseTotals.passed
@@ -1000,6 +1021,7 @@ git -C "${COLLECTIONS_DIRECTORY}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null
                     def lintSummary = LINT_SUMMARY_BUF.trim()
 
                     def message = "${notificationTitle}\n"
+                    if (customWebexMessage) { message += "${customWebexMessage}\n\n" }
                     message += "📊 Pipeline completed for the ND Nightly run - Build ${BUILD_NUMBER}\n"
                     message += "🌿 ansible-nd branch: ${selectedBranch}\n"
                     message += "🔖 ansible-nd commit: ${selectedCommit}\n"
@@ -1113,12 +1135,16 @@ def sendWebexNotificationMessages(messages) {
 
 def minimalBuildNotification(exceptionClass = 'unavailable') {
     def versions = (env.ACTIVE_DCNM_VERSIONS ?: '4.3').toString().trim().take(80)
-    def branch = (env.ND_GIT_BRANCH ?: 'develop').toString().trim().take(200)
+    def rounds = (env.ACTIVE_FABRIC_ROUNDS ?: '').toString().trim().take(80)
+    def roundsSuffix = rounds ? " (${rounds})" : ''
+    def customNote = (params.WEBEX_CUSTOM_MESSAGE ?: '').toString().trim().take(1200).replaceAll('[\\uD800-\\uDBFF]$', '')
+    def branch = ((env.ND_GIT_SELECTION ?: env.ND_GIT_BRANCH ?: params.ND_GIT_BRANCH ?: 'develop').toString().trim() ?: 'develop').take(200)
     def commit = (env.ND_GIT_COMMIT ?: 'unavailable').toString().trim().take(80)
     // Accept only a bounded Java class name, never an exception body or token.
     def failureClass = (exceptionClass ?: 'unavailable').toString().take(200)
     if (!(failureClass ==~ /[A-Za-z0-9_.$]+/)) { failureClass = 'unavailable' }
-    "ND ${versions} NIGHTLY NOTIFICATION - Build ${BUILD_NUMBER}\n" +
+    "ND ${versions}${roundsSuffix} NIGHTLY NOTIFICATION - Build ${BUILD_NUMBER}\n" +
+        (customNote ? "${customNote}\n\n" : '') +
         "Branch: ${branch}\nCommit: ${commit}\n" +
         "Build result: ${currentBuild.currentResult}\n" +
         "Reporting revision: ${ND_REPORTING_REVISION}\n" +
@@ -1134,20 +1160,35 @@ def minimalBuildNotification(exceptionClass = 'unavailable') {
 def runLintCheck() {
     stage('Run Lint Check') {
             echo "⏱ Running lint check..."
-            try {
+            withCleanupPreservingFailure({
             sh '''#!/bin/bash
-            set -e
-            cd ${COLLECTIONS_DIRECTORY}
+            set -euo pipefail
+            printf '%s\n' 'Lint did not complete; see the build console.' > "${BASE_DIRECTORY}/lint_summary.txt"
+            [ -n "${ND_GIT_COMMIT:-}" ] || { echo 'Pinned collection commit is required' >&2; exit 1; }
+            # A reused checkout contains operational files from earlier builds.
+            # Use a separate index to export exactly the pinned commit, without
+            # modifying the real index or honoring export-ignore attributes.
+            lint_root=$(mktemp -d "${WORKSPACE}/nd_lint.XXXXXX")
+            trap 'rm -rf -- "$lint_root"' EXIT
+            lint_source="${lint_root}/ansible_collections/cisco/nd"
+            mkdir -p "$lint_source"
+            GIT_INDEX_FILE="${lint_root}/index" git -C "$COLLECTIONS_DIRECTORY" read-tree "$ND_GIT_COMMIT"
+            GIT_INDEX_FILE="${lint_root}/index" git -C "$COLLECTIONS_DIRECTORY" checkout-index --all --prefix="${lint_source}/"
+            cd "$lint_source"
+            unset ANSIBLE_CONFIG
+            export ANSIBLE_COLLECTIONS_PATH="$lint_root"
             
             # Activate venv
             source $HOME/ansible/venv/bin/activate
             
             # Run ansible-lint with production profile and capture output
             echo "🔍 Running ansible-lint with production profile..."
-            LINT_OUTPUT=$(ansible-lint --profile=production 2>&1) || LINT_STATUS=$?
+            LINT_STATUS=0
+            LINT_OUTPUT=$(ansible-lint -c "$lint_source/.ansible-lint" --project-dir "$lint_source" --profile=production 2>&1) || LINT_STATUS=$?
+            printf '%s\n' "$LINT_OUTPUT" > "${WORKSPACE}/ansible_lint_build_${BUILD_NUMBER}.txt"
             
             # Process the output to extract and format the summary
-            if [ -n "$LINT_STATUS" ]; then
+            if [ "$LINT_STATUS" -ne 0 ]; then
                 # Full rule-violation table -> keep in the console log for debugging.
                 SUMMARY_BLOCK=$(echo "$LINT_OUTPUT" | awk '/^# Rule Violation Summary/{f=1;next} /^Failed:/{print;exit} f')
                 echo "# Rule Violation Summary"
@@ -1168,7 +1209,7 @@ def runLintCheck() {
                 echo "✅ ansible-lint check passed with no violations" > "${BASE_DIRECTORY}/lint_summary.txt"
             fi
             '''
-            } finally {
+            }, {
                 // Capture the lint summary (pass OR fail) in Pipeline state so the post{} Webex
                 // notification can include it; the Docker-agent workspace is gone by
                 // post time, so it cannot be read from a file there.
@@ -1181,7 +1222,14 @@ def runLintCheck() {
                     rethrowIfInterrupt(e)
                     echo "⚠️ Could not capture lint summary: ${e.getMessage()}"
                 }
-            }
+                try {
+                    archiveArtifacts artifacts: "ansible_lint_build_${BUILD_NUMBER}.txt", allowEmptyArchive: true
+                } catch (Exception e) {
+                    rethrowIfInterrupt(e)
+                    env.PIPELINE_FAILED = 'true'
+                    echo "NDP_LINT_ARCHIVE_FAILED: ${e.getClass().getName()}"
+                }
+            })
     }
 }
 
@@ -1751,7 +1799,7 @@ def foldStructuredResults() {
     TEST_RESULT_ARTIFACTS_BUF = ''
     SKIPLIST_FILES_BUF = ''
     SKIPLIST_DETAILS_BUF = ''
-    BUILD_FAILURE_REASON_BUF = ''
+    // Keep bounded round setup failures recorded before any module could register.
     (report.rows ?: []).each { row ->
         def key = "${row.version_id}|${row.module}|${row.run_id}".toString()
         MODULE_ACTIVITY_RESULTS[key] = row
@@ -2209,6 +2257,8 @@ def escapeWebexMarkdown(value) {
         .replace('|', '\\|')
         .replace('_', '\\_')
         .replace('*', '\\*')
+        .replace('[', '\\[')
+        .replace(']', '\\]')
         .replace('\r', ' ')
         .replace('\n', ' ')
 }
@@ -2237,8 +2287,13 @@ def formatSkippedTestLinks(rawSkipFiles) {
     def files = (rawSkipFiles ?: '').split('\n').findAll { it.trim() }
     def links = []
     files.eachWithIndex { fileName, index ->
-        def label = files.size() == 1 ? 'Skipped tests' : "Skipped tests ${index + 1}"
-        links << "📋 [${label}](${JOB_URL}${BUILD_NUMBER}/artifact/${fileName.trim()})"
+        def parts = fileName.split('\\|', 2)
+        def artifactPath = parts.size() == 2 ? parts[1].trim() : fileName.trim()
+        def defaultLabel = files.size() == 1 ? 'Skipped tests' : "Skipped tests ${index + 1}"
+        def label = escapeWebexMarkdown(parts.size() == 2 && parts[0].trim() ? parts[0].trim() : defaultLabel)
+        if (artifactPath) {
+            links << "📋 [${label}](${JOB_URL}${BUILD_NUMBER}/artifact/${artifactPath})"
+        }
     }
     links.join('\n')
 }
@@ -2487,7 +2542,7 @@ def bundleAllLogs() {
     try {
         def summary = """ND NIGHTLY RUN - Build ${BUILD_NUMBER}
 Console: ${JOB_URL}${BUILD_NUMBER}/console
-Branch: ${env.ND_GIT_BRANCH ?: 'develop'}
+Branch: ${(env.ND_GIT_SELECTION ?: env.ND_GIT_BRANCH ?: params.ND_GIT_BRANCH ?: 'develop').toString().trim() ?: 'develop'}
 Commit: ${env.ND_GIT_COMMIT ?: 'unavailable'}
 
 Test cases passed: ${moduleCaseTotals(MODULE_ACTIVITY_RESULTS.values().toList()).passed}
@@ -3273,6 +3328,7 @@ def runNDFCVersionTests(ndfcConfig) {
                 done
                 cd ${COLLECTIONS_DIRECTORY}
                 # Check source and helper compatibility before round setup or switch preflight.
+                [ "$(git remote get-url origin)" = "$ND_GIT_REPOSITORY" ] || { echo 'NDP_SELECTED_SOURCE_ORIGIN_MISMATCH' >&2; exit 1; }
                 "${BASE_DIRECTORY}/venv/bin/python" "${COLLECTIONS_DIRECTORY}/nd_verify_develop_sources.py" \
                     --collection-root "${COLLECTIONS_DIRECTORY}" \
                     --expected-branch "${ND_GIT_BRANCH}" \
@@ -3283,6 +3339,20 @@ def runNDFCVersionTests(ndfcConfig) {
         // The requested branch was validated and installed in the Clone Repository stage.
     }
 
+    def interfaceInputs = [params.ND_INTERFACE_TEST_SWITCH_IP, params.ND_SUBIF_ETHERNET_PARENT]
+    if ((INTEGRATION_MODULES + INTERFACE_INTEGRATION_MODULES + TRAILING_INTEGRATION_MODULES).any {
+            it.startsWith('nd_interface_') && !it.startsWith('nd_interface_vpc_')
+        } && interfaceInputs.any { it?.toString()?.trim() }) {
+        sh '''#!/bin/bash
+            set -e
+            grep -q 'select-interface' "$COLLECTIONS_DIRECTORY/nd_prerequisite_orchestrator.py" &&
+            grep -q 'interface_selection_changed' "$COLLECTIONS_DIRECTORY/run_integration_module.yaml" &&
+            grep -q 'interface_selection_changed' "$COLLECTIONS_DIRECTORY/nd_prerequisite/nd_prerequisite_wrapper.yaml" || {
+                echo 'NDP_INTERFACE_INPUTS_UNSUPPORTED: install the matching local orchestrator, runner and prerequisite wrapper in Consul before using interface overrides' >&2
+                exit 1
+            }
+        '''
+    }
     applyFabricRound(ndfcConfig)
 
     echo "⏱ Stage 'NDFC ${ndfcConfig.version}${roundTag} - Fabric Tests' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
@@ -3588,7 +3658,8 @@ def runFabricTest(ndfcConfig) {
                 stage("Tests Run ${ndfcConfig.fabric_name}") {
                     // echo timestamp when stage starts
                     echo "⏱ Stage 'Tests Run ${ndfcConfig.fabric_name}' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
-                    catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE', catchInterruptions: false) {
+                    // Infrastructure failures must escape; only a completed batch
+                    // of collected module failures may continue to the next round.
                         echo "🚀 Beginning of function - Deploying ${ndfcConfig.fabric_name}"
                         echo "Using inventory file: ${inventory_file}"
                         //echo "Using playbook file: ${playbook_file}"
@@ -3603,8 +3674,11 @@ def runFabricTest(ndfcConfig) {
                                  "ND_REPORT_TARGET_CONTEXTS=${reportContextsForShell}",
                                  "TEST_RUN_MARKER=${testRunMarker}",
                                  "ND_REPORT_LOG_DIR=${reportingLogDirectory}",
+                                 "ND_MODULE_BATCH_STATUS=${reportingLogDirectory}/module_batch.status",
                                  "ND_REPORT_DEBUG_ENABLED=${params.DEBUG == true}",
                                  "ND_REPORT_DEBUG_MODULES=${params.DEBUG_MODULES ?: ''}",
+                                 "ND_INTERFACE_TEST_SWITCH_IP=${params.ND_INTERFACE_TEST_SWITCH_IP?.trim() ?: ''}",
+                                 "ND_SUBIF_ETHERNET_PARENT=${params.ND_SUBIF_ETHERNET_PARENT?.trim() ?: ''}",
                                  "FABRIC_NAME=${ndfcConfig.fabric_name}",
                                  "SECONDARY_FABRIC_NAME=${secondaryFabricName}",
                                  "VERSION_ID=${ndfcConfig.versionId}",
@@ -3615,6 +3689,7 @@ def runFabricTest(ndfcConfig) {
                                 # Keep running independent module/playbook pipelines after
                                 # one Ansible failure; explicit prerequisite checks still exit.
                                 set -e
+                                [ ! -e "$ND_MODULE_BATCH_STATUS" ] && [ ! -L "$ND_MODULE_BATCH_STATUS" ] || exit 1
 
                                 if [ "${ND_PREREQUISITE_ONLY_EFFECTIVE:-false}" = "true" ]; then
                                     echo "🔎 Prerequisite-only audit: skipping standalone and smoke playbooks"
@@ -3747,6 +3822,7 @@ def runFabricTest(ndfcConfig) {
                                 FIRST_TARGET_GUARD=true
                                 ensure_switches_ready() {
                                     # Verify source purity before any module-specific lab changes.
+                                    [ "$(git -C "$COLLECTIONS_DIRECTORY" remote get-url origin)" = "$ND_GIT_REPOSITORY" ] || { echo 'NDP_SELECTED_SOURCE_ORIGIN_MISMATCH' >&2; return 1; }
                                     python "${COLLECTIONS_DIRECTORY}/nd_verify_develop_sources.py" \
                                         --collection-root "${COLLECTIONS_DIRECTORY}" \
                                         --expected-branch "${ND_GIT_BRANCH}" \
@@ -3942,6 +4018,24 @@ PEERLINK_PROBE_EOF
                                     echo "Running integration module: $m, pwd: $(pwd)"
                                     echo "========================================"
                                     PREREQUISITE_START=$(date +%s)
+                                    INTERFACE_SELECTION_VARS=()
+                                    selected_parent=""
+                                    case "$m" in
+                                        nd_interface_subinterface_*) selected_parent="${ND_SUBIF_ETHERNET_PARENT}" ;;
+                                    esac
+                                    case "$m" in
+                                        nd_interface_vpc_*) ;; # Keep the authored multi-peer topology.
+                                        nd_interface_*)
+                                            if [ -n "${ND_INTERFACE_TEST_SWITCH_IP}${selected_parent}" ]; then
+                                                selection_root="${ND_REPORT_LOG_DIR}/.nd-prerequisite-recovery"
+                                                selection_vars="${selection_root}/vars_${m}.json"
+                                                python "${COLLECTIONS_DIRECTORY}/nd_prerequisite_orchestrator.py" select-interface \
+                                                    --registry "${PROFILE_REGISTRY}" --execution-id "integration.${m}" \
+                                                    --switch-ip "${ND_INTERFACE_TEST_SWITCH_IP}" --ethernet-parent "${selected_parent}" \
+                                                    --output "${selection_root}/profile_${m}.json" --vars-output "${selection_vars}"
+                                                INTERFACE_SELECTION_VARS=(-e "@${selection_vars}")
+                                            fi ;;
+                                    esac
                                     ensure_switches_ready "integration module $m" "$m"
                                     if [ -f "${COLLECTIONS_DIRECTORY}/run_integration_module.yaml" ] && \
                                        [ ! -L "${COLLECTIONS_DIRECTORY}/run_integration_module.yaml" ] && \
@@ -3975,7 +4069,7 @@ PEERLINK_PROBE_EOF
                                         INTERFACE_TEST_VARS=""
                                         case "${m}" in
                                             nd_interface_*)
-                                                # The typed interface profiles are bound to vxlan_leaf_1 (192.0.2.195).
+                                                # Default interface profiles use vxlan_leaf_1; selected profile vars override these defaults last.
                                                 INTERFACE_TEST_VARS="-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=192.0.2.195"
                                                 ;;
                                         esac
@@ -3988,13 +4082,11 @@ PEERLINK_PROBE_EOF
                                                 # found") and holds the WHOLE VXLAN_EVPN_Fabric (spine_1/leaf_1/leaf_2/
                                                 # border_1) in migration mode -- every later module then 207s "switches in
                                                 # read-only mode" (live-proven configSave 500, build #27, 2026-09-16).
-                                                # The parent is the EXISTING inter-fabric cable leaf_1 Eth1/1 <-> external_edge_1
-                                                # Eth1/1 (up/up, ND-default intent, used by no other target). The registry
-                                                # profile (Consul) publishes it and the runner refuses any other parent. The
-                                                # typed prerequisite gate proves the cable exists (module is SKIP otherwise) and
-                                                # carries no underlay link, temporarily creates routedHost intent plus a
-                                                # memberless L3 Port-channel10, and restores the journaled pre-test state after
-                                                # target cleanup (including failures).
+                                                # The default parent is the declared inter-fabric cable on leaf_1 Eth1/1.
+                                                # An explicit input selects a run-specific profile; the prerequisite gate
+                                                # validates that exact switch/parent and rejects occupied or undeclared ports.
+                                                # It journals temporary routedHost and memberless L3 Port-channel10 changes
+                                                # and restores them after target cleanup, including failures.
                                                 INTERFACE_TEST_VARS="${INTERFACE_TEST_VARS} -e nd_test_port_channel_parent=Port-channel10"
                                                 ;;
                                             nd_interface_port_channel_access)
@@ -4025,7 +4117,7 @@ PEERLINK_PROBE_EOF
                                             -e "nd_prerequisite_only=${ND_PREREQUISITE_ONLY_EFFECTIVE}" \
                                             -e "nd_prerequisite_mode=live" \
                                             -e "nd_prerequisite_run_id=${TEST_RUN_MARKER}_${m}" \
-                                            ${NETWORK_EXTRA_VARS} ${MODULE_TOPOLOGY_VARS} ${INTERFACE_TEST_VARS} 2>&1 | tee -a "${ND_REPORT_LOG_DIR}/test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt"
+                                            ${NETWORK_EXTRA_VARS} ${MODULE_TOPOLOGY_VARS} ${INTERFACE_TEST_VARS} "${INTERFACE_SELECTION_VARS[@]}" 2>&1 | tee -a "${ND_REPORT_LOG_DIR}/test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt"
                                         ANSIBLE_STATUS=${PIPESTATUS[0]}
                                         echo "[ANSIBLE_EXIT_STATUS: ${ANSIBLE_STATUS}]" | tee -a "${ND_REPORT_LOG_DIR}/test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt"
                                         if [ "${ANSIBLE_STATUS}" -ne 0 ]; then
@@ -4090,16 +4182,28 @@ PEERLINK_PROBE_EOF
                                 # Module case progress/skips are rendered once from the
                                 # small structured summaries after both branches join.
                                 echo "NDP_MODULE_BATCH_CLOSED: $FABRIC_NAME $VERSION_ID"
-
+                                printf '%s\n' "$RUN_FAILURE" > "$ND_MODULE_BATCH_STATUS"
                                 if [ "${RUN_FAILURE}" -ne 0 ]; then
                                     echo "❌ One or more Ansible runs failed; all independent runs were attempted" >&2
-                                    exit "${RUN_FAILURE}"
                                 fi
                             '''
+                            def batchStatus = sh(script: '''#!/bin/bash
+                                set -euo pipefail
+                                [ -f "$ND_MODULE_BATCH_STATUS" ] && [ ! -L "$ND_MODULE_BATCH_STATUS" ]
+                                [ "$(wc -c < "$ND_MODULE_BATCH_STATUS")" -eq 2 ]
+                                cat -- "$ND_MODULE_BATCH_STATUS"
+                            ''', returnStdout: true).trim()
+                            if (!(batchStatus in ['0', '1'])) { error('Invalid completed module-batch status') }
+                            if (batchStatus == '1') {
+                                setFailureFlag(failureFlagName, true)
+                                env.PIPELINE_FAILED = 'true'
+                                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE', catchInterruptions: false) {
+                                    error('Collected module/reporting failures; continuation requires successful switch recovery')
+                                }
+                            }
                         }
                         echo "🚀 End of function - ${ndfcConfig.fabric_name}"
                         //parseDeploymentResults(ndfcConfig, failureFlagName)
-                    }
                 }
 
                 echo "NDP_MODULE_REPORTS_QUEUED: ${ndfcConfig.fabric_name}; independent publisher owns completed evidence"

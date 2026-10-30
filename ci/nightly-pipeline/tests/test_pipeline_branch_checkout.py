@@ -6,13 +6,14 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 
 import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 VARIANTS = ("Jenkinsfile_nd_jenkins_script",)
-CANONICAL_REPO = 'REPO_URL="https://github.com/CiscoDevNet/ansible-nd.git"'
+CANONICAL_REPO = 'REPO_URL="${ND_GIT_REPOSITORY:-https://github.com/CiscoDevNet/ansible-nd.git}"'
 
 
 def git(path, *arguments):
@@ -27,7 +28,7 @@ def offline_environment():
                 GIT_TERMINAL_PROMPT="0", GIT_ALLOW_PROTOCOL="file")
 
 
-def checkout_shell(variant, remote):
+def checkout_shell(variant, remote=None):
     source = (ROOT / variant).read_text()
     stage = source.split("stage('Clone Repository')", 1)[1]
     shell = stage.split("sh '''", 1)[1].split("'''", 1)[0]
@@ -35,8 +36,9 @@ def checkout_shell(variant, remote):
     # continuations are otherwise left as written; bash accepts either form.
     shell = shell.replace("\\\\", "\\")
     assert shell.count(CANONICAL_REPO) == 1
-    # This is the sole test substitution in the production checkout shell.
-    return shell.replace(CANONICAL_REPO, 'REPO_URL="' + remote.as_uri() + '"')
+    # Ordinary fixtures substitute only the network endpoint. Fork fixtures use
+    # a transport adapter so the selected URL itself is also exercised.
+    return shell.replace(CANONICAL_REPO, 'REPO_URL="' + remote.as_uri() + '"') if remote else shell
 
 
 @pytest.fixture(params=VARIANTS)
@@ -70,12 +72,12 @@ def checkout(tmp_path, request):
     }
 
 
-def run_checkout(checkout, branch="feature/foo", **extra_environment):
+def run_checkout(checkout, branch="feature/foo", cwd=None, **extra_environment):
     environment = dict(offline_environment(), COLL_DIR=str(checkout["collections"]),
                        BASE_DIRECTORY=str(checkout["base"]), ND_GIT_BRANCH=branch,
                        BUILD_NUMBER="offline", **extra_environment)
     return subprocess.run(
-        ["/bin/bash", "-c", checkout["shell"]], cwd=checkout["collections"],
+        ["/bin/bash", "-c", checkout["shell"]], cwd=cwd or checkout["collections"],
         env=environment, text=True, capture_output=True, timeout=30,
     )
 
@@ -118,7 +120,7 @@ def test_develop_parameter_default_is_a_valid_checkout(checkout):
     assert re.search(r"string\(name: 'ND_GIT_BRANCH', defaultValue: 'develop'", source)
     # Assert the production environment maps omitted or whitespace-only input
     # to develop, then exercise that resulting context in the actual shell.
-    assert 'ND_GIT_BRANCH = "${params.ND_GIT_BRANCH?.trim() ?: \'develop\'}"' in source
+    assert "def selection = (params.ND_GIT_BRANCH ?: '').toString().trim() ?: 'develop'" in source
     require_success(run_checkout(checkout, "develop"))
     assert_clean_checkout(checkout, "develop", git(checkout["seed"], "rev-parse", "develop"))
     assert (checkout["target"] / "payload.txt").read_text() == "develop fixture\n"
@@ -233,3 +235,90 @@ fi
     assert target.stat().st_ino == old_inode
     assert_clean_checkout(checkout, "feature/foo", old_commit)
     assert not backups(checkout)
+
+
+def test_switching_from_develop_to_requested_branch_replaces_the_checkout(checkout):
+    require_success(run_checkout(checkout, "develop"))
+    original_inode = checkout["target"].stat().st_ino
+    result = run_checkout(checkout, "feature/foo")
+    require_success(result)
+    assert checkout["target"].stat().st_ino != original_inode
+    assert_clean_checkout(checkout, "feature/foo", git(checkout["seed"], "rev-parse", "feature/foo"))
+    assert len(backups(checkout)) == 1
+
+
+def test_checkout_shorthand_cannot_select_a_different_branch(checkout):
+    require_success(run_checkout(checkout, "develop"))
+    target = checkout["target"]
+    git(target, "checkout", "-qb", "previous")
+    git(target, "checkout", "-q", "develop")
+    before = git(target, "rev-parse", "HEAD")
+    result = run_checkout(checkout, "@{-1}", cwd=target)
+    assert result.returncode != 0
+    assert "literal branch" in result.stderr
+    assert git(target, "rev-parse", "HEAD") == before
+    assert git(target, "symbolic-ref", "--short", "HEAD") == "develop"
+    assert not backups(checkout)
+
+
+def test_fork_repository_replaces_wrong_origin_and_tracks_requested_remote_branch(checkout, tmp_path):
+    require_success(run_checkout(checkout))
+    old_inode = checkout["target"].stat().st_ino
+    selected = "https://github.com/fixture-owner/ansible-nd.git"
+    binary = tmp_path / "fork-transport"
+    binary.mkdir()
+    adapter = binary / "git"
+    adapter.write_text("#!" + sys.executable + '''
+import os, subprocess, sys
+arguments = sys.argv[1:]
+network = any(value in arguments for value in ['clone', 'fetch', 'ls-remote'])
+if network:
+    assert os.environ['SELECTED_REPOSITORY'] in arguments
+    arguments = [os.environ['LOCAL_FORK_TRANSPORT'] if value == os.environ['SELECTED_REPOSITORY'] else value for value in arguments]
+result = subprocess.call([os.environ['REAL_GIT'], *arguments])
+if result == 0 and arguments[0] == 'clone':
+    # A real HTTPS clone stores its requested URL as origin. Preserve that
+    # metadata while only replacing transport with a disposable local bare repo.
+    result = subprocess.call([os.environ['REAL_GIT'], '-C', arguments[-1], 'remote', 'set-url', 'origin', os.environ['SELECTED_REPOSITORY']])
+raise SystemExit(result)
+''')
+    adapter.chmod(0o755)
+    checkout["shell"] = checkout_shell(checkout["variant"])
+    environment = dict(PATH=str(binary) + os.pathsep + os.environ["PATH"], REAL_GIT=shutil.which("git"),
+                       SELECTED_REPOSITORY=selected, LOCAL_FORK_TRANSPORT=checkout["remote"].as_uri(),
+                       ND_GIT_REPOSITORY=selected)
+    require_success(run_checkout(checkout, **environment))
+    assert checkout["target"].stat().st_ino != old_inode
+    assert git(checkout["target"], "remote", "get-url", "origin") == selected
+    assert_clean_checkout(checkout, "feature/foo", git(checkout["seed"], "rev-parse", "feature/foo"))
+    advanced = advance_remote(checkout)
+    require_success(run_checkout(checkout, **environment))
+    assert_clean_checkout(checkout, "feature/foo", advanced)
+    assert git(checkout["target"], "remote", "get-url", "origin") == selected
+
+
+def test_failed_installed_validation_rolls_back_the_original_checkout(checkout, tmp_path):
+    require_success(run_checkout(checkout, "develop"))
+    original = git(checkout["target"], "rev-parse", "HEAD")
+    original_inode = checkout["target"].stat().st_ino
+    binary = tmp_path / "installation-fault"
+    binary.mkdir()
+    adapter = binary / "mv"
+    adapter.write_text("#!" + sys.executable + '''
+import os, subprocess, sys
+from pathlib import Path
+arguments = sys.argv[1:]
+result = subprocess.call([os.environ['REAL_MV'], *arguments])
+operands = [value for value in arguments if value != '--']
+if result == 0 and len(operands) == 2 and Path(operands[0]).name.startswith('.nd-staging-') and not Path(operands[0]).name.startswith('.nd-staging-rollback-') and operands[1] == os.environ['FAULT_TARGET']:
+    subprocess.check_call([os.environ['REAL_GIT'], '-C', operands[1], 'update-ref', 'HEAD', os.environ['FAULT_COMMIT']])
+raise SystemExit(result)
+''')
+    adapter.chmod(0o755)
+    result = run_checkout(checkout, PATH=str(binary) + os.pathsep + os.environ["PATH"],
+                          REAL_MV=shutil.which("mv"), REAL_GIT=shutil.which("git"),
+                          FAULT_TARGET=str(checkout["target"]), FAULT_COMMIT=original)
+    assert result.returncode != 0
+    assert "original checkout restored" in result.stderr
+    assert checkout["target"].stat().st_ino == original_inode
+    assert_clean_checkout(checkout, "develop", original)

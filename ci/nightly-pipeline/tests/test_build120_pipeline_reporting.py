@@ -43,6 +43,7 @@ def pipelineType = loader.parseClass(source + '\ndef runPostForTest() {\n' + pos
     'NdBuild120Pipeline.groovy')
 def script = pipelineType.newInstance()
 script.binding = new Binding([
+    params: [:],
     env: [ACTIVE_DCNM_VERSIONS: '4.3', ND_GIT_BRANCH: 'fixture-branch',
           ND_GIT_COMMIT: 'abcdef0123456789', WEBEX_ROOM_ID: 'fixture-room',
           WEBEX_TOKEN: 'fixture-token'],

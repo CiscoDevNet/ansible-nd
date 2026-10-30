@@ -33,6 +33,7 @@ def source = new File(args[0]).getText('UTF-8')
 def pipelineType = loader.parseClass(source, 'FiveIssuePipeline.groovy')
 def script = pipelineType.newInstance()
 script.binding = new Binding([
+    params: [:],
     env: [ND_REPORTING_RELATIVE_ROOT: 'fixture-reports', ND_REPORTING_ROOT: '/workspace/fixture-reports'],
     BUILD_NUMBER: '122', JOB_URL: 'https://jenkins.example/job/nd/',
     currentBuild: [currentResult: 'FAILURE', startTimeInMillis: System.currentTimeMillis()]

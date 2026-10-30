@@ -42,7 +42,7 @@ def context = [WORKSPACE: workspace.absolutePath, BUILD_TAG: 'jenkins-fixture-12
                HOME: new File(workspace, 'home').absolutePath,
                PATH: new File(args[3]).parent + File.pathSeparator + System.getenv('PATH'),
                CONSUL_SYNC_FAILED: 'false']
-script.binding = new Binding([env: context, BUILD_NUMBER: '121', CONSUL_URL: 'http://consul.invalid'])
+script.binding = new Binding([env: context, params: [:], BUILD_NUMBER: '121', CONSUL_URL: 'http://consul.invalid'])
 def logs = []
 def requests = []
 script.metaClass.echo = { Object message -> logs.add(message.toString()) }

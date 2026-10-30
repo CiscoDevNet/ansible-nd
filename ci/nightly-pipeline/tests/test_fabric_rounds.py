@@ -661,30 +661,32 @@ def test_port_channel_unbundle_is_scoped_to_the_runner_gate_with_an_audit_safe_d
 
 
 def test_runner_releases_reserved_port_channel_members_before_the_prerequisite_gate():
-    # Per-module C1 self-heal: before the read-only verify_free_interfaces gate (hosted by the
-    # "prepare and verify declared prerequisites" block) runs for a port-channel module, release
-    # any stale port-channel501/502/503 holding the shared Ethernet1/10-13 pool on vxlan_leaf_1,
-    # then Recalculate & Deploy. Best-effort so a stuck port-channel can never block the module.
+    # Release only the default access/trunk namespace on the profile-verified
+    # switch before the read-only gate. Routed targets own PC520-523; custom
+    # selections prove an empty namespace instead of deleting existing intent.
     play = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text(encoding="utf-8"))[0]
     pre = play["pre_tasks"]
     names = [t.get("name", "") for t in pre]
     heal = next(t for t in pre if t.get("name", "").endswith("release reserved port-channel members before the gate"))
     gate_index = names.index("[{{ test_module }}] prepare and verify declared prerequisites")
     assert names.index(heal["name"]) < gate_index  # the self-heal must run BEFORE the gate
-    # Gated to exactly the three port-channel modules, and only while prerequisites run.
+    # Access/trunk only, with custom selections excluded before any deletion.
     assert "nd_prerequisite_enable | default(false) | bool" in heal["when"]
     assert any(
         all(mod in condition for mod in (
             "nd_interface_port_channel_access",
             "nd_interface_port_channel_trunk_host",
-            "nd_interface_port_channel_routed",
         ))
         for condition in heal["when"]
     )
-    # Scope: port-channel501/502/503 on ansible_switch1 (vxlan_leaf_1 -> frees Ethernet1/10-13).
+    assert not any("nd_interface_port_channel_routed" in condition for condition in heal["when"])
+    assert "not (_ndp_selected_profile.interface_selection_changed | default(false) | bool)" in heal["when"]
+    assert heal["vars"]["_ndp_pc_switch_ip"] == "{{ _ndp_selected_profile.runtime_vars.nd_test_switch_ip }}"
+    assert heal["vars"]["_ndp_pc_fabric_name"] == "{{ _ndp_selected_profile.runtime_vars.nd_test_fabric_name }}"
+    # Delete the exact access/trunk namespace on that same verified switch.
     cfg = heal["vars"]["_ndp_pc_delete_config"]
     assert [row["interface_name"] for row in cfg] == ["port-channel501", "port-channel502", "port-channel503"]
-    assert {row["switch_ip"] for row in cfg} == {"{{ ansible_switch1 }}"}
+    assert {row["switch_ip"] for row in cfg} == {"{{ _ndp_pc_switch_ip }}"}
     inner = heal["block"]
     delete_task = next(t for t in inner if "cisco.nd.nd_interface_port_channel_access" in t)
     assert delete_task["cisco.nd.nd_interface_port_channel_access"]["state"] == "deleted"

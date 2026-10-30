@@ -152,11 +152,14 @@ def test_baseline_repair_lock_and_readonly_modes(tmp_path, mode, occupied, targe
                  "nd_prerequisite_repair_baseline": mode != "disabled", "test_module": "mock",
                  "_ndp_profile": {"switches": {"members": ["leaf"]}}, "_ndp_run_id": "mock-run",
                  "_ndp_execution_id": "mock", "nd_prerequisite_repair_lock_dir": str(lock_dir)}
-    tasks = [lock] + repair_tasks
+    runner = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]
+    arm = next(task for task in runner["tasks"] if task.get("name", "").endswith("arm forced prerequisite restore handler"))
+    tasks = [arm]
+    variables["nd_prerequisite_enable"] = True
     if target_failure:
         tasks.append({"name": "Injected target failure", "ansible.builtin.fail": {"msg": "target failed"}})
     play = [{"hosts": "localhost", "connection": "local", "gather_facts": False, "force_handlers": True,
-             "vars": variables, "tasks": tasks,
+             "vars": variables, "pre_tasks": [lock] + repair_tasks, "tasks": tasks,
              "handlers": [{"name": "Restore prerequisite interface changes", "ansible.builtin.include_tasks": str(release_file)}]}]
     playbook = tmp_path / "lock.yaml"
     playbook.write_text(yaml.safe_dump(play, sort_keys=False))
@@ -546,13 +549,15 @@ def test_jenkins_runs_vpc_pairs_immediately_after_policy_groups():
     assert "standaloneTargets.each { m -> resultTargets.add([m, 'integration']) }" not in jenkins_text
 
 
-def test_jenkins_exposes_only_debug_and_git_branch_parameters():
+def test_jenkins_exposes_restored_branch_notification_and_interface_parameters():
     jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
     block = re.search(r"\n    parameters \{(.*?)\n    \}", jenkins_text, re.S).group(1)
-    assert re.findall(r"(?:booleanParam|string|choice|text|password)\(name: '([A-Za-z0-9_]+)'", block) == ["DEBUG", "DEBUG_MODULES", "ND_GIT_BRANCH"]
-    # Topology and coverage remain fixed; only branch/debug parameters are read.
-    assert set(re.findall(r"\bparams\.([A-Za-z0-9_]+)", jenkins_text)) == {"DEBUG", "DEBUG_MODULES", "ND_GIT_BRANCH"}
-    for removed in ("RUN_ND_MANAGE_LINKS", "RUN_ND_VPC_PAIR", "RUN_ND_MANAGE_TOR", "ND_LINKS_FABRIC", "ND_SUBIF_ETHERNET_PARENT", "ND_INTERFACE_TEST_SWITCH_IP"):
+    expected = ["DEBUG", "DEBUG_MODULES", "WEBEX_CUSTOM_MESSAGE", "ND_GIT_BRANCH",
+                "ND_INTERFACE_TEST_SWITCH_IP", "ND_SUBIF_ETHERNET_PARENT"]
+    assert re.findall(r"(?:booleanParam|string|choice|text|password)\(name: '([A-Za-z0-9_]+)'", block) == expected
+    # Coverage remains fixed; interface inputs select only validated profiles.
+    assert set(re.findall(r"\bparams\.([A-Za-z0-9_]+)", jenkins_text)) == set(expected)
+    for removed in ("RUN_ND_MANAGE_LINKS", "RUN_ND_VPC_PAIR", "RUN_ND_MANAGE_TOR", "ND_LINKS_FABRIC"):
         assert removed not in jenkins_text, removed
 
 

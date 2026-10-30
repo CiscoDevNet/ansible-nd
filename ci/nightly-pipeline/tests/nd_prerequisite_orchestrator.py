@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import ipaddress
 import json
 import os
 import pathlib
@@ -88,6 +89,73 @@ def _validated_registry(registry):
     errors = validate_registry(registry)
     if errors:
         raise OrchestrationError(f"registry validation failed: {errors[0]}")
+
+
+def select_interface(registry, execution_id, switch_ip="", ethernet_parent=""):
+    """Select one interface profile without changing canonical lab identities or ports."""
+    _validated_registry(registry)
+    allowed = {"integration.nd_interface_" + name for name in (
+        "loopback", "svi", "ethernet_access", "ethernet_trunk_host", "ethernet_routed",
+        "port_channel_access", "port_channel_trunk_host", "port_channel_routed",
+        "subinterface_managed", "subinterface_unmanaged")}
+    if execution_id not in allowed or execution_id not in registry["profiles"]:
+        raise OrchestrationError("interface selection requires a single-switch interface profile")
+    if not isinstance(switch_ip, str) or not isinstance(ethernet_parent, str):
+        raise OrchestrationError("interface selections must be strings")
+    original = registry["profiles"][execution_id]
+    if original.get("interface_selection_changed"):
+        raise OrchestrationError("interface selection requires an unmodified source profile")
+    profile = copy.deepcopy(original)  # Break shared YAML aliases before changing the selected profile.
+    members = profile["switches"]["members"]
+    if len(members) != 1 or members[0]["desired_role"] != "leaf":
+        raise OrchestrationError("interface selection requires exactly one declared leaf")
+    old_ref = members[0]["ref"]
+    runtime = profile["runtime_vars"]
+    switch_ip = switch_ip.strip() or runtime["nd_test_switch_ip"]
+    try:
+        switch_ip = str(ipaddress.ip_address(switch_ip))
+    except ValueError:
+        raise OrchestrationError("interface switch must be a valid management IP") from None
+    matches = [ref for ref, switch in registry["lab"]["switches"].items()
+               if switch["seed_ip"] == switch_ip and switch["baseline_role"] == "leaf"
+               and switch["baseline_fabric_ref"] == members[0]["desired_fabric_ref"]]
+    if len(matches) != 1:
+        raise OrchestrationError("interface switch must identify one declared leaf in the round fabric")
+    selected_ref = matches[0]
+    ethernet_parent = ethernet_parent.strip()
+    if ethernet_parent and not re.fullmatch(r"Ethernet[1-9]\d*/[1-9]\d*", ethernet_parent):
+        raise OrchestrationError("Ethernet parent must be a physical Ethernet interface")
+    old_parent = runtime.get("nd_test_ethernet_parent")
+    selected_parent = ethernet_parent or old_parent
+    if old_parent and selected_ref == "vxlan_leaf_1" and selected_parent in {"Ethernet1/2", "Ethernet1/3"}:
+        raise OrchestrationError("Ethernet parent is a known fabric underlay or peer-link interface")
+    changed = selected_ref != old_ref or bool(old_parent and selected_parent != old_parent)
+    output = copy.deepcopy(registry)
+    if changed:
+        members[0]["ref"] = selected_ref
+        runtime["nd_test_switch_ip"] = switch_ip
+        for resource in profile["resources"] + profile.get("links", []):
+            if resource.get("switch_ref") == old_ref:
+                resource["switch_ref"] = selected_ref
+            if old_parent and resource.get("kind") == "ensure_routed_parent":
+                resource["interface"] = selected_parent
+                resource.pop("existing_link", None)
+            if old_parent and resource.get("interface_type") == "subinterface":
+                resource["interfaces"] = [selected_parent + name[len(old_parent):]
+                                          if name.startswith(old_parent + ".") else name
+                                          for name in resource["interfaces"]]
+        if old_parent:
+            runtime["nd_test_ethernet_parent"] = selected_parent
+        profile["interface_selection_changed"] = True
+        output["profiles"][execution_id] = profile
+    _validated_registry(output)
+    variables = {"nd_test_switch_ip": switch_ip, "nd_interface_selection_changed": changed}
+    if old_parent:
+        variables.update(nd_test_ethernet_parent=selected_parent,
+                         nd_test_port_channel_parent=runtime["nd_test_port_channel_parent"])
+    if changed:
+        variables["nd_prerequisite_repair_baseline"] = False
+    return output, variables
 
 
 def _confirmation_error(registry, selection, allow_auto_confirm=False):
@@ -1333,9 +1401,31 @@ def main(argv=None):
     schedule.add_argument("--allow-auto-confirm", action="store_true")
     registry_export = sub.add_parser("registry")
     registry_export.add_argument("--registry", required=True)
+    selection = sub.add_parser("select-interface")
+    selection.add_argument("--registry", required=True)
+    selection.add_argument("--execution-id", required=True)
+    selection.add_argument("--switch-ip", default="")
+    selection.add_argument("--ethernet-parent", default="")
+    selection.add_argument("--output", required=True)
+    selection.add_argument("--vars-output", required=True)
     args = parser.parse_args(argv)
     registry = load_registry(args.registry)
     try:
+        if args.command == "select-interface":
+            output, variables = select_interface(registry, args.execution_id, args.switch_ip, args.ethernet_parent)
+            paths = [pathlib.Path(args.output), pathlib.Path(args.vars_output)]
+            if paths[0].absolute() == paths[1].absolute():
+                raise OrchestrationError("selected registry and variables require distinct paths")
+            for path in paths:
+                if not path.is_absolute() or ".nd-prerequisite-recovery" not in path.parts or path.exists():
+                    raise OrchestrationError("selection outputs must be new absolute recovery paths")
+                _reject_symlink_components(path)
+            variables["nd_prerequisite_registry"] = str(paths[0])
+            write_restricted_json(paths[0], output)
+            write_restricted_json(paths[1], variables)
+            print(json.dumps({"registry": str(paths[0]), "vars": str(paths[1]),
+                              "changed": variables["nd_interface_selection_changed"]}))
+            return 0
         if args.command == "registry":
             _validated_registry(registry)
             print(json.dumps(registry, indent=2, sort_keys=True))

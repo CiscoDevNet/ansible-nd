@@ -43,7 +43,7 @@ def context = [WORKSPACE: workspace.absolutePath,
     COLLECTIONS_DIRECTORY: new File(workspace, 'collection').absolutePath,
     ND_GIT_BRANCH: 'develop', ND_GIT_COMMIT: 'a' * 40,
     ACTIVE_DCNM_VERSIONS: '4.3', PIPELINE_FAILED: 'false', WEBEX_ROOM_ID: 'fixture-room']
-script.binding = new Binding([env: context, BUILD_NUMBER: '122',
+script.binding = new Binding([env: context, params: [:], BUILD_NUMBER: '122',
     JOB_URL: 'https://jenkins.invalid/job/nd/',
     currentBuild: [currentResult: 'FAILURE', startTimeInMillis: System.currentTimeMillis()]])
 def logs = []
@@ -316,7 +316,7 @@ def test_fallback_reports_only_revision_and_safe_exception_class(groovy_runner):
     groovy_runner(r"""
 def name = 'org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException'
 def fallback = script.minimalBuildNotification(name)
-assert fallback.contains('Reporting revision: selected-branch-pipeline-20261029')
+assert fallback.contains('Reporting revision: ' + script.ND_REPORTING_REVISION)
 assert fallback.contains('Detailed reporting error class: ' + name)
 assert fallback.contains('Branch: develop\nCommit: ' + ('a' * 40) + '\n')
 def unsafe = script.minimalBuildNotification('Authorization: Bearer OFFLINE_RAW_SECRET\nresponse body')
@@ -350,10 +350,10 @@ script.metaClass.moduleCaseTotals = { Object rows -> throw failure }
 script.run()
 assert requests.size() == 1
 assert requests[0].markdown.contains('Build result: FAILURE')
-assert requests[0].markdown.contains('Reporting revision: selected-branch-pipeline-20261029')
+assert requests[0].markdown.contains('Reporting revision: ' + script.ND_REPORTING_REVISION)
 assert requests[0].markdown.contains('Detailed reporting error class: org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException')
 assert !requests[0].markdown.contains('OFFLINE_RAW_SECRET')
-assert logs.any { it == 'NDP_NOTIFICATION_REVISION: selected-branch-pipeline-20261029' }
+assert logs.any { it == 'NDP_NOTIFICATION_REVISION: ' + script.ND_REPORTING_REVISION }
 assert logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_FAILED: org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException; revision=') }
 assert !logs.join('\n').contains('OFFLINE_RAW_SECRET')
 assert writes.isEmpty() && shells.isEmpty()
@@ -389,7 +389,7 @@ assert !source.contains('compactMessage')
 assert logs.any { it.startsWith('NDP_WEBEX_REPORT_SIZE: characters=') && it.endsWith('part_limit=7000') }
 assert logs.any { it.startsWith('📨 Webex notification before delivery (') && it.contains('unique_post_module_219') && it.contains('unique_artifact_29.txt') }
 assert !delivered.contains('Detailed reporting was unavailable')
-assert logs.any { it == 'NDP_NOTIFICATION_REVISION: selected-branch-pipeline-20261029' }
+assert logs.any { it == 'NDP_NOTIFICATION_REVISION: ' + script.ND_REPORTING_REVISION }
 assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_FAILED:') }
 assert writes.isEmpty() && shells.isEmpty()
 """)
@@ -404,7 +404,7 @@ def test_current_file_fingerprint_cannot_match_captured_build124_old_signature(f
         'denied_plan_write': 'writeFile file: planFile',
     }
     assert all(value not in source for value in old_fingerprint.values())
-    assert "ND_REPORTING_REVISION = 'selected-branch-pipeline-20261029'" in source
+    assert re.search(r"ND_REPORTING_REVISION = '[^']+'", source)
     assert 'NDP_NOTIFICATION_REVISION: ${ND_REPORTING_REVISION}' in source
     assert 'writeFile file: stagedPlanFile' in source
     # This detects local source drift; it does not activate or inspect live Jenkins.

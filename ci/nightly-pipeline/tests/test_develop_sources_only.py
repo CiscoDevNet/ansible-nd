@@ -289,7 +289,7 @@ def test_pipeline_uses_selected_branch_without_test_patch_paths(name):
     source = (ROOT / name).read_text()
     assert re.search(r"string\(name:\s*'ND_GIT_BRANCH',\s*defaultValue:\s*'develop'", source)
     assert "ND_GIT_BRANCH = 'develop'" not in source
-    assert 'ND_GIT_BRANCH = "${params.ND_GIT_BRANCH?.trim() ?: \'develop\'}"' in source
+    assert "def selection = (params.ND_GIT_BRANCH ?: '').toString().trim() ?: 'develop'" in source
     for forbidden in ("prepareSwitchIntegrationBaseline", "materializeEmbeddedTests", "RUN_INTEGRATION_MODULE_YAML", "patch.git.diff"):
         assert forbidden not in source
     assert "'nd_verify_develop_sources.py'" in source

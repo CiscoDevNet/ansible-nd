@@ -89,7 +89,7 @@
   when:
     - nd_prerequisite_mode | default('fixture') == 'live'
     - nd_prerequisite_apply | default(false) | bool
-    - nd_prerequisite_repair_baseline | default(false) | bool
+    - (nd_prerequisite_repair_baseline | default(false) | bool) or (_ndp_profile.interface_selection_changed | default(false) | bool)
     - not (nd_prerequisite_only | default(false) | bool)
     - not ansible_check_mode
     - _ndp_profile.switches.members | length > 0
@@ -113,7 +113,6 @@
       delegate_to: localhost
       run_once: true
       changed_when: true
-      notify: Restore prerequisite interface changes
 
     - name: Record ownership of the baseline repair lock
       ansible.builtin.set_fact:
@@ -195,10 +194,11 @@
     - not (nd_prerequisite_only | default(false) | bool)
 
 - name: Release run-owned resources before skipping unavailable substrate
-  ansible.builtin.meta: flush_handlers
+  ansible.builtin.include_tasks: nd_prerequisite_restore.yaml
   when:
     - _ndp_plan.rc == 3
-    - _ndp_baseline_repair_lock_acquired | default(false) | bool
+    - not (nd_prerequisite_only | default(false) | bool)
+    - (_ndp_prerequisite_restore_operations | default([]) | length > 0) or (_ndp_baseline_repair_lock_acquired | default(false) | bool)
 
 - name: End the play cleanly because the declared lab substrate is unavailable
   ansible.builtin.meta: end_play
