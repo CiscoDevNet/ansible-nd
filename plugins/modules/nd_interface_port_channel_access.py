@@ -41,9 +41,11 @@ options:
     - Each item specifies the target switch, the port-channel interface name, and its configuration.
     - Multiple switches can be configured in a single task.
     - The structure mirrors the ND Manage Interfaces API payload.
+    - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+    - Omit for O(state=gathered). This module currently supports gather-all only; gathered filtering is not supported.
     type: list
     elements: dict
-    required: true
+    required: false
     suboptions:
       switch_ip:
         description:
@@ -372,9 +374,11 @@ options:
       Any resource existing on ND but not present in the configuration will be deleted. Use with extra caution.
     - Use O(state=deleted) to remove the specified port-channels via the C(interfaceActions/remove) API.
       Member ethernet interfaces are reverted to their fabric default configuration.
+    - Use O(state=gathered) to read all accessPoHost port-channels across the fabric without making changes.
+      O(config) must be omitted or empty.
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -524,6 +528,12 @@ EXAMPLES = r"""
     config_actions:
       deploy: true
     state: overridden
+
+- name: Gather all accessPoHost port-channels in the fabric
+  cisco.nd.nd_interface_port_channel_access:
+    fabric_name: my_fabric
+    state: gathered
+  register: gathered_port_channel_access
 """
 
 RETURN = r"""
@@ -584,13 +594,13 @@ diff:
   description:
   - Reserved for the per-interface difference between C(before) and C(after).
   - Currently always an empty list for this module family; compare C(before) and C(after) directly.
-  returned: always
+  returned: when O(state) is not V(gathered)
   type: list
   elements: dict
   sample: []
 proposed:
   description: The configuration the module proposed to apply, before reconciliation with the controller.
-  returned: when O(output_level) is V(info) or V(debug)
+  returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
   sample:
@@ -600,6 +610,13 @@ proposed:
       network_os:
         policy:
           access_vlan: 200
+gathered:
+  description:
+  - All accessPoHost port-channels across the fabric.
+  - Returned in reusable Ansible configuration format.
+  returned: when O(state=gathered)
+  type: list
+  elements: dict
 logs:
   description:
   - Reserved for internal diagnostic log messages collected during the run.
@@ -622,16 +639,12 @@ import logging
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_access_interface import (
-    PortChannelAccessInterfaceModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_access_interface import PortChannelAccessInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.module_failure import fail_from_exception
 from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import config_actions_spec, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_access_interface import (
-    PortChannelAccessInterfaceOrchestrator,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_access_interface import PortChannelAccessInterfaceOrchestrator
 
 
 def main():
@@ -652,10 +665,20 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
     )
     require_pydantic(module)
     setup_logging(module)
     module_log = logging.getLogger("nd.nd_interface_port_channel_access")
+    if module.params["state"] == "gathered" and module.params.get("config"):
+        module.fail_json(
+            msg=("config is not supported when state is gathered because this module " "currently supports gather-all only; omit config or use an empty list.")
+        )
 
     nd_state_machine = None
 
@@ -677,7 +700,7 @@ def main():
         nd_state_machine.manage_state()
         module_log.debug("manage_state end")
 
-        if not module.check_mode:
+        if not module.check_mode and module.params["state"] != "gathered":
             nd_state_machine.model_orchestrator.remove_pending()
             nd_state_machine.model_orchestrator.deploy_pending()
 
