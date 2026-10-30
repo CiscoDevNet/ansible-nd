@@ -21,13 +21,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationTyp
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_community_list.manage_community_list import CommunityListModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.bulk_create_readback import NDBulkCreateReadBackOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 _FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
 
 
-class ManageCommunityListOrchestrator(NDBaseOrchestrator[CommunityListModel]):
+class ManageCommunityListOrchestrator(NDBulkCreateReadBackOrchestrator[CommunityListModel]):
     """
     Orchestrator for community list CRUD operations on Nexus Dashboard.
 
@@ -163,7 +163,8 @@ class ManageCommunityListOrchestrator(NDBaseOrchestrator[CommunityListModel]):
 
     def create_bulk(self, model_instances: list[CommunityListModel], **kwargs) -> ResponseType:
         """
-        Bulk-create community lists.
+        Bulk-create community lists. On failure, the items the controller committed anyway are read back (`_created_despite_failure`) and named
+        in the error; `accepted_mutations` then reports them to `NDStateMachine`.
 
         POST /fabrics/{fabricName}/communityLists
         Body: {"communityLists": [...]}
@@ -178,6 +179,9 @@ class ManageCommunityListOrchestrator(NDBaseOrchestrator[CommunityListModel]):
             return result
         except Exception as e:
             names = [m.name for m in model_instances]
+            created = [m.name for m in self._created_despite_failure(model_instances)]
+            if created:
+                raise RuntimeError(f"Bulk create failed for {names}: {e}. The controller created {created} from the same request.") from e
             raise RuntimeError(f"Bulk create failed for {names}: {e}") from e
 
     def update(self, model_instance: CommunityListModel, **kwargs) -> ResponseType:
