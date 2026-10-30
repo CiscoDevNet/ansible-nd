@@ -28,14 +28,17 @@ import inspect
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
+    CsrLoopbackPolicyModel,
     IpfmLoopbackPolicyModel,
     LoopbackConfigDataModel,
     LoopbackInterfaceModel,
     MplsLoopbackPolicyModel,
     NexusLoopbackNetworkOSModel,
     NexusLoopbackPolicyModel,
+    XeLoopbackNetworkOSModel,
+    XeLoopbackPolicyModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import BulkCreateGroupKey, BulkCreateItem
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import BulkCreateGroupKey, BulkCreateItem, NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -1536,3 +1539,251 @@ def test_loopback_interface_01500() -> None:
     assert [item.interface_name for item in groups[keys[0]]] == ["loopback200", "loopback202"]
     assert groups[keys[1]][0].payload["switchId"] == "FDO12345ABC"
     assert isinstance(groups[keys[1]][0], BulkCreateItem)
+
+
+# =============================================================================
+# Test: csrLoopback release preflight (issue #632)
+# =============================================================================
+
+
+def _build_xe_loopback_model(policy_type: str, switch_ip: str = "192.168.12.151", interface_name: str = "loopback206") -> LoopbackInterfaceModel:
+    """Build a minimal IOS-XE `LoopbackInterfaceModel` carrying either a `csrLoopback` or an `iosXeLoopback` policy."""
+    if policy_type == "csrLoopback":
+        policy = CsrLoopbackPolicyModel(policy_type="csrLoopback", admin_state=True, ip="10.100.206.1")
+    else:
+        policy = XeLoopbackPolicyModel(policy_type="iosXeLoopback", admin_state=True, ip="10.100.205.1")
+    return LoopbackInterfaceModel(
+        switch_ip=switch_ip,
+        interface_name=interface_name,
+        config_data=LoopbackConfigDataModel(network_os=XeLoopbackNetworkOSModel(network_os_type="ios-xe", policy=policy)),
+    )
+
+
+def _existing_xe_loopback(policy_type: str, interface_name: str = "loopback206") -> dict:
+    """Wire-shaped IOS-XE loopback record as the per-switch interface list returns it."""
+    return {
+        "interfaceName": interface_name,
+        "interfaceType": "loopback",
+        "configData": {"mode": "managed", "networkOS": {"networkOSType": "ios-xe", "policy": {"policyType": policy_type, "adminState": True}}},
+    }
+
+
+def test_loopback_interface_01600() -> None:
+    """
+    # Summary
+
+    On ND 4.3.1 a proposed `csrLoopback` that does not exist yet is refused before any write: the controller rejects the policy
+    on create and update (issue #632), so the preflight fails with a message naming the interface, the switch and the release.
+
+    ## Test
+
+    - `controller_version` is `4.3.1.175`
+    - The switch's interface list is empty (seeded cache), so `loopback206` would be created
+    - `_check_csr_loopback_writable` raises RuntimeError naming `csrLoopback`, `loopback206 (192.168.12.151)` and `4.3.1.175`
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._check_csr_loopback_writable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    rest_send.controller_version = "4.3.1.175"
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance.state_snapshot._interfaces_by_switch["FDO12345ABC"] = {}
+
+    with pytest.raises(RuntimeError, match=r"csrLoopback.*loopback206 \(192\.168\.12\.151\)") as excinfo:
+        instance._check_csr_loopback_writable([_build_xe_loopback_model("csrLoopback")])
+    assert "4.3.1.175" in str(excinfo.value)
+    assert "#632" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("version", ["4.2.1.10", "4.2.3.7", None])
+def test_loopback_interface_01610(version) -> None:
+    """
+    # Summary
+
+    Below ND 4.3.1, and when the controller version is unknown, the csrLoopback preflight is a no-op: 4.2.1 accepts the policy
+    (lab-verified) and an unknown release must not block a write on speculation.
+
+    ## Test
+
+    - `controller_version` is a 4.2.x build or None
+    - A proposed `csrLoopback` passes without any request (no switch resolution, no interface fetch)
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._check_csr_loopback_writable()
+    """
+    rest_send = _build_rest_send(ResponseGenerator(iter([])))
+    rest_send.controller_version = version
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance._check_csr_loopback_writable([_build_xe_loopback_model("csrLoopback")])
+    assert instance._switch_interfaces_cache == {}
+
+
+def test_loopback_interface_01630() -> None:
+    """
+    # Summary
+
+    On ND 4.3.1 a `csrLoopback` that already exists with that policy type is not refused: re-stating it (an idempotent re-run)
+    issues no write, so the preflight must stay silent.
+
+    ## Test
+
+    - `controller_version` is `4.3.1.175`
+    - The switch's interface list (seeded cache) already holds `loopback206` as `csrLoopback`
+    - `_check_csr_loopback_writable` does not raise
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._check_csr_loopback_writable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    rest_send.controller_version = "4.3.1.175"
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance.state_snapshot._interfaces_by_switch["FDO12345ABC"] = {"loopback206": _existing_xe_loopback("csrLoopback")}
+
+    with does_not_raise():
+        instance._check_csr_loopback_writable([_build_xe_loopback_model("csrLoopback")])
+
+
+def test_loopback_interface_01640() -> None:
+    """
+    # Summary
+
+    On ND 4.3.1 a proposed IOS-XE loopback of any other policy type is not affected by the csrLoopback preflight.
+
+    ## Test
+
+    - `controller_version` is `4.3.1.175`
+    - A proposed `iosXeLoopback` passes without switch resolution or interface fetch
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._check_csr_loopback_writable()
+    """
+    rest_send = _build_rest_send(ResponseGenerator(iter([])))
+    rest_send.controller_version = "4.3.1.175"
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance._check_csr_loopback_writable([_build_xe_loopback_model("iosXeLoopback", interface_name="loopback205")])
+    assert instance._switch_interfaces_cache == {}
+
+
+def test_loopback_interface_01650() -> None:
+    """
+    # Summary
+
+    On ND 4.3.1 a policy-type transition to `csrLoopback` (the interface exists as `iosXeLoopback`) is refused: the transition is a
+    PUT, and the controller rejects `csrLoopback` on PUT as well as on create.
+
+    ## Test
+
+    - `controller_version` is `4.3.1.175`
+    - The switch's interface list (seeded cache) holds `loopback206` as `iosXeLoopback`
+    - A proposed `csrLoopback` `loopback206` raises RuntimeError
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._check_csr_loopback_writable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    rest_send.controller_version = "4.3.1.175"
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance.state_snapshot._interfaces_by_switch["FDO12345ABC"] = {"loopback206": _existing_xe_loopback("iosXeLoopback")}
+
+    with pytest.raises(RuntimeError, match="csrLoopback"):
+        instance._check_csr_loopback_writable([_build_xe_loopback_model("csrLoopback")])
+
+
+def test_loopback_interface_01660(monkeypatch) -> None:
+    """
+    # Summary
+
+    The inherited `preflight` reaches the csrLoopback release check through `preflight_safety`, so `NDStateMachine.manage_state`
+    and the workflow executor (which call `preflight`) report the refusal, in check mode too.
+
+    ## Test
+
+    - `validate_switches_capable` and `_check_overridden_removals_discovered` are replaced by no-ops so their fixtures are not needed
+    - The switches list (1 IOS-XE switch) resolves the switch and satisfies the platform check
+    - `controller_version` is `4.3.1.175`; the switch's interface list is empty (seeded cache)
+    - `preflight` with a proposed `csrLoopback` raises the csrLoopback RuntimeError
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - LoopbackInterfaceOrchestrator.preflight_safety()
+    - LoopbackInterfaceOrchestrator._check_csr_loopback_writable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "validate_switches_capable", lambda self, model_instances: None)
+    monkeypatch.setattr(LoopbackInterfaceOrchestrator, "_check_overridden_removals_discovered", lambda self, model_instances: None)
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    rest_send.controller_version = "4.3.1.175"
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance.state_snapshot._interfaces_by_switch["FDO12345ABC"] = {}
+
+    with pytest.raises(RuntimeError, match="csrLoopback"):
+        instance.preflight([_build_xe_loopback_model("csrLoopback")])
+
+
+def test_loopback_interface_01670(monkeypatch) -> None:
+    """
+    # Summary
+
+    `preflight_safety` runs the shared safety checks and then the csrLoopback release check. The aggregate workflow planner calls
+    `preflight_safety` (never `preflight`) in check mode, so the guard has to live on this path for a `nd_interfaces_workflow` dry
+    run to report the refusal (PR #634 review).
+
+    ## Test
+
+    - The base `NDBaseInterfaceOrchestrator.preflight_safety` is replaced by a recorder so its own fixtures are not needed
+    - `controller_version` is `4.3.1.175`; the switch's interface list is empty (seeded cache)
+    - `preflight_safety` with a proposed `csrLoopback` calls the base safety check once, then raises the csrLoopback RuntimeError
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.preflight_safety()
+    - LoopbackInterfaceOrchestrator._check_csr_loopback_writable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+
+    calls: list[int] = []
+
+    def fake_base_preflight_safety(self, model_instances):  # pylint: disable=unused-argument
+        calls.append(len(model_instances))
+
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", fake_base_preflight_safety)
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    rest_send.controller_version = "4.3.1.175"
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance.state_snapshot._interfaces_by_switch["FDO12345ABC"] = {}
+
+    with pytest.raises(RuntimeError, match="csrLoopback"):
+        instance.preflight_safety([_build_xe_loopback_model("csrLoopback")])
+    assert calls == [1]

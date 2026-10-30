@@ -509,6 +509,63 @@ def test_normal_execution_rechecks_platform_match_immediately_before_writes() ->
     assert "reports platformType 'ios-xe'" in execution.message
 
 
+def _versioned_rest_send_factory(version: str):
+    """Return a planner `rest_send_factory` whose RestSend reports `version` as the controller release."""
+
+    def factory(params: dict[str, Any]) -> RestSend:
+        rest_send = RestSend(params)
+        rest_send.controller_version = version
+        return rest_send
+
+    return factory
+
+
+def _csr_loopback(switch_ip: str = "192.0.2.1", name: str = "loopback206") -> dict[str, Any]:
+    return _loopback(switch_ip, name, network_os_type="ios-xe", policy_type="csrLoopback", policy={"ip": "10.100.206.1", "admin_state": True})
+
+
+def test_check_mode_planning_refuses_csr_loopback_create_on_nd_431() -> None:
+    """A dry run must report the csrLoopback refusal the normal run would hit (ND 4.3.1 rejects the policy, issue #632)."""
+    planner, recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": []}])
+    planner.fabric_context._platform_map = {"192.0.2.1": PlatformType.IOS_XE}
+    planner.rest_send_factory = _versioned_rest_send_factory("4.3.1.175")
+
+    with pytest.raises(InterfaceWorkflowValidationError, match=r"csrLoopback.*loopback206 \(192\.0\.2\.1\)"):
+        planner.plan([{"type": "loopback", "state": "merged", "config": [_csr_loopback()]}])
+
+    assert {getattr(call["verb"], "value", call["verb"]) for call in recorder.calls} == {"GET"}
+
+
+def test_check_mode_planning_refuses_transition_to_csr_loopback_on_nd_431() -> None:
+    """A policy transition onto csrLoopback is a typed write ND 4.3.1 rejects, so the planner refuses it too."""
+    current = _wire_loopback("loopback206", "iosXeLoopback", network_os_type="ios-xe", adminState=True, ip="10.100.206.1")
+    planner, recorder = _planner(
+        switches={"192.0.2.1": "SERIAL1"},
+        responses=[{"interfaces": [current]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
+    )
+    planner.fabric_context._platform_map = {"192.0.2.1": PlatformType.IOS_XE}
+    planner.rest_send_factory = _versioned_rest_send_factory("4.3.1.175")
+
+    with pytest.raises(InterfaceWorkflowValidationError, match=r"csrLoopback.*loopback206 \(192\.0\.2\.1\)"):
+        planner.plan([{"type": "loopback", "state": "merged", "config": [_csr_loopback()]}])
+
+    assert {getattr(call["verb"], "value", call["verb"]) for call in recorder.calls} == {"GET"}
+
+
+def test_check_mode_planning_allows_csr_loopback_create_below_nd_431() -> None:
+    """ND 4.2.1 accepts csrLoopback (lab-verified), so the release guard stays silent and the create is planned."""
+    planner, recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": []}])
+    planner.fabric_context._platform_map = {"192.0.2.1": PlatformType.IOS_XE}
+    planner.rest_send_factory = _versioned_rest_send_factory("4.2.1.10")
+
+    plan = planner.plan([{"type": "loopback", "state": "merged", "config": [_csr_loopback()]}])
+
+    assert plan.changed is True
+    assert plan.mutation_count == 1
+    assert {getattr(call["verb"], "value", call["verb"]) for call in recorder.calls} == {"GET"}
+
+
 @pytest.mark.parametrize(
     ("resource_type", "config"),
     [
