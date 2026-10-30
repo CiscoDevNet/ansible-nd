@@ -18,6 +18,9 @@ from ansible_collections.cisco.nd.tests.unit.modules.test_nd_policy_group_direct
     invoke,
 )
 
+# Re-export the shared pytest fixture.
+__all__ = ["invoke"]
+
 
 class RejectingController(Controller):
     """Reject selected writes while preserving accepted earlier HTTP effects."""
