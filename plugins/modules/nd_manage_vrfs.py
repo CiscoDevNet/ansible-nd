@@ -53,6 +53,16 @@ options:
     type: str
     choices: [ merged, replaced, overridden, deleted, gathered, staged ]
     default: merged
+  deletion_mode:
+    description:
+      - V(standard) retains the ordinary detach, optional deployment, and VRF deletion workflow.
+      - V(finalize) deletes only explicitly named, already detached and undeployed VRF definitions on a standalone Manage fabric.
+      - Finalization requires fresh controller evidence that each existing VRF and attachment has reached a known detached terminal state.
+      - Finalization performs no attachment or deployment request and verifies definition absence after deletion.
+      - Only valid with O(state=deleted) and a nonempty O(config); attached, pending, failed, unknown, or unsupported state is rejected.
+    type: str
+    choices: [ standard, finalize ]
+    default: standard
   config:
     description:
       - List of VRF definition configurations to manage.
@@ -625,6 +635,14 @@ EXAMPLES = r"""
       - vrf_name: VRF_BLUE
 
 # ── Replace VRF configuration ───────────────────────────────────────────────
+- name: Finalize a VRF whose detachment was already deployed
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: fab1
+    state: deleted
+    deletion_mode: finalize
+    config:
+      - vrf_name: VRF_BLUE
+
 - name: Replace VRF configuration (full replace)
   cisco.nd.nd_manage_vrfs:
     fabric_name: fab1
@@ -663,6 +681,14 @@ changed:
   description: Whether the module changed VRF, attachment, or deployment state.
   returned: always
   type: bool
+deletion_finalization:
+  description:
+    - Request-bound evidence for O(deletion_mode=finalize), including exact names and verified detached attachments.
+    - C(detach_attempts) and C(deployment_attempts) are zero for this workflow.
+    - C(definition_absence_verified) is V(true) after a successful fresh absence check, V(false) if post-deletion observation fails,
+      and V(null) in check mode or when the deletion did not complete successfully.
+  returned: when finalization validation succeeds and the definition state machine returns
+  type: dict
 before:
   description: VRF configuration present on ND before the operation.
   returned: always
@@ -767,6 +793,7 @@ def main():
             default="merged",
             choices=["merged", "replaced", "overridden", "deleted", "gathered", "staged"],
         ),
+        deletion_mode=dict(type="str", default="standard", choices=["standard", "finalize"]),
         config=dict(
             type="list",
             elements="dict",

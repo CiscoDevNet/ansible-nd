@@ -184,6 +184,7 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
                 "ptp",
             }
             | InterfaceDefaultConfig.UNRESETTABLE_FIELDS
+            | InterfaceDefaultConfig.STORM_THRESHOLD_FIELDS
         )
         if any(key not in reset_fields for key in policy):
             return False
@@ -211,7 +212,7 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         # ND's validator rejects 0/null for them, so a normalized interface still carries any prior value. We must treat
         # such an interface as configured (not an unconfigured default) so `state: deleted` keeps it in scope and routes
         # it to the per-interface PUT-as-replace reset path. See InterfaceDefaultConfig.UNRESETTABLE_FIELDS for the set.
-        if any(policy.get(field) is not None for field in InterfaceDefaultConfig.UNRESETTABLE_FIELDS):
+        if any(policy.get(field) is not None for field in InterfaceDefaultConfig.UNRESETTABLE_FIELDS | InterfaceDefaultConfig.STORM_THRESHOLD_FIELDS):
             return False
         if policy.get("vlanMappingEntries"):
             return False

@@ -50,6 +50,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_fab
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_state_machine import (
     NetworkStateMachine,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.overlay_deletion_finalizer import OverlayDeletionFinalizer
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_staging_effects import network_staging_request_digest
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
@@ -75,6 +77,14 @@ class NetworkWorkflowCoordinator:
         initial_workflow_trace: list[dict[str, Any]] | None = None,
     ):
         self.module = module
+        # Bind the public Ansible request before _parse_config introduces model
+        # defaults/aliases and before CRUD temporarily substitutes module.params.
+        params = getattr(module, "params", {})
+        self._network_staging_request_sha256 = (
+            network_staging_request_digest(params.get("fabric_name"), "staged", params.get("config"), params.get("config_actions"))
+            if params.get("state") == "staged"
+            else None
+        )
         self.strategy = strategy
         self._trace_started_at = time.monotonic()
         self._workflow_trace: list[dict[str, Any]] = []
@@ -124,6 +134,11 @@ class NetworkWorkflowCoordinator:
             self._normalize_module_args(module_args)
             fabric_type: str = self.strategy.fabric_type
             self._validate_topology_argument_scope(module_args, fabric_type)
+
+            if module_args.get("deletion_mode", "standard") == "finalize":
+                result = OverlayDeletionFinalizer(self, "network").run(module_args, self.strategy)
+                self._trace("workflow_end", changed=result.get("changed"), failed=result.get("failed"))
+                return self._attach_workflow_trace(result)
 
             if self.strategy.is_child:
                 result = self._handle_child_workflow(module_args, fabric_type)
@@ -557,6 +572,7 @@ class NetworkWorkflowCoordinator:
                 strategy=active_strategy,
                 trace_hook=self._trace,
             )
+            orchestrator.staging_effects = getattr(self, "_network_staging_effects", None)
             self.module.params["config"] = orchestrator.prepare_config_data(module_args.get("config") or [])
             self.module.params["state"] = state
             self._trace(

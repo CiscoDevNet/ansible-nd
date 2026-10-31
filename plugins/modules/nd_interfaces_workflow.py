@@ -168,6 +168,22 @@ options:
         - Unsupported, changing, unknown or incomplete observations decline the proof and retain ordinary execution behavior.
         type: bool
         default: false
+      preparation_only:
+        description:
+        - Limit this workflow to explicit merged or replaced NX-OS L2 Ethernet, port-channel and vPC preparation.
+        - Requires O(config_actions.deploy=false) and O(verify.enabled=true). Rejects implicit aggregate member retirement before writes.
+        - Return a compact C(preparation_observation) from already acquired actual snapshots, including configured member and peer evidence.
+        - The observation does not require operational link or LACP convergence and does not replace Network attachment validation.
+        type: bool
+        default: false
+      defer_ready_membership:
+        description:
+        - Requires O(execution_options.preparation_only=true) and its verified staging constraints.
+        - Defer an existing local L2 port-channel replacement when only membership differs and current configured membership is safe.
+        - Perform no preparation write for that target. Report actual current members separately from desired future members.
+        - Mode, VLAN or other property changes, new parents and vPC member retirements retain strict preparation guards.
+        type: bool
+        default: false
       member_batching:
         description:
         - V(disabled) retains singular member PUTs.
@@ -559,7 +575,18 @@ resources:
           - V(planned) in check mode.
           - The actual execution outcome in normal mode. HTTP 207 outcomes require an identified exact V(success); any requested target
             without that evidence is V(failed), not V(uncertain).
+          - V(failed) alone does not establish an explicit controller rejection; inspect C(rejection) when available.
           type: str
+        rejection:
+          description:
+          - Request-bound explicit synchronous negative evidence for a logical loopback, SVI or subinterface create.
+          - Requires HTTP 207 with one uniquely bound result per requested identity and recognized terminal statuses.
+          - Bare result names bind only when the mutation request targets one switch; other result names must qualify their switch explicitly.
+          - Missing, duplicate, contradictory, malformed and unknown outcomes cannot produce this receipt.
+          - Includes version, source, action, switch_id, interface_name, http_status, response_status and request_sha256.
+          - Does not prove present interface absence, authorize deleting another interface, or establish device convergence.
+          returned: for an exact named controller rejection of a supported logical create
+          type: dict
         message:
           description: Controller or execution detail associated with this operation outcome.
           returned: when the controller or executor supplies detail
@@ -785,8 +812,20 @@ desired_equality:
   description:
   - Versioned cache-only residual planning over actual observed inventories, bound by C(request_sha256).
   - Includes every supported resource's exact targets with satisfied and residual-action evidence.
-  - Incomplete, unverified, removal and unqualified generated-vPC scopes cannot certify desired equality.
+  - Normal verified zero-mutation plans with vPC targets can use C(native_actual_noop_upserts_v1) from the original clean snapshot.
+  - That proof additionally checks reciprocal vPC parent/member intent and both generated local port-channels without reads, copies or replanning.
+  - Incomplete, unverified, changing generated-vPC and removal scopes retain ordinary recovery.
   returned: when O(execution_options.desired_equality=true) and normal planning completes
+  type: dict
+preparation_observation:
+  description:
+  - Compact request-bound actual configured intent for explicit L2 preparation targets, including raw policy, member and peer checks.
+  - Produced from complete clean snapshots already acquired by the workflow, without additional requests or a second workflow plan.
+  - A changing check-mode plan or incomplete observation returns C(complete=false) and cannot establish readiness.
+  - Does not certify deployed device configuration, operational LACP convergence or Network attachment acceptance.
+  - Deferred membership targets report C(ready=true), C(satisfied=false), current C(members), future C(desired_members),
+    and C(non_membership_satisfied=true). C(all_ready) includes these targets; C(all_satisfied) does not.
+  returned: when O(execution_options.preparation_only=true) and planning completes
   type: dict
 observed_satisfaction:
   description:
@@ -904,6 +943,8 @@ def interface_workflow_argument_spec():
                     "contract_version": {"type": "int", "choices": [1], "default": 1},
                     "desired_equality": {"type": "bool", "default": False},
                     "observed_satisfaction": {"type": "bool", "default": False},
+                    "preparation_only": {"type": "bool", "default": False},
+                    "defer_ready_membership": {"type": "bool", "default": False},
                     "member_batching": {
                         "type": "str",
                         "choices": ["disabled", "switch_policy", "experimental_policy", "experimental_mixed"],

@@ -75,7 +75,10 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
     interface_mode: ClassVar[str] = "managed"
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_full_modify: ClassVar[bool] = True
-    supports_bulk_modify_create: ClassVar[bool] = True
+    # ND 4.3.1 modify-create can reject a removed SVI as an overlay-only
+    # edit even after its interface/VLAN are absent. Keep grouped POST creation;
+    # existing SVI updates still qualify for bulk full modify.
+    supports_bulk_modify_create: ClassVar[bool] = False
     supports_bulk_delete: ClassVar[bool] = True
     xe_removal_requires_discovery: ClassVar[bool] = True
 

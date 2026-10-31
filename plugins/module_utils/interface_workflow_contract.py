@@ -22,6 +22,10 @@ CAPABILITIES = (
     "member_batching_mixed_v1",
     "observed_noop_preplan_v1",
     "staged_deletions_v1",
+    "preparation_observation_v1",
+    "named_sync_rejection_v1",
+    "actual_noop_upserts_v1",
+    "deferred_membership_preparation_v1",
 )
 # NaC checks these names from the selected base collection before passing a
 # new module argument. Older collections can safely retain their old path.
@@ -38,6 +42,10 @@ def workflow_options(params):
     }
     if supplied.get("observed_satisfaction") is True:
         options["observed_satisfaction"] = True
+    if supplied.get("preparation_only") is True:
+        options["preparation_only"] = True
+    if supplied.get("defer_ready_membership") is True:
+        options["defer_ready_membership"] = True
     return options
 
 
@@ -117,8 +125,11 @@ def desired_equality(*, params, plan, snapshot, rest_send_factory, _physical_def
     # Pair-aware generated footprints need separate qualification before NaC
     # may use this proof to replace its existing readback and recovery guards.
     if any(resource.adapter.ownership_domain == "vpc" for resource in plan.resources):
-        result["reason"] = "vpc_generated_footprint_not_qualified"
-        return result
+        from ansible_collections.cisco.nd.plugins.module_utils.interface_actual_noop_upserts import actual_noop_upserts
+
+        return actual_noop_upserts(
+            params=params, plan=plan, snapshot=snapshot, request_sha256=result["request_sha256"], desired_digest=result["desired_digest"]
+        )
     if any(
         resource.state in {"deleted", "overridden"}
         and not (_physical_defaults and resource.state == "deleted" and resource.adapter.ownership_domain == "ethernet")

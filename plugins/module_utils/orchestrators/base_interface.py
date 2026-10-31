@@ -669,7 +669,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
                     sid, name = requested[key]
                     owners[key]._queue_deploy(name, sid)
                 if accepted:
-                    raise RuntimeError(f"Mixed bulk create accepted {len(accepted)} of {len(requested)} named identities before failure.") from error
+                    raise RuntimeError(f"Mixed bulk create accepted {len(accepted)} of {len(requested)} named identities before failure: {error}") from error
             raise
         finally:
             for sid in touched:

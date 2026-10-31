@@ -13,6 +13,7 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.interface_family_adapters import INTERFACE_FAMILY_ADAPTERS
 from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
+from ansible_collections.cisco.nd.plugins.module_utils import interface_workflow_coordinator as workflow_coordinator
 from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_coordinator import (
     InterfaceWorkflowCoordinator,
     InterfaceWorkflowExecutionFailed,
@@ -67,6 +68,80 @@ def test_opt_in_profile_is_returned_after_output_finishes(monkeypatch):
 
     assert result["performance_profile"]["phases"]["planning"]["calls"] == 1
     assert result["performance_profile"]["phases"]["output"]["calls"] == 1
+
+
+def test_preparation_scope_guard_runs_before_executor(monkeypatch):
+    """An explicitly invalid preparation scope cannot send a mutation."""
+    module = FakeModule(check_mode=False, verify_enabled=True)
+    module.params["execution_options"] = {"preparation_only": True}
+    coordinator = InterfaceWorkflowCoordinator(module)
+    monkeypatch.setattr(coordinator, "_build_plan", plan)
+    coordinator.executor_factory = lambda **_kwargs: pytest.fail("Invalid preparation must not construct an executor")
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="requires config_actions.deploy=false"):
+        coordinator.run()
+
+
+def test_operation_named_rejection_is_bound_to_exact_workflow_request():
+    """The public operation carries the exact whole-workflow request digest."""
+    module = FakeModule(check_mode=False)
+    coordinator = InterfaceWorkflowCoordinator(module)
+    key = (0, "create", "192.0.2.1", "vlan3991")
+    rejection = {
+        "version": 1,
+        "source": "native_named_sync_rejection_v1",
+        "action": "create",
+        "switch_id": "SERIAL1",
+        "interface_name": "vlan3991",
+        "http_status": 207,
+        "response_status": "error",
+    }
+    result = coordinator._operation_result(
+        SimpleNamespace(resource_index=0),
+        action="create",
+        switch_ip="192.0.2.1",
+        switch_id="SERIAL1",
+        interface_name="vlan3991",
+        before_by_target={},
+        after_by_target={},
+        execution_items={key: {"status": "failed", "rejection": rejection}},
+    )
+    assert result["rejection"] == dict(rejection, request_sha256=workflow_coordinator.workflow_contract(module.params)["request_sha256"])
+    assert "request_sha256" not in rejection
+
+
+@pytest.mark.parametrize("check_mode,changed,verified", [(True, True, False), (False, False, True), (False, True, True)])
+def test_preparation_output_uses_existing_snapshot_and_profiles_proof(check_mode, changed, verified, monkeypatch):
+    """Every normal preparation exit uses the exact already observed snapshot."""
+    module = FakeModule(check_mode=check_mode, verify_enabled=True)
+    module.params.update(config_actions={"deploy": False}, execution_options={"preparation_only": True}, profile=True)
+    coordinator = InterfaceWorkflowCoordinator(module)
+    snapshot = SimpleNamespace(request_stats={"switches": 2, "interface_inventory_gets": 2})
+    coordinator._snapshot = snapshot
+    workflow_plan = plan(changed=changed)
+    calls = []
+    coordinator.executor_factory = lambda **kwargs: FakeExecutor(calls, **kwargs)
+    monkeypatch.setattr(coordinator, "_build_plan", lambda: workflow_plan)
+    monkeypatch.setattr(workflow_coordinator, "validate_preparation_plan", lambda **_kwargs: None)
+    observations = []
+
+    def observe(**kwargs):
+        observations.append(kwargs)
+        return {"test_observation": True}
+
+    monkeypatch.setattr(workflow_coordinator, "preparation_observation", observe)
+    monkeypatch.setattr(coordinator, "_new_rest_send", lambda **_kwargs: pytest.fail("Proof must not create another transport"))
+
+    result = coordinator.run()
+
+    assert result["preparation_observation"] == {"test_observation": True}
+    assert result["performance_profile"]["phases"]["preparation_observation"]["calls"] == 1
+    assert len(observations) == 1
+    assert observations[0]["snapshot"] is snapshot
+    assert observations[0]["plan"] is workflow_plan
+    assert observations[0]["verified"] is verified
+    assert observations[0]["check_mode"] is check_mode
+    assert bool(calls) is (changed and not check_mode)
 
 
 @pytest.mark.parametrize("status", [204, 404])

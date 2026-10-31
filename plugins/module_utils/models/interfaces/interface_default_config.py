@@ -126,13 +126,14 @@ class InterfaceDefaultPolicyModel(NDNestedModel):
     "no configuration". Lab-verified on ND 4.2.1 (S1_LE1 Ethernet1/41) for the following classes of fields:
 
     - String name pointers (`qos_policy`, `queuing_policy`, `netflow_monitor`, `netflow_sampler`): `""` clears.
-    - Storm-control numeric levels and PPS counters: `0` / `0.0` clears (and is the natural off-state when
-      `storm_control` is false).
+    Storm-control numeric thresholds are omitted from reset defaults. ND 4.3.1
+    generates real zero-level commands even when `stormControl` is false, so
+    zero is not an unconfigured sentinel. An existing threshold selects the
+    minimal PUT-as-replace reset instead of a normalize that could retain it.
 
-    Three fields could NOT be reset via normalize because ND's create/update validator rejects 0 / null on them:
-    `bandwidth`, `debounce_linkup_timer`, `inherit_bandwidth`. Users who set these via `state: merged` must
-    explicitly clear them via `state: merged` again or `state: replaced` — `state: deleted` will leave them at
-    the prior non-default value.
+    Three other fields cannot be reset via normalize because ND's create/update
+    validator rejects 0 / null: `bandwidth`, `debounce_linkup_timer` and
+    `inherit_bandwidth`. A delete with these fields also selects PUT-as-replace.
 
     `vlan_mapping_entries` is deferred until lab-verified on a hardware testbed (N9Kv rejects the parent
     `vlan_mapping` config with HTTP 400, so the wire shape cannot be probed here).
@@ -177,12 +178,12 @@ class InterfaceDefaultPolicyModel(NDNestedModel):
     speed: str = Field(default="auto")
     storm_control: bool = Field(default=False, alias="stormControl")
     storm_control_action: str = Field(default="default", alias="stormControlAction")
-    storm_control_broadcast_level: float = Field(default=0.0, alias="stormControlBroadcastLevel")
-    storm_control_broadcast_level_pps: int = Field(default=0, alias="stormControlBroadcastLevelPps")
-    storm_control_multicast_level: float = Field(default=0.0, alias="stormControlMulticastLevel")
-    storm_control_multicast_level_pps: int = Field(default=0, alias="stormControlMulticastLevelPps")
-    storm_control_unicast_level: float = Field(default=0.0, alias="stormControlUnicastLevel")
-    storm_control_unicast_level_pps: int = Field(default=0, alias="stormControlUnicastLevelPps")
+    storm_control_broadcast_level: float | None = Field(default=None, alias="stormControlBroadcastLevel")
+    storm_control_broadcast_level_pps: int | None = Field(default=None, alias="stormControlBroadcastLevelPps")
+    storm_control_multicast_level: float | None = Field(default=None, alias="stormControlMulticastLevel")
+    storm_control_multicast_level_pps: int | None = Field(default=None, alias="stormControlMulticastLevelPps")
+    storm_control_unicast_level: float | None = Field(default=None, alias="stormControlUnicastLevel")
+    storm_control_unicast_level_pps: int | None = Field(default=None, alias="stormControlUnicastLevelPps")
     vlan_mapping: bool = Field(default=False, alias="vlanMapping")
 
 
@@ -242,6 +243,11 @@ class InterfaceDefaultConfig(NDNestedModel):
     # use this set to detect when `state: deleted` must fall back to the per-interface PUT-as-replace path via
     # `to_reset_payload()`. Lab-verified on ND 4.2.1 (S1_LE1 Ethernet1/41, 2026-05-29).
     UNRESETTABLE_FIELDS: ClassVar[set[str]] = {"bandwidth", "debounceLinkupTimer", "inheritBandwidth"}
+    # Unlike a nullable absent value, an explicit zero emits real storm CLI.
+    # All existing non-null rates therefore need the replacement reset path.
+    STORM_THRESHOLD_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        "stormControl" + traffic + suffix for traffic in ("Broadcast", "Multicast", "Unicast") for suffix in ("Level", "LevelPps")
+    )
 
     @classmethod
     def to_normalize_payload(

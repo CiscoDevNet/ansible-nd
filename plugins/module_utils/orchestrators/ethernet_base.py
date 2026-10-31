@@ -607,6 +607,9 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         A narrowly typed routed-policy residue on a current NX trunk uses the
         same replacement path. It never counts as an already-reset default;
         the existing fresh readback must prove the replacement took effect.
+        Any non-null storm threshold also requires replacement: normalize's
+        zero sentinel can generate real rate-limit CLI while stormControl is
+        false, and omitting an existing threshold from normalize can retain it.
 
         ## Raises
 
@@ -616,7 +619,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             return False
         policy = existing_data.get("configData", {}).get("networkOS", {}).get("policy") or {}
         return (
-            any(policy.get(field) is not None for field in InterfaceDefaultConfig.UNRESETTABLE_FIELDS)
+            any(policy.get(field) is not None for field in InterfaceDefaultConfig.UNRESETTABLE_FIELDS | InterfaceDefaultConfig.STORM_THRESHOLD_FIELDS)
             or existing_data.get("interfaceType") == "ethernet"
             and has_typed_routed_sibling_residue(existing_data.get("configData"))
         )
@@ -2181,8 +2184,38 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                     raise RuntimeError(f"Reset negotiation context changed for {switch_id}/{name}; rerun with fresh state")
                 if self._membership_index().claiming_parents(switch_id, name):
                     raise RuntimeError(f"Reset negotiation target {switch_id}/{name} acquired aggregate ownership; refusing the reset")
-                if any(candidate.startswith(name.casefold() + ".") for candidate in self._switch_interfaces(switch_id)):
+                if self._has_blocking_child_subinterfaces(name, switch_id):
                     raise RuntimeError(f"Reset negotiation target {switch_id}/{name} has child subinterfaces; refusing the reset")
+
+    @contextmanager
+    def staged_child_deletion_context(self, checker):
+        """Use workflow-proven child deletions only during this reset phase.
+
+        Standalone modules have no resolver and retain the live-child guard.
+        Restore prior context even if reset validation or transport fails.
+        """
+        previous = getattr(self, "_staged_child_deletion_check", None)
+        self._staged_child_deletion_check = checker
+        try:
+            yield
+        finally:
+            self._staged_child_deletion_check = previous
+
+    def _has_blocking_child_subinterfaces(self, name: str, switch_id: str) -> bool:
+        """Reject every child except an exact current workflow deletion proof."""
+        checker = getattr(self, "_staged_child_deletion_check", None)
+        for candidate, current in self._switch_interfaces(switch_id).items():
+            if not candidate.startswith(name.casefold() + "."):
+                continue
+            if (
+                not isinstance(current, dict)
+                or current.get("switchId") != switch_id
+                or str(current.get("interfaceName") or "").casefold() != candidate
+                or checker is None
+                or not checker(switch_id, current)
+            ):
+                return True
+        return False
 
     def _verify_reset_auto_negotiation(self, pairs: Sequence[tuple[str, str]]) -> None:
         """Refuse success if controller staging still negates retained negotiation."""
@@ -2646,7 +2679,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             )
             self._check_port_channel_delete_restriction(model, current, switch_id=switch_id)
             self._check_fabric_ownership(model, current)
-            if any(candidate.startswith(name.casefold() + ".") for candidate in self._switch_interfaces(switch_id)):
+            if self._has_blocking_child_subinterfaces(name, switch_id):
                 raise RuntimeError(f"Normalized reset {switch_id}/{name} acquired child subinterfaces; refusing correction")
             if self._is_absent_delete_reset_target(current):
                 continue
@@ -2686,7 +2719,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                     raise RuntimeError(f"Routed residue correction did not reach exact fresh reset intent for {switch_id}/{name}")
                 if self._membership_index().claiming_parents(switch_id, name):
                     raise RuntimeError(f"Routed residue correction {switch_id}/{name} acquired aggregate ownership")
-                if any(candidate.startswith(name.casefold() + ".") for candidate in self._switch_interfaces(switch_id)):
+                if self._has_blocking_child_subinterfaces(name, switch_id):
                     raise RuntimeError(f"Routed residue correction {switch_id}/{name} acquired child subinterfaces")
         for name, switch_id in pairs:
             key = self._member_key(switch_id, name)
@@ -2793,8 +2826,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         # Summary
 
         Reset queued interfaces one-at-a-time via PUT-as-replace using the minimal `InterfaceDefaultConfig.to_reset_payload`
-        body. There is no bulk PUT equivalent — this path runs only for interfaces whose wire state carries an unresettable
-        Class C field (`bandwidth`, `debounceLinkupTimer`, `inheritBandwidth`), so the request count stays low in practice.
+        body. There is no bulk PUT equivalent. This path clears unresettable
+        Class C fields, existing storm thresholds, and qualified routed residue.
 
         Fail-fast: on the first PUT failure the remaining interfaces are not attempted. ND has no rollback for a per-interface
         PUT, so interfaces reset before the failure stay at fabric default; the raised error names which interfaces

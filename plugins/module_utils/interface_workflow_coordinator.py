@@ -32,6 +32,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_contra
     write_receipt,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.interface_observed_satisfaction import observed_satisfaction
+from ansible_collections.cisco.nd.plugins.module_utils.interface_preparation_observation import preparation_observation, validate_preparation_plan
+from ansible_collections.cisco.nd.plugins.module_utils.interface_preparation_deferred import (
+    annotate_deferred_readiness,
+    defer_ready_memberships,
+    observation_plan,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import (
     InterfaceStateSnapshot,
 )
@@ -98,6 +104,7 @@ class InterfaceWorkflowCoordinator:
         self._performance_profile = InterfacePerformanceProfile() if module.params.get("profile", False) else None
         self._rest_sends = []
         self._execution_options = workflow_options(module.params)
+        self._preparation_deferrals = {}
 
     def _new_rest_send(self, params: dict[str, Any] | None = None, *, check_mode: bool | None = None) -> RestSend:
         """Build an authenticated collection REST runtime for this module invocation."""
@@ -430,6 +437,8 @@ class InterfaceWorkflowCoordinator:
             result["message"] = message
         if execution_item.get("execution_sequence") is not None:
             result["execution_sequence"] = execution_item["execution_sequence"]
+        if isinstance(execution_item.get("rejection"), Mapping):
+            result["rejection"] = dict(execution_item["rejection"], request_sha256=workflow_contract(self.module.params)["request_sha256"])
         if member_update is not None:
             result.update(member_update)
 
@@ -1205,6 +1214,20 @@ class InterfaceWorkflowCoordinator:
     def run(self) -> dict[str, Any]:
         return self.attach_contract(self._run())
 
+    def _preparation_observation(self, plan, *, verified=False):
+        """Include cache-only preparation proof cost in optional profiling."""
+        profile = self._performance_profile
+        with profile.phase("preparation_observation") if profile is not None else nullcontext():
+            observed = preparation_observation(
+                params=self.module.params,
+                plan=observation_plan(plan, self._preparation_deferrals) if self._preparation_deferrals else plan,
+                snapshot=self._snapshot,
+                request_sha256=workflow_contract(self.module.params)["request_sha256"],
+                check_mode=self.module.check_mode,
+                verified=verified,
+            )
+            return annotate_deferred_readiness(observed, self._preparation_deferrals)
+
     def _run(self) -> dict[str, Any]:
         """Plan the complete workflow, then execute only after all validation succeeds."""
         profile = self._performance_profile
@@ -1212,6 +1235,18 @@ class InterfaceWorkflowCoordinator:
             plan = self._build_plan()
         deploy = bool((self.module.params.get("config_actions") or {}).get("deploy", False))
         verify = bool((self.module.params.get("verify") or {}).get("enabled", False))
+        preparation = self._execution_options.get("preparation_only") is True
+        if self._execution_options.get("defer_ready_membership") is True:
+            if not preparation:
+                raise InterfaceWorkflowValidationError("defer_ready_membership requires preparation_only=true")
+            plan, self._preparation_deferrals = defer_ready_memberships(
+                params=self.module.params,
+                plan=plan,
+                snapshot=self._snapshot,
+                request_sha256=workflow_contract(self.module.params)["request_sha256"],
+            )
+        if preparation:
+            validate_preparation_plan(params=self.module.params, plan=plan, snapshot=self._snapshot)
         barriers = getattr(plan, "parent_deployment_barriers", ())
         if barriers and not deploy:
             parents = ", ".join(f"{operation.switch_id}/{operation.interface_name}" for operation in barriers)
@@ -1234,13 +1269,15 @@ class InterfaceWorkflowCoordinator:
                         rest_send_factory=lambda params: self._new_rest_send(params=params, check_mode=True),
                         check_mode=self.module.check_mode,
                     )
+            if preparation:
+                result["preparation_observation"] = self._preparation_observation(plan)
             if profile is not None:
                 result["performance_profile"] = profile.to_dict()
             return result
         if not plan.changed and not pending_deployment_targets:
             with profile.phase("output") if profile is not None else nullcontext():
                 result = self._format_result(plan)
-            if self._execution_options["desired_equality"]:
+            if self._execution_options["desired_equality"] and not self._preparation_deferrals:
                 with profile.phase("desired_equality") if profile is not None else nullcontext():
                     result["desired_equality"] = desired_equality(
                         params=self.module.params,
@@ -1248,6 +1285,8 @@ class InterfaceWorkflowCoordinator:
                         snapshot=self._snapshot,
                         rest_send_factory=lambda params: self._new_rest_send(params=params, check_mode=True),
                     )
+            if preparation:
+                result["preparation_observation"] = self._preparation_observation(plan, verified=True)
             if profile is not None:
                 result["performance_profile"] = profile.to_dict()
             return result
@@ -1275,7 +1314,7 @@ class InterfaceWorkflowCoordinator:
             if profile is not None:
                 result["performance_profile"] = profile.to_dict()
             raise InterfaceWorkflowExecutionFailed(result, execution.message)
-        if self._execution_options["desired_equality"]:
+        if self._execution_options["desired_equality"] and not self._preparation_deferrals:
             with profile.phase("desired_equality") if profile is not None else nullcontext():
                 result["desired_equality"] = (
                     desired_equality(
@@ -1295,6 +1334,8 @@ class InterfaceWorkflowCoordinator:
                         "request_sha256": workflow_contract(self.module.params)["request_sha256"],
                     }
                 )
+        if preparation:
+            result["preparation_observation"] = self._preparation_observation(plan, verified=verify)
         if profile is not None:
             result["performance_profile"] = profile.to_dict()
         return result

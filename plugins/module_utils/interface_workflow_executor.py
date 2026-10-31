@@ -7,14 +7,17 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from contextlib import nullcontext
-from dataclasses import dataclass, field
+from contextlib import ExitStack, nullcontext
+from dataclasses import dataclass, field, replace
+from hashlib import sha256
+import json
 from time import monotonic, sleep
 from typing import Any, Callable, Iterable
 
 from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import (
     InterfaceStateSnapshot,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.interface_named_rejection import named_sync_rejections
 from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_planner import (
     InterfaceResourcePlan,
     InterfaceWorkflowOperation,
@@ -56,6 +59,7 @@ class InterfaceExecutionItem:
     status: str = "not_attempted"
     message: str | None = None
     execution_sequence: int | None = None
+    rejection: dict[str, Any] | None = None
 
     @property
     def target(self) -> Target:
@@ -81,6 +85,8 @@ class InterfaceExecutionItem:
             result["message"] = self.message
         if self.execution_sequence is not None:
             result["execution_sequence"] = self.execution_sequence
+        if self.rejection is not None:
+            result["rejection"] = dict(self.rejection)
         return result
 
 
@@ -418,6 +424,17 @@ class InterfaceWorkflowExecutor:
         cls._apply_outcomes(items, outcomes)
         return all(item.status == "succeeded" for item in items)
 
+    @staticmethod
+    def _record_named_create_rejections(items, response):
+        """Keep explicit negative evidence separate from generic failed results."""
+        logical_types = {"loopback", "svi", "subinterface_managed", "subinterface_unmanaged"}
+        candidates = [item for item in items if item.action == "create" and item.status == "failed" and item.resource_type in logical_types]
+        if not candidates or response.get("RETURN_CODE") != 207:
+            return
+        rejected = named_sync_rejections(response, [(item.switch_id, item.interface_name) for item in items])
+        for item in candidates:
+            item.rejection = rejected.get((item.switch_id, item.interface_name))
+
     def _call_items(
         self,
         orchestrator: NDBaseInterfaceOrchestrator,
@@ -461,6 +478,7 @@ class InterfaceWorkflowExecutor:
             for target in create_targets & newly_accepted:
                 outcomes[target] = ("succeeded", None)
             self._apply_outcomes(items, outcomes)
+            self._record_named_create_rejections(items, response)
             self._errors.append(error)
             return False
         response, result = self._fresh_mutation_result(orchestrator.rest_send, markers)
@@ -471,11 +489,13 @@ class InterfaceWorkflowExecutor:
                 item.status = "succeeded" if item.target in accepted else "failed"
                 item.message = None if item.target in accepted else error
             if not exact or any(item.status != "succeeded" for item in items):
+                self._record_named_create_rejections(items, response)
                 self._invalidate_topology_evidence()
                 self._errors.append(error)
                 return False
             return True
         if not self._apply_success_response(items, response, result, error):
+            self._record_named_create_rejections(items, response)
             self._invalidate_topology_evidence()
             self._errors.append(error)
             return False
@@ -691,7 +711,100 @@ class InterfaceWorkflowExecutor:
         target, _targets = transferred
         return self._flush_delete_queue(target, "remove", "Consolidated interface removal failed")
 
+    def _staged_child_delete_resolver(self, plan: InterfaceWorkflowPlan):
+        """Requalify only child removals authorized by this exact workflow.
+
+        An accepted delete can leave a structural Ethernet tombstone until
+        final deployment. Existing strict planning proofs need no new preview
+        when the fresh raw row is unchanged; newly staged or changed rows use
+        the same scoped preview validator as planning, once per observation.
+        """
+        child_types = {"subinterface_managed", "subinterface_unmanaged"}
+        resources = {resource.resource_index: resource for resource in plan.resources}
+        scope = {}
+        proven_targets = set()
+        validated = set()
+        proposed_by_resource = {}
+        for resource in plan.resources:
+            if resource.resource_type not in child_types:
+                continue
+            for model in resource.operations.deletes:
+                name, switch_id = self._model_target(resource, model)
+                scope[(switch_id, name.casefold())] = (resource, model)
+        for proof in getattr(plan, "logical_staged_deletions", ()):
+            resource = resources.get(proof.resource_index)
+            if (
+                resource is None
+                or resource.resource_type not in child_types
+                or proof.resource_type != resource.resource_type
+                or resource.state != "deleted"
+                or proof.member_interfaces
+            ):
+                continue
+            key = proof.switch_id, proof.interface_name.casefold()
+            if resource.resource_index not in proposed_by_resource:
+                proposed_by_resource[resource.resource_index] = {}
+                for model in resource.proposed:
+                    name, switch_id = self._model_target(resource, model)
+                    proposed_by_resource[resource.resource_index][(switch_id, name.casefold())] = model
+            model = proposed_by_resource[resource.resource_index].get(key)
+            if model is None:
+                continue
+            scope[key] = resource, model
+            proven_targets.add(key)
+            validated.add((*key, proof.raw_observation_sha256))
+        validator = None
+
+        def current_child_is_staged(switch_id, current):
+            nonlocal validator
+            name = current.get("interfaceName")
+            if not isinstance(name, str) or current.get("switchId") != switch_id:
+                return False
+            key = switch_id, name.casefold()
+            entry = scope.get(key)
+            if entry is None:
+                return False
+            resource, model = entry
+            digest = sha256(json.dumps(current, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode("utf-8")).hexdigest()
+            observation = (*key, digest)
+            if observation in validated:
+                return True
+            item = self._item_by_key.get((resource.resource_index, "delete", model.get_identifier_value()))
+            if key not in proven_targets and (item is None or item.status != "succeeded"):
+                return False
+            if validator is None:
+                validator = InterfaceWorkflowPlanner(snapshot=self.snapshot)
+            before = len(validator._logical_staged_deletions)
+            # An overridden family's accepted delete has the same exact
+            # operation authority as an explicit state: deleted request.
+            if not validator._staged_subinterface_delete_echo(replace(resource, state="deleted"), model, ((switch_id, current),)):
+                return False
+            if not any(
+                proof.resource_index == resource.resource_index
+                and proof.resource_type == resource.resource_type
+                and proof.switch_id == switch_id
+                and proof.interface_name.casefold() == name.casefold()
+                and proof.raw_observation_sha256 == digest
+                for proof in validator._logical_staged_deletions[before:]
+            ):
+                return False
+            validated.add(observation)
+            return True
+
+        return current_child_is_staged
+
     def _flush_ethernet_removes(self, plan: InterfaceWorkflowPlan) -> bool:
+        # Consolidation can select a different Ethernet source than the
+        # parent's original family; every source receives the same scope.
+        checker = self._staged_child_delete_resolver(plan)
+        with ExitStack() as contexts:
+            for source in self._all_orchestrators(plan):
+                context = getattr(source, "staged_child_deletion_context", None)
+                if isinstance(source, EthernetBaseOrchestrator) and callable(context):
+                    contexts.enter_context(context(checker))
+            return self._flush_ethernet_remove_queues(plan)
+
+    def _flush_ethernet_remove_queues(self, plan: InterfaceWorkflowPlan) -> bool:
         sources = [
             orchestrator
             for orchestrator in self._all_orchestrators(plan)

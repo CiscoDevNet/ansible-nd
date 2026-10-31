@@ -50,6 +50,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_fabric_
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_state_machine import (
     VrfStateMachine,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.overlay_deletion_finalizer import (
+    OverlayDeletionFinalizer,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
@@ -125,7 +128,9 @@ class VrfWorkflowCoordinator:
             fabric_type: str = self.strategy.fabric_type
             self._validate_topology_argument_scope(module_args, fabric_type)
 
-            if self.strategy.is_child:
+            if module_args.get("deletion_mode", "standard") == "finalize":
+                result = OverlayDeletionFinalizer(self, "vrf").run(module_args, self.strategy)
+            elif self.strategy.is_child:
                 result = self._handle_child_workflow(module_args, fabric_type)
             elif self.strategy.is_parent:
                 result = self._handle_parent_workflow(module_args, fabric_type)
