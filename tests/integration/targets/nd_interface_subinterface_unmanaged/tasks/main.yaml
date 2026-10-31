@@ -23,11 +23,15 @@
   ansible.builtin.fail:
     msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
   when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+  tags:
+    - always
 
 - name: Set vars
   ansible.builtin.set_fact:
     nd_info: &nd_info
       output_level: '{{ api_key_output_level | default("debug") }}'
+  tags:
+    - always
 
 - name: Run nd_interface_subinterface_unmanaged state tests with optional logging env
   block:
@@ -40,10 +44,109 @@
     - name: Run replaced state tests
       ansible.builtin.include_tasks: replaced.yaml
 
-    - name: Run overridden state tests
-      ansible.builtin.include_tasks: overridden.yaml
+    # The legacy overridden state is fabric-wide. Keep its original test file
+    # intact, but require an explicit tag so ordinary suite runs cannot remove
+    # unmanaged subinterfaces outside the target's reserved IDs.
+    - name: Run overridden state tests (explicit opt-in)
+      ansible.builtin.include_tasks:
+        file: nd4x_legacy_overridden.yaml
+        apply:
+          tags:
+            - legacy_overridden
+      tags:
+        - never
+        - legacy_overridden
 
     - name: Run deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
+
+    # Safe harness scenarios run with the suite. Their reserved IDs are
+    # separate from the legacy tests. Fabric-wide overridden remains explicitly
+    # opt-in in its own tagged scenario.
+    - name: Run ND 4.x harness preflight
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_preflight.yaml
+        apply:
+          tags:
+            - nd4x_demo
+            - nd4x_demo_preflight
+            - nd4x_demo_merged
+            - nd4x_demo_replaced
+            - nd4x_demo_deleted
+            - nd4x_demo_negative
+            - nd4x_demo_merged_fanout
+            - nd4x_demo_overridden
+      tags:
+        - nd4x_demo
+        - nd4x_demo_preflight
+        - nd4x_demo_merged
+        - nd4x_demo_replaced
+        - nd4x_demo_deleted
+        - nd4x_demo_negative
+        - nd4x_demo_merged_fanout
+        - nd4x_demo_overridden
+
+    - name: Run merged state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_merged.yaml
+        apply:
+          tags:
+            - nd4x_demo
+            - nd4x_demo_merged
+            - nd4x_demo_merged_fanout
+      tags:
+        - nd4x_demo
+        - nd4x_demo_merged
+        - nd4x_demo_merged_fanout
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run replaced state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_replaced.yaml
+        apply:
+          tags:
+            - nd4x_demo
+            - nd4x_demo_replaced
+      tags:
+        - nd4x_demo
+        - nd4x_demo_replaced
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run deleted state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_deleted.yaml
+        apply:
+          tags:
+            - nd4x_demo
+            - nd4x_demo_deleted
+      tags:
+        - nd4x_demo
+        - nd4x_demo_deleted
+      when: nd4x_supported | default(false) | bool
+
+    - name: Run overridden state tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_overridden.yaml
+        apply:
+          tags:
+            - never
+            - nd4x_demo_overridden
+      tags:
+        - never
+        - nd4x_demo_overridden
+      when:
+        - nd4x_supported | default(false) | bool
+
+    - name: Run negative validation tests using the ND 4.x harness
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_negative.yaml
+        apply:
+          tags:
+            - nd4x_demo
+            - nd4x_demo_negative
+      tags:
+        - nd4x_demo
+        - nd4x_demo_negative
+      when: nd4x_supported | default(false) | bool
   environment:
     ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"
