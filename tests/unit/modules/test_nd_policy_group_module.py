@@ -55,6 +55,36 @@ class FailJsonError(Exception):
     """Raised by ``FakeModule.fail_json`` so tests can ``pytest.raises`` cleanly."""
 
 
+@pytest.mark.parametrize("provided,expected", [("omitted", None), ("null", None), ("empty", [])])
+def test_deleted_membership_argument_spec_preserves_presence(provided, expected):
+    """Real Ansible parsing distinguishes omitted/null members from explicit []."""
+    from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
+
+    entry = {"name": "feature_enable", "description": "Selected group"}
+    if provided != "omitted":
+        entry["switch_ids"] = None if provided == "null" else []
+    config_spec = nd_manage_policy_group.PolicyGroupCreate.get_argument_spec()["config"]
+    validated = ArgumentSpecValidator({"config": config_spec}).validate({"config": [entry]})
+    assert validated.error_messages == []
+    assert validated.validated_parameters["config"][0]["switch_ids"] == expected
+
+
+@pytest.mark.parametrize(
+    "provided,expected", [("omitted", None), (None, None), ("", ""), (" ", " "), (" POLICY-GROUP-101 ", " POLICY-GROUP-101 "), (101, "101")]
+)
+def test_explicit_id_argument_spec_preserves_values_before_local_validation(provided, expected):
+    """Ansible keeps empty/padded IDs distinguishable and stringifies integers."""
+    from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
+
+    entry = {"name": "feature_enable"}
+    if provided != "omitted":
+        entry["policy_id"] = provided
+    config_spec = nd_manage_policy_group.PolicyGroupCreate.get_argument_spec()["config"]
+    validated = ArgumentSpecValidator({"config": config_spec}).validate({"config": [entry]})
+    assert validated.error_messages == []
+    assert validated.validated_parameters["config"][0]["policy_id"] == expected
+
+
 def test_nd_policy_group_module_00005_deploy_default_matches_documentation() -> None:
     """Verify the safe deploy default is identical in docs and argument spec."""
     documentation = yaml.safe_load(nd_manage_policy_group.DOCUMENTATION)
@@ -505,9 +535,8 @@ def test_nd_policy_group_module_00230() -> None:
     """
     # Summary
 
-    Mixed config: a normal entry, a ``POLICY-GROUP-*`` resolution, and
-    a template-only ``deleted`` expansion all produce the expected
-    resolved entries in order.
+    Mixed broad deletion resolves only active targets to exact IDs, retaining
+    the first selected target order and omitting an absent narrow target.
 
     ## Classes and Methods
 
@@ -528,11 +557,9 @@ def test_nd_policy_group_module_00230() -> None:
 
     result = _resolve_config(config, existing, state="deleted", module=module, log=log)
 
-    # 1 pass-through + 1 id-resolved + 2 template-expanded
-    assert len(result) == 4
-    assert result[0] == {"name": "normal", "description": "norm-d"}
-    assert result[1]["policy_id"] == "POLICY-GROUP-1"
-    assert {e["description"] for e in result[2:]} == {"b1", "b2"}
+    assert [entry["policy_id"] for entry in result] == ["POLICY-GROUP-1", "P2", "P3"]
+    assert result[0]["description"] == "renamed"
+    assert {entry["description"] for entry in result[1:]} == {"b1", "b2"}
 
 
 # =============================================================================
@@ -572,9 +599,8 @@ def test_nd_policy_group_module_00250() -> None:
     """
     # Summary
 
-    Delete+deploy entries that are present in the active policy-group view
-    are excluded from pending-cleanup scheduling because the normal
-    delete path will handle them.
+    Exact ID and pair targets in the active view are handled by the normal
+    delete path. Template-wide requests also check for independent pending rows.
 
     ## Classes and Methods
 
@@ -593,8 +619,8 @@ def test_nd_policy_group_module_00250() -> None:
 
     result = _pending_cleanup_candidates(config, existing, log)
 
-    assert result == []
-    assert log.info_msgs == []
+    assert result == [config[2]]
+    assert len(log.info_msgs) == 1
 
 
 # =============================================================================

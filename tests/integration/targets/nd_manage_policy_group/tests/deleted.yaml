@@ -40,7 +40,7 @@
     ##     TC1 - Delete with deploy=true        ##
     ##############################################
 
-    - name: "DELETED TC1 - Delete switch_freeform policy group with deploy"
+    - name: "DELETED TC1 - Preview deletion with retained creation flag"
       cisco.nd.nd_manage_policy_group: &delete_freeform
         fabric_name: "{{ fabric_name }}"
         state: deleted
@@ -48,6 +48,44 @@
         config:
           - name: switch_freeform
             description: "Enable system vlan long-name"
+            create_additional_policy: true
+      check_mode: true
+      register: delete_preview
+      tags: deleted
+
+    - name: "DELETED TC1 - Verify deletion preview"
+      vars:
+        target_before: "{{ delete_preview.before | selectattr('description', 'equalto', 'Enable system vlan long-name') | list }}"
+        target_after: "{{ delete_preview.after | selectattr('description', 'equalto', 'Enable system vlan long-name') | list }}"
+      ansible.builtin.assert:
+        that:
+          - delete_preview.changed == true
+          - delete_preview.force_created is not defined
+          - target_before | length == 1
+          - target_before[0].priority == 110
+          - target_after == []
+      tags: deleted
+
+    - name: "DELETED TC1 - Gather after deletion preview"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "Enable system vlan long-name"
+      register: delete_preview_readback
+      tags: deleted
+
+    - name: "DELETED TC1 - Verify deletion preview did not persist"
+      ansible.builtin.assert:
+        that:
+          - delete_preview_readback.changed == false
+          - delete_preview_readback.gathered | length == 1
+          - delete_preview_readback.gathered[0].policy_id == (delete_preview.before | selectattr('description', 'equalto', 'Enable system vlan long-name') | first).policy_id
+      tags: deleted
+
+    - name: "DELETED TC1 - Delete switch_freeform policy group with deploy"
+      cisco.nd.nd_manage_policy_group: *delete_freeform
       register: result
       tags: deleted
 
@@ -55,14 +93,19 @@
       ansible.builtin.assert:
         that:
           - result.changed == true
+          - result.force_created is not defined
       tags: deleted
 
     ##############################################
     ##     TC2 - Idempotence after delete       ##
     ##############################################
 
-    - name: "DELETED TC2 - Idempotence check (already deleted)"
+    - name: "DELETED TC2 - Already absent with creation flag in real and check modes"
       cisco.nd.nd_manage_policy_group: *delete_freeform
+      check_mode: "{{ item }}"
+      loop: [false, true]
+      loop_control:
+        label: "check_mode={{ item }}"
       register: result
       tags: deleted
 
@@ -70,6 +113,29 @@
       ansible.builtin.assert:
         that:
           - result.changed == false
+          - result.results | length == 2
+          - result.results[0].changed == false
+          - result.results[1].changed == false
+          - result.results[0].force_created is not defined
+          - result.results[1].force_created is not defined
+      tags: deleted
+
+    - name: "DELETED TC2 - Gather after repeated deletion"
+      cisco.nd.nd_manage_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "Enable system vlan long-name"
+      register: absent_readback
+      tags: deleted
+
+    - name: "DELETED TC2 - Verify no replacement group was created"
+      ansible.builtin.assert:
+        that:
+          - absent_readback.changed == false
+          - absent_readback.gathered is defined
+          - absent_readback.gathered == []
       tags: deleted
 
     ##############################################
@@ -164,60 +230,1560 @@
     # view. The cleanup run validates the generated child through policySummary
     # using the original policy group ID as source.
 
-    - name: "DELETED TC5 SETUP - Create switch_freeform policy group for source cleanup"
-      cisco.nd.nd_manage_policy_group:
-        fabric_name: "{{ fabric_name }}"
-        state: merged
-        deploy: true
-        config:
-          - name: switch_freeform
-            description: "Pending cleanup switch_freeform source"
-            priority: 120
-            switch_ids:
-              - "{{ switch_serial_1 }}"
-            template_inputs:
-              CONF: |
-                line console
-                  exec-timeout 5
-      register: source_cleanup_setup
+    - name: DELETED TC5 - Verify pending freeform source cleanup
       tags: deleted
+      block:
+        - name: DELETED TC5 - Reset exact-ID cleanup capture
+          ansible.builtin.set_fact:
+            source_cleanup_policy_group_id: ""
+            source_cleanup_setup: {}
 
-    - name: "DELETED TC5 SETUP - Capture switch_freeform source cleanup policy group ID"
-      ansible.builtin.set_fact:
-        source_cleanup_policy_group_id: "{{ (source_cleanup_setup.after | selectattr('description', 'equalto', 'Pending cleanup switch_freeform source') | first).policy_id }}"
-      tags: deleted
+        - name: "DELETED TC5 SETUP - Create switch_freeform policy group for source cleanup"
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: merged
+            deploy: true
+            config:
+              - name: switch_freeform
+                description: "Pending cleanup switch_freeform source"
+                priority: 120
+                switch_ids:
+                  - "{{ switch_serial_1 }}"
+                template_inputs:
+                  CONF: |
+                    line console
+                      exec-timeout 5
+          register: source_cleanup_setup
+          tags: deleted
 
-    - name: "DELETED TC5 - Delete switch_freeform policy group with deploy=false"
-      cisco.nd.nd_manage_policy_group:
-        fabric_name: "{{ fabric_name }}"
-        state: deleted
-        deploy: false
-        config:
-          - name: "{{ source_cleanup_policy_group_id }}"
-      register: result
-      tags: deleted
+        - name: "DELETED TC5 SETUP - Capture switch_freeform source cleanup policy group ID"
+          ansible.builtin.set_fact:
+            source_cleanup_policy_group_id: "{{ (source_cleanup_setup.after | selectattr('description', 'equalto', 'Pending cleanup switch_freeform source') | selectattr('template_name', 'equalto', 'switch_freeform') | first).policy_id }}"
+          tags: deleted
 
-    - name: "DELETED TC5 - Verify deploy=false switch_freeform delete changed"
-      ansible.builtin.assert:
-        that:
-          - result.changed == true
-      tags: deleted
+        - name: "DELETED TC5 - Delete switch_freeform policy group with deploy=false"
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: false
+            config:
+              - name: "{{ source_cleanup_policy_group_id }}"
+          register: result
+          tags: deleted
 
-    - name: "DELETED TC5B - Deploy switch_freeform pending cleanup by original policy group ID"
-      cisco.nd.nd_manage_policy_group:
-        fabric_name: "{{ fabric_name }}"
-        state: deleted
-        deploy: true
-        config:
-          - name: "{{ source_cleanup_policy_group_id }}"
-      register: result
-      tags: deleted
+        - name: "DELETED TC5 - Verify deploy=false switch_freeform delete changed"
+          ansible.builtin.assert:
+            that:
+              - result.changed == true
+          tags: deleted
 
-    - name: "DELETED TC5B - Verify pending cleanup deploy changed"
-      ansible.builtin.assert:
-        that:
-          - result.changed == true
-      tags: deleted
+        - name: DELETED TC5A - Read raw pending freeform identity
+          cisco.nd.nd_rest:
+            method: GET
+            path: >-
+              /api/v1/manage/fabrics/{{ fabric_name }}/policySummary?filter=policyId:*POLICY-GROUP-*&max=10000&pushConfigPreview=false
+          register: source_cleanup_raw_before
+          tags: deleted
+
+        - name: DELETED TC5A - Record the observed pending representation
+          ansible.builtin.set_fact:
+            source_cleanup_is_orphan: >-
+              {{ (source_cleanup_raw_before.current.policies | selectattr('policyId', 'equalto', source_cleanup_policy_group_id) | list | length == 0) and (source_cleanup_raw_before.current.policies
+              | selectattr('source', 'defined') | selectattr('source', 'equalto', source_cleanup_policy_group_id) | list | length > 0) }}
+          tags: deleted
+
+        - name: DELETED TC5A - Record the live coverage branch
+          ansible.builtin.set_fact:
+            source_cleanup_observed_branch: "{{ 'orphan-source-child' if source_cleanup_is_orphan else 'known-original-root' }}"
+          tags: deleted
+
+        - name: DELETED TC5A - Require proven pending fixture ownership
+          ansible.builtin.assert:
+            that:
+              - source_cleanup_pending_rows | length > 0
+              - >-
+                source_cleanup_pending_rows | map(attribute='switches') | flatten | selectattr('markDeleted', 'equalto', true) | map(attribute='switchId') | unique
+                | sort == [switch_serial_1]
+              - >-
+                source_cleanup_is_orphan or ((source_cleanup_parent_rows | length == 1) and source_cleanup_parent_rows[0].templateName == 'switch_freeform' and not (source_cleanup_parent_rows[0].source | default('')))
+          vars:
+            source_cleanup_pending_rows: >-
+              {{ (source_cleanup_raw_before.current.policies | selectattr('policyId', 'equalto', source_cleanup_policy_group_id) | list) + (source_cleanup_raw_before.current.policies
+              | selectattr('source', 'defined') | selectattr('source', 'equalto', source_cleanup_policy_group_id) | list) }}
+            source_cleanup_parent_rows: >-
+              {{ source_cleanup_raw_before.current.policies | selectattr('policyId', 'equalto', source_cleanup_policy_group_id) | list }}
+          tags: deleted
+
+        - name: DELETED TC5A - Try cleanup by template and description without guessing an orphan
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config:
+              - name: switch_freeform
+                description: Pending cleanup switch_freeform source
+          register: source_cleanup_no_id
+          tags: deleted
+
+        - name: DELETED TC5A - Independently read pending identity after no-ID cleanup
+          cisco.nd.nd_rest:
+            method: GET
+            path: >-
+              /api/v1/manage/fabrics/{{ fabric_name }}/policySummary?filter=policyId:*POLICY-GROUP-*&max=10000&pushConfigPreview=false
+          register: source_cleanup_raw_after_no_id
+          tags: deleted
+
+        - name: DELETED TC5A - Verify the chosen orphan or known-root behavior
+          ansible.builtin.assert:
+            that:
+              - source_cleanup_no_id.changed == (not source_cleanup_is_orphan)
+              - >-
+                not source_cleanup_is_orphan or (source_cleanup_no_id.pending_deleted_cleanup.skipped | selectattr('reason_code', 'defined') | selectattr('reason_code',
+                'equalto', 'unresolved_original_template') | selectattr('policy_group_id', 'equalto', source_cleanup_policy_group_id) | list | length > 0)
+              - >-
+                not source_cleanup_is_orphan or ((source_cleanup_children_after | map(attribute='policyId') | sort | list) == (source_cleanup_children_before |
+                map(attribute='policyId') | sort | list))
+              - >-
+                not source_cleanup_is_orphan or ((source_cleanup_children_after | map(attribute='switches') | flatten | selectattr('markDeleted', 'equalto', true)
+                | map(attribute='switchId') | unique | sort) == (source_cleanup_children_before | map(attribute='switches') | flatten | selectattr('markDeleted',
+                'equalto', true) | map(attribute='switchId') | unique | sort))
+              - >-
+                not source_cleanup_is_orphan or ((source_cleanup_children_after | sort(attribute='policyId') | map(attribute='templateInputs') | list) == (source_cleanup_children_before
+                | sort(attribute='policyId') | map(attribute='templateInputs') | list))
+              - source_cleanup_is_orphan or source_cleanup_remaining_rows == []
+          vars:
+            source_cleanup_children_before: >-
+              {{ source_cleanup_raw_before.current.policies | selectattr('source', 'defined') | selectattr('source', 'equalto', source_cleanup_policy_group_id)
+              | list }}
+            source_cleanup_children_after: >-
+              {{ source_cleanup_raw_after_no_id.current.policies | selectattr('source', 'defined') | selectattr('source', 'equalto', source_cleanup_policy_group_id)
+              | list }}
+            source_cleanup_remaining_rows: >-
+              {{ (source_cleanup_raw_after_no_id.current.policies | selectattr('policyId', 'equalto', source_cleanup_policy_group_id) | list) + (source_cleanup_raw_after_no_id.current.policies
+              | selectattr('source', 'defined') | selectattr('source', 'equalto', source_cleanup_policy_group_id) | list) }}
+          tags: deleted
+
+        - name: "DELETED TC5B - Deploy switch_freeform pending cleanup by original policy group ID"
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config:
+              - name: "{{ source_cleanup_policy_group_id }}"
+          register: result
+          tags: deleted
+
+        - name: "DELETED TC5B - Verify pending cleanup deploy changed"
+          ansible.builtin.assert:
+            that:
+              - result.changed == source_cleanup_is_orphan
+          tags: deleted
+
+        - name: DELETED TC5B - Verify exact-ID cleanup through raw summary
+          cisco.nd.nd_rest:
+            method: GET
+            path: >-
+              /api/v1/manage/fabrics/{{ fabric_name }}/policySummary?filter=policyId:*POLICY-GROUP-*&max=10000&pushConfigPreview=false
+          register: source_cleanup_raw_final
+          tags: deleted
+
+        - name: DELETED TC5B - Require all original and generated fixture rows absent
+          ansible.builtin.assert:
+            that:
+              - source_cleanup_final_rows == []
+          vars:
+            source_cleanup_final_rows: >-
+              {{ (source_cleanup_raw_final.current.policies | selectattr('policyId', 'equalto', source_cleanup_policy_group_id) | list) + (source_cleanup_raw_final.current.policies
+              | selectattr('source', 'defined') | selectattr('source', 'equalto', source_cleanup_policy_group_id) | list) }}
+          tags: deleted
+
+      always:
+        - name: DELETED TC5 - Recover accepted ordinary-create rows for exact cleanup
+          ansible.builtin.set_fact:
+            source_cleanup_accepted_rows: >-
+              {{ (source_cleanup_setup.after | selectattr('description', 'defined') | selectattr('description', 'equalto', 'Pending cleanup switch_freeform source') | selectattr('template_name', 'equalto', 'switch_freeform') | list)
+                 if source_cleanup_setup is mapping and source_cleanup_setup.after is defined and source_cleanup_setup.after is sequence
+                 and source_cleanup_setup.after is not string and source_cleanup_setup.after is not mapping else [] }}
+
+        - name: DELETED TC5 - Retain the returned valid exact fixture ID
+          ansible.builtin.set_fact:
+            source_cleanup_policy_group_id: "{{ source_cleanup_policy_group_id if source_cleanup_policy_group_id | length > 0 else item.policy_id }}"
+          loop: "{{ source_cleanup_accepted_rows }}"
+          loop_control:
+            label: "{{ item.policy_id | default('unusable accepted row') }}"
+          when:
+            - item is mapping
+            - item.policy_id is defined
+            - item.policy_id is string
+            - item.policy_id is match('^POLICY-GROUP-.+')
+
+        - name: DELETED TC5 - Clean only the captured original ID and switch
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config:
+              - name: "{{ source_cleanup_policy_group_id }}"
+                switch_ids: ["{{ switch_serial_1 }}"]
+          when: source_cleanup_policy_group_id | length > 0
+
+    - name: "DELETED TC6 - ID-only deletion deploys all anonymous members"
+      tags: [deleted, deleted_members]
+      vars:
+        anonymous_delete_members: ["{{ switch_serial_1 }}", "{{ switch_serial_2 }}"]
+      block:
+        - name: "DELETED TC6 - Reset the captured fixture ID"
+          ansible.builtin.set_fact:
+            anonymous_delete_policy_id: ""
+            anonymous_delete_created: {}
+
+        - name: "DELETED TC6 - Read member pending configuration before the fixture"
+          cisco.nd.nd_rest:
+            method: GET
+            path: "/api/v1/manage/fabrics/{{ fabric_name }}/switches/{{ item }}/pendingConfig?forceShowRun=true"
+          loop: "{{ anonymous_delete_members }}"
+          register: anonymous_delete_initial_pending
+
+        - name: "DELETED TC6 - Require clean member switches before deployment"
+          ansible.builtin.assert:
+            that:
+              - item.current.pendingConfigs is defined
+              - item.current.pendingConfigs == []
+          loop: "{{ anonymous_delete_initial_pending.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+
+        - name: "DELETED TC6 - Create and deploy an anonymous timezone group"
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: merged
+            deploy: true
+            config:
+              - name: clock_timezone
+                create_additional_policy: true
+                switch_ids: "{{ anonymous_delete_members }}"
+                template_inputs:
+                  TIME_ZONE: CET
+                  HOUR_OFFSET: 1
+                  MINUTE_OFFSET: 0
+          register: anonymous_delete_created
+
+        - name: "DELETED TC6 - Capture the controller-generated ID immediately"
+          ansible.builtin.set_fact:
+            anonymous_delete_policy_id: "{{ anonymous_delete_created.force_created[0].policy_id }}"
+
+        - name: "DELETED TC6 - Require the exact created fixture ID"
+          ansible.builtin.assert:
+            that:
+              - anonymous_delete_created.changed
+              - anonymous_delete_created.force_created | length == 1
+              - anonymous_delete_policy_id is match('^POLICY-GROUP-')
+
+        - name: "DELETED TC6 - Gather the anonymous fixture by exact ID"
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            config:
+              - name: "{{ anonymous_delete_policy_id }}"
+          register: anonymous_delete_original
+
+        - name: "DELETED TC6 - Verify both actual members and timezone inputs"
+          ansible.builtin.assert:
+            that:
+              - anonymous_delete_original.gathered | length == 1
+              - anonymous_delete_original.gathered[0].policy_id == anonymous_delete_policy_id
+              - anonymous_delete_original.gathered[0].description == ''
+              - anonymous_delete_original.gathered[0].name == 'clock_timezone'
+              - anonymous_delete_original.gathered[0].switch_ids | sort == anonymous_delete_members | sort
+              - anonymous_delete_original.gathered[0].template_inputs.TIME_ZONE == 'CET'
+              - anonymous_delete_original.gathered[0].template_inputs.HOUR_OFFSET | string == '1'
+              - anonymous_delete_original.gathered[0].template_inputs.MINUTE_OFFSET | string == '0'
+
+        - name: "DELETED TC6 - Read pending configuration after deployed creation"
+          cisco.nd.nd_rest:
+            method: GET
+            path: "/api/v1/manage/fabrics/{{ fabric_name }}/switches/{{ item }}/pendingConfig?forceShowRun=true"
+          loop: "{{ anonymous_delete_members }}"
+          register: anonymous_delete_created_pending
+
+        - name: "DELETED TC6 - Verify the fixture was deployed to both switches"
+          ansible.builtin.assert:
+            that:
+              - item.current.pendingConfigs is defined
+              - item.current.pendingConfigs == []
+          loop: "{{ anonymous_delete_created_pending.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+
+        - name: "DELETED TC6 - Preview anonymous deletion with only the group ID"
+          cisco.nd.nd_manage_policy_group: &anonymous_id_delete
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config:
+              - name: "{{ anonymous_delete_policy_id }}"
+          check_mode: true
+          register: anonymous_delete_preview
+
+        - name: "DELETED TC6 - Verify the preview retains both actual members"
+          ansible.builtin.assert:
+            that:
+              - anonymous_delete_preview.changed
+              - anonymous_delete_preview.direct_actions.deleted | length == 1
+              - anonymous_delete_preview.direct_actions.deleted[0].policy_id == anonymous_delete_policy_id
+              - anonymous_delete_preview.direct_actions.deleted[0].switch_ids | sort == anonymous_delete_members | sort
+
+        - name: "DELETED TC6 - Independently gather after the deletion preview"
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            config:
+              - name: "{{ anonymous_delete_policy_id }}"
+          register: anonymous_delete_after_preview
+
+        - name: "DELETED TC6 - Verify preview preserved the complete fixture"
+          ansible.builtin.assert:
+            that:
+              - anonymous_delete_after_preview.gathered == anonymous_delete_original.gathered
+
+        - name: "DELETED TC6 - Delete and deploy using only the anonymous group ID"
+          cisco.nd.nd_manage_policy_group: *anonymous_id_delete
+          register: anonymous_delete_result
+
+        - name: "DELETED TC6 - Verify accepted ID-only deletion"
+          ansible.builtin.assert:
+            that:
+              - anonymous_delete_result.changed
+              - anonymous_delete_result.direct_actions.deleted | length == 1
+              - anonymous_delete_result.direct_actions.deleted[0].policy_id == anonymous_delete_policy_id
+
+        - name: "DELETED TC6 - Independently gather after real deletion"
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            config:
+              - name: "{{ anonymous_delete_policy_id }}"
+          register: anonymous_delete_after
+
+        - name: "DELETED TC6 - Verify the active fixture is absent"
+          ansible.builtin.assert:
+            that:
+              - anonymous_delete_after.gathered is defined
+              - anonymous_delete_after.gathered == []
+
+        # Gathered hides markDeleted/source rows. Inspect raw summary as well
+        # so staging a deletion without deployment cannot satisfy the test.
+        - name: "DELETED TC6 - Read raw group summary after deletion"
+          cisco.nd.nd_rest:
+            method: GET
+            path: "/api/v1/manage/fabrics/{{ fabric_name }}/policySummary?filter=policyId:*POLICY-GROUP-*&max=10000&pushConfigPreview=false"
+          register: anonymous_delete_summary
+
+        - name: "DELETED TC6 - Verify no hidden fixture removal remains"
+          ansible.builtin.assert:
+            that:
+              - anonymous_delete_summary.current.policies is defined
+              - anonymous_delete_summary.current.policies | selectattr('policyId', 'equalto', anonymous_delete_policy_id) | list == []
+              - anonymous_delete_summary.current.policies | selectattr('source', 'defined') | selectattr('source', 'equalto', anonymous_delete_policy_id) | list == []
+
+        - name: "DELETED TC6 - Refresh both members' pending configuration"
+          cisco.nd.nd_rest:
+            method: GET
+            path: "/api/v1/manage/fabrics/{{ fabric_name }}/switches/{{ item }}/pendingConfig?forceShowRun=true"
+          loop: "{{ anonymous_delete_members }}"
+          register: anonymous_delete_final_pending
+
+        - name: "DELETED TC6 - Verify deletion was deployed to every actual member"
+          ansible.builtin.assert:
+            that:
+              - item.current.pendingConfigs is defined
+              - item.current.pendingConfigs == []
+          loop: "{{ anonymous_delete_final_pending.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+
+      always:
+        - name: "DELETED TC6 - Recover an accepted ID after a deployment failure"
+          ansible.builtin.set_fact:
+            anonymous_delete_policy_id: "{{ anonymous_delete_created.force_created[0].policy_id }}"
+          when:
+            - anonymous_delete_policy_id | length == 0
+            - anonymous_delete_created is mapping
+            - anonymous_delete_created.force_created is defined
+            - anonymous_delete_created.force_created is sequence
+            - anonymous_delete_created.force_created is not string
+            - anonymous_delete_created.force_created is not mapping
+            - anonymous_delete_created.force_created | length > 0
+            - anonymous_delete_created.force_created[0] is mapping
+            - anonymous_delete_created.force_created[0].policy_id is defined
+            - anonymous_delete_created.force_created[0].policy_id is string
+            - anonymous_delete_created.force_created[0].policy_id is match('^POLICY-GROUP-.+')
+
+        - name: "DELETED TC6 - Clean up only the captured ID with its full member list"
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config:
+              - name: "{{ anonymous_delete_policy_id }}"
+                switch_ids: "{{ anonymous_delete_members }}"
+          when: anonymous_delete_policy_id | length > 0
+
+    - name: DELETED TC7 - Isolate pending cleanup by template and description
+      tags: [deleted, deleted_template_pair]
+      block:
+
+        - name: DELETED TC7 - Reset fixture capture
+          ansible.builtin.set_fact:
+            deleted_tc7_created: {}
+            deleted_tc7_cleanup_entries: []
+            deleted_tc7_description: >-
+              DELETED-TC7-{{ lookup('ansible.builtin.password', '/dev/null length=10 chars=ascii_lowercase,digits') }}
+
+        - name: DELETED TC7 - Read both switches before fixture deployment
+          cisco.nd.nd_rest:
+            method: GET
+            path: "/api/v1/manage/fabrics/{{ fabric_name }}/switches/{{ item }}/pendingConfig?forceShowRun=true"
+          loop: ["{{ switch_serial_3 }}", "{{ switch_serial_2 }}"]
+          register: deleted_tc7_preflight
+
+        - name: DELETED TC7 - Require both fixture switches clean
+          ansible.builtin.assert:
+            that:
+              - item.current.pendingConfigs is defined
+              - item.current.pendingConfigs == []
+          loop: "{{ deleted_tc7_preflight.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+
+        - name: DELETED TC7 - Create and deploy same-description groups with different templates
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: merged
+            deploy: true
+            config:
+              - name: feature_enable
+                description: "{{ deleted_tc7_description }}"
+                create_additional_policy: true
+                switch_ids: ["{{ switch_serial_3 }}"]
+                template_inputs:
+                  featureName: bfd
+              - name: clock_timezone
+                description: "{{ deleted_tc7_description }}"
+                create_additional_policy: true
+                switch_ids: ["{{ switch_serial_2 }}"]
+                template_inputs:
+                  TIME_ZONE: CET
+                  HOUR_OFFSET: 1
+                  MINUTE_OFFSET: 0
+          register: deleted_tc7_created
+
+        - name: DELETED TC7 - Capture both actual controller IDs immediately
+          ansible.builtin.set_fact:
+            deleted_tc7_feature_id: >-
+              {{ (deleted_tc7_created.force_created | selectattr('template_name', 'equalto', 'feature_enable') | first).policy_id }}
+            deleted_tc7_clock_id: >-
+              {{ (deleted_tc7_created.force_created | selectattr('template_name', 'equalto', 'clock_timezone') | first).policy_id }}
+
+        - name: DELETED TC7 - Verify two distinct accepted fixtures
+          ansible.builtin.assert:
+            that:
+              - deleted_tc7_created.changed
+              - deleted_tc7_created.force_created | length == 2
+              - deleted_tc7_feature_id is match('^POLICY-GROUP-.+')
+              - deleted_tc7_clock_id is match('^POLICY-GROUP-.+')
+              - deleted_tc7_feature_id != deleted_tc7_clock_id
+
+        - name: DELETED TC7 - Stage both exact-ID deletions without deployment
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: false
+            config:
+              - name: "{{ deleted_tc7_feature_id }}"
+              - name: "{{ deleted_tc7_clock_id }}"
+          register: deleted_tc7_staged
+
+        - name: DELETED TC7 - Verify both deletions were staged
+          ansible.builtin.assert:
+            that:
+              - deleted_tc7_staged.changed
+
+        - name: DELETED TC7 - Read pending raw clock identity before pair cleanup
+          cisco.nd.nd_rest:
+            method: GET
+            path: >-
+              /api/v1/manage/fabrics/{{ fabric_name }}/policySummary?filter=policyId:*POLICY-GROUP-*&max=10000&pushConfigPreview=false
+          register: deleted_tc7_raw_before
+
+        - name: DELETED TC7 - Read untouched clock removal before pair cleanup
+          cisco.nd.nd_rest:
+            method: GET
+            path: "/api/v1/manage/fabrics/{{ fabric_name }}/switches/{{ item }}/pendingConfig?forceShowRun=true"
+          loop: ["{{ switch_serial_2 }}"]
+          register: deleted_tc7_pending_before
+
+        - name: DELETED TC7 - Require the clock removal to be pending on its own switch
+          ansible.builtin.assert:
+            that:
+              - deleted_tc7_clock_pending_rows | length > 0
+              - >-
+                deleted_tc7_clock_pending_rows | map(attribute='switches') | flatten | selectattr('markDeleted', 'equalto', true) | map(attribute='switchId')
+                | unique | sort == [switch_serial_2]
+              - deleted_tc7_pending_before.results[0].current.pendingConfigs | length > 0
+          vars:
+            deleted_tc7_clock_pending_rows: >-
+              {{ (deleted_tc7_raw_before.current.policies | selectattr('policyId', 'equalto', deleted_tc7_clock_id) | list) + (deleted_tc7_raw_before.current.policies
+              | selectattr('source', 'defined') | selectattr('source', 'equalto', deleted_tc7_clock_id) | list) }}
+
+        - name: DELETED TC7 - Deploy only the requested template and description
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config:
+              - name: feature_enable
+                description: "{{ deleted_tc7_description }}"
+          register: deleted_tc7_pair_cleanup
+
+        - name: DELETED TC7 - Verify template-specific cleanup targets only the feature switch
+          ansible.builtin.assert:
+            that:
+              - deleted_tc7_pair_cleanup.changed
+              - deleted_tc7_pair_cleanup.pending_deleted_cleanup.switch_ids == [switch_serial_3]
+
+        - name: DELETED TC7 - Independently read the clock after feature cleanup
+          cisco.nd.nd_rest:
+            method: GET
+            path: >-
+              /api/v1/manage/fabrics/{{ fabric_name }}/policySummary?filter=policyId:*POLICY-GROUP-*&max=10000&pushConfigPreview=false
+          register: deleted_tc7_raw_after
+
+        - name: DELETED TC7 - Independently read the clock switch pending removal
+          cisco.nd.nd_rest:
+            method: GET
+            path: "/api/v1/manage/fabrics/{{ fabric_name }}/switches/{{ item }}/pendingConfig?forceShowRun=true"
+          loop: ["{{ switch_serial_2 }}"]
+          register: deleted_tc7_pending_after
+
+        - name: DELETED TC7 - Verify the other template remains pending and unchanged
+          ansible.builtin.assert:
+            that:
+              - >-
+                deleted_tc7_clock_after | map(attribute='switches') | flatten | selectattr('markDeleted', 'equalto', true) | map(attribute='switchId') | unique
+                | sort == [switch_serial_2]
+              - >-
+                (deleted_tc7_clock_after | map(attribute='policyId') | sort | list) == (deleted_tc7_clock_before | map(attribute='policyId') | sort | list)
+              - >-
+                deleted_tc7_pending_after.results[0].current.pendingConfigs == deleted_tc7_pending_before.results[0].current.pendingConfigs
+              - deleted_tc7_pending_after.results[0].current.pendingConfigs | length > 0
+          vars:
+            deleted_tc7_clock_before: >-
+              {{ (deleted_tc7_raw_before.current.policies | selectattr('policyId', 'equalto', deleted_tc7_clock_id) | list) + (deleted_tc7_raw_before.current.policies
+              | selectattr('source', 'defined') | selectattr('source', 'equalto', deleted_tc7_clock_id) | list) }}
+            deleted_tc7_clock_after: >-
+              {{ (deleted_tc7_raw_after.current.policies | selectattr('policyId', 'equalto', deleted_tc7_clock_id) | list) + (deleted_tc7_raw_after.current.policies
+              | selectattr('source', 'defined') | selectattr('source', 'equalto', deleted_tc7_clock_id) | list) }}
+
+        - name: DELETED TC7 - Clean the other template by its original exact ID
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config:
+              - name: "{{ deleted_tc7_clock_id }}"
+          register: deleted_tc7_clock_cleanup
+
+        - name: DELETED TC7 - Verify the remaining exact-ID cleanup changed
+          ansible.builtin.assert:
+            that:
+              - deleted_tc7_clock_cleanup.changed
+
+        - name: DELETED TC7 - Verify both fixture identities are absent
+          cisco.nd.nd_rest:
+            method: GET
+            path: >-
+              /api/v1/manage/fabrics/{{ fabric_name }}/policySummary?filter=policyId:*POLICY-GROUP-*&max=10000&pushConfigPreview=false
+          register: deleted_tc7_raw_final
+
+        - name: DELETED TC7 - Require no pending parent or source fixture rows
+          ansible.builtin.assert:
+            that:
+              - >-
+                deleted_tc7_raw_final.current.policies | selectattr('policyId', 'in', [deleted_tc7_feature_id, deleted_tc7_clock_id]) | list == []
+              - >-
+                deleted_tc7_raw_final.current.policies | selectattr('source', 'defined') | selectattr('source', 'in', [deleted_tc7_feature_id, deleted_tc7_clock_id])
+                | list == []
+
+        - name: DELETED TC7 - Refresh both switches after exact cleanup
+          cisco.nd.nd_rest:
+            method: GET
+            path: "/api/v1/manage/fabrics/{{ fabric_name }}/switches/{{ item }}/pendingConfig?forceShowRun=true"
+          loop: ["{{ switch_serial_3 }}", "{{ switch_serial_2 }}"]
+          register: deleted_tc7_final_pending
+
+        - name: DELETED TC7 - Require no fixture removal remains on either switch
+          ansible.builtin.assert:
+            that:
+              - item.current.pendingConfigs is defined
+              - item.current.pendingConfigs == []
+          loop: "{{ deleted_tc7_final_pending.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+      always:
+
+        - name: DELETED TC7 - Read accepted create results for exact cleanup
+          ansible.builtin.set_fact:
+            deleted_tc7_returned_creates: >-
+              {{ deleted_tc7_created.force_created if deleted_tc7_created is mapping and deleted_tc7_created.force_created is defined and deleted_tc7_created.force_created
+              is sequence and deleted_tc7_created.force_created is not string and deleted_tc7_created.force_created is not mapping else [] }}
+
+        - name: DELETED TC7 - Recover every accepted exact ID and original member list
+          ansible.builtin.set_fact:
+            deleted_tc7_cleanup_entries: "{{ deleted_tc7_cleanup_entries + [{'name': item.policy_id, 'switch_ids': item.switch_ids}] }}"
+          loop: "{{ deleted_tc7_returned_creates }}"
+          loop_control:
+            label: "{{ item.policy_id | default('unusable create result') }}"
+          when:
+            - item is mapping
+            - item.policy_id is defined
+            - item.policy_id is string
+            - item.policy_id is match('^POLICY-GROUP-.+')
+            - item.switch_ids is defined
+            - item.switch_ids is sequence
+            - item.switch_ids is not string
+            - item.switch_ids is not mapping
+            - item.switch_ids | length > 0
+
+        - name: DELETED TC7 - Clean up only captured exact IDs with full original members
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config: "{{ deleted_tc7_cleanup_entries }}"
+          register: deleted_tc7_cleanup_result
+          when: deleted_tc7_cleanup_entries | length > 0
+
+    - name: DELETED TC8 - Deploy pending removal for mixed group membership
+      tags: [deleted, deleted_mixed_members]
+      block:
+
+        - name: DELETED TC8 - Reset fixture capture
+          ansible.builtin.set_fact:
+            deleted_tc8_created: {}
+            deleted_tc8_cleanup_entries: []
+            deleted_tc8_description: >-
+              DELETED-TC8-{{ lookup('ansible.builtin.password', '/dev/null length=10 chars=ascii_lowercase,digits') }}
+
+        - name: DELETED TC8 - Read both members before fixture deployment
+          cisco.nd.nd_rest:
+            method: GET
+            path: "/api/v1/manage/fabrics/{{ fabric_name }}/switches/{{ item }}/pendingConfig?forceShowRun=true"
+          loop: ["{{ switch_serial_1 }}", "{{ switch_serial_2 }}"]
+          register: deleted_tc8_preflight
+
+        - name: DELETED TC8 - Require both initial members clean
+          ansible.builtin.assert:
+            that:
+              - item.current.pendingConfigs is defined
+              - item.current.pendingConfigs == []
+          loop: "{{ deleted_tc8_preflight.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+
+        - name: DELETED TC8 - Create and deploy a native two-member group
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: merged
+            deploy: true
+            config:
+              - name: clock_timezone
+                description: "{{ deleted_tc8_description }}"
+                create_additional_policy: true
+                switch_ids: ["{{ switch_serial_1 }}", "{{ switch_serial_2 }}"]
+                template_inputs:
+                  TIME_ZONE: CET
+                  HOUR_OFFSET: 1
+                  MINUTE_OFFSET: 0
+          register: deleted_tc8_created
+
+        - name: DELETED TC8 - Capture the actual mixed-membership fixture ID immediately
+          ansible.builtin.set_fact:
+            deleted_tc8_policy_id: "{{ deleted_tc8_created.force_created[0].policy_id }}"
+
+        - name: DELETED TC8 - Verify the accepted native fixture
+          ansible.builtin.assert:
+            that:
+              - deleted_tc8_created.changed
+              - deleted_tc8_created.force_created | length == 1
+              - deleted_tc8_policy_id is match('^POLICY-GROUP-.+')
+
+        - name: DELETED TC8 - Stage removal of the second member without deployment
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: merged
+            deploy: false
+            config:
+              - name: "{{ deleted_tc8_policy_id }}"
+                switch_ids: ["{{ switch_serial_1 }}"]
+          register: deleted_tc8_membership_update
+
+        - name: DELETED TC8 - Verify the membership removal was staged
+          ansible.builtin.assert:
+            that:
+              - deleted_tc8_membership_update.changed
+
+        - name: DELETED TC8 - Gather only the active member independently
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            deploy: false
+            config:
+              - name: "{{ deleted_tc8_policy_id }}"
+          register: deleted_tc8_active
+
+        - name: DELETED TC8 - Read raw evidence of the removed member
+          cisco.nd.nd_rest:
+            method: GET
+            path: >-
+              /api/v1/manage/fabrics/{{ fabric_name }}/policySummary?filter=policyId:*POLICY-GROUP-*&max=10000&pushConfigPreview=false
+          register: deleted_tc8_raw_before
+
+        - name: DELETED TC8 - Read the removed switch pending configuration
+          cisco.nd.nd_rest:
+            method: GET
+            path: "/api/v1/manage/fabrics/{{ fabric_name }}/switches/{{ item }}/pendingConfig?forceShowRun=true"
+          loop: ["{{ switch_serial_2 }}"]
+          register: deleted_tc8_removed_pending
+
+        - name: DELETED TC8 - Require both active and exact-linked pending membership evidence
+          ansible.builtin.assert:
+            that:
+              - deleted_tc8_active.gathered | length == 1
+              - deleted_tc8_active.gathered[0].policy_id == deleted_tc8_policy_id
+              - deleted_tc8_active.gathered[0].switch_ids == [switch_serial_1]
+              - >-
+                deleted_tc8_pending_rows | map(attribute='switches') | flatten | selectattr('markDeleted', 'equalto', true) | map(attribute='switchId') | unique
+                | sort == [switch_serial_2]
+              - deleted_tc8_removed_pending.results[0].current.pendingConfigs | length > 0
+          vars:
+            deleted_tc8_pending_rows: >-
+              {{ (deleted_tc8_raw_before.current.policies | selectattr('policyId', 'equalto', deleted_tc8_policy_id) | list) + (deleted_tc8_raw_before.current.policies
+              | selectattr('source', 'defined') | selectattr('source', 'equalto', deleted_tc8_policy_id) | list) }}
+
+        - name: DELETED TC8 - Delete and deploy using only the partially active group ID
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config:
+              - name: "{{ deleted_tc8_policy_id }}"
+          register: deleted_tc8_deleted
+
+        - name: DELETED TC8 - Verify accepted deletion of the remaining active group
+          ansible.builtin.assert:
+            that:
+              - deleted_tc8_deleted.changed
+
+        - name: DELETED TC8 - Independently gather after mixed-member deletion
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            deploy: false
+            config:
+              - name: "{{ deleted_tc8_policy_id }}"
+          register: deleted_tc8_after
+
+        - name: DELETED TC8 - Read hidden rows after mixed-member deletion
+          cisco.nd.nd_rest:
+            method: GET
+            path: >-
+              /api/v1/manage/fabrics/{{ fabric_name }}/policySummary?filter=policyId:*POLICY-GROUP-*&max=10000&pushConfigPreview=false
+          register: deleted_tc8_raw_final
+
+        - name: DELETED TC8 - Require the parent and all source rows absent before cleanup
+          ansible.builtin.assert:
+            that:
+              - deleted_tc8_after.gathered is defined
+              - deleted_tc8_after.gathered == []
+              - deleted_tc8_final_rows == []
+          vars:
+            deleted_tc8_final_rows: >-
+              {{ (deleted_tc8_raw_final.current.policies | selectattr('policyId', 'equalto', deleted_tc8_policy_id) | list) + (deleted_tc8_raw_final.current.policies
+              | selectattr('source', 'defined') | selectattr('source', 'equalto', deleted_tc8_policy_id) | list) }}
+
+        - name: DELETED TC8 - Refresh both original switches after deletion
+          cisco.nd.nd_rest:
+            method: GET
+            path: "/api/v1/manage/fabrics/{{ fabric_name }}/switches/{{ item }}/pendingConfig?forceShowRun=true"
+          loop: ["{{ switch_serial_1 }}", "{{ switch_serial_2 }}"]
+          register: deleted_tc8_final_pending
+
+        - name: DELETED TC8 - Require the removed and active members both deployed
+          ansible.builtin.assert:
+            that:
+              - item.current.pendingConfigs is defined
+              - item.current.pendingConfigs == []
+          loop: "{{ deleted_tc8_final_pending.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+      always:
+
+        - name: DELETED TC8 - Read accepted create results for exact cleanup
+          ansible.builtin.set_fact:
+            deleted_tc8_returned_creates: >-
+              {{ deleted_tc8_created.force_created if deleted_tc8_created is mapping and deleted_tc8_created.force_created is defined and deleted_tc8_created.force_created
+              is sequence and deleted_tc8_created.force_created is not string and deleted_tc8_created.force_created is not mapping else [] }}
+
+        - name: DELETED TC8 - Recover every accepted exact ID and original member list
+          ansible.builtin.set_fact:
+            deleted_tc8_cleanup_entries: "{{ deleted_tc8_cleanup_entries + [{'name': item.policy_id, 'switch_ids': item.switch_ids}] }}"
+          loop: "{{ deleted_tc8_returned_creates }}"
+          loop_control:
+            label: "{{ item.policy_id | default('unusable create result') }}"
+          when:
+            - item is mapping
+            - item.policy_id is defined
+            - item.policy_id is string
+            - item.policy_id is match('^POLICY-GROUP-.+')
+            - item.switch_ids is defined
+            - item.switch_ids is sequence
+            - item.switch_ids is not string
+            - item.switch_ids is not mapping
+            - item.switch_ids | length > 0
+
+        - name: DELETED TC8 - Clean up only captured exact IDs with full original members
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config: "{{ deleted_tc8_cleanup_entries }}"
+          register: deleted_tc8_cleanup_result
+          when: deleted_tc8_cleanup_entries | length > 0
+
+    - name: DELETED TC9 - Delete every matching active template group
+      tags: [deleted, deleted_template_all]
+      block:
+
+        - name: DELETED TC9 - Reset fixture capture
+          ansible.builtin.set_fact:
+            deleted_tc9_created: {}
+            deleted_tc9_cleanup_entries: []
+            deleted_tc9_description: >-
+              DELETED-TC9-{{ lookup('ansible.builtin.password', '/dev/null length=10 chars=ascii_lowercase,digits') }}
+            deleted_tc9_first_created: {}
+
+        - name: DELETED TC9 - Read all three switches before broad-delete fixtures
+          cisco.nd.nd_rest:
+            method: GET
+            path: "/api/v1/manage/fabrics/{{ fabric_name }}/switches/{{ item }}/pendingConfig?forceShowRun=true"
+          loop: ["{{ switch_serial_1 }}", "{{ switch_serial_2 }}", "{{ switch_serial_3 }}"]
+          register: deleted_tc9_preflight
+
+        - name: DELETED TC9 - Require every fixture switch initially clean
+          ansible.builtin.assert:
+            that:
+              - item.current.pendingConfigs is defined
+              - item.current.pendingConfigs == []
+          loop: "{{ deleted_tc9_preflight.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+
+        - name: DELETED TC9 - Check active clock groups before owning a template-wide selector
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            deploy: false
+            config:
+              - name: clock_timezone
+          register: deleted_tc9_preexisting
+
+        - name: DELETED TC9 - Check raw clock groups before fixture creation
+          cisco.nd.nd_rest:
+            method: GET
+            path: >-
+              /api/v1/manage/fabrics/{{ fabric_name }}/policySummary?filter=policyId:*POLICY-GROUP-*&max=10000&pushConfigPreview=false
+          register: deleted_tc9_raw_preexisting
+
+        - name: DELETED TC9 - Require the clock template initially unowned
+          ansible.builtin.assert:
+            that:
+              - deleted_tc9_raw_preexisting.current.meta.counts.remaining is defined
+              - deleted_tc9_raw_preexisting.current.meta.counts.remaining is integer
+              - deleted_tc9_raw_preexisting.current.meta.counts.remaining == 0
+              - deleted_tc9_preexisting.gathered is defined
+              - deleted_tc9_preexisting.gathered == []
+              - >-
+                deleted_tc9_raw_preexisting.current.policies | selectattr('templateName', 'equalto', 'clock_timezone') | list == []
+
+        - name: DELETED TC9 - Create the first described clock fixture separately
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: merged
+            deploy: true
+            config:
+              - name: clock_timezone
+                description: "{{ deleted_tc9_description }}"
+                create_additional_policy: true
+                switch_ids: ["{{ switch_serial_1 }}"]
+                template_inputs:
+                  TIME_ZONE: CET
+                  HOUR_OFFSET: 1
+                  MINUTE_OFFSET: 0
+          register: deleted_tc9_first_created
+
+        - name: DELETED TC9 - Capture the first actual ID before creating its duplicate
+          ansible.builtin.set_fact:
+            deleted_tc9_first_id: "{{ deleted_tc9_first_created.force_created[0].policy_id }}"
+
+        - name: DELETED TC9 - Create the second duplicate anonymous fixture and control
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: merged
+            deploy: true
+            config:
+              - name: clock_timezone
+                description: "{{ deleted_tc9_description }}"
+                create_additional_policy: true
+                switch_ids: ["{{ switch_serial_2 }}"]
+                template_inputs:
+                  TIME_ZONE: CET
+                  HOUR_OFFSET: 1
+                  MINUTE_OFFSET: 0
+              - name: clock_timezone
+                create_additional_policy: true
+                switch_ids: ["{{ switch_serial_1 }}", "{{ switch_serial_2 }}"]
+                template_inputs:
+                  TIME_ZONE: CET
+                  HOUR_OFFSET: 1
+                  MINUTE_OFFSET: 0
+              - name: feature_enable
+                description: "{{ deleted_tc9_description }} control"
+                create_additional_policy: true
+                switch_ids: ["{{ switch_serial_3 }}"]
+                template_inputs:
+                  featureName: bfd
+          register: deleted_tc9_created
+
+        - name: DELETED TC9 - Capture every actual forced-create ID immediately
+          ansible.builtin.set_fact:
+            deleted_tc9_clock_ids: >-
+              {{ [deleted_tc9_first_id] + (deleted_tc9_created.force_created | selectattr('template_name', 'equalto', 'clock_timezone') | map(attribute='policy_id')
+              | list) }}
+            deleted_tc9_control_id: >-
+              {{ (deleted_tc9_created.force_created | selectattr('template_name', 'equalto', 'feature_enable') | first).policy_id }}
+
+        - name: DELETED TC9 - Verify all four accepted fixture identities
+          ansible.builtin.assert:
+            that:
+              - deleted_tc9_first_created.changed
+              - deleted_tc9_first_created.force_created | length == 1
+              - deleted_tc9_created.changed
+              - deleted_tc9_created.force_created | length == 3
+              - deleted_tc9_clock_ids | length == 3
+              - deleted_tc9_clock_ids | unique | length == 3
+              - deleted_tc9_control_id is match('^POLICY-GROUP-.+')
+              - deleted_tc9_control_id not in deleted_tc9_clock_ids
+
+        - name: DELETED TC9 - Independently gather all clock fixtures before broad deletion
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            deploy: false
+            config:
+              - name: clock_timezone
+          register: deleted_tc9_before
+
+        - name: DELETED TC9 - Independently gather the different-template control
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            deploy: false
+            config:
+              - name: "{{ deleted_tc9_control_id }}"
+          register: deleted_tc9_control_before
+
+        - name: DELETED TC9 - Require all matching clock groups belong to this fixture
+          ansible.builtin.assert:
+            that:
+              - deleted_tc9_before.gathered | length == 3
+              - deleted_tc9_before.gathered | map(attribute='policy_id') | sort == deleted_tc9_clock_ids | sort
+              - >-
+                deleted_tc9_before.gathered | selectattr('description', 'equalto', deleted_tc9_description) | list | length == 2
+              - deleted_tc9_before.gathered | selectattr('description', 'equalto', '') | list | length == 1
+              - deleted_tc9_control_before.gathered | length == 1
+
+        - name: DELETED TC9 - Preview deletion of every group using the template
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config:
+              - name: clock_timezone
+                create_additional_policy: true
+          register: deleted_tc9_preview
+          check_mode: true
+
+        - name: DELETED TC9 - Verify broad preview never creates a replacement
+          ansible.builtin.assert:
+            that:
+              - deleted_tc9_preview.changed
+              - deleted_tc9_preview.force_created is not defined
+
+        - name: DELETED TC9 - Independently read every exact fixture ID after preview
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            deploy: false
+            config:
+              - name: "{{ deleted_tc9_clock_ids[0] }}"
+              - name: "{{ deleted_tc9_clock_ids[1] }}"
+              - name: "{{ deleted_tc9_clock_ids[2] }}"
+              - name: "{{ deleted_tc9_control_id }}"
+          register: deleted_tc9_after_preview
+
+        - name: DELETED TC9 - Verify preview preserved all clock and control fixtures
+          ansible.builtin.assert:
+            that:
+              - >-
+                (deleted_tc9_after_preview.gathered | sort(attribute='policy_id')) == ((deleted_tc9_before.gathered + deleted_tc9_control_before.gathered) |
+                sort(attribute='policy_id'))
+
+        - name: DELETED TC9 - Delete all template matches while retaining the creation flag
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config:
+              - name: clock_timezone
+                create_additional_policy: true
+          register: deleted_tc9_deleted
+
+        - name: DELETED TC9 - Verify broad deletion was accepted without creation
+          ansible.builtin.assert:
+            that:
+              - deleted_tc9_deleted.changed
+              - deleted_tc9_deleted.force_created is not defined
+
+        - name: DELETED TC9 - Independently gather the clock template and exact control
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            deploy: false
+            config:
+              - name: clock_timezone
+              - name: "{{ deleted_tc9_control_id }}"
+          register: deleted_tc9_after
+
+        - name: DELETED TC9 - Read raw parent and source identities after broad deletion
+          cisco.nd.nd_rest:
+            method: GET
+            path: >-
+              /api/v1/manage/fabrics/{{ fabric_name }}/policySummary?filter=policyId:*POLICY-GROUP-*&max=10000&pushConfigPreview=false
+          register: deleted_tc9_raw_final
+
+        - name: DELETED TC9 - Require every clock identity absent and the control unchanged
+          ansible.builtin.assert:
+            that:
+              - deleted_tc9_after.gathered == deleted_tc9_control_before.gathered
+              - >-
+                deleted_tc9_raw_final.current.policies | selectattr('policyId', 'in', deleted_tc9_clock_ids) | list == []
+              - >-
+                deleted_tc9_raw_final.current.policies | selectattr('source', 'defined') | selectattr('source', 'in', deleted_tc9_clock_ids) | list == []
+
+        - name: DELETED TC9 - Refresh both clock switches after broad deletion
+          cisco.nd.nd_rest:
+            method: GET
+            path: "/api/v1/manage/fabrics/{{ fabric_name }}/switches/{{ item }}/pendingConfig?forceShowRun=true"
+          loop: ["{{ switch_serial_1 }}", "{{ switch_serial_2 }}"]
+          register: deleted_tc9_final_pending
+
+        - name: DELETED TC9 - Require every clock removal deployed
+          ansible.builtin.assert:
+            that:
+              - item.current.pendingConfigs is defined
+              - item.current.pendingConfigs == []
+          loop: "{{ deleted_tc9_final_pending.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+
+        - name: DELETED TC9 - Repeat the broad absent deletion in real and check modes
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config:
+              - name: clock_timezone
+                create_additional_policy: true
+          register: deleted_tc9_repeat
+          check_mode: "{{ item }}"
+          loop: [false, true]
+          loop_control:
+            label: "check_mode={{ item }}"
+
+        - name: DELETED TC9 - Verify repeated broad deletion is unchanged in both modes
+          ansible.builtin.assert:
+            that:
+              - not deleted_tc9_repeat.changed
+              - deleted_tc9_repeat.results | length == 2
+              - not deleted_tc9_repeat.results[0].changed
+              - not deleted_tc9_repeat.results[1].changed
+              - deleted_tc9_repeat.results[0].force_created is not defined
+              - deleted_tc9_repeat.results[1].force_created is not defined
+
+        - name: DELETED TC9 - Independently gather after repeated deletion
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            deploy: false
+            config:
+              - name: clock_timezone
+              - name: "{{ deleted_tc9_control_id }}"
+          register: deleted_tc9_after_repeat
+
+        - name: DELETED TC9 - Verify no replacement appeared and the control still matches
+          ansible.builtin.assert:
+            that:
+              - deleted_tc9_after_repeat.gathered == deleted_tc9_control_before.gathered
+      always:
+
+        - name: DELETED TC9 - Read accepted create results for exact cleanup
+          ansible.builtin.set_fact:
+            deleted_tc9_returned_creates: >-
+              {{ (deleted_tc9_first_created.force_created if deleted_tc9_first_created is mapping and deleted_tc9_first_created.force_created is defined and
+              deleted_tc9_first_created.force_created is sequence and deleted_tc9_first_created.force_created is not string and deleted_tc9_first_created.force_created
+              is not mapping else []) + (deleted_tc9_created.force_created if deleted_tc9_created is mapping and deleted_tc9_created.force_created is defined
+              and deleted_tc9_created.force_created is sequence and deleted_tc9_created.force_created is not string and deleted_tc9_created.force_created is
+              not mapping else []) }}
+
+        - name: DELETED TC9 - Recover every accepted exact ID and original member list
+          ansible.builtin.set_fact:
+            deleted_tc9_cleanup_entries: "{{ deleted_tc9_cleanup_entries + [{'name': item.policy_id, 'switch_ids': item.switch_ids}] }}"
+          loop: "{{ deleted_tc9_returned_creates }}"
+          loop_control:
+            label: "{{ item.policy_id | default('unusable create result') }}"
+          when:
+            - item is mapping
+            - item.policy_id is defined
+            - item.policy_id is string
+            - item.policy_id is match('^POLICY-GROUP-.+')
+            - item.switch_ids is defined
+            - item.switch_ids is sequence
+            - item.switch_ids is not string
+            - item.switch_ids is not mapping
+            - item.switch_ids | length > 0
+
+        - name: DELETED TC9 - Clean up only captured exact IDs with full original members
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config: "{{ deleted_tc9_cleanup_entries }}"
+          register: deleted_tc9_cleanup_result
+          when: deleted_tc9_cleanup_entries | length > 0
+
+    - name: DELETED TC10 - Select deletion targets by the complete requested membership
+      tags: [deleted, deleted_membership_selector]
+      block:
+
+        - name: DELETED TC10 - Reset fixture capture
+          ansible.builtin.set_fact:
+            deleted_tc10_cleanup_entries: []
+            deleted_tc10_description: >-
+              DELETED-TC10-{{ lookup('ansible.builtin.password', '/dev/null length=10 chars=ascii_lowercase,digits') }}
+            deleted_tc10_old_created: {}
+            deleted_tc10_new_created: {}
+            deleted_tc10_third_created: {}
+
+        - name: DELETED TC10 - Read all three switches before membership selection fixtures
+          cisco.nd.nd_rest:
+            method: GET
+            path: "/api/v1/manage/fabrics/{{ fabric_name }}/switches/{{ item }}/pendingConfig?forceShowRun=true"
+          loop: ["{{ switch_serial_1 }}", "{{ switch_serial_2 }}", "{{ switch_serial_3 }}"]
+          register: deleted_tc10_preflight
+
+        - name: DELETED TC10 - Require all membership fixture switches clean
+          ansible.builtin.assert:
+            that:
+              - item.current.pendingConfigs is defined
+              - item.current.pendingConfigs == []
+          loop: "{{ deleted_tc10_preflight.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+
+        - name: DELETED TC10 - Verify no clock group exists before fixture ownership
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            deploy: false
+            config:
+              - name: clock_timezone
+          register: deleted_tc10_preexisting
+
+        - name: DELETED TC10 - Read complete raw inventory before fixture creation
+          cisco.nd.nd_rest:
+            method: GET
+            path: >-
+              /api/v1/manage/fabrics/{{ fabric_name }}/policySummary?filter=policyId:*POLICY-GROUP-*&max=10000&pushConfigPreview=false
+          register: deleted_tc10_raw_preexisting
+
+        - name: DELETED TC10 - Require complete and empty clock ownership
+          ansible.builtin.assert:
+            that:
+              - deleted_tc10_raw_preexisting.current.meta.counts.remaining is defined
+              - deleted_tc10_raw_preexisting.current.meta.counts.remaining is integer
+              - deleted_tc10_raw_preexisting.current.meta.counts.remaining == 0
+              - deleted_tc10_preexisting.gathered is defined
+              - deleted_tc10_preexisting.gathered == []
+              - >-
+                deleted_tc10_raw_preexisting.current.policies | selectattr('templateName', 'equalto', 'clock_timezone') | list == []
+
+        - name: DELETED TC10 - Create the older two-member fixture separately
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: merged
+            deploy: true
+            config:
+              - name: clock_timezone
+                description: "{{ deleted_tc10_description }}"
+                create_additional_policy: true
+                switch_ids: ["{{ switch_serial_1 }}", "{{ switch_serial_3 }}"]
+                template_inputs:
+                  TIME_ZONE: CET
+                  HOUR_OFFSET: 1
+                  MINUTE_OFFSET: 0
+          register: deleted_tc10_old_created
+
+        - name: DELETED TC10 - Capture the older exact ID immediately
+          ansible.builtin.set_fact:
+            deleted_tc10_old_id: "{{ deleted_tc10_old_created.force_created[0].policy_id }}"
+
+        - name: DELETED TC10 - Create the newer one-member duplicate separately
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: merged
+            deploy: true
+            config:
+              - name: clock_timezone
+                description: "{{ deleted_tc10_description }}"
+                create_additional_policy: true
+                switch_ids: ["{{ switch_serial_2 }}"]
+                template_inputs:
+                  TIME_ZONE: CET
+                  HOUR_OFFSET: 1
+                  MINUTE_OFFSET: 0
+          register: deleted_tc10_new_created
+
+        - name: DELETED TC10 - Capture the newer exact ID immediately
+          ansible.builtin.set_fact:
+            deleted_tc10_new_id: "{{ deleted_tc10_new_created.force_created[0].policy_id }}"
+
+        - name: DELETED TC10 - Independently gather both membership candidates
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            deploy: false
+            config:
+              - name: clock_timezone
+                description: "{{ deleted_tc10_description }}"
+          register: deleted_tc10_before
+
+        - name: DELETED TC10 - Read the existing newest composite winner without writing
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: merged
+            deploy: false
+            config:
+              - name: clock_timezone
+                description: "{{ deleted_tc10_description }}"
+          register: deleted_tc10_winner
+          check_mode: true
+
+        - name: DELETED TC10 - Prove the requested older membership differs from the newest winner
+          ansible.builtin.assert:
+            that:
+              - deleted_tc10_old_created.changed
+              - deleted_tc10_new_created.changed
+              - deleted_tc10_old_id != deleted_tc10_new_id
+              - deleted_tc10_before.gathered | length == 2
+              - >-
+                deleted_tc10_before.gathered | map(attribute='policy_id') | sort == [deleted_tc10_old_id, deleted_tc10_new_id] | sort
+              - >-
+                (deleted_tc10_before.gathered | selectattr('policy_id', 'equalto', deleted_tc10_old_id) | first).switch_ids | sort == [switch_serial_1, switch_serial_3]
+                | sort
+              - >-
+                (deleted_tc10_before.gathered | selectattr('policy_id', 'equalto', deleted_tc10_new_id) | first).switch_ids == [switch_serial_2]
+              - not deleted_tc10_winner.changed
+              - >-
+                deleted_tc10_winner.before | selectattr('description', 'equalto', deleted_tc10_description) | selectattr('template_name', 'equalto', 'clock_timezone')
+                | map(attribute='policy_id') | list == [deleted_tc10_new_id]
+
+        - name: DELETED TC10 - Define only nonmatching membership selectors
+          ansible.builtin.set_fact:
+            deleted_tc10_invalid_members:
+              - label: subset
+                members:
+                  - "{{ switch_serial_1 }}"
+              - label: superset
+                members:
+                  - "{{ switch_serial_1 }}"
+                  - "{{ switch_serial_2 }}"
+                  - "{{ switch_serial_3 }}"
+              - label: empty
+                members: []
+
+        - name: DELETED TC10 - Reject subset superset and empty membership in real and check modes
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config:
+              - name: clock_timezone
+                description: "{{ deleted_tc10_description }}"
+                switch_ids: "{{ item.0.members }}"
+          register: deleted_tc10_rejected
+          check_mode: "{{ item.1 }}"
+          loop: "{{ deleted_tc10_invalid_members | product([false, true]) | list }}"
+          loop_control:
+            label: "{{ item.0.label }} check_mode={{ item.1 }}"
+          ignore_errors: true
+
+        - name: DELETED TC10 - Verify every nonmatching selector failed without accepted changes
+          ansible.builtin.assert:
+            that:
+              - deleted_tc10_rejected.failed == true
+              - deleted_tc10_rejected.results | length == 6
+              - deleted_tc10_rejected.results | selectattr('failed', 'equalto', true) | list | length == 6
+              - deleted_tc10_rejected.results | selectattr('changed', 'equalto', true) | list == []
+
+        - name: DELETED TC10 - Independently gather after all rejected membership requests
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            deploy: false
+            config:
+              - name: clock_timezone
+                description: "{{ deleted_tc10_description }}"
+          register: deleted_tc10_after_rejected
+
+        - name: DELETED TC10 - Verify rejected requests preserved both complete candidates
+          ansible.builtin.assert:
+            that:
+              - >-
+                (deleted_tc10_after_rejected.gathered | sort(attribute='policy_id')) == (deleted_tc10_before.gathered | sort(attribute='policy_id'))
+
+        - name: DELETED TC10 - Preview the older exact membership ignoring order and duplicates
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config:
+              - name: clock_timezone
+                description: "{{ deleted_tc10_description }}"
+                switch_ids: ["{{ switch_serial_3 }}", "{{ switch_serial_1 }}", "{{ switch_serial_3 }}"]
+          register: deleted_tc10_preview
+          check_mode: true
+
+        - name: DELETED TC10 - Verify exact-members preview removes only the older target
+          ansible.builtin.assert:
+            that:
+              - deleted_tc10_preview.changed
+              - >-
+                deleted_tc10_preview.after | selectattr('description', 'equalto', deleted_tc10_description) | selectattr('template_name', 'equalto', 'clock_timezone')
+                | map(attribute='policy_id') | list == [deleted_tc10_new_id]
+
+        - name: DELETED TC10 - Independently gather after the membership deletion preview
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            deploy: false
+            config:
+              - name: clock_timezone
+                description: "{{ deleted_tc10_description }}"
+          register: deleted_tc10_after_preview
+
+        - name: DELETED TC10 - Verify the exact-members preview did not persist
+          ansible.builtin.assert:
+            that:
+              - >-
+                (deleted_tc10_after_preview.gathered | sort(attribute='policy_id')) == (deleted_tc10_before.gathered | sort(attribute='policy_id'))
+
+        - name: DELETED TC10 - Delete and deploy only the older exact member set
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config:
+              - name: clock_timezone
+                description: "{{ deleted_tc10_description }}"
+                switch_ids: ["{{ switch_serial_3 }}", "{{ switch_serial_1 }}", "{{ switch_serial_3 }}"]
+          register: deleted_tc10_deleted
+
+        - name: DELETED TC10 - Independently gather the exact-members survivor
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            deploy: false
+            config:
+              - name: clock_timezone
+                description: "{{ deleted_tc10_description }}"
+          register: deleted_tc10_survivor
+
+        - name: DELETED TC10 - Inspect raw older identity after exact-members deletion
+          cisco.nd.nd_rest:
+            method: GET
+            path: >-
+              /api/v1/manage/fabrics/{{ fabric_name }}/policySummary?filter=policyId:*POLICY-GROUP-*&max=10000&pushConfigPreview=false
+          register: deleted_tc10_raw_after
+
+        - name: DELETED TC10 - Require only the older identity removed and newer configuration preserved
+          ansible.builtin.assert:
+            that:
+              - deleted_tc10_deleted.changed
+              - deleted_tc10_survivor.gathered | length == 1
+              - deleted_tc10_survivor.gathered[0].policy_id == deleted_tc10_new_id
+              - >-
+                deleted_tc10_survivor.gathered[0] == (deleted_tc10_before.gathered | selectattr('policy_id', 'equalto', deleted_tc10_new_id) | first)
+              - deleted_tc10_old_rows == []
+          vars:
+            deleted_tc10_old_rows: >-
+              {{ (deleted_tc10_raw_after.current.policies | selectattr('policyId', 'equalto', deleted_tc10_old_id) | list) + (deleted_tc10_raw_after.current.policies
+              | selectattr('source', 'defined') | selectattr('source', 'equalto', deleted_tc10_old_id) | list) }}
+
+        - name: DELETED TC10 - Refresh the older original members after deletion
+          cisco.nd.nd_rest:
+            method: GET
+            path: "/api/v1/manage/fabrics/{{ fabric_name }}/switches/{{ item }}/pendingConfig?forceShowRun=true"
+          loop: ["{{ switch_serial_1 }}", "{{ switch_serial_3 }}"]
+          register: deleted_tc10_old_pending
+
+        - name: DELETED TC10 - Require both older member removals deployed
+          ansible.builtin.assert:
+            that:
+              - item.current.pendingConfigs is defined
+              - item.current.pendingConfigs == []
+          loop: "{{ deleted_tc10_old_pending.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+
+        - name: DELETED TC10 - Create a third group with the same exact surviving members
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: merged
+            deploy: true
+            config:
+              - name: clock_timezone
+                description: "{{ deleted_tc10_description }}"
+                create_additional_policy: true
+                priority: 600
+                switch_ids: ["{{ switch_serial_2 }}"]
+                template_inputs:
+                  TIME_ZONE: CET
+                  HOUR_OFFSET: 1
+                  MINUTE_OFFSET: 0
+          register: deleted_tc10_third_created
+
+        - name: DELETED TC10 - Capture the third accepted exact ID immediately
+          ansible.builtin.set_fact:
+            deleted_tc10_third_id: "{{ deleted_tc10_third_created.force_created[0].policy_id }}"
+
+        - name: DELETED TC10 - Independently gather both exact-members ambiguity candidates
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            deploy: false
+            config:
+              - name: clock_timezone
+                description: "{{ deleted_tc10_description }}"
+          register: deleted_tc10_ambiguous_before
+
+        - name: DELETED TC10 - Prove the ambiguous set contains two distinct complete matches
+          ansible.builtin.assert:
+            that:
+              - deleted_tc10_third_created.changed
+              - deleted_tc10_third_id != deleted_tc10_new_id
+              - deleted_tc10_ambiguous_before.gathered | length == 2
+              - >-
+                deleted_tc10_ambiguous_before.gathered | map(attribute='policy_id') | sort == [deleted_tc10_new_id, deleted_tc10_third_id] | sort
+              - >-
+                deleted_tc10_ambiguous_before.gathered | map(attribute='switch_ids') | list == [[switch_serial_2], [switch_serial_2]]
+
+        - name: DELETED TC10 - Reject ambiguous identical membership in real and check modes
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config:
+              - name: clock_timezone
+                description: "{{ deleted_tc10_description }}"
+                switch_ids: ["{{ switch_serial_2 }}"]
+          register: deleted_tc10_ambiguous
+          check_mode: "{{ item }}"
+          loop: [false, true]
+          loop_control:
+            label: "check_mode={{ item }}"
+          ignore_errors: true
+
+        - name: DELETED TC10 - Verify both ambiguous requests require an exact ID without accepted changes
+          ansible.builtin.assert:
+            that:
+              - deleted_tc10_ambiguous.failed == true
+              - deleted_tc10_ambiguous.results | length == 2
+              - deleted_tc10_ambiguous.results | selectattr('failed', 'equalto', true) | list | length == 2
+              - deleted_tc10_ambiguous.results | selectattr('changed', 'equalto', true) | list == []
+
+        - name: DELETED TC10 - Independently gather after ambiguous membership rejection
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+            deploy: false
+            config:
+              - name: clock_timezone
+                description: "{{ deleted_tc10_description }}"
+          register: deleted_tc10_ambiguous_after
+
+        - name: DELETED TC10 - Verify ambiguity never chooses either matching group
+          ansible.builtin.assert:
+            that:
+              - >-
+                (deleted_tc10_ambiguous_after.gathered | sort(attribute='policy_id')) == (deleted_tc10_ambiguous_before.gathered | sort(attribute='policy_id'))
+      always:
+
+        - name: DELETED TC10 - Read accepted create results for exact cleanup
+          ansible.builtin.set_fact:
+            deleted_tc10_returned_creates: >-
+              {{ (deleted_tc10_old_created.force_created if deleted_tc10_old_created is mapping and deleted_tc10_old_created.force_created is defined and deleted_tc10_old_created.force_created
+              is sequence and deleted_tc10_old_created.force_created is not string and deleted_tc10_old_created.force_created is not mapping else []) + (deleted_tc10_new_created.force_created
+              if deleted_tc10_new_created is mapping and deleted_tc10_new_created.force_created is defined and deleted_tc10_new_created.force_created is sequence
+              and deleted_tc10_new_created.force_created is not string and deleted_tc10_new_created.force_created is not mapping else []) + (deleted_tc10_third_created.force_created
+              if deleted_tc10_third_created is mapping and deleted_tc10_third_created.force_created is defined and deleted_tc10_third_created.force_created
+              is sequence and deleted_tc10_third_created.force_created is not string and deleted_tc10_third_created.force_created is not mapping else []) }}
+
+        - name: DELETED TC10 - Recover every accepted exact ID and original member list
+          ansible.builtin.set_fact:
+            deleted_tc10_cleanup_entries: "{{ deleted_tc10_cleanup_entries + [{'name': item.policy_id, 'switch_ids': item.switch_ids}] }}"
+          loop: "{{ deleted_tc10_returned_creates }}"
+          loop_control:
+            label: "{{ item.policy_id | default('unusable create result') }}"
+          when:
+            - item is mapping
+            - item.policy_id is defined
+            - item.policy_id is string
+            - item.policy_id is match('^POLICY-GROUP-.+')
+            - item.switch_ids is defined
+            - item.switch_ids is sequence
+            - item.switch_ids is not string
+            - item.switch_ids is not mapping
+            - item.switch_ids | length > 0
+
+        - name: DELETED TC10 - Clean up only captured exact IDs with full original members
+          cisco.nd.nd_manage_policy_group:
+            fabric_name: "{{ fabric_name }}"
+            state: deleted
+            deploy: true
+            config: "{{ deleted_tc10_cleanup_entries }}"
+          register: deleted_tc10_cleanup_result
+          when: deleted_tc10_cleanup_entries | length > 0
 
   always:
     - name: "DELETED - Final cleanup"

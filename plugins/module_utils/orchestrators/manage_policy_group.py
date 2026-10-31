@@ -18,6 +18,7 @@ Extends ``NDBaseOrchestrator`` with custom logic for:
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from typing import TYPE_CHECKING, ClassVar
 
 log = logging.getLogger("nd.PolicyGroupOrchestrator")
@@ -25,6 +26,9 @@ log = logging.getLogger("nd.PolicyGroupOrchestrator")
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     PrivateAttr,
     ValidationError,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.constants import (
+    SYSTEM_INJECTED_TEMPLATE_KEYS,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
@@ -138,8 +142,28 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
     # ``_invalidate_cache``.
     _raw_cache: list | None = PrivateAttr(default=None)
     _policy_summary_cache: list | None = PrivateAttr(default=None)
+    _require_complete_summary: bool = PrivateAttr(default=False)
+    _delete_deploy_targets: dict[str, set[str]] = PrivateAttr(default_factory=dict)
+    _active_delete_policy_ids: set[str] = PrivateAttr(default_factory=set)
     _pending_delete_switch_ids: set[str] | None = PrivateAttr(default=None)
     _pending_delete_wants: list[dict] | None = PrivateAttr(default=None)
+    _accepted_changes: list[dict] = PrivateAttr(default_factory=list)
+    _direct_update_payload: dict = PrivateAttr(default_factory=dict)
+
+    @property
+    def direct_update_payload(self) -> dict:
+        """Return the effective intent from the most recent direct update plan."""
+        return deepcopy(self._direct_update_payload)
+
+    @property
+    def accepted_changes(self) -> list[dict]:
+        """Return accepted per-request configuration effects for local reporting.
+
+        Record before subsequent split requests or deployment can fail. The
+        ledger does not alter request execution, cache timing, or response
+        validation; it only retains effects already accepted by those paths.
+        """
+        return deepcopy(self._accepted_changes)
 
     # ------------------------------------------------------------------ #
     # Endpoint-parameter plumbing
@@ -349,8 +373,41 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         self._apply_endpoint_params(ep, with_ticket=False)
         ep.lucene_params.max = 10000
         ep.lucene_params.filter = "policyId:*POLICY-GROUP-*"
-        result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
-        policies = result.get("policies", []) if isinstance(result, dict) else []
+        policies = []
+        seen_policy_ids: set[str] = set()
+        offset = 0
+        previous_remaining = None
+        while True:
+            result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
+            page = (result.get("policies") or []) if isinstance(result, dict) else []
+            if not self._require_complete_summary:
+                policies = page
+                break
+            if not isinstance(page, list):
+                raise ValueError("policySummary policies must be a list")
+            policies.extend(page)
+            page_ids = {row.get("policyId") for row in page if isinstance(row, dict) and row.get("policyId")}
+            if page_ids & seen_policy_ids:
+                raise ValueError("Cannot safely delete all template groups: policySummary pagination repeated policy IDs")
+            seen_policy_ids.update(page_ids)
+            meta = (result.get("meta") or {}) if isinstance(result, dict) else {}
+            counts = (meta.get("counts") or {}) if isinstance(meta, dict) else {}
+            remaining = counts.get("remaining") if isinstance(counts, dict) else None
+            if not isinstance(counts, dict) or "remaining" not in counts:
+                if len(page) >= ep.lucene_params.max:
+                    raise ValueError("Cannot safely delete all template groups: policySummary pagination metadata is missing")
+                break
+            if isinstance(remaining, bool) or not isinstance(remaining, int) or remaining < 0:
+                raise ValueError("Cannot safely delete all template groups: invalid policySummary remaining count")
+            if previous_remaining is not None and remaining >= previous_remaining:
+                raise ValueError("Cannot safely delete all template groups: policySummary remaining count did not decrease")
+            previous_remaining = remaining
+            if remaining == 0:
+                break
+            if not page or not page_ids:
+                raise ValueError("Cannot safely delete all template groups: policySummary pagination made no progress")
+            offset += len(page)
+            ep.lucene_params.offset = offset
         raw = [self._summary_to_policy_group(policy) for policy in (policies or []) if isinstance(policy, dict) and self._is_policy_group_summary(policy)]
         self._policy_summary_cache = raw
         return list(raw)
@@ -476,11 +533,34 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
     @staticmethod
     def _cleanup_identity(entry: dict) -> tuple[str | None, str | None]:
         """Extract the cleanup identity from a user config entry."""
-        policy_group_id = entry.get("policy_id")
         name = entry.get("name") or ""
-        if not policy_group_id and name.startswith("POLICY-GROUP-"):
-            policy_group_id = name
+        policy_group_id = name if name.startswith("POLICY-GROUP-") else entry.get("policy_id")
         return policy_group_id, entry.get("description")
+
+    def prepare_delete_deploy_targets(self, config_entries: list[dict], active_groups: list[dict]) -> dict[str, list[str]]:
+        """Keep exact-ID cleanup membership separate from active configuration.
+
+        Read only the inventory already cached before mutation. Pending members
+        can belong to a mixed parent row or an exactly source-linked child; they
+        must never be put back into gathered membership or merged PUT payloads.
+        """
+        if not self.deploy:
+            self._delete_deploy_targets = {}
+            self._active_delete_policy_ids = set()
+            return {}
+        targets = {row["policyId"]: set(self._record_switch_ids(row)) for row in active_groups if row.get("policyId")}
+        for row in self._policy_summary_cache or []:
+            pending_ids = row.get("_deletedSwitchIds") or (self._record_switch_ids(row) if row.get("markDeleted") else [])
+            for policy_id in (row.get("policyId"), row.get("source")):
+                if policy_id in targets:
+                    targets[policy_id].update(pending_ids)
+        for entry in config_entries:
+            policy_id, _description = self._cleanup_identity(entry)
+            if policy_id in targets:
+                targets[policy_id].update(self._entry_switch_ids(entry))
+        self._delete_deploy_targets = targets
+        self._active_delete_policy_ids = {self._cleanup_identity(entry)[0] for entry in config_entries} & targets.keys()
+        return {policy_id: sorted(switch_ids, key=str) for policy_id, switch_ids in targets.items()}
 
     def schedule_pending_deleted_cleanup(self, config_entries: list[dict]) -> dict:
         """Queue switch cleanup for markDeleted rows hidden from active view."""
@@ -495,9 +575,15 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         if not self.deploy:
             return summary
 
+        rows = self._query_policy_summary_groups()
+        parents = {row.get("policyId"): row for row in rows if row.get("policyId")}
         for index, entry in enumerate(config_entries):
-            matches = self._pending_deleted_matches(entry)
-            if len(matches) > 1 and not self._cleanup_identity(entry)[0]:
+            unresolved = []
+            matches = self._pending_deleted_matches(entry, unresolved=unresolved, parents=parents)
+            summary["skipped"].extend({"index": index, "entry": dict(entry), **item} for item in unresolved)
+            policy_group_id, description = self._cleanup_identity(entry)
+            logical_ids = {match.get("source") or match.get("policyId") for match in matches}
+            if len(logical_ids) > 1 and not policy_group_id and description:
                 summary["skipped"].append(
                     {
                         "index": index,
@@ -522,7 +608,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             for match in matches:
                 matched_policy_ids.append(match.get("policyId"))
                 switch_ids.extend(match.get("_deletedSwitchIds") or match.get("switchIds") or self._record_switch_ids(match))
-            if not switch_ids:
+            if not policy_group_id and not description:
+                switch_ids.extend(self._entry_switch_ids(entry))
+            elif not switch_ids:
                 switch_ids = self._entry_switch_ids(entry)
             if not switch_ids:
                 summary["skipped"].append(
@@ -548,25 +636,62 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
 
         return summary
 
-    def _pending_deleted_matches(self, entry: dict) -> list[dict]:
+    def _pending_deleted_matches(self, entry: dict, *, unresolved: list | None = None, parents: dict | None = None) -> list[dict]:
         """Return markDeleted summary rows matching a cleanup entry.
 
         A requested policy-group ID can match either the hidden row's own
         ``policyId`` (for callers that provide the generated child/pending row
         ID) or its ``source`` (for callers that provide the original ID).
-        Description matching is a fallback for delete intents that did not carry
-        a controller ID.
+        No-ID selectors must prove the original template. Generated children
+        can use a different template, so use their known parent when present;
+        an orphan requires an exact ID rather than a description-only guess.
         """
         policy_group_id, description = self._cleanup_identity(entry)
+        raw_template = entry.get("name") or ""
+        template_name = raw_template
+        template_name = template_name.strip() if isinstance(template_name, str) else None
+        if raw_template and not template_name and not policy_group_id:
+            return []
+        rows = self._query_policy_summary_groups()
+        if parents is None:
+            parents = {row.get("policyId"): row for row in rows if row.get("policyId")}
         matches: list[dict] = []
-        for group in self._query_policy_summary_groups():
-            if not group.get("markDeleted", False):
+        for group in rows:
+            if not group.get("markDeleted", False) and not group.get("_deletedSwitchIds"):
                 continue
             if policy_group_id:
                 if group.get("policyId") == policy_group_id or group.get("source") == policy_group_id:
                     matches.append(group)
                 continue
-            if description and group.get("description") == description:
+            if not template_name:
+                # Preserve the direct helper's legacy description-only API;
+                # module delete requests always provide a name.
+                if description and group.get("description") == description:
+                    matches.append(group)
+                continue
+            owner = group
+            if group.get("source"):
+                owner = parents.get(group["source"])
+                if not owner or owner.get("source") or not isinstance(owner.get("templateName"), str) or not owner["templateName"].strip():
+                    if unresolved is not None and template_name and (not description or group.get("description") == description):
+                        unresolved.append(
+                            {
+                                "reason_code": "unresolved_original_template",
+                                "reason": "original template unavailable for pending-delete row; use policy group ID",
+                                "policy_group_id": (group["source"] if str(group["source"]).startswith("POLICY-GROUP-") else group.get("policyId")),
+                                "matched_policy_ids": [group.get("policyId")],
+                            }
+                        )
+                    continue
+            owner_template = owner.get("templateName")
+            if not isinstance(owner_template, str) or owner_template.strip() != template_name:
+                continue
+            if description:
+                if owner.get("description") == description:
+                    matches.append(group)
+            elif template_name and owner.get("policyId") not in self._active_delete_policy_ids:
+                # Linked cleanup for an active template-wide target is carried
+                # by its exact-ID delete context, not an independent queue.
                 matches.append(group)
         return matches
 
@@ -644,6 +769,19 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             response_groups = []
             if isinstance(result, dict):
                 response_groups = result.get("policyGroups", [])
+            for idx, response_group in enumerate(response_groups if isinstance(response_groups, list) else []):
+                if idx >= len(model_instances) or not isinstance(response_group, dict):
+                    continue
+                policy_id = response_group.get("policyId") or response_group.get("policy_id")
+                if not policy_id:
+                    inputs = response_group.get("templateInputs") or response_group.get("template_inputs") or {}
+                    if isinstance(inputs, dict):
+                        policy_id = inputs.get("POLICY_ID")
+                status = response_group.get("status") or ""
+                if policy_id and (not status or str(status).lower() == "success"):
+                    self._accepted_changes.append(
+                        {"operation": "create", "policy_id": policy_id, "payload": deepcopy(payload["policyGroups"][idx]), "model": id(model_instances[idx])}
+                    )
             self._populate_policy_ids(model_instances, response_groups)
 
             # Detect per-item failures in the 207 response body.
@@ -693,6 +831,28 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         switch-level deploy on the removed switches so the controller
         pushes the negative (removal) config to those switches.
         """
+        result, _changed = self._update_policy_group(model_instance)
+        return result
+
+    def update_direct(self, model_instance: PolicyGroupCreate, *, check_mode: bool = False) -> bool:
+        """Update an ID-resolved group only when its effective intent differs.
+
+        Direct actions bypass the state machine's diff. Keep their no-op guard
+        local, preserving the ordinary ``update`` contract and sparse direct
+        payload semantics. Return the accepted (or check-mode planned) change.
+        An explicit deployment still runs for an unchanged group in real mode.
+        """
+        _result, changed = self._update_policy_group(model_instance, skip_unchanged=True, check_mode=check_mode)
+        return changed
+
+    def _update_policy_group(
+        self,
+        model_instance: PolicyGroupCreate,
+        *,
+        skip_unchanged: bool = False,
+        check_mode: bool = False,
+    ) -> tuple[ResponseType, bool]:
+        """Share the existing read, split-PUT and deploy sequence between paths."""
         try:
             policy_group_id = model_instance.policy_id
             if not policy_group_id:
@@ -701,7 +861,15 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             current_group = self._get_current_policy_group(policy_group_id)
             old_switch_ids = self._extract_switch_ids(current_group)
             desired_payload = self._with_update_priority(model_instance.to_payload(), current_group)
-            update_payloads = self._build_update_payloads(current_group, desired_payload)
+            if skip_unchanged:
+                self._direct_update_payload = deepcopy(desired_payload)
+            if skip_unchanged and self._direct_update_matches(policy_group_id, current_group, desired_payload):
+                update_payloads = []
+            else:
+                update_payloads = self._build_update_payloads(current_group, desired_payload)
+
+            if check_mode:
+                return {}, bool(update_payloads)
 
             if len(update_payloads) > 1:
                 log.info(
@@ -729,10 +897,46 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                 if affected_switches:
                     self._switch_deploy(sorted(affected_switches))
 
-            self._invalidate_cache()
-            return result
+            if update_payloads:
+                self._invalidate_cache()
+            return result, bool(update_payloads)
         except Exception as e:
             raise Exception(f"Update policy group failed for {model_instance.description!r}: {e}") from e
+
+    @classmethod
+    def _direct_update_matches(cls, policy_group_id: str, current_group: dict, desired_payload: dict) -> bool:
+        """Prove equality from the exact ID's known writable configuration.
+
+        An absent or unrepresentable current record must retain the existing
+        update fallback. Missing priority or membership cannot prove a no-op.
+        """
+        if not current_group or current_group.get("policyId") != policy_group_id or not current_group.get("templateName"):
+            return False
+        try:
+            current_payload = cls._policy_group_to_payload(current_group)
+            if current_payload.get("priority") is None or not current_payload.get("switchIds"):
+                return False
+            if cls._extract_switch_ids(current_payload) != cls._extract_switch_ids(desired_payload):
+                return False
+            return cls._direct_update_intent(current_payload) == cls._direct_update_intent(desired_payload)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Could not prove direct update equality for %s (%s: %s); retaining PUT.", policy_group_id, type(exc).__name__, exc)
+            return False
+
+    @classmethod
+    def _direct_update_intent(cls, payload: dict) -> dict:
+        """Compare writable intent while treating equivalent empty values alike."""
+        intent = cls._without_switch_ids(payload)
+        for key in ("description", "source"):
+            if intent.get(key) is None or intent.get(key) == "":
+                intent.pop(key, None)
+        template_inputs = intent.get("templateInputs")
+        if isinstance(template_inputs, dict):
+            # Ignore controller bookkeeping without altering either PUT payload.
+            intent["templateInputs"] = {key: value for key, value in template_inputs.items() if key not in SYSTEM_INJECTED_TEMPLATE_KEYS}
+        if intent.get("templateInputs") is None or intent.get("templateInputs") == {}:
+            intent.pop("templateInputs", None)
+        return intent
 
     def _put_policy_group(self, policy_group_id: str, payload: dict) -> ResponseType:
         """Send one ``PUT /policyGroups/{policyGroupId}`` request.
@@ -744,12 +948,14 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         ep.fabric_name = self.fabric_name
         ep.policy_group_id = policy_group_id
         self._apply_endpoint_params(ep)
-        return self._request(
+        result = self._request(
             path=ep.path,
             verb=ep.verb,
             data=payload,
             operation_type=OperationType.UPDATE,
         )
+        self._accepted_changes.append({"operation": "update", "policy_id": policy_group_id, "payload": deepcopy(payload)})
+        return result
 
     def _get_current_policy_group(self, policy_group_id: str) -> dict:
         """Return the raw current policy group dict for ``policy_group_id``.
@@ -890,8 +1096,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         Deletion strategy:
 
         1. **markDelete** all policy group IDs.
-        2. For any policy group whose markDelete result is not success:
-           direct ``DELETE /policyGroups/<id>``.  This is primarily a
+        2. After a complete, validated response, directly
+           ``DELETE /policyGroups/<id>`` only for requested IDs explicitly
+           reported failed. This is primarily a
            controller workaround for freeform/PYTHON failures, but the local
            fallback is driven by the controller's per-policy result rather
            than by a hardcoded template classification.
@@ -901,6 +1108,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         Consolidating the deploy into one call avoids hitting the same
         switch twice when a batch mixes markDelete-eligible and
         direct-delete groups that share switches.
+
+        An unconfirmed acknowledgement stops fallback and deployment. Distinct
+        unambiguous requested successes remain recorded for failure reporting.
 
         When ``deploy=False``, markDelete (and direct DELETE for failures)
         is performed without the trailing switch deploy.
@@ -934,36 +1144,31 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             # Build switch_ids lookup for switch-level deploy
             switch_ids_by_policy: dict[str, list[str]] = {}
             for m in model_instances:
-                if m.policy_id and m.switch_ids:
-                    switch_ids_by_policy[m.policy_id] = list(m.switch_ids)
+                if m.policy_id:
+                    switch_ids = list(m.switch_ids or [])
+                    if self.deploy:
+                        switch_ids.extend(self._delete_deploy_targets.get(m.policy_id, ()))
+                    if switch_ids:
+                        switch_ids_by_policy[m.policy_id] = switch_ids
             log.debug("delete_bulk: switch_ids_by_policy=%s", switch_ids_by_policy)
 
             # Step 1: Attempt markDelete for all policy groups
             log.debug("delete_bulk: Step 1 - markDelete for policy_ids=%s", policy_ids)
             mark_result = self._mark_delete(policy_ids)
             log.debug("delete_bulk: markDelete response=%s", mark_result)
-
-            # Inspect 207 response for per-policy failures
-            mark_succeeded = []
-            mark_failed_ids = []
-            mark_failure_messages: list[str] = []
-            if isinstance(mark_result, dict):
-                policies_response = mark_result.get("policyGroups", [])
-                failed_set = set()
-                for p in policies_response:
-                    pid = p.get("policyId", "")
-                    status = str(p.get("status", "")).lower()
-                    if status != "success":
-                        failed_set.add(pid)
-                        mark_failed_ids.append(pid)
-                        msg = p.get("message") or "unknown error"
-                        mark_failure_messages.append(f"{pid}: {msg}")
-                mark_succeeded = [pid for pid in policy_ids if pid not in failed_set]
-                # If empty response, treat all as succeeded (ambiguous)
-                if not policies_response and policy_ids:
-                    mark_succeeded = list(policy_ids)
-            else:
-                mark_succeeded = list(policy_ids)
+            # Classify the whole batch before accepting a success or using any
+            # response ID in a DELETE path. Identical echoes are harmless;
+            # conflicting/malformed outcomes cannot confirm that ID's removal.
+            mark_succeeded, mark_failed_ids, mark_failure_messages, validation_errors = self._classify_mark_delete_response(policy_ids, mark_result)
+            recorded_delete_ids = {change["policy_id"] for change in self._accepted_changes if change["operation"] == "delete"}
+            self._accepted_changes.extend({"operation": "delete", "policy_id": pid} for pid in mark_succeeded if pid not in recorded_delete_ids)
+            if validation_errors:
+                raise ValueError(
+                    "Invalid markDelete response: "
+                    + "; ".join(validation_errors)
+                    + ". Outcomes are unconfirmed except for explicitly acknowledged requested successes; "
+                    "the controller may have applied the request. No fallback or deployment was sent for this batch."
+                )
 
             if mark_failure_messages:
                 # Log the reason at WARNING so the cause of the direct-DELETE
@@ -979,7 +1184,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                 mark_failed_ids,
             )
 
-            # Step 2: Direct DELETE fallback for markDelete failures.
+            # Step 2: Direct DELETE fallback for validated explicit failures.
             # TODO(4.2.1): Workaround — switch_freeform-type policies fail
             # markDelete on ND; we fall back to direct DELETE /policyGroups/<id>.
             # Remove once ND supports markDelete for these templates natively.
@@ -996,6 +1201,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                     self._apply_endpoint_params(ep)
                     self._request(path=ep.path, verb=ep.verb)
                     direct_deleted.append(pid)
+                    self._accepted_changes.append({"operation": "delete", "policy_id": pid})
 
             # Step 3: Single consolidated switchActions/deploy against the
             # union of all affected switches.  One call covers the removal
@@ -1040,6 +1246,57 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         self._apply_endpoint_params(ep)
         payload = {"policyIds": policy_ids}
         return self._request(path=ep.path, verb=ep.verb, data=payload)
+
+    @staticmethod
+    def _classify_mark_delete_response(policy_ids: list[str], result: object) -> tuple[list[str], list[str], list[str], list[str]]:
+        """Correlate complete per-group outcomes before any follow-up mutation.
+
+        Completeness is per unique requested ID, retaining first response order.
+        Identical success/failed echoes normalize to one outcome. A conflicting
+        or malformed outcome invalidates that ID, while distinct acknowledged
+        successes remain available for accepted-progress failure reporting.
+        """
+        requested = dict.fromkeys(policy_ids)
+        outcomes: dict[str, str | None] = {}
+        messages: dict[str, str] = {}
+        errors: list[str] = []
+        if not isinstance(result, dict) or not isinstance(result.get("policyGroups"), list):
+            errors.append("expected an object containing a policyGroups list")
+            rows = []
+        else:
+            rows = result["policyGroups"]
+        for index, item in enumerate(rows):
+            if not isinstance(item, dict):
+                errors.append(f"policyGroups[{index}] must be an object")
+                continue
+            policy_id = item.get("policyId")
+            if not isinstance(policy_id, str) or not policy_id.strip():
+                errors.append(f"policyGroups[{index}] has no usable policyId")
+                continue
+            if policy_id not in requested:
+                errors.append(f"policyGroups[{index}] contains unrequested policyId {policy_id!r}")
+                continue
+            raw_status = item.get("status")
+            status = raw_status.strip().lower() if isinstance(raw_status, str) else None
+            if status not in ("success", "failed"):
+                outcomes[policy_id] = None
+                errors.append(f"policyGroups[{index}] has unrecognized status {raw_status!r} for {policy_id!r}")
+                continue
+            if policy_id not in outcomes:
+                outcomes[policy_id] = status
+                messages[policy_id] = str(item.get("message") or "unknown error")
+            elif outcomes[policy_id] is not None and outcomes[policy_id] != status:
+                outcomes[policy_id] = None
+                errors.append(f"conflicting statuses for policyId {policy_id!r}")
+        missing = [policy_id for policy_id in requested if policy_id not in outcomes]
+        if missing:
+            errors.append(f"missing acknowledgements for policy group IDs {missing!r}")
+        unconfirmed = [policy_id for policy_id in requested if outcomes.get(policy_id) is None]
+        if unconfirmed:
+            errors.append(f"unconfirmed policy group IDs {unconfirmed!r}")
+        succeeded = [policy_id for policy_id, status in outcomes.items() if status == "success"]
+        failed = [policy_id for policy_id, status in outcomes.items() if status == "failed"]
+        return succeeded, failed, [f"{policy_id}: {messages[policy_id]}" for policy_id in failed], errors
 
     def _switch_deploy(self, switch_ids: list[str]) -> ResponseType:
         """POST /switchActions/deploy to deploy config to specific switches.

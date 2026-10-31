@@ -25,7 +25,9 @@ The shared infrastructure inherited from ``NDBaseOrchestrator`` (``_request``,
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_policy_group_actions import (
@@ -1073,12 +1075,14 @@ def test_manage_policy_group_orchestrator_00457() -> None:
                     [
                         {
                             "policyId": "POLICY-GROUP-A",
+                            "templateName": "feature_enable",
                             "description": "same",
                             "switchIds": ["SN1"],
                             "markDeleted": True,
                         },
                         {
                             "policyId": "POLICY-GROUP-B",
+                            "templateName": "feature_enable",
                             "description": "same",
                             "switchIds": ["SN2"],
                             "markDeleted": True,
@@ -1889,9 +1893,8 @@ def test_manage_policy_group_orchestrator_00750() -> None:
     """
     # Summary
 
-    When ``markDelete`` returns an empty ``policyGroups`` list the
-    orchestrator treats every requested ID as succeeded (ambiguous response
-    is interpreted permissively).
+    An empty ``markDelete`` acknowledgement cannot confirm the requested
+    deletion or trigger subsequent fallback/deployment requests.
 
     ## Classes and Methods
 
@@ -1902,9 +1905,175 @@ def test_manage_policy_group_orchestrator_00750() -> None:
     instance = _make_orchestrator(rest_send, deploy=False)
     models = [_build_pg_model(policy_id="P1", switch_ids=["SN1"])]
 
+    with pytest.raises(Exception, match="markDelete response.*unconfirmed"):
+        instance.delete_bulk(models)
+    assert instance.accepted_changes == []
+
+
+@pytest.mark.parametrize(
+    "mark_items,fallback_ids,accepted_ids",
+    [
+        (
+            [
+                {"policyId": "P3", "status": "SUCCESS"},
+                {"policyId": "P2", "status": "success"},
+                {"policyId": "P2", "status": "success"},
+                {"policyId": "P1", "status": "Success"},
+            ],
+            [],
+            ["P3", "P2", "P1"],
+        ),
+        (
+            [
+                {"policyId": "P3", "status": "success"},
+                {"policyId": "P1", "status": "failed", "message": "first retry"},
+                {"policyId": "P2", "status": "SUCCESS"},
+                {"policyId": "P1", "status": "failed", "message": "second retry"},
+            ],
+            ["P1"],
+            ["P3", "P2", "P1"],
+        ),
+        ([{"policyId": pid, "status": "success"} for pid in ("P2", "P1", "P3")], [], ["P2", "P1", "P3"]),
+    ],
+    ids=["reordered-successes", "identical-failed-echoes", "one-ack-per-unique-request"],
+)
+def test_delete_bulk_preserves_order_duplicates_and_requested_membership(mark_items, fallback_ids, accepted_ids):
+    """Preserve request order/repeats while normalizing benign response echoes."""
+    requested_ids = ["P2", "P1", "P2", "P3"]
+    members = {"P1": ["SN1"], "P2": ["SN2", "SN3"], "P3": ["SN3", "SN4"]}
+    responses = [_resp({"policyGroups": mark_items}, method="POST")]
+    responses.extend(_resp({}, method="DELETE") for _ in fallback_ids)
+    responses.append(_resp({"switchIds": []}, method="POST"))
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send(responses), deploy=True, results=results)
+    models = [_build_pg_model(policy_id=pid, switch_ids=members[pid]) for pid in requested_ids]
+
     result = instance.delete_bulk(models)
 
-    assert result == {"policyIds": ["P1"], "status": "success"}
+    assert result == {"policyIds": requested_ids, "status": "success"}
+    assert results._tasks[0].payload == {"policyIds": requested_ids}
+    assert [task.path.rsplit("/", 1)[-1] for task in results._tasks if task.verb == "DELETE"] == fallback_ids
+    assert len(results._tasks) == 2 + len(fallback_ids)
+    assert results._tasks[-1].payload == {"switchIds": ["SN1", "SN2", "SN3", "SN4"]}
+    assert instance.accepted_changes == [{"operation": "delete", "policy_id": pid} for pid in accepted_ids]
+
+
+@pytest.mark.parametrize(
+    "body,accepted_ids",
+    [
+        (None, []),
+        ([], []),
+        ("unexpected", []),
+        ({}, []),
+        ({"policyGroups": None}, []),
+        ({"policyGroups": {}}, []),
+        ({"policyGroups": []}, []),
+        ({"policyGroups": [{"policyId": "FOREIGN", "status": "failed"}]}, []),
+        ({"policyGroups": [{"policyId": "FOREIGN", "status": "success"}]}, []),
+        (
+            {"policyGroups": [{"policyId": "P1", "status": "failed"}, {"policyId": "FOREIGN", "status": "success"}, {"policyId": "P2", "status": "success"}]},
+            ["P2"],
+        ),
+        ({"policyGroups": [{"policyId": "P1", "status": "success"}]}, ["P1"]),
+        ({"policyGroups": [{"policyId": "P1", "status": " SUCCESS "}, None]}, ["P1"]),
+        ({"policyGroups": [{"policyId": "P1", "status": "success"}, {"policyId": [], "status": "failed"}]}, ["P1"]),
+        ({"policyGroups": [{"status": "failed"}]}, []),
+        ({"policyGroups": [{"policyId": " ", "status": "failed"}]}, []),
+        ({"policyGroups": [{"policyId": " P1 ", "status": "success"}]}, []),
+        ({"policyGroups": [{"policyId": "P1"}]}, []),
+        ({"policyGroups": [{"policyId": "P1", "status": 1}]}, []),
+        ({"policyGroups": [{"policyId": "P1", "status": "notExecuted"}]}, []),
+        ({"policyGroups": [{"policyId": "P1", "status": "success"}, {"policyId": "P1", "status": "failed"}, {"policyId": "P2", "status": "success"}]}, ["P2"]),
+        ({"policyGroups": [{"policyId": "P1", "status": "success"}, {"policyId": "P1", "status": None}, {"policyId": "P2", "status": "success"}]}, ["P2"]),
+    ],
+    ids=[
+        "null",
+        "list",
+        "string",
+        "missing-envelope",
+        "null-envelope",
+        "mapping-envelope",
+        "empty",
+        "foreign-failed",
+        "foreign-success",
+        "foreign-row-blocks-valid-fallback",
+        "missing-sibling",
+        "non-object-after-success",
+        "non-string-id",
+        "missing-id",
+        "blank-id",
+        "padded-id",
+        "missing-status",
+        "non-string-status",
+        "unknown-status",
+        "conflicting-duplicate",
+        "malformed-duplicate",
+    ],
+)
+def test_delete_bulk_rejects_unconfirmed_acknowledgements_before_followup(body, accepted_ids):
+    """Response anomalies retain only distinct confirmed requested effects."""
+    response = _resp(method="POST", return_code=207)
+    response["DATA"] = body
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([response]), deploy=True, results=results)
+    models = [_build_pg_model(policy_id=pid, switch_ids=[pid + "-switch"]) for pid in ("P1", "P2")]
+
+    with pytest.raises(Exception, match="markDelete response.*unconfirmed"):
+        instance.delete_bulk(models)
+
+    assert len(results._tasks) == 1
+    assert results._tasks[0].payload == {"policyIds": ["P1", "P2"]}
+    assert instance.accepted_changes == [{"operation": "delete", "policy_id": pid} for pid in accepted_ids]
+
+
+def test_delete_bulk_preserves_failed_python_fallback_with_empty_204():
+    """A complete failed acknowledgement can fall back to DELETE's valid204."""
+    responses = [
+        _resp(
+            {
+                "policyGroups": [
+                    {"policyId": "P2", "status": " SUCCESS "},
+                    {"policyId": "P1", "status": " FaIlEd ", "message": "PYTHON template"},
+                    {"policyId": "P1", "status": "failed"},
+                ]
+            },
+            method="POST",
+            return_code=207,
+        ),
+        _resp(method="DELETE", return_code=204),
+        _resp({"switchIds": []}, method="POST"),
+    ]
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send(responses), deploy=True, results=results)
+    models = [_build_pg_model(policy_id=pid, switch_ids=[pid + "-switch"]) for pid in ("P1", "P2", "P1")]
+
+    assert instance.delete_bulk(models) == {"policyIds": ["P1", "P2", "P1"], "status": "success"}
+    assert [task.verb for task in results._tasks] == ["POST", "DELETE", "POST"]
+    assert results._tasks[0].payload == {"policyIds": ["P1", "P2", "P1"]}
+    assert results._tasks[1].path.endswith("/policyGroups/P1")
+    assert results._tasks[2].payload == {"switchIds": ["P1-switch", "P2-switch"]}
+    assert instance.accepted_changes == [{"operation": "delete", "policy_id": "P2"}, {"operation": "delete", "policy_id": "P1"}]
+
+
+@pytest.mark.parametrize("malformed_item", [None, {"policyId": [], "status": "failed"}], ids=["non-object-item", "non-string-id"])
+def test_delete_bulk_malformed_response_preserves_only_explicit_requested_successes(malformed_item):
+    """A parser error retains known accepted deletions without fallback or deployment."""
+    mark_items = [
+        {"policyId": "UNREQUESTED", "status": "success"},
+        {"policyId": "P2", "status": "SUCCESS"},
+        malformed_item,
+        {"policyId": "P3", "status": "success"},
+    ]
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([_resp({"policyGroups": mark_items}, method="POST")]), deploy=True, results=results)
+    models = [_build_pg_model(policy_id=pid) for pid in ["P2", "P1", "P3"]]
+
+    with pytest.raises(Exception, match="Bulk delete policy groups failed"):
+        instance.delete_bulk(models)
+
+    assert len(results._tasks) == 1
+    assert results._tasks[0].payload == {"policyIds": ["P2", "P1", "P3"]}
+    assert instance.accepted_changes == [{"operation": "delete", "policy_id": "P2"}, {"operation": "delete", "policy_id": "P3"}]
 
 
 # =============================================================================
@@ -2678,3 +2847,449 @@ def test_manage_policy_group_orchestrator_01270() -> None:
     path = results._tasks[0].path
     assert "clusterName=" not in path
     assert "ticketId=" not in path
+
+
+# =============================================================================
+# Regression gates: complete, exact-target pending deletion planning
+# =============================================================================
+
+
+def _pending_plan_row(policy_id, switch_ids, *, template="feature_enable", description="same", source="", deleted=True):
+    """Build a raw summary row retaining controller lifecycle and parent identity."""
+    row = _build_summary_row({"policyId": policy_id, "description": description, "source": source, "switchIds": switch_ids, "markDeleted": deleted})
+    if template is not None:
+        row["templateName"] = template
+    return row
+
+
+def _cached_pending_plan(rows, *, responses=None, deploy=True):
+    """Seed one already-read summary snapshot; any subsequent GET is unexpected."""
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send(responses or []), deploy=deploy, results=results)
+    instance._policy_summary_cache = [instance._summary_to_policy_group(row) for row in rows]
+    active = [row for row in instance._policy_summary_cache if instance._is_active_user_group(row)]
+    return instance, results, active
+
+
+def test_delete_targets_keep_active_members_separate_from_mixed_and_source_cleanup():
+    """Pending B/C affect deployment for101, never active membership or sibling102."""
+    mixed = _pending_plan_row("POLICY-GROUP-101", ["A"], deleted=False)
+    mixed["switches"].append({"switchId": "B", "priority": -500, "markDeleted": True})
+    rows = [
+        mixed,
+        _pending_plan_row("POLICY-GROUP-CHILD1", ["C"], template="switch_freeform_config", source="POLICY-GROUP-101"),
+        _pending_plan_row("POLICY-GROUP-102", ["SIBLING"], deleted=False),
+        _pending_plan_row("POLICY-GROUP-CHILD2", ["SIBLING_PENDING"], source="POLICY-GROUP-102"),
+    ]
+    instance, results, active = _cached_pending_plan(rows)
+    original = deepcopy(instance._policy_summary_cache)
+    config = [{"name": "POLICY-GROUP-101", "switch_ids": ["EXPLICIT", "A"]}]
+
+    targets = instance.prepare_delete_deploy_targets(config, active)
+
+    assert set(targets) == {"POLICY-GROUP-101", "POLICY-GROUP-102"}
+    assert set(targets["POLICY-GROUP-101"]) == {"A", "B", "C", "EXPLICIT"}
+    assert set(targets["POLICY-GROUP-102"]) == {"SIBLING", "SIBLING_PENDING"}
+    assert active[0]["switchIds"] == ["A"]
+    assert active[0]["_deletedSwitchIds"] == ["B"]
+    assert instance._policy_summary_cache == original
+    assert config == [{"name": "POLICY-GROUP-101", "switch_ids": ["EXPLICIT", "A"]}]
+    assert results._tasks == []
+
+
+@pytest.mark.parametrize("deploy", [False, True])
+def test_delete_targets_apply_only_to_requested_accepted_ids_without_extra_get(deploy):
+    """Planning sibling context cannot expand a subsequent single-ID deletion."""
+    rows = [
+        _pending_plan_row("POLICY-GROUP-101", ["A"], deleted=False),
+        _pending_plan_row("POLICY-GROUP-C1", ["B"], source="POLICY-GROUP-101"),
+        _pending_plan_row("POLICY-GROUP-102", ["OTHER"], deleted=False),
+        _pending_plan_row("POLICY-GROUP-C2", ["OTHER_PENDING"], source="POLICY-GROUP-102"),
+    ]
+    responses = [_resp({"policyGroups": [{"policyId": "POLICY-GROUP-101", "status": "success"}]}, method="POST")]
+    if deploy:
+        responses.append(_resp({"switchIds": []}, method="POST"))
+    instance, results, active = _cached_pending_plan(rows, responses=responses, deploy=deploy)
+    instance.prepare_delete_deploy_targets([{"name": "POLICY-GROUP-101"}, {"name": "POLICY-GROUP-102"}], active)
+
+    instance.delete_bulk([_build_pg_model(policy_id="POLICY-GROUP-101", switch_ids=["A"])])
+
+    assert len(results._tasks) == (2 if deploy else 1)
+    assert results._tasks[0].payload == {"policyIds": ["POLICY-GROUP-101"]}
+    assert all(task.verb != "GET" for task in results._tasks)
+    if deploy:
+        assert results._tasks[-1].payload == {"switchIds": ["A", "B"]}
+    assert instance.accepted_changes == [{"operation": "delete", "policy_id": "POLICY-GROUP-101"}]
+
+
+@pytest.mark.parametrize("failure_stage", [None, "fallback", "deploy"], ids=["accepted-fallback", "rejected-fallback", "deploy-failure"])
+def test_delete_pending_targets_preserve_fallback_and_failure_progress(failure_stage):
+    """A later failure keeps accepted deletes and never deploys unaccepted context."""
+    rows = [
+        _pending_plan_row("POLICY-GROUP-101", ["A"], deleted=False),
+        _pending_plan_row("POLICY-GROUP-C1", ["B"], source="POLICY-GROUP-101"),
+        _pending_plan_row("POLICY-GROUP-102", ["C"], deleted=False),
+        _pending_plan_row("POLICY-GROUP-C2", ["D"], source="POLICY-GROUP-102"),
+    ]
+    responses = [
+        _resp(
+            {
+                "policyGroups": [
+                    {"policyId": "POLICY-GROUP-101", "status": "success"},
+                    {"policyId": "POLICY-GROUP-102", "status": "failed", "message": "retry"},
+                ]
+            },
+            method="POST",
+        ),
+        _resp(
+            {"message": "fallback rejected"} if failure_stage == "fallback" else {}, return_code=500 if failure_stage == "fallback" else 200, method="DELETE"
+        ),
+    ]
+    if failure_stage != "fallback":
+        responses.append(
+            _resp(
+                {"message": "deploy rejected"} if failure_stage == "deploy" else {"switchIds": []},
+                return_code=500 if failure_stage == "deploy" else 200,
+                method="POST",
+            )
+        )
+    instance, results, active = _cached_pending_plan(rows, responses=responses)
+    instance.prepare_delete_deploy_targets([{"name": "POLICY-GROUP-101"}, {"name": "POLICY-GROUP-102"}], active)
+    models = [_build_pg_model(policy_id="POLICY-GROUP-101", switch_ids=["A"]), _build_pg_model(policy_id="POLICY-GROUP-102", switch_ids=["C"])]
+
+    if failure_stage:
+        with pytest.raises(Exception, match="Bulk delete policy groups failed"):
+            instance.delete_bulk(models)
+    else:
+        instance.delete_bulk(models)
+
+    accepted = [item["policy_id"] for item in instance.accepted_changes]
+    assert accepted == (["POLICY-GROUP-101"] if failure_stage == "fallback" else ["POLICY-GROUP-101", "POLICY-GROUP-102"])
+    assert len(results._tasks) == (2 if failure_stage == "fallback" else 3)
+    assert all(task.verb != "GET" for task in results._tasks)
+    if failure_stage != "fallback":
+        assert results._tasks[-1].payload == {"switchIds": ["A", "B", "C", "D"]}
+
+
+@pytest.mark.parametrize("template", ["feature_enable", " feature_enable "], ids=["plain", "padded-user-template"])
+def test_pending_pair_uses_supplied_template_and_rejects_other_or_missing_templates(template):
+    """A reused description cannot select another template or untyped root row."""
+    rows = [
+        _pending_plan_row("POLICY-GROUP-MATCH", ["A"]),
+        _pending_plan_row("POLICY-GROUP-OTHER", ["B"], template="clock_timezone"),
+        _pending_plan_row("POLICY-GROUP-UNTYPED", ["C"], template=None),
+    ]
+    instance, results, _ = _cached_pending_plan(rows)
+
+    summary = instance.schedule_pending_deleted_cleanup([{"name": template, "description": "same"}])
+
+    assert summary["switch_ids"] == ["A"]
+    assert summary["matched_policy_ids"] == ["POLICY-GROUP-MATCH"]
+    assert not summary["skipped"]
+    assert results._tasks == []
+
+
+@pytest.mark.parametrize("name,alias,expected", [("POLICY-GROUP-101", "POLICY-GROUP-102", "A"), ("wrong_template", "POLICY-GROUP-101", "A")])
+@pytest.mark.parametrize("row_template", [None, "feature_enable"], ids=["untyped-row", "typed-row"])
+def test_pending_exact_id_bypasses_template_but_keeps_name_id_precedence(name, alias, expected, row_template):
+    rows = [_pending_plan_row("POLICY-GROUP-101", ["A"], template=row_template), _pending_plan_row("POLICY-GROUP-102", ["B"], template="clock_timezone")]
+    instance, results, _ = _cached_pending_plan(rows)
+
+    summary = instance.schedule_pending_deleted_cleanup([{"name": name, "policy_id": alias, "description": "incidental"}])
+
+    assert summary["switch_ids"] == [expected]
+    assert summary["matched_policy_ids"] == ["POLICY-GROUP-101"]
+    assert results._tasks == []
+
+
+def test_pending_pair_resolves_different_child_template_through_known_parent():
+    parent = _pending_plan_row("POLICY-GROUP-101", ["A"], template="switch_freeform", description="original")
+    child = _pending_plan_row("POLICY-GROUP-CHILD", ["B"], template="switch_freeform_config", description="generated", source="POLICY-GROUP-101")
+    instance, results, _ = _cached_pending_plan([parent, child])
+
+    matches = instance._pending_deleted_matches({"name": "switch_freeform", "description": "original"})
+
+    assert {row["policyId"] for row in matches} == {"POLICY-GROUP-101", "POLICY-GROUP-CHILD"}
+    assert instance._pending_deleted_matches({"name": "switch_freeform_config", "description": "generated"}) == []
+    summary = instance.schedule_pending_deleted_cleanup([{"name": "switch_freeform", "description": "original"}])
+    assert summary["switch_ids"] == ["A", "B"]
+    assert summary["matched_policy_ids"] == ["POLICY-GROUP-101", "POLICY-GROUP-CHILD"]
+    assert summary["skipped"] == []  # Two physical rows still identify one logical parent.
+    assert results._tasks == []
+
+
+@pytest.mark.parametrize("description", [None, "same"], ids=["template-wide", "pair"])
+def test_pending_orphan_requires_visible_original_id_instead_of_inferred_template(description):
+    child = _pending_plan_row("POLICY-GROUP-CHILD", ["B"], template="switch_freeform_config", source="POLICY-GROUP-ORIGINAL")
+    instance, results, _ = _cached_pending_plan([child])
+    entry = {"name": "switch_freeform_config"}
+    if description is not None:
+        entry["description"] = description
+
+    summary = instance.schedule_pending_deleted_cleanup([entry])
+
+    assert summary["switch_ids"] == []
+    assert summary["matched_policy_ids"] == []
+    unresolved = [item for item in summary["skipped"] if item.get("reason_code") == "unresolved_original_template"]
+    assert len(unresolved) == 1
+    assert unresolved[0]["policy_group_id"] == "POLICY-GROUP-ORIGINAL"
+    assert unresolved[0]["matched_policy_ids"] == ["POLICY-GROUP-CHILD"]
+    assert results._tasks == []
+    assert instance.schedule_pending_deleted_cleanup([{"name": "POLICY-GROUP-ORIGINAL"}])["switch_ids"] == ["B"]
+
+
+def test_pending_template_wide_matches_all_roots_without_queuing_active_parent_children():
+    rows = [
+        _pending_plan_row("POLICY-GROUP-PENDING1", ["A"]),
+        _pending_plan_row("POLICY-GROUP-PENDING2", ["B"]),
+        _pending_plan_row("POLICY-GROUP-OTHER", ["OTHER"], template="clock_timezone"),
+        _pending_plan_row("POLICY-GROUP-ACTIVE", ["C"], deleted=False),
+        _pending_plan_row("POLICY-GROUP-CHILD", ["D"], template="generated_template", source="POLICY-GROUP-ACTIVE"),
+    ]
+    instance, results, active = _cached_pending_plan(rows)
+    context = instance.prepare_delete_deploy_targets([{"name": "feature_enable", "policy_id": "POLICY-GROUP-ACTIVE"}], active)
+
+    summary = instance.schedule_pending_deleted_cleanup([{"name": "feature_enable"}])
+
+    assert set(context["POLICY-GROUP-ACTIVE"]) == {"C", "D"}
+    assert summary["switch_ids"] == ["A", "B"]
+    assert summary["matched_policy_ids"] == ["POLICY-GROUP-PENDING1", "POLICY-GROUP-PENDING2"]
+    assert summary["skipped"] == []
+    assert results._tasks == []
+
+
+def test_broad_summary_reads_remaining_pages_once_and_reuses_complete_cache():
+    pages = [
+        {"policies": [_pending_plan_row("POLICY-GROUP-101", ["A"])], "meta": {"counts": {"remaining": 1}}},
+        {"policies": [_pending_plan_row("POLICY-GROUP-102", ["B"])], "meta": {"counts": {"remaining": 0}}},
+    ]
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([_resp(page) for page in pages]), results=results)
+    instance._require_complete_summary = True
+
+    first = instance.query_all(include_no_description=True, deduplicate=False)
+    second = instance._query_policy_summary_groups()
+
+    assert first == []  # Fully pending rows remain excluded from the active view.
+    assert {row["policyId"] for row in second} == {"POLICY-GROUP-101", "POLICY-GROUP-102"}
+    assert len(results._tasks) == 2
+    assert all(task.verb == "GET" for task in results._tasks)
+    assert parse_qs(urlsplit(results._tasks[0].path).query).get("max") == ["10000"]
+    assert parse_qs(urlsplit(results._tasks[1].path).query).get("offset") == ["1"]
+
+
+def test_ordinary_summary_preserves_one_get_even_when_metadata_reports_more():
+    page = {"policies": [_pending_plan_row("POLICY-GROUP-101", ["A"], deleted=False)], "meta": {"counts": {"remaining": 1}}}
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([_resp(page)]), results=results)
+
+    assert [row["policyId"] for row in instance.query_all(include_no_description=True, deduplicate=False)] == ["POLICY-GROUP-101"]
+    assert len(results._tasks) == 1
+
+
+@pytest.mark.parametrize("remaining", ["1", -1, True, None], ids=["string", "negative", "boolean", "explicit-null"])
+def test_broad_summary_rejects_malformed_remaining_before_any_write(remaining):
+    page = {"policies": [_pending_plan_row("POLICY-GROUP-101", ["A"])], "meta": {"counts": {"remaining": remaining}}}
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([_resp(page)]), results=results)
+    instance._require_complete_summary = True
+
+    with pytest.raises(Exception, match="remaining|pagination|summary|Summary"):
+        instance._query_policy_summary_groups()
+
+    assert len(results._tasks) == 1
+    assert results._tasks[0].verb == "GET"
+    assert instance._policy_summary_cache is None
+
+
+@pytest.mark.parametrize(
+    "last_page,last_remaining",
+    [([], 1), ([_pending_plan_row("POLICY-GROUP-101", ["A"])], 1), ([_pending_plan_row("POLICY-GROUP-101", ["A"])], 0)],
+    ids=["empty-incomplete-page", "repeated-incomplete-page", "repeated-final-page"],
+)
+def test_broad_summary_rejects_nonprogress_before_any_write(last_page, last_remaining):
+    pages = [
+        {"policies": [_pending_plan_row("POLICY-GROUP-101", ["A"])], "meta": {"counts": {"remaining": 1}}},
+        {"policies": last_page, "meta": {"counts": {"remaining": last_remaining}}},
+    ]
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([_resp(page) for page in pages]), results=results)
+    instance._require_complete_summary = True
+
+    with pytest.raises(Exception, match="progress|pagination|summary|Summary"):
+        instance._query_policy_summary_groups()
+
+    assert len(results._tasks) == 2
+    assert all(task.verb == "GET" for task in results._tasks)
+    assert instance._policy_summary_cache is None
+
+
+def test_broad_summary_rejects_full_page_without_completeness_metadata():
+    page = {"policies": [_pending_plan_row(f"POLICY-GROUP-{index}", []) for index in range(10000)]}
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([_resp(page)]), results=results)
+    instance._require_complete_summary = True
+
+    with pytest.raises(Exception, match="metadata|pagination|summary|Summary"):
+        instance._query_policy_summary_groups()
+
+    assert len(results._tasks) == 1
+    assert instance._policy_summary_cache is None
+
+
+def test_delete_targets_take_only_marked_members_from_mixed_source_child():
+    parent = _pending_plan_row("POLICY-GROUP-101", ["A"], deleted=False)
+    child = _pending_plan_row("POLICY-GROUP-CHILD", ["CHILD_ACTIVE"], source="POLICY-GROUP-101", deleted=False)
+    child["switches"].append({"switchId": "B", "priority": -500, "markDeleted": True})
+    instance, results, active = _cached_pending_plan([parent, child])
+
+    context = instance.prepare_delete_deploy_targets([{"name": "POLICY-GROUP-101"}], active)
+
+    assert context == {"POLICY-GROUP-101": ["A", "B"]}
+    assert results._tasks == []
+
+
+def test_delete_targets_without_summary_cache_preserve_explicit_members_without_get():
+    instance, results, _ = _cached_pending_plan([])
+    instance._policy_summary_cache = None
+    active = [{"policyId": "POLICY-GROUP-101", "switchIds": ["A"]}]
+
+    context = instance.prepare_delete_deploy_targets([{"name": "POLICY-GROUP-101", "switch_ids": ["B"]}], active)
+
+    assert context == {"POLICY-GROUP-101": ["A", "B"]}
+    assert instance._policy_summary_cache is None
+    assert results._tasks == []
+
+
+@pytest.mark.parametrize("page", [None, "invalid", {}], ids=["null-policies", "string-policies", "mapping-policies"])
+def test_broad_summary_rejects_malformed_policy_page_before_any_write(page):
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([_resp({"policies": page, "meta": {"counts": {"remaining": 1}}})]), results=results)
+    instance._require_complete_summary = True
+
+    with pytest.raises(Exception, match="list|pagination|summary|Summary"):
+        instance._query_policy_summary_groups()
+
+    assert len(results._tasks) == 1
+    assert results._tasks[0].verb == "GET"
+    assert instance._policy_summary_cache is None
+
+
+def test_public_pending_helper_deploys_child_of_unselected_active_parent():
+    """A broad cache map must not suppress cleanup owned by no actual delete."""
+    rows = [
+        _pending_plan_row("POLICY-GROUP-101", ["A"], deleted=False),
+        _pending_plan_row("POLICY-GROUP-CHILD1", ["B"], template="generated", source="POLICY-GROUP-101"),
+        _pending_plan_row("POLICY-GROUP-102", ["C"], deleted=False),
+        _pending_plan_row("POLICY-GROUP-CHILD2", ["D"], template="generated", source="POLICY-GROUP-102"),
+    ]
+    instance, results, active = _cached_pending_plan(rows, responses=[_resp({"switchIds": []}, method="POST")])
+    instance.prepare_delete_deploy_targets([{"name": "POLICY-GROUP-102"}], active)
+
+    summary = instance.deploy_pending_deleted_cleanup([{"name": "feature_enable"}])
+
+    assert summary["changed"] is True
+    assert summary["switch_ids"] == ["B"]
+    assert summary["matched_policy_ids"] == ["POLICY-GROUP-CHILD1"]
+    assert summary["skipped"] == []
+    assert len(results._tasks) == 1
+    assert "switchActions/deploy" in results._tasks[0].path
+    assert results._tasks[0].payload == {"switchIds": ["B"]}
+
+
+def test_pending_mixed_orphan_reports_unresolved_without_deployment():
+    """A marked subset remains visible even when the generated row is still active."""
+    child = _pending_plan_row("POLICY-GROUP-CHILD", ["CHILD_ACTIVE"], template="generated", source="POLICY-GROUP-ORIGINAL", deleted=False)
+    child["switches"].append({"switchId": "B", "priority": -500, "markDeleted": True})
+    instance, results, _ = _cached_pending_plan([child])
+    assert instance._policy_summary_cache[0]["markDeleted"] is False
+    assert instance._policy_summary_cache[0]["_deletedSwitchIds"] == ["B"]
+
+    summary = instance.schedule_pending_deleted_cleanup([{"name": "feature_enable", "description": "same"}])
+
+    unresolved = [item for item in summary["skipped"] if item.get("reason_code") == "unresolved_original_template"]
+    assert len(unresolved) == 1
+    assert unresolved[0]["policy_group_id"] == "POLICY-GROUP-ORIGINAL"
+    assert unresolved[0]["matched_policy_ids"] == ["POLICY-GROUP-CHILD"]
+    assert summary["switch_ids"] == []
+    assert instance.deploy_scheduled_pending_deleted_cleanup()["changed"] is False
+    assert results._tasks == []
+
+
+def test_public_pending_helper_deploys_only_marked_subset_of_unselected_mixed_parent():
+    """Deploy pending B, without including the still-active A or selected sibling."""
+    mixed = _pending_plan_row("POLICY-GROUP-101", ["A"], deleted=False)
+    mixed["switches"].append({"switchId": "B", "priority": -500, "markDeleted": True})
+    sibling = _pending_plan_row("POLICY-GROUP-102", ["C"], deleted=False)
+    instance, results, active = _cached_pending_plan([mixed, sibling], responses=[_resp({"switchIds": []}, method="POST")])
+    instance.prepare_delete_deploy_targets([{"name": "POLICY-GROUP-102"}], active)
+
+    summary = instance.deploy_pending_deleted_cleanup([{"name": "feature_enable"}])
+
+    assert summary["changed"] is True
+    assert summary["switch_ids"] == ["B"]
+    assert summary["matched_policy_ids"] == ["POLICY-GROUP-101"]
+    assert summary["skipped"] == []
+    assert len(results._tasks) == 1
+    assert results._tasks[0].payload == {"switchIds": ["B"]}
+    assert active[0]["switchIds"] == ["A"]
+
+
+def test_ordinary_summary_preserves_null_policies_compatibility():
+    """Strict completeness validation must not change the existing ordinary read."""
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([_resp({"policies": None})]), results=results)
+
+    assert instance.query_all(include_no_description=True, deduplicate=False) == []
+    assert instance._policy_summary_cache == []
+    assert len(results._tasks) == 1
+    assert results._tasks[0].verb == "GET"
+
+
+@pytest.mark.parametrize("second_remaining", [1, 2], ids=["stalled", "increasing"])
+def test_broad_summary_bounds_unique_pages_by_remaining_progress(second_remaining):
+    """Fresh IDs cannot justify an unbounded stream with no count progress."""
+    pages = [
+        {"policies": [_pending_plan_row("POLICY-GROUP-101", ["A"])], "meta": {"counts": {"remaining": 1}}},
+        {"policies": [_pending_plan_row("POLICY-GROUP-102", ["B"])], "meta": {"counts": {"remaining": second_remaining}}},
+    ]
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([_resp(page) for page in pages]), results=results)
+    instance._require_complete_summary = True
+
+    with pytest.raises(Exception, match="remaining.*decreas|pagination.*progress"):
+        instance._query_policy_summary_groups()
+
+    assert len(results._tasks) == 2
+    assert all(task.verb == "GET" for task in results._tasks)
+    assert instance._policy_summary_cache is None
+
+
+@pytest.mark.parametrize("with_child", [False, True], ids=["root", "known-parent-child"])
+def test_pending_template_comparison_normalizes_proven_owner(with_child):
+    parent = _pending_plan_row("POLICY-GROUP-101", ["A"], template=" feature_enable ")
+    rows = [parent]
+    if with_child:
+        rows.append(_pending_plan_row("POLICY-GROUP-CHILD", ["B"], template="generated_template", source="POLICY-GROUP-101"))
+    instance, results, _ = _cached_pending_plan(rows)
+
+    summary = instance.schedule_pending_deleted_cleanup([{"name": "feature_enable", "description": "same"}])
+
+    assert summary["switch_ids"] == (["A", "B"] if with_child else ["A"])
+    assert summary["skipped"] == []
+    assert results._tasks == []
+
+
+def test_unproven_non_group_source_recommends_usable_child_id():
+    """A controller source marker need not itself be an addressable group ID."""
+    child = _pending_plan_row("POLICY-GROUP-CHILD", ["B"], template="generated", source="custom-marker")
+    instance, results, _ = _cached_pending_plan([child])
+
+    summary = instance.schedule_pending_deleted_cleanup([{"name": "feature_enable", "description": "same"}])
+
+    unresolved = [item for item in summary["skipped"] if item.get("reason_code") == "unresolved_original_template"]
+    assert len(unresolved) == 1
+    assert unresolved[0]["policy_group_id"] == "POLICY-GROUP-CHILD"
+    assert summary["switch_ids"] == []
+    assert results._tasks == []
+    assert instance.schedule_pending_deleted_cleanup([{"name": unresolved[0]["policy_group_id"]}])["switch_ids"] == ["B"]
