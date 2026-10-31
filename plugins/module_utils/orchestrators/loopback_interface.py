@@ -162,22 +162,24 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
             raise RuntimeError(f"Cannot safely canonicalize IOS-XE loopback name {name!r} on {switch_id}")
         return f"Loopback{match.group(1)}"
 
-    def preflight(self, model_instances: Sequence[LoopbackInterfaceModel]) -> None:
+    def preflight_safety(self, model_instances: Sequence[LoopbackInterfaceModel]) -> None:
         """
         # Summary
 
-        Pre-mutation validation for the proposed loopbacks: the shared interface preflight (switch resolution, platform match,
-        capability, IOS-XE override removals), then the MPLS Handoff precondition for interfaces that would become `mplsLoopback`
-        (`_check_mpls_handoff`). Invoked by `NDStateMachine.manage_state` before any create or update, in check mode too.
+        Local safety checks for the proposed loopbacks: the shared switch-resolution and platform checks, then the MPLS Handoff
+        precondition for interfaces that would become `mplsLoopback` (`_check_mpls_handoff`). This is the hook every execution path
+        shares: the standalone module reaches it through `NDBaseInterfaceOrchestrator.preflight` (`NDStateMachine.manage_state`, in
+        check mode too), and the `nd_interfaces_workflow` planner calls it directly for its check-mode plan. Keeping the handoff check
+        here rather than in `preflight` means a dry run through either path refuses what a normal run refuses (PR #596 review).
 
         ## Raises
 
         ### RuntimeError
 
-        - Propagated from `NDBaseInterfaceOrchestrator.preflight`.
+        - Propagated from `NDBaseInterfaceOrchestrator.preflight_safety`.
         - Propagated from `_check_mpls_handoff`.
         """
-        super().preflight(model_instances)
+        super().preflight_safety(model_instances)
         self._check_mpls_handoff(model_instances)
 
     def _check_mpls_handoff(self, model_instances: Sequence[LoopbackInterfaceModel]) -> None:

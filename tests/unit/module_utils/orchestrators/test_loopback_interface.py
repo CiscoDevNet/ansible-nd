@@ -2254,29 +2254,124 @@ def test_loopback_interface_00960() -> None:
     """
     # Summary
 
-    Verify `preflight` runs the shared interface preflight and then the handoff check, in check mode, which is how `NDStateMachine`
-    reaches it before any mutation.
+    Verify `preflight` reaches the handoff check through `preflight_safety`, in check mode, which is how `NDStateMachine` reaches it
+    before any mutation. The refusal comes before the capability preflight, so the `capableSwitches` request is never sent.
 
     ## Test
 
     - Check mode is on
-    - Requests: switches list, capableSwitches (the switch is capable), switch inventory, fabric details (`mplsHandoff: false`)
-    - `RuntimeError` is the handoff message, raised only after the capability preflight passed
+    - Requests: switches list, switch inventory, fabric details (`mplsHandoff: false`)
+    - `RuntimeError` is the handoff message; no `capableSwitches` request follows
 
     ## Classes and Methods
 
-    - LoopbackInterfaceOrchestrator.preflight()
+    - LoopbackInterfaceOrchestrator.preflight_safety()
     - NDBaseInterfaceOrchestrator.preflight()
     """
     method_name = inspect.stack()[0][3]
-    rest_send = _mpls_rest_send(method_name, "abcd")
+    rest_send = _mpls_rest_send(method_name, "abc")
     rest_send.check_mode = True
     instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
 
     with pytest.raises(RuntimeError, match=HANDOFF_OFF):
         instance.preflight([_build_mpls_loopback_model(interface_name="loopback30")])
 
-    assert rest_send.response_count == 4
+    assert rest_send.response_count == 3
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1"
+
+
+def test_loopback_interface_00961() -> None:
+    """
+    # Summary
+
+    Verify `preflight_safety` alone refuses a new `mplsLoopback` while MPLS Handoff is disabled, in check mode and without any write. This
+    is the hook the `nd_interfaces_workflow` planner calls for its check-mode plan, so a dry run through the planner refuses what a normal
+    run refuses (PR #596 review).
+
+    ## Test
+
+    - Check mode is on; `state` is `merged`
+    - loopback30 (`mplsLoopback`) is proposed and absent from the switch inventory
+    - Requests: switches list, switch inventory, fabric details (`mplsHandoff: false`); all GET
+    - `RuntimeError` is the handoff message
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.preflight_safety()
+    - NDBaseInterfaceOrchestrator.preflight_safety()
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "abc", state="merged")
+    rest_send.check_mode = True
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    with pytest.raises(RuntimeError, match=HANDOFF_OFF):
+        instance.preflight_safety([_build_mpls_loopback_model(interface_name="loopback30")])
+
+    assert rest_send.response_count == 3
+    assert rest_send.verb == HttpVerbEnum.GET.value
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1"
+
+
+def test_loopback_interface_00962() -> None:
+    """
+    # Summary
+
+    Verify `preflight_safety` refuses a `replaced` conversion of an existing plain `loopback` to `mplsLoopback` while MPLS Handoff is
+    disabled, in check mode and without any write.
+
+    ## Test
+
+    - Check mode is on; `state` is `replaced`
+    - loopback30 (`mplsLoopback`) is proposed; the switch inventory shows it as a plain `loopback`
+    - Requests: switches list, switch inventory, fabric details (`mplsHandoff: false`); all GET
+    - `RuntimeError` is the handoff message
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.preflight_safety()
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "abc", state="replaced")
+    rest_send.check_mode = True
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    with pytest.raises(RuntimeError, match=HANDOFF_OFF):
+        instance.preflight_safety([_build_mpls_loopback_model(interface_name="loopback30")])
+
+    assert rest_send.response_count == 3
+    assert rest_send.verb == HttpVerbEnum.GET.value
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1"
+
+
+def test_loopback_interface_00963() -> None:
+    """
+    # Summary
+
+    Verify `preflight_safety` passes for an `mplsLoopback` that already is one on the controller, without a fabric details request, so an
+    unchanged interface keeps its no-op behavior under the shared hook.
+
+    ## Test
+
+    - Check mode is on; `state` is `merged`
+    - loopback30 (`mplsLoopback`) is proposed and the switch inventory shows it as `mplsLoopback`
+    - Requests: switches list, switch inventory; no fabric details GET
+    - No exception
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.preflight_safety()
+    """
+    method_name = inspect.stack()[0][3]
+    rest_send = _mpls_rest_send(method_name, "ab", state="merged")
+    rest_send.check_mode = True
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.preflight_safety([_build_mpls_loopback_model(interface_name="loopback30")])
+
+    assert rest_send.response_count == 2
+    assert rest_send.path.startswith("/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces")
 
 
 def test_loopback_interface_00970() -> None:
