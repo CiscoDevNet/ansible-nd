@@ -99,7 +99,7 @@ options:
                   description:
                     description:
                     - ASCII interface description, up to 254 characters.
-                    - An explicit empty string clears an existing description; ND 4.3.1 requires the module to omit the field on retry.
+                    - An explicit empty string clears an existing description.
                     type: str
                   duplex_mode:
                     description: Duplex mode; ND default is V(auto).

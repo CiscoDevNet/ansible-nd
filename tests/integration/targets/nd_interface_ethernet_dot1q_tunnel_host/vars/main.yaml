@@ -6,7 +6,6 @@
 # are selected by default. Use three dedicated, down, default-trunk NX-OS ports.
 test_fabric_name: "{{ nd_test_fabric_name | default('') }}"
 test_switch_ip: "{{ nd_test_switch_ip | default('') }}"
-test_switch_id: "{{ nd_test_switch_id | default('') }}"
 test_interface_names: "{{ nd_test_dot1q_interface_names | default([]) }}"
 test_expected_release: "{{ nd_test_expected_release | default('') }}"
 test_deploy: "{{ nd_test_deploy | default(false) | bool }}"

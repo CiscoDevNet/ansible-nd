@@ -40,6 +40,7 @@ class EthernetDot1qTunnelHostPolicyModel(StormControlMutexMixin, InterfacePolicy
 
     model_config = ConfigDict(extra="forbid")
 
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND echoes unset template defaults. In particular, dot1qTunnelHost uses
     # bpduFilter=enable, unlike accessHost's bpduFilter=default.
     reverse_diff_defaults: ClassVar[dict[str, Any]] = {

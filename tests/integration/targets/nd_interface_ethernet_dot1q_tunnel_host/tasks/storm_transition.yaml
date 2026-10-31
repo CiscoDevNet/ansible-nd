@@ -1,7 +1,7 @@
 ---
-# Optional regression for the open #647 finding. It is expected to FAIL on
-# 0d554ebd, not to treat the existing error as a passing outcome. The transition
-# is previewed and staged on ND, never deployed to a switch. See README.md/#533.
+# Optional regression: clear a unicast percentage limit and set broadcast PPS
+# in one merge. Preview and stage the transition on ND without deployment.
+# Physical storm-unit transition qualification is tracked separately in #533.
 - name: STORM REGRESSION | Seed an unicast percentage-only policy without deployment
   cisco.nd.nd_interface_ethernet_dot1q_tunnel_host:
     fabric_name: "{{ test_fabric_name }}"

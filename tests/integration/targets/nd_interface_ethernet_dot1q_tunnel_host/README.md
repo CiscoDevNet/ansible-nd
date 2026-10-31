@@ -10,8 +10,9 @@ ND GETs; the module's planned `after` value alone is not accepted as readback.
 
 Run against a dedicated NX-OS test fabric on ND **4.2.1** or **4.3.1**. Provide
 exactly three existing, unused physical Ethernet ports on one switch. Before
-any writes, the target checks the actual ND build, current fabric switch IP and
-chassis serial mapping, NX-OS interface identities, down/non-member status,
+any writes, the target checks the actual ND build, resolves the current switch
+ID from a unique management-IP match in the selected fabric, and checks NX-OS
+interface identities, down/non-member status,
 default `trunkHost` policies with empty descriptions, and the absence of **any**
 pre-existing `dot1qTunnelHost` policy anywhere in the fabric. A failed preflight
 does not arm cleanup or reset ports. Existing dot1q policies make the suite stop.
@@ -37,12 +38,12 @@ The target explicitly pins both ND modules to `ansible_host`, so an inherited
 | --- | --- |
 | `nd_test_expected_release` | Required: `4.2.1` or `4.3.1`; compared with `/api/v1/infra/about` buildVersion before writes. |
 | `nd_test_fabric_name` | Required dedicated test fabric. |
-| `nd_test_switch_ip` / `nd_test_switch_id` | Required current management IP and verified chassis serial. |
+| `nd_test_switch_ip` | Required management IP; the current switch ID is resolved from fresh fabric inventory before writes. |
 | `nd_test_dot1q_interface_names` | Required list of exactly three distinct canonical physical Ethernet names. |
 | `nd_test_dot1q_vlan` | Base test service VLAN, default 150; the tests also use VLAN+1 through VLAN+3. |
 | `nd_test_deploy` | Default false. True applies the same state suite and cleanup with exact-target deployment enabled. |
 | `nd_test_output_level` | Default debug; before/after are asserted and optional logs can aid diagnosis. |
-| `nd_test_dot1q_storm_transition` | Optional known-regression test, default false; allowed only when deploy=false. |
+| `nd_test_dot1q_storm_transition` | Optional storm-unit merge regression test, default false; allowed only when deploy=false. |
 | `nd_test_verify_cli` | Default false; with deploy=true, verify NX-OS running mode, VLAN, description, and CDP over SSH. Supply `nd_test_switch_username` and `nd_test_switch_password` securely. |
 | `nd_test_cli_evidence_file` | Optional controller-local file for credential-free port-only CLI snapshots; mode 0600. |
 | `nd_logging_config` | Optional existing collection logging configuration file. |
@@ -109,20 +110,17 @@ when an inventory contains more than one controller.
   and requires no remaining managed dot1q hosts. Cleanup failure is a test
   failure; it is not silently ignored. Initial preflight failures do not clean.
 
-## Known storm-control regression
+## Storm-control merge regression
 
-The new Medium review finding at PR head `0d554ebd` rejects a valid `merged`
-preview while clearing an old unicast percentage limit and setting broadcast
-PPS. Set `nd_test_dot1q_storm_transition=true` with `nd_test_deploy=false` to
-exercise it. The case seeds a percentage policy on ND, previews the transition in check
-mode, proves that preview changed no intent, then stages the completed merge
-without deployment. Independent GETs verify the cleared percentage and new PPS
-limit, and replay must be a no-op. No unit-family transition is deployed.
-**It fails on the original head**; the error is not marked as success or
-ignored. The accompanying merge-validation fix makes this regression plan
-successfully. Cleanup still runs. The fixed case must leave intent unchanged
-during check mode, then stage and read back the completed transition. Safe physical unit transitions
-remain separately tracked by issue #533; this case does not qualify them.
+Set `nd_test_dot1q_storm_transition=true` with `nd_test_deploy=false` to check
+clearing a unicast percentage limit and setting broadcast PPS in one `merged`
+request. The case seeds a percentage policy on ND, previews the transition in
+check mode, proves that preview changed no intent, then stages the completed
+merge without deployment. Independent GETs verify the cleared percentage and
+new PPS limit, and replay must be a no-op. Cleanup returns the reserved ports
+to defaults. No unit-family transition is deployed. Safe physical unit
+transitions remain separately tracked by issue #533; this case does not
+qualify them.
 
 ND 4.2.1 ordinary empty-description clearing was previously unqualified live.
 It is deliberately tested rather than skipped or treated as an expected error.

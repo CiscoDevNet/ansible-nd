@@ -31,8 +31,8 @@ class EthernetDot1qTunnelHostInterfaceOrchestrator(EthernetBaseOrchestrator):
 
     model_class: ClassVar[type[NDBaseModel]] = EthernetDot1qTunnelHostInterfaceModel
     MEMBER_FAMILY: ClassVar[str] = ""
-    # Workflow bulk modify is deferred until the workflow family is added and
-    # its dot1q full-policy request/partial-outcome contract is live-qualified.
+    # Use singular PUT until the dot1q full-policy bulk modify path, including
+    # partial outcomes, is live-qualified on ND 4.3.1.
     supports_bulk_full_modify: ClassVar[bool] = False
 
     def _managed_policy_types(self) -> set[str]:
@@ -90,4 +90,5 @@ class EthernetDot1qTunnelHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         except Exception:
             if not self._rejected_empty_description(response_count):
                 raise
+            # TODO(4.3.1) empty-interface-description-accepted
             return super()._request(path, verb, retry, not_found_ok, operation_type)

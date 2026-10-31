@@ -4,7 +4,6 @@
 nd_test_expected_release: '4.2.1'
 nd_test_fabric_name: dedicated_test_fabric
 nd_test_switch_ip: 192.0.2.82
-nd_test_switch_id: REPLACE_WITH_VERIFIED_CHASSIS_SERIAL
 nd_test_dot1q_interface_names:
   - Ethernet1/40
   - Ethernet1/41

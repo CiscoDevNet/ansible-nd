@@ -15,7 +15,6 @@
       - ansible_password is defined
       - test_fabric_name | length > 0
       - test_switch_ip | length > 0
-      - test_switch_id | length > 0
       - test_expected_release in ['4.2.1', '4.3.1']
       - test_interface_names is sequence and test_interface_names is not string
       - test_interface_names | length == 3
@@ -27,7 +26,7 @@
       - not test_verify_cli or nd_test_switch_username is defined
       - not test_verify_cli or nd_test_switch_password is defined
     fail_msg: >-
-      Supply a controller, credentials, fabric, switch IP/serial, expected ND
+      Supply a controller, credentials, fabric, switch IP, expected ND
       release, and exactly three distinct reserved NX-OS Ethernet ports. Run
       normally: individual tasks exercise check mode internally. The optional
       storm-transition regression is staging/check-mode only (nd_test_deploy=false).
@@ -61,17 +60,25 @@
     path: "/api/v1/manage/fabrics/{{ test_fabric_name | urlencode | replace('/', '%2F') }}/switches"
   register: dot1q_switches
 
-- name: SETUP | Match the supplied switch IP and serial to one current inventory row
+- name: SETUP | Resolve the current switch ID from its management IP
   vars:
     selected_switches: >-
       {{ dot1q_switches.current.switches | default([])
          | selectattr('fabricManagementIp', 'equalto', test_switch_ip) | list }}
-  ansible.builtin.assert:
-    that:
-      - dot1q_switches.status | int == 200
-      - selected_switches | length == 1
-      - (selected_switches | first).switchId == test_switch_id
-    fail_msg: The selected fabric must contain exactly one switch matching the supplied management IP and expected chassis serial.
+  block:
+    - name: SETUP | Require one matching inventory row with a usable switch ID
+      ansible.builtin.assert:
+        that:
+          - dot1q_switches.status | int == 200
+          - selected_switches | length == 1
+          - (selected_switches | first).switchId is defined
+          - (selected_switches | first).switchId is string
+          - (selected_switches | first).switchId | length > 0
+        fail_msg: The selected fabric must contain exactly one switch matching the management IP, with a nonempty switch ID.
+
+    - name: SETUP | Record the switch ID from fresh inventory
+      ansible.builtin.set_fact:
+        test_switch_id: "{{ (selected_switches | first).switchId }}"
 
 - name: SETUP | Inspect all managed dot1q hosts using the module's paginated read path
   cisco.nd.nd_interface_ethernet_dot1q_tunnel_host:
