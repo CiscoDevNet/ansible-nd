@@ -1,0 +1,362 @@
+---
+# Run after overridden.yaml has released the other reserved group members.
+# Every override retains the existing port-channel group, and the outer suite
+# cleanup owns both group names and all physical members used below.
+
+- name: Query the group scope before the authoritative Ethernet case
+  cisco.nd.nd_manage_interface_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+  register: authoritative_ethernet_scope
+  changed_when: false
+
+- name: Reject an authoritative Ethernet case with unrelated groups
+  ansible.builtin.assert:
+    that:
+      - authoritative_ethernet_scope.gathered is defined
+      - authoritative_ethernet_scope.gathered | type_debug == 'list'
+      - >-
+        authoritative_ethernet_scope.gathered
+        | map(attribute='interface_group_name')
+        | list
+        | difference([
+            interface_group_names.port_channel,
+            interface_group_names.ethernet_with_policy
+          ])
+        | length == 0
+      - >-
+        interface_group_names.port_channel in
+        (authoritative_ethernet_scope.gathered
+         | map(attribute='interface_group_name')
+         | list)
+    fail_msg: >-
+      Authoritative Ethernet coverage must follow the reserved one-group
+      override. Unrelated Interface Groups will not be removed.
+
+- name: Define the Ethernet baseline and expected replacement associations
+  ansible.builtin.set_fact:
+    authoritative_ethernet_baseline:
+      interface_group_name: "{{ interface_group_names.ethernet_with_policy }}"
+      type: ethernetWithPolicy
+      ethernet_attributes:
+        admin_state: true
+        cdp: false
+        extra_config: "description {{ interface_group_run_marker }}"
+      networks:
+        - "{{ test_network_1 }}"
+      switch_interfaces:
+        - switch_id: "{{ test_switch_id }}"
+          interface_names:
+            - "{{ test_ethernet_policy }}"
+    authoritative_ethernet_expected:
+      interface_group_name: "{{ interface_group_names.ethernet_with_policy }}"
+      type: ethernetWithPolicy
+      ethernet_attributes:
+        admin_state: true
+        cdp: true
+      networks:
+        - "{{ test_network_1 }}"
+      switch_interfaces:
+        - switch_id: "{{ test_switch_id }}"
+          interface_names: >-
+            {{
+              [test_ethernet_policy]
+              + ([test_any_ethernet_primary]
+                 if authoritative_ethernet_case.add_member else [])
+            }}
+
+- name: Establish CDP disabled with one network and one Ethernet member
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: replaced
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config:
+      - "{{ authoritative_ethernet_baseline }}"
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: true
+        failed: false
+    nd_queries:
+      - name: Fetch the Ethernet policy baseline
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/interfaceGroups?max=10000
+        method: get
+        expected_status: 200
+  register: authoritative_ethernet_baseline_result
+
+- name: Validate the non-default baseline and retained port-channel group
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: >-
+      {{ authoritative_ethernet_baseline_result.nd_query_results[0].result }}
+    test_data:
+      - "{{ authoritative_ethernet_baseline }}"
+      - "{{ interface_group_pc_one_member }}"
+    mode: exact
+    invariants:
+      total_count: 2
+      unique_group_names: true
+      unique_members: true
+  when: not ansible_check_mode
+
+- name: Confirm a supplied sparse merged policy retains omitted settings
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config: >-
+      {{
+        [{
+          'interface_group_name':
+            interface_group_names.ethernet_with_policy,
+          'type': 'ethernetWithPolicy',
+          'ethernet_attributes': {'admin_state': true}
+        }
+        | combine(
+            {'switch_interfaces':
+              authoritative_ethernet_expected.switch_interfaces}
+            if authoritative_ethernet_case.add_member else {}
+          )]
+      }}
+    expected:
+      check_mode:
+        changed: "{{ authoritative_ethernet_case.add_member }}"
+        failed: false
+      apply:
+        changed: "{{ authoritative_ethernet_case.add_member }}"
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Fetch the unchanged sparse merged policy
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+          interface_group_names.ethernet_with_policy }}
+        method: get
+        expected_status: 200
+  register: authoritative_ethernet_merged_control
+
+- name: Validate sparse merged retained CDP, extra config, and associations
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: >-
+      {{ authoritative_ethernet_merged_control.nd_query_results[0].result }}
+    test_data:
+      - >-
+        {{
+          authoritative_ethernet_expected
+          | combine(
+              {'ethernet_attributes': {
+                'cdp': false,
+                'extra_config':
+                  'description ' ~ interface_group_run_marker
+              }},
+              recursive=true
+            )
+        }}
+    mode: exact
+  when: not ansible_check_mode
+
+- name: Restore one Ethernet member before authoritative member-add coverage
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: replaced
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config:
+      - "{{ authoritative_ethernet_baseline }}"
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: true
+        failed: false
+    nd_queries:
+      - name: Fetch the restored one-member baseline
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+          interface_group_names.ethernet_with_policy }}
+        method: get
+        expected_status: 200
+  register: authoritative_ethernet_member_restore
+  when: authoritative_ethernet_case.add_member | bool
+
+- name: Validate the restored non-default policy and one-member baseline
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: >-
+      {{ authoritative_ethernet_member_restore.nd_query_results[0].result }}
+    test_data:
+      - "{{ authoritative_ethernet_baseline }}"
+    mode: exact
+  when:
+    - authoritative_ethernet_case.add_member | bool
+    - not ansible_check_mode
+
+- name: Define the sparse authoritative policy without network associations
+  ansible.builtin.set_fact:
+    authoritative_ethernet_input: >-
+      {{
+        {
+          'interface_group_name':
+            interface_group_names.ethernet_with_policy,
+          'type': 'ethernetWithPolicy',
+          'ethernet_attributes': {'admin_state': true}
+        }
+        | combine(
+            {'switch_interfaces':
+              authoritative_ethernet_expected.switch_interfaces}
+            if authoritative_ethernet_case.add_member else {}
+          )
+      }}
+
+- name: Recheck the complete group scope immediately before override
+  cisco.nd.nd_manage_interface_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+  register: authoritative_ethernet_override_scope
+  changed_when: false
+  when: authoritative_ethernet_case.state == 'overridden'
+
+- name: Reject override if any unretained group appeared
+  ansible.builtin.assert:
+    that:
+      - authoritative_ethernet_override_scope.gathered is defined
+      - authoritative_ethernet_override_scope.gathered | type_debug == 'list'
+      - >-
+        authoritative_ethernet_override_scope.gathered
+        | map(attribute='interface_group_name')
+        | list
+        | sort
+        == [interface_group_names.port_channel,
+            interface_group_names.ethernet_with_policy] | sort
+    fail_msg: >-
+      The overridden case retains only its Ethernet group and the reserved
+      port-channel group. The group scope changed; no override was applied.
+  when: authoritative_ethernet_case.state == 'overridden'
+
+- name: Reset omitted CDP and extra config independently of membership
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: "{{ authoritative_ethernet_case.state }}"
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config: >-
+      {{
+        [authoritative_ethernet_input]
+        + ([interface_group_pc_one_member]
+           if authoritative_ethernet_case.state == 'overridden' else [])
+      }}
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Fetch the authoritative Ethernet replacement result
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/interfaceGroups?max=10000
+        method: get
+        expected_status: 200
+  register: authoritative_ethernet_result
+
+- name: Validate check mode predicts the effective Ethernet policy
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ authoritative_ethernet_result.check_mode_result.after }}"
+    test_data:
+      - "{{ authoritative_ethernet_expected }}"
+    mode: exact
+
+- name: Validate authoritative policy reset and retained associations on NDFC
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ authoritative_ethernet_result.nd_query_results[0].result }}"
+    test_data:
+      - "{{ authoritative_ethernet_expected }}"
+      - "{{ interface_group_pc_one_member }}"
+    mode: exact
+    invariants:
+      total_count: 2
+      unique_group_names: true
+      unique_members: true
+  register: authoritative_ethernet_live_validation
+  when: not ansible_check_mode
+
+- name: Confirm omitted extra config was removed from prediction and NDFC
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          authoritative_ethernet_result.check_mode_result.after
+          | selectattr('interface_group_name', 'equalto',
+                       interface_group_names.ethernet_with_policy)
+          | map(attribute='ethernet_attributes')
+          | map(attribute='extra_config', default='')
+          | list
+        ) == ['']
+      - >-
+        (
+          authoritative_ethernet_live_validation.groups
+          | selectattr('interface_group_name', 'equalto',
+                       interface_group_names.ethernet_with_policy)
+          | map(attribute='ethernet_attributes')
+          | map(attribute='extra_config', default='')
+          | list
+        ) == ['']
+    fail_msg: >-
+      Authoritative replacement retained the baseline extra_config description
+      in check mode or on NDFC.
+  when: not ansible_check_mode
+
+- name: Verify the replaced Ethernet members have no pending configuration
+  ansible.builtin.include_tasks: preview.yaml
+  vars:
+    preview_name: "AUTHORITATIVE ETHERNET POLICY REPLACEMENT"
+    preview_request_interfaces: >-
+      {{
+        [{'switchId': test_switch_id,
+          'interfaceName': test_ethernet_policy}]
+        + ([{'switchId': test_switch_id,
+             'interfaceName': test_any_ethernet_primary}]
+           if authoritative_ethernet_case.add_member else [])
+      }}
+    preview_test_data: >-
+      {{
+        [{'switch_id': test_switch_id,
+          'interface_name': test_ethernet_policy,
+          'pending': 'clean'}]
+        + ([{'switch_id': test_switch_id,
+             'interface_name': test_any_ethernet_primary,
+             'pending': 'clean'}]
+           if authoritative_ethernet_case.add_member else [])
+      }}
