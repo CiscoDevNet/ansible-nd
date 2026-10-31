@@ -33,6 +33,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.staged_stat
     crud_module_args,
     prepare_crud_state,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.overlay_deletion_finalizer import (
+    OverlayDeletionFinalizer,
+)
 
 
 class VrfStateMachine:
@@ -390,6 +393,8 @@ class VrfStateMachine:
         """
         Detach and deploy current VRF attachments before removing the VRF.
         """
+        if module_args.get("deletion_mode", "standard") == "finalize":
+            return OverlayDeletionFinalizer(self.coordinator, "vrf").run(module_args, strategy)
         config = module_args.get("config") or []
 
         if not config:

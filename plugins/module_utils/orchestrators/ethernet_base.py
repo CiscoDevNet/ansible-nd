@@ -25,17 +25,21 @@ resolution) from `NDBaseInterfaceOrchestrator` and adds ethernet-specific functi
 from __future__ import annotations
 
 import logging
+import re
 from collections import defaultdict
 from collections.abc import Sequence
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, ClassVar
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import EpManageFabricsGet
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_vpc_pair import (
     EpVpcPairGet,
 )
@@ -49,6 +53,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_links import (
     EpManageLinksListGet,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.interface_membership import (
     EthernetMembershipIndex,
     MissingPeerInventoryError,
@@ -72,6 +78,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import (
     InterfaceDefaultConfig,
     InterfaceDefaultPolicyModel,
+    ROUTED_SIBLING_RESET_FIELDS,
+    has_retained_reset_auto_negotiation,
+    has_typed_routed_sibling_residue,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
     DeferredDeleteRequestGroup,
@@ -166,6 +175,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         "extra_config",
     }
     MEMBER_FAMILY: ClassVar[str] = ""
+    # Conservative client request bound; the endpoint schema declares no maximum.
+    RESET_NEGOTIATION_PREVIEW_ITEMS: ClassVar[int] = 100
     MEMBER_PLANNING_SHAPES: ClassVar[dict[tuple[str, str], tuple[str, str]]] = {
         ("access", "nx-os"): ("access", "accessHost"),
         ("access", "ios-xe"): ("access", "iosXeAccess"),
@@ -246,16 +257,32 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         self._pending_resets: list[tuple[str, str]] = []
         self._pending_xe_resets: list[tuple[str, str]] = []
         self._fabric_link_endpoints_cache: dict[tuple[str, str], dict] | None = None
+        self._fabric_link_evidence_generation: int | None = None
         self._fabric_link_cache_provider: EthernetBaseOrchestrator | None = None
         # Flipped for the rest of the run once the controller rejects the template's empty `description` (ND 4.3.1); see
         # `_post_normalize`.
         self._normalize_omits_description: bool = False
         self._member_records: dict[tuple[str, str], dict] = {}
         self._member_intents: dict[tuple[str, str], MemberUpdateIntent] = {}
+        self._new_member_patch_owners: dict[tuple[str, str], tuple[str, str, str]] = {}
         self._validated_member_ownership: dict[tuple[str, str], Any] = {}
         self._membership_index_cache = None
         self._membership_index_inventory_switches: frozenset[str] = frozenset()
         self._member_peer_serial_cache: dict[str, str] = {}
+        self._staged_detachment_pair_checked: set[str] = set()
+        self._staged_detachment_generation: int = 0
+        self._reset_auto_negotiation_retained: set[tuple[str, str]] = set()
+        self._reset_auto_negotiation_repairs: set[tuple[str, str]] = set()
+        self._reset_auto_negotiation_checked: set[tuple[str, str]] = set()
+        self._reset_auto_negotiation_deploy_blocks: set[tuple[str, str]] = set()
+        self._reset_negotiation_preview_cache_provider: EthernetBaseOrchestrator | None = None
+        self._reset_negotiation_fabric_preview: dict[str, dict] | None = None
+        self._bounded_workflow_reset_evidence = False
+        self._reset_negotiation_fabric_blocks: dict[tuple[str, str], dict[str, list[str]]] = {}
+        self._reset_negotiation_interface_preview: dict[tuple[str, str], dict[str, list[str]]] = {}
+        self._reset_negotiation_preview_markers: dict[tuple[str, str], tuple[int, int]] = {}
+        self._reset_negotiation_preview_scope: dict[tuple[str, str], tuple[str, str, tuple[int, int]]] = {}
+        self._reset_negotiation_preview_epoch: set[tuple[str, str]] | None = None
 
     def _managed_policy_types(self) -> set[str]:
         """
@@ -378,8 +405,9 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         }
 
     def share_fabric_link_cache(self, provider: EthernetBaseOrchestrator) -> None:
-        """Use one Ethernet orchestrator as the workflow-wide owner of lazy fabric-link discovery."""
+        """Share lazy Ethernet fabric-link and reset-preview discovery across the workflow."""
         self._fabric_link_cache_provider = None if provider is self else provider
+        self._reset_negotiation_preview_cache_provider = None if provider is self else provider
 
     def _fabric_link_endpoints(self) -> dict[tuple[str, str], dict]:
         """
@@ -391,7 +419,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         on the interface, so they do not make an interface fabric-owned. Both ends of a link are indexed, so a link another fabric
         owns that terminates on this fabric's switch is found under this fabric's listing.
 
-        Fetched at most once per module run via `GET /api/v1/manage/links?fabricName=`, following `meta.counts.remaining` pagination
+        Fetched once per topology-evidence generation via `GET /api/v1/manage/links?fabricName=`, following `meta.counts.remaining` pagination
         with `offset`. A fabric with no links (HTTP 404 or an empty `links[]`) yields an empty map.
 
         ## Raises
@@ -402,7 +430,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         if self._fabric_link_cache_provider is not None:
             return self._fabric_link_cache_provider._fabric_link_endpoints()
-        if self._fabric_link_endpoints_cache is not None:
+        generation = self.state_snapshot.topology_generation
+        if self._fabric_link_endpoints_cache is not None and self._fabric_link_evidence_generation == generation:
             return self._fabric_link_endpoints_cache
         endpoints: dict[tuple[str, str], dict] = {}
         offset = 0
@@ -430,6 +459,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 break
             offset += len(links)
         self._fabric_link_endpoints_cache = endpoints
+        self._fabric_link_evidence_generation = generation
         return endpoints
 
     def _check_xe_fabric_link(self, model_instance: ModelType, existing_data: dict | None = None) -> None:
@@ -458,6 +488,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         link = self._fabric_link_endpoints().get((switch_id, interface_name.lower()))
         if link is None:
             return
+        # Pylint 3.3.1 can misread string keys inside Python 3.11 f-strings.
+        # pylint: disable=implicit-str-concat
         raise RuntimeError(
             f"Interface {interface_name} on switch {switch_ip} is an endpoint of fabric link "
             f"{link.get('linkId')} ({(link.get('configData') or {}).get('policyType')}: {link.get('srcSwitchName')} "
@@ -465,6 +497,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             f"fabric-owned intent with policy '{self._desired_policy_type(model_instance)}'; fabric links must be changed through "
             f"the fabric link workflow, not an interface module."
         )
+        # pylint: enable=implicit-str-concat
 
     @staticmethod
     def _is_ios_xe(iface: dict) -> bool:
@@ -574,6 +607,13 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         with a non-null value. These fields persist across `interfaceActions/normalize` because ND's validator rejects 0/null
         on them; the orchestrator routes such interfaces to the PUT-as-replace path on `state: deleted` so they actually clear.
 
+        A narrowly typed routed-policy residue on a current NX trunk uses the
+        same replacement path. It never counts as an already-reset default;
+        the existing fresh readback must prove the replacement took effect.
+        Any non-null storm threshold also requires replacement: normalize's
+        zero sentinel can generate real rate-limit CLI while stormControl is
+        false, and omitting an existing threshold from normalize can retain it.
+
         ## Raises
 
         None
@@ -581,7 +621,11 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         if existing_data is None:
             return False
         policy = existing_data.get("configData", {}).get("networkOS", {}).get("policy") or {}
-        return any(policy.get(field) is not None for field in InterfaceDefaultConfig.UNRESETTABLE_FIELDS)
+        return (
+            any(policy.get(field) is not None for field in InterfaceDefaultConfig.UNRESETTABLE_FIELDS | InterfaceDefaultConfig.STORM_THRESHOLD_FIELDS)
+            or existing_data.get("interfaceType") == "ethernet"
+            and has_typed_routed_sibling_residue(existing_data.get("configData"))
+        )
 
     def _existing_interface(self, interface_name: str, switch_id: str) -> dict | None:
         """
@@ -746,6 +790,179 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             existing_data = self._existing_interface(model_instance.interface_name, switch_id)
             self._prepare_member_intent(model_instance, existing_data)
 
+    def validate_new_member_patch_intent(self, model_instance: ModelType) -> MemberUpdateIntent:
+        """Validate explicit safe intent without granting future ownership."""
+        state = self.rest_send.params.get("state") if self.rest_send and self.rest_send.params else None
+        if state != "merged":
+            raise RuntimeError("New aggregate member patches require state: merged.")
+        fields, values = self._requested_member_updates(model_instance)
+        if not fields or fields - self.PORT_CHANNEL_MODIFIABLE_FIELDS:
+            raise RuntimeError("New aggregate member patches may request only description, admin_state, or safe extra_config.")
+        values = normalize_safe_member_updates(values)
+        return MemberUpdateIntent(requested_state=state, effective_state="merged", requested_fields=fields, requested_values=values)
+
+    def validate_new_member_preparation(
+        self,
+        model_instance: ModelType,
+        *,
+        expected_current: dict[str, Any] | None = None,
+        require_prepared: bool = False,
+    ) -> dict[str, Any]:
+        """Prove one explicit NX-OS host is safe to prepare before attachment.
+
+        This grants no member ownership and writes nothing. The workflow must
+        refresh complete local and reciprocal peer inventories before using this
+        proof for transport, then repeat it after staging the host conversion.
+        Existing member policies, parent claims and unexplained operational
+        membership never qualify for a host-policy write.
+        """
+        # Exact controller/receipt types are part of the validation contract.
+        # pylint: disable=unidiomatic-typecheck
+        if self.deploy or not isinstance(model_instance, self.model_class):
+            raise RuntimeError("New member preparation requires a stage-only family model.")
+        self.validate_new_member_patch_intent(model_instance)
+        shapes = {"accessHost": "access", "trunkHost": "trunk", "routedHost": "routed"}
+        desired_type = self._desired_policy_type(model_instance)
+        if desired_type not in shapes or self._desired_network_os(model_instance) != "nx-os" or shapes[desired_type] != self.MEMBER_FAMILY:
+            raise RuntimeError("New member preparation supports only matching NX-OS access, trunk or routed hosts.")
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        snapshot = self.state_snapshot
+        if not snapshot.has_switch(switch_id):
+            raise RuntimeError("New member preparation requires a complete clean switch inventory.")
+        current = self._existing_interface(model_instance.interface_name, switch_id)
+        if (
+            not isinstance(current, dict)
+            or current.get("interfaceType") != "ethernet"
+            or str(current.get("interfaceName") or "").casefold() != model_instance.interface_name.casefold()
+            or current.get("switchId") not in (None, switch_id)
+        ):
+            raise RuntimeError("New member preparation requires one existing physical Ethernet identity.")
+        config = current.get("configData")
+        network_os = config.get("networkOS") if isinstance(config, dict) else None
+        policy = network_os.get("policy") if isinstance(network_os, dict) else None
+        current_type = policy.get("policyType") if isinstance(policy, dict) else None
+        if (
+            not isinstance(config, dict)
+            or not isinstance(network_os, dict)
+            or not isinstance(policy, dict)
+            or network_os.get("networkOSType") != "nx-os"
+            or current_type not in shapes
+            or config.get("mode") != shapes[current_type]
+        ):
+            raise RuntimeError("New member preparation refuses nonstandard, fabric-owned or malformed host policies.")
+        for values in (config, policy):
+            if any(values.get(field) not in (None, "") for field in ("primaryInterface", "portChannelId")):
+                raise RuntimeError("New member preparation refuses configured aggregate ownership.")
+        oper = current.get("operData")
+        if not isinstance(oper, dict):
+            raise RuntimeError("New member preparation requires valid operational membership evidence.")
+        oper_id = oper.get("portChannelId")
+        if type(oper_id) is not int or oper_id not in (-1, 0):
+            raise RuntimeError("New member preparation refuses positive or ambiguous operational membership.")
+        if expected_current is not None and (
+            expected_current.get("interfaceType") != current.get("interfaceType")
+            or str(expected_current.get("interfaceName") or "").casefold() != model_instance.interface_name.casefold()
+            or expected_current.get("switchId") not in (None, switch_id)
+            or expected_current.get("configData") != config
+        ):
+            raise RuntimeError("New member preparation changed since planning; refusing stale host conversion.")
+        peer_id = self._member_peer_serial_cache.get(switch_id)
+        if peer_id is not None and not snapshot.has_switch(peer_id):
+            raise RuntimeError("New member preparation requires the complete reciprocal peer inventory.")
+        inventories = snapshot.clean_interfaces_by_switch
+        index = EthernetMembershipIndex(inventories, peer_switch_ids=self._member_peer_serial_cache)
+        if index.get_member(switch_id, model_instance.interface_name) is not None or index.claiming_parents(switch_id, model_instance.interface_name):
+            raise RuntimeError("New member preparation refuses existing aggregate membership or parent claims.")
+        # With no current member policy, do not infer a vPC slot from a host row.
+        # Both peer slots are deliberately protected until authentic membership
+        # can be verified after the explicit standalone parent is staged.
+        for owner_id in (switch_id, *((peer_id,) if peer_id is not None else ())):
+            for record in inventories[owner_id].values():
+                record_policy = self._interface_policy(record)
+                if record_policy is None or (owner_id != switch_id and record.get("interfaceType") != "vpc"):
+                    continue
+                for field in ("ports", "peer1MemberPorts", "peer2MemberPorts"):
+                    if field not in record_policy:
+                        continue
+                    names = EthernetMembershipIndex._valid_vpc_member_names(record_policy[field])
+                    if names is None:
+                        raise RuntimeError("New member preparation refuses malformed parent membership lists.")
+                    if model_instance.interface_name.casefold() in names:
+                        raise RuntimeError("New member preparation refuses a local or reciprocal peer parent claim.")
+        for record in inventories[switch_id].values():
+            name = str(record.get("interfaceName") or "").casefold()
+            if record.get("interfaceType") == "subInterface" and name.rsplit(".", 1)[0] == model_instance.interface_name.casefold():
+                raise RuntimeError("New member preparation refuses a physical parent with existing subinterfaces.")
+        if (switch_id, model_instance.interface_name.casefold()) in self._fabric_link_endpoints():
+            raise RuntimeError("New member preparation refuses a fabric-link endpoint.")
+        if require_prepared:
+            if current_type != desired_type or config.get("mode") != shapes[desired_type]:
+                raise RuntimeError("Prepared host policy does not match the explicit parent family.")
+            desired_policy = model_instance.to_payload()["configData"]["networkOS"]["policy"]
+            current_policy_model = type(model_instance.config_data.network_os.policy).from_response(policy)
+            desired_policy_model = type(current_policy_model).from_response(desired_policy)
+            for field in desired_policy_model.model_fields_set:
+                expected = getattr(desired_policy_model, field)
+                actual = getattr(current_policy_model, field)
+                alias = type(desired_policy_model).model_fields[field].alias or field
+                if actual != expected or (type(expected) is bool and type(policy.get(alias)) is not bool):
+                    raise RuntimeError(f"Prepared host readback differs for {alias!r}; refusing parent attachment.")
+            for field in ("description", "adminState", "extraConfig"):
+                if field in desired_policy and policy.get(field) != desired_policy[field]:
+                    raise RuntimeError(f"Prepared host readback differs for explicit {field!r}.")
+        return deepcopy(current)
+
+    def refresh_new_member_preparation_contexts(
+        self,
+        model_instances: Sequence[ModelType],
+        *,
+        expected_records: dict[tuple[str, str], dict[str, Any]] | None = None,
+        require_prepared: bool = False,
+    ) -> dict[tuple[str, str], dict[str, Any]]:
+        """GET-refresh complete ownership evidence before or after preparation.
+
+        Only the exact named switches and their resolved reciprocal vPC peers are
+        read. There is no normalization, rediscovery or deployment. Fresh fabric
+        link intent is checked for every target before any caller may continue.
+        """
+        models = list(model_instances)
+        switch_ids = {self._resolve_switch_id(model.switch_ip) for model in models}
+        refresh_ids = set(switch_ids)
+        for switch_id in sorted(switch_ids):
+            peer_id = self._load_staged_detachment_peer(switch_id, load_peer_inventory=False)
+            if peer_id is not None:
+                refresh_ids.add(peer_id)
+        self.state_snapshot.refresh(sorted(refresh_ids))
+        self._membership_index_cache = None
+        self._membership_index_inventory_switches = frozenset()
+        # Preparing host policies changes interface intent, not fabric links or
+        # switch/vPC topology. Keep their execution-scoped evidence shared.
+        observed = {}
+        for model in models:
+            key = self._member_key(self._resolve_switch_id(model.switch_ip), model.interface_name)
+            if key in observed or (expected_records is not None and key not in expected_records):
+                raise RuntimeError("New member preparation requires unique exact planned target records.")
+            observed[key] = self.validate_new_member_preparation(
+                model,
+                expected_current=expected_records[key] if expected_records is not None else None,
+                require_prepared=require_prepared,
+            )
+        return observed
+
+    def prepare_new_member_patch_intent(self, model_instance: ModelType, *, parent_switch_id: str, parent_name: str, parent_policy_type: str) -> None:
+        """Retain safe caller fields and an exact owner expectation for refresh.
+
+        The workflow planner has separately proven the explicit parent's final
+        membership and the target's current lack of ownership. This receipt is
+        not an ownership proof and cannot authorize a member PUT itself.
+        """
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        if switch_id != parent_switch_id or not parent_name or not parent_policy_type:
+            raise RuntimeError("New aggregate member patch has invalid parent identity.")
+        key = self._member_key(switch_id, model_instance.interface_name)
+        self._member_intents[key] = self.validate_new_member_patch_intent(model_instance)
+        self._new_member_patch_owners[key] = parent_switch_id, parent_name.casefold(), parent_policy_type
+
     def refresh_member_update_contexts(self, model_instances: Sequence[ModelType]) -> None:
         """Refresh and revalidate members after an owning parent mutation.
 
@@ -760,11 +977,11 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         for model_instance in models:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             key = self._member_key(switch_id, model_instance.interface_name)
-            if key not in self._member_intents or key not in self._validated_member_ownership:
+            if key not in self._member_intents or (key not in self._validated_member_ownership and key not in self._new_member_patch_owners):
                 raise RuntimeError(f"Member-safe intent or ownership proof is missing for {model_instance.interface_name} on switch {switch_id}.")
-            ownership = self._validated_member_ownership[key]
             refresh_switch_ids.add(switch_id)
-            if ownership.peer_owner is not None:
+            ownership = self._validated_member_ownership.get(key)
+            if ownership is not None and ownership.peer_owner is not None:
                 refresh_switch_ids.add(ownership.peer_owner.switch_id)
 
         self.state_snapshot.refresh(sorted(refresh_switch_ids))
@@ -778,6 +995,14 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 raise RuntimeError(f"Member {model_instance.interface_name} disappeared after its owning parent mutation.")
             if not self._prepare_member_intent(model_instance, existing_data):
                 raise RuntimeError(f"Interface {model_instance.interface_name} is no longer an authentic supported member after its owning parent mutation.")
+            expected_owner = self._new_member_patch_owners.get(self._member_key(switch_id, model_instance.interface_name))
+            if expected_owner is not None:
+                owner = self._validated_member_ownership[self._member_key(switch_id, model_instance.interface_name)].owner
+                actual_owner = owner.switch_id, owner.interface_name.casefold(), owner.policy_type
+                if actual_owner != expected_owner:
+                    self._validated_member_ownership.pop(self._member_key(switch_id, model_instance.interface_name), None)
+                    raise RuntimeError(f"New member {model_instance.interface_name} has unexpected aggregate ownership after parent staging.")
+                del self._new_member_patch_owners[self._member_key(switch_id, model_instance.interface_name)]
 
     def member_update_projection(self, switch_id: str, interface_name: str) -> dict[str, Any] | None:
         """Return the authentic member record after applying validated safe intent.
@@ -834,17 +1059,16 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
     def _resolve_member_peer_switch_id(self, switch_id: str) -> str:
         """Resolve one omitted vPC peer through the established cached pair endpoint."""
-
+        self._sync_member_topology_generation()
         cached = self._member_peer_serial_cache.get(switch_id)
         if cached is not None:
             return cached
         endpoint = EpVpcPairGet()
         endpoint.fabric_name = self.fabric_name
         endpoint.switch_id = switch_id
-        result = self._request(
-            path=endpoint.path,
-            verb=endpoint.verb,
-            not_found_ok=True,
+        result = self.state_snapshot.topology_pair(
+            switch_id,
+            lambda: self._request(path=endpoint.path, verb=endpoint.verb, not_found_ok=True),
         )
         if not isinstance(result, dict) or not result:
             raise RuntimeError(f"Cannot resolve the vPC peer for switch {switch_id!r}: the " "vpcPair endpoint returned no pair evidence.")
@@ -1088,6 +1312,268 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         except Exception:  # pylint: disable=broad-exception-caught
             return False
 
+    def _staged_detachment_mtu_only(self, model_instance: ModelType, existing_data: dict | None) -> bool:
+        """Recognize only a same-policy merged NX-OS routed MTU change.
+
+        This is an eligibility check, not membership permission. The complete
+        parent/peer/link proof below must also succeed before any write.
+        """
+        state = self.rest_send.params.get("state") if self.rest_send and self.rest_send.params else None
+        if state != "merged" or self.deploy or existing_data is None or self.MEMBER_FAMILY != "routed":
+            return False
+        if self._existing_port_channel_id(existing_data) is None or self._existing_policy_type(existing_data) != "routedHost":
+            return False
+        if self._desired_network_os(model_instance) != "nx-os" or self._desired_policy_type(model_instance) != "routedHost":
+            return False
+        try:
+            response = deepcopy(existing_data)
+            response["switchIp"] = model_instance.switch_ip
+            existing_model = self.model_class.from_response(response)
+            requested_policy = model_instance.config_data.network_os.policy
+            existing_policy = existing_model.config_data.network_os.policy
+            if requested_policy.mtu is None or requested_policy.mtu == existing_policy.mtu:
+                return False
+            # Workflow updates are already merged and explicitly carry frozen
+            # identity fields. Merging that model again attempts to assign
+            # interface_type even when unchanged and Pydantic rejects it.
+            # Instead, vary only MTU in a copy of observed state, then require
+            # every caller-supplied field to match that bounded candidate.
+            candidate = existing_model.model_copy(deep=True)
+            candidate.config_data.network_os.policy.mtu = requested_policy.mtu
+            return candidate.get_diff(model_instance, exclude_unset=True)
+        except Exception:  # pylint: disable=broad-exception-caught
+            return False
+
+    def _staged_detachment_default_corrections(self, model_instance: ModelType, existing_data: dict | None) -> dict[str, Any]:
+        """Recognize bounded same-policy merged host default corrections only.
+
+        Existing routed MTU eligibility is preserved. New admin correction is
+        restricted to typed observed/requested booleans on routed/trunk hosts;
+        authority, complete membership, peers and links are separate guards.
+        """
+        # Exact controller/receipt types are part of the validation contract.
+        # pylint: disable=unidiomatic-typecheck
+        if self._staged_detachment_mtu_only(model_instance, existing_data):
+            return {"mtu": model_instance.config_data.network_os.policy.mtu}
+        state = self.rest_send.params.get("state") if self.rest_send and self.rest_send.params else None
+        expected_policy = {"routed": "routedHost", "trunk": "trunkHost"}.get(self.MEMBER_FAMILY)
+        if (
+            state != "merged"
+            or self.deploy
+            or existing_data is None
+            or expected_policy is None
+            or self._existing_port_channel_id(existing_data) is None
+            or self._existing_policy_type(existing_data) != expected_policy
+            or self._desired_network_os(model_instance) != "nx-os"
+            or self._desired_policy_type(model_instance) != expected_policy
+            or existing_data.get("configData", {}).get("mode") != self.MEMBER_FAMILY
+        ):
+            return {}
+        try:
+            raw_policy = existing_data["configData"]["networkOS"]["policy"]
+            response = deepcopy(existing_data)
+            response["switchIp"] = model_instance.switch_ip
+            existing_model = self.model_class.from_response(response)
+            requested_policy = model_instance.config_data.network_os.policy
+            existing_policy = existing_model.config_data.network_os.policy
+            target_admin = requested_policy.admin_state
+            if type(target_admin) is not bool or type(raw_policy.get("adminState")) is not bool or target_admin is raw_policy["adminState"]:
+                return {}
+            candidate = existing_model.model_copy(deep=True)
+            candidate.config_data.network_os.policy.admin_state = target_admin
+            corrections = {"adminState": target_admin}
+            if self.MEMBER_FAMILY == "routed" and requested_policy.mtu is not None and requested_policy.mtu != existing_policy.mtu:
+                candidate.config_data.network_os.policy.mtu = requested_policy.mtu
+                corrections["mtu"] = requested_policy.mtu
+            return corrections if candidate.get_diff(model_instance, exclude_unset=True) else {}
+        except Exception:  # pylint: disable=broad-exception-caught
+            return {}
+
+    def _staged_detachment_admin_authority(self, corrections: dict[str, Any]) -> tuple[str, str, bool] | None:
+        """Independently read typed same-fabric authority for admin correction."""
+        # Exact controller/receipt types are part of the validation contract.
+        # pylint: disable=unidiomatic-typecheck
+        if "adminState" not in corrections:
+            return None
+        endpoint = EpManageFabricsGet()
+        endpoint.fabric_name = self.fabric_name
+        fabric = self._request(path=endpoint.path, verb=endpoint.verb)
+        management = fabric.get("management") if isinstance(fabric, dict) else None
+        if (
+            not isinstance(fabric, dict)
+            or fabric.get("name") != self.fabric_name
+            or not isinstance(management, dict)
+            or management.get("type") != "vxlanIbgp"
+            or type(management.get("hostInterfaceAdminState")) is not bool
+            or type(corrections["adminState"]) is not bool
+            or corrections["adminState"] is not management["hostInterfaceAdminState"]
+        ):
+            raise RuntimeError("Staged host admin cleanup requires fresh typed same-fabric admin default authority")
+        return self.fabric_name, management["type"], management["hostInterfaceAdminState"]
+
+    def _staged_detachment_peer_metadata(self, switch_id: str, context: FabricContext) -> tuple[bool | None, str | None, bool]:
+        """Read exact raw switch metadata; identity maps contain IP strings only."""
+        # Exact controller/receipt types are part of the validation contract.
+        # pylint: disable=unidiomatic-typecheck
+        records = [row for row in context.switches if isinstance(row, dict) and row.get("switchId") == switch_id]
+        address = context.switch_map_by_id.get(switch_id)
+        same_address = [row for row in context.switches if isinstance(row, dict) and row.get("fabricManagementIp") == address]
+        if (
+            len(records) != 1
+            or address is None
+            or len(same_address) != 1
+            or records[0].get("fabricManagementIp") != self.fabric_context.switch_map_by_id.get(switch_id)
+        ):
+            raise RuntimeError(f"Staged detachment requires one unchanged switch identity for {switch_id!r}")
+        record = records[0]
+        configured = record.get("vpcConfigured")
+        metadata = record.get("vpcData")
+        if (configured is not None and type(configured) is not bool) or (metadata is not None and not isinstance(metadata, dict)):
+            raise RuntimeError(f"Malformed vPC switch metadata for staged detachment on {switch_id!r}")
+        peer = (metadata or {}).get("peerSwitchId")
+        if peer is not None and (not isinstance(peer, str) or not peer or peer == switch_id or peer not in context.switch_map_by_id):
+            raise RuntimeError(f"Malformed vPC peer hint for staged detachment on {switch_id!r}")
+        return configured, peer, bool(metadata)
+
+    def _sync_member_topology_generation(self) -> None:
+        """Reject retained family-level ownership proof after invalidation."""
+        snapshot = self.state_snapshot
+        if self._staged_detachment_generation != snapshot.topology_generation:
+            self._staged_detachment_pair_checked.clear()
+            self._member_peer_serial_cache.clear()
+            self._validated_member_ownership.clear()
+            self._membership_index_cache = None
+            self._membership_index_inventory_switches = frozenset()
+            self._staged_detachment_generation = snapshot.topology_generation
+
+    def _load_staged_detachment_peer(self, switch_id: str, *, load_peer_inventory: bool = True) -> str | None:
+        """Load authoritative pair evidence even after a member policy disappears."""
+        snapshot = self.state_snapshot
+        self._sync_member_topology_generation()
+        if switch_id not in self._staged_detachment_pair_checked:
+            # Preserve the planner's identity authority while sharing one fresh
+            # raw-metadata observation across every family in this execution.
+            context = snapshot.topology_context(
+                lambda: FabricContext(rest_send=self.rest_send, fabric_name=self.fabric_name),
+            )
+            configured, raw_peer, populated_metadata = self._staged_detachment_peer_metadata(switch_id, context)
+            incoming = {
+                row.get("switchId")
+                for row in context.switches
+                if isinstance(row, dict) and isinstance(row.get("vpcData"), dict) and row["vpcData"].get("peerSwitchId") == switch_id
+            }
+            endpoint = EpVpcPairGet()
+            endpoint.fabric_name = self.fabric_name
+            endpoint.switch_id = switch_id
+            result = snapshot.topology_pair(
+                switch_id,
+                lambda: self._request(path=endpoint.path, verb=endpoint.verb, not_found_ok=True),
+            )
+            if result:
+                if not isinstance(result, dict) or result.get("switchId") not in (None, switch_id):
+                    raise RuntimeError(f"Invalid vPC pair evidence for staged detachment on {switch_id!r}")
+                peer_id = result.get("peerSwitchId")
+                if peer_id not in self.fabric_context.switch_map_by_id:
+                    raise RuntimeError(f"Staged detachment peer {peer_id!r} is not a switch in this fabric")
+                if (raw_peer is not None and raw_peer != peer_id) or incoming - {peer_id}:
+                    raise RuntimeError(f"Exact vPC pair conflicts with raw switch peer metadata on {switch_id!r}")
+                _peer_configured, reciprocal_hint, _peer_populated = self._staged_detachment_peer_metadata(peer_id, context)
+                if reciprocal_hint is not None and reciprocal_hint != switch_id:
+                    raise RuntimeError(f"Raw peer switch metadata is non-reciprocal for {switch_id!r}")
+                peer_endpoint = EpVpcPairGet()
+                peer_endpoint.fabric_name = self.fabric_name
+                peer_endpoint.switch_id = peer_id
+                peer_pair = snapshot.topology_pair(
+                    peer_id,
+                    lambda: self._request(path=peer_endpoint.path, verb=peer_endpoint.verb, not_found_ok=True),
+                )
+                if not isinstance(peer_pair, dict) or peer_pair.get("switchId") not in (None, peer_id) or peer_pair.get("peerSwitchId") != switch_id:
+                    raise RuntimeError(f"Non-reciprocal vPC pair evidence for staged detachment on {switch_id!r}")
+                self._cache_member_peer_switch_id(switch_id, peer_id, source="staged detachment vPC pair evidence")
+            elif switch_id in self._member_peer_serial_cache or configured is not False or raw_peer is not None or populated_metadata or incoming:
+                raise RuntimeError(f"Missing vPC pair evidence conflicts with or cannot resolve switch metadata on {switch_id!r}")
+            self._staged_detachment_pair_checked.add(switch_id)
+        peer_id = self._member_peer_serial_cache.get(switch_id)
+        if peer_id is not None and load_peer_inventory:
+            self._switch_interfaces(peer_id)
+        return peer_id
+
+    def _require_staged_detachment_mtu(self, model_instance: ModelType) -> None:
+        """Use fresh complete caches, conservative peer claims, and link ownership."""
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        self._switch_interfaces(switch_id)
+        self._load_staged_detachment_peer(switch_id)
+        index = EthernetMembershipIndex(
+            self.state_snapshot.clean_interfaces_by_switch,
+            peer_switch_ids=self._member_peer_serial_cache,
+        )
+        current = self._existing_interface(model_instance.interface_name, switch_id)
+        corrections = self._staged_detachment_default_corrections(model_instance, current)
+        if not corrections:
+            raise RuntimeError("Staged host cleanup no longer has bounded default correction intent")
+        self._staged_detachment_admin_authority(corrections)
+        index.require_staged_host_detachment(
+            switch_id,
+            model_instance.interface_name,
+            host_policy_type={"routed": "routedHost", "trunk": "trunkHost"}[self.MEMBER_FAMILY],
+        )
+        if (switch_id, model_instance.interface_name.casefold()) in self._fabric_link_endpoints():
+            raise RuntimeError(f"Staged detachment MTU update refuses fabric-link endpoint {switch_id}/{model_instance.interface_name}")
+
+    def _refresh_staged_detachment_context(self, model_instance: ModelType) -> dict | None:
+        """Recheck controller intent immediately before singular or bulk mutation."""
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        current = self._existing_interface(model_instance.interface_name, switch_id)
+        corrections = self._staged_detachment_default_corrections(model_instance, current)
+        if not corrections:
+            return current
+        expected_config = deepcopy(current["configData"])
+        authority = self._staged_detachment_admin_authority(corrections)
+        peer_id = self._load_staged_detachment_peer(switch_id, load_peer_inventory=False)
+        self.state_snapshot.refresh([switch_id, *((peer_id,) if peer_id is not None else ())])
+        # Bounded admin/MTU correction does not mutate fabric-link topology.
+        refreshed = self._existing_interface(model_instance.interface_name, switch_id)
+        if (
+            refreshed is None
+            or refreshed.get("configData") != expected_config
+            or self._staged_detachment_default_corrections(model_instance, refreshed) != corrections
+            or self._staged_detachment_admin_authority(corrections) != authority
+        ):
+            raise RuntimeError(
+                f"Staged detachment default context changed for {switch_id}/{model_instance.interface_name} "
+                "during pre-write refresh; refusing the stale planned payload. Rerun with fresh controller state."
+            )
+        return refreshed
+
+    def prepare_bulk_modify_context(self, model_instance: ModelType, previous_model: ModelType | None = None) -> None:
+        """Refresh bounded staged-detachment evidence before the bulk write guard."""
+        super().prepare_bulk_modify_context(model_instance, previous_model)
+        self._refresh_staged_detachment_context(model_instance)
+
+    def _bulk_modify_payload(self, model_instance: ModelType, switch_id: str) -> dict[str, Any]:
+        """Preserve raw staged host policy and change only bounded default fields."""
+        current = self._existing_interface(model_instance.interface_name, switch_id)
+        corrections = self._staged_detachment_default_corrections(model_instance, current)
+        if not corrections:
+            return super()._bulk_modify_payload(model_instance, switch_id)
+        self._require_staged_detachment_mtu(model_instance)
+        config = deepcopy(current["configData"])
+        policy = config["networkOS"]["policy"]
+        # Undeclared GET-only ptp echo is not accepted host write intent.
+        # Only the observed false default can be dropped; any other echo blocks.
+        if "ptp" in policy:
+            ptp = policy["ptp"]
+            if not (ptp is False or isinstance(ptp, str) and ptp == "false"):
+                raise RuntimeError("Staged detachment default cleanup refuses a non-default ptp echo")
+            policy.pop("ptp")
+        policy.update(corrections)
+        return {
+            "interfaceName": current["interfaceName"],
+            "interfaceType": current["interfaceType"],
+            "switchId": switch_id,
+            "configData": config,
+        }
+
     def _check_port_channel_restrictions(
         self,
         model_instance: ModelType,
@@ -1125,6 +1611,9 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         policy_type = self._existing_policy_type(existing_data)
         if classify_member_policy(policy_type) == MemberPolicyDisposition.NOT_MEMBER:
             if allow_unchanged and not self.deploy and self._host_policy_replay_is_noop(model_instance, existing_data):
+                return
+            if self._staged_detachment_default_corrections(model_instance, existing_data):
+                self._require_staged_detachment_mtu(model_instance)
                 return
             raise RuntimeError(
                 f"Interface {model_instance.interface_name} has operational port-channel "
@@ -1258,7 +1747,11 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
 
         config_data = existing_data.get("configData") or {}
+        if not isinstance(config_data, dict) or any(key not in {"mode", "networkOS"} for key in config_data):
+            return False
         network_os = config_data.get("networkOS") or {}
+        if not isinstance(network_os, dict) or any(key not in {"networkOSType", "policy"} for key in network_os):
+            return False
         policy = network_os.get("policy") or {}
         if existing_data.get("interfaceType") != "ethernet" or not isinstance(policy, dict):
             return False
@@ -1279,15 +1772,494 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             key == "policyType"
             or (key == "description" and value in (None, ""))
             or (network_os_type == "nx-os" and key == "accessVlan" and value in (1, "1"))
-            or (network_os_type == "nx-os" and key == "ptp" and value in (False, "false"))
+            or (network_os_type == "nx-os" and key == "ptp" and (value is False or isinstance(value, str) and value == "false"))
+            or (key == "extraConfig" and has_retained_reset_auto_negotiation(config_data))
             or (key in defaults and value == defaults[key])
             for key, value in policy.items()
         )
 
+    def enable_bounded_workflow_reset_evidence(self) -> None:
+        """Opt the aggregate workflow into internal-only bounded read retention.
+
+        Workflow normal/info/debug output does not expose raw REST records;
+        standalone modules retain their original complete response histories.
+        """
+        self._bounded_workflow_reset_evidence = True
+
+    def _fabric_reset_negotiation_rows(self, *, refresh: bool = False) -> dict[str, dict]:
+        """Read the deployed-policy preview that can retain old cleanup entities.
+
+        Interface preview omits some old policy commands that fabric deployment
+        will execute. Cache a complete read only during planning; retained reset
+        writes and their verification explicitly request a fresh observation.
+        """
+        provider = self._reset_negotiation_preview_cache_provider
+        if provider is not None:
+            return provider._fabric_reset_negotiation_rows(refresh=refresh)
+        if self._reset_negotiation_fabric_preview is not None and not refresh:
+            return self._reset_negotiation_fabric_preview
+        self._reset_negotiation_fabric_blocks.clear()
+        response_start = self.rest_send.response_count
+        sequence_start = self.results.task_sequence_number if self.results is not None else 0
+        path = f"/api/v1/manage/fabrics/{quote(self.fabric_name, safe='')}/actions/preview"
+        result = self._request(path=path, verb=HttpVerbEnum.GET)
+        items = result.get("items") if isinstance(result, dict) else None
+        if not isinstance(items, list) or not items:
+            raise RuntimeError("Reset negotiation fabric preview lacks a non-empty items list")
+        indexed = {}
+        for row in items:
+            if not isinstance(row, dict):
+                raise RuntimeError("Reset negotiation fabric preview contains a malformed switch row")
+            switch_id = row.get("switchId")
+            if not isinstance(switch_id, str) or not switch_id or switch_id != switch_id.strip() or switch_id in indexed:
+                raise RuntimeError("Reset negotiation fabric preview has missing or duplicate switch identities")
+            if row.get("status") not in {"inSync", "outOfSync"}:
+                raise RuntimeError(f"Reset negotiation fabric preview has unsupported status for {switch_id}")
+            for field in ("runningConfigs", "pendingConfigs", "expectedConfigs"):
+                if not isinstance(row.get(field), list) or any(not isinstance(line, str) for line in row[field]):
+                    raise RuntimeError(f"Reset negotiation fabric preview lacks valid {field} for {switch_id}")
+            indexed[switch_id] = row
+        self._reset_negotiation_fabric_preview = indexed
+        if self._bounded_workflow_reset_evidence:
+            self.rest_send.compact_successful_read_history(response_start, path=path)
+            if self.results is not None:
+                self.results.compact_successful_read_history(sequence_start, path=path)
+        return indexed
+
+    @staticmethod
+    def _fabric_interface_lines(lines: list[str], interface_name: str) -> list[str]:
+        """Extract exact interface blocks, excluding unrelated CLI and contexts."""
+        target = interface_name.casefold()
+        selected = False
+        result = []
+        for raw in (line for chunk in lines for line in chunk.splitlines()):
+            line = raw.strip().casefold()
+            if not line:
+                continue
+            header = re.fullmatch(r"interface\s+(.+)", line)
+            if header is not None:
+                selected = header.group(1) == target
+                if selected:
+                    result.append(f"interface {target}")
+                continue
+            if line == "configure terminal" or line in {"end", "exit"} or line.startswith("no interface "):
+                selected = False
+                continue
+            if raw and not raw[0].isspace() and not line.startswith(("!", "#")):
+                # The fabric response uses indentation for interface commands.
+                # A different top-level context must not leak into this port.
+                selected = False
+            if selected:
+                result.append(line)
+        return result
+
+    @staticmethod
+    def _fabric_interface_index(lines: list[str]) -> dict[str, list[str]]:
+        """Parse exact CLI contexts once; preserve the extractor's full semantics."""
+        indexed: dict[str, list[str]] = {}
+        selected = None
+        for raw in (line for chunk in lines for line in chunk.splitlines()):
+            line = raw.strip().casefold()
+            if not line:
+                continue
+            header = re.fullmatch(r"interface\s+(.+)", line)
+            if header is not None:
+                selected = header.group(1)
+                indexed.setdefault(selected, []).append(f"interface {selected}")
+                continue
+            if line == "configure terminal" or line in {"end", "exit"} or line.startswith("no interface "):
+                selected = None
+                continue
+            if raw and not raw[0].isspace() and not line.startswith(("!", "#")):
+                selected = None
+            if selected is not None:
+                indexed[selected].append(line)
+        return indexed
+
+    def _scoped_fabric_reset_lines(self, fabric_row: dict, kind: str, interface_name: str) -> list[str]:
+        """Reuse parsed blocks only inside one current immutable preview epoch."""
+        owner = self._reset_negotiation_cache_owner()
+        if not owner._bounded_workflow_reset_evidence:
+            return self._fabric_interface_lines(fabric_row[f"{kind}Configs"], interface_name)
+        key = (fabric_row["switchId"], kind)
+        if key not in owner._reset_negotiation_fabric_blocks:
+            owner._reset_negotiation_fabric_blocks[key] = self._fabric_interface_index(fabric_row[f"{kind}Configs"])
+        return list(owner._reset_negotiation_fabric_blocks[key].get(interface_name.casefold(), ()))
+
+    def _reset_negotiation_cache_owner(self):
+        return self._reset_negotiation_preview_cache_provider or self
+
+    def _reset_negotiation_marker(self, switch_id: str) -> tuple[int, int]:
+        snapshot = self.state_snapshot
+        return snapshot.topology_generation, snapshot.switch_revision(switch_id)
+
+    def register_reset_negotiation_preview_scope(self, models: Sequence[ModelType]) -> None:
+        """Register only observed NX-OS reset candidates; do not send requests."""
+        owner = self._reset_negotiation_cache_owner()
+        for model in models:
+            switch_id = self._resolve_switch_id(model.switch_ip)
+            current = self.state_snapshot.cached_interface(switch_id, model.interface_name)
+            config = (current or {}).get("configData") or {}
+            network = config.get("networkOS") or {}
+            policy = network.get("policy") or {}
+            if (
+                current is not None
+                and current.get("interfaceType") == "ethernet"
+                and network.get("networkOSType") == "nx-os"
+                and policy.get("policyType") in self.CONVERTIBLE_POLICY_TYPES
+                and policy.get("negotiateAuto") is True
+            ):
+                owner._reset_negotiation_preview_scope[self._member_key(switch_id, model.interface_name)] = (
+                    model.interface_name,
+                    switch_id,
+                    self._reset_negotiation_marker(switch_id),
+                )
+
+    def invalidate_reset_negotiation_previews(self, *, clear_scope: bool = True) -> None:
+        """Never carry CLI evidence across an attempted workflow mutation."""
+        owner = self._reset_negotiation_cache_owner()
+        owner._reset_negotiation_interface_preview.clear()
+        owner._reset_negotiation_preview_markers.clear()
+        owner._reset_negotiation_fabric_preview = None
+        owner._reset_negotiation_fabric_blocks.clear()
+        if clear_scope:
+            owner._reset_negotiation_preview_scope.clear()
+
+    @staticmethod
+    def _reset_negotiation_interface_cli(row: dict, interface_name: str, switch_id: str) -> dict[str, list[str]]:
+        """Keep the original per-target CLI guard for every row in a batch."""
+        configs = row["combinedConfigs"]
+        by_type = {}
+        expected_header = f"interface {interface_name.casefold()}"
+        for kind in ("running", "pending", "expected"):
+            values = [item.get("config") for item in configs if item["configType"].strip().casefold() == kind]
+            if len(values) != 1 or not isinstance(values[0], str):
+                raise RuntimeError(f"Reset negotiation preview lacks exact {kind} CLI for {switch_id}/{interface_name}")
+            lines = [line.strip().casefold() for line in values[0].splitlines() if line.strip()]
+            headers = [line for line in lines if re.match(r"(?:no )?interface\s", line)]
+            if any(header != expected_header for header in headers):
+                raise RuntimeError(f"Reset negotiation preview includes another interface for {switch_id}/{interface_name}")
+            if kind == "running" and expected_header not in headers:
+                raise RuntimeError(f"Reset negotiation preview does not identify running interface {switch_id}/{interface_name}")
+            by_type[kind] = lines
+        return by_type
+
+    def _load_reset_negotiation_interface_previews(self, pairs: Sequence[tuple[str, str]]) -> None:
+        """Validate complete exact coverage before publishing any batch evidence."""
+        owner = self._reset_negotiation_cache_owner()
+        groups = defaultdict(list)
+        seen = set()
+        for name, switch_id in pairs:
+            key = self._normalized_interface_pair(name, switch_id)
+            if key is None or key in seen:
+                raise RuntimeError("Reset negotiation preview scope is invalid or duplicated")
+            seen.add(key)
+            groups[switch_id].append((name, switch_id))
+        prepared, markers = {}, {}
+        try:
+            for group in groups.values():
+                for offset in range(0, len(group), self.RESET_NEGOTIATION_PREVIEW_ITEMS):
+                    batch = group[offset : offset + self.RESET_NEGOTIATION_PREVIEW_ITEMS]
+                    recorded = owner.rest_send.response_count
+                    result = owner._preview_interfaces({"interfaces": [{"interfaceName": name, "switchId": serial} for name, serial in batch]})
+                    if owner.rest_send.response_count <= recorded:
+                        raise RuntimeError("Reset negotiation preview returned without a fresh response")
+                    _pending, error = self._pending_preview_pairs(result, list(batch))
+                    if error is not None:
+                        raise RuntimeError(f"Cannot verify reset negotiation batch: {error}")
+                    for row in result["configurationDiffs"]:
+                        name, serial = row["interfaceName"], row["switchId"]
+                        key = self._member_key(serial, name)
+                        prepared[key] = self._reset_negotiation_interface_cli(row, name, serial)
+                        markers[key] = self._reset_negotiation_marker(serial)
+        except Exception:
+            self.invalidate_reset_negotiation_previews(clear_scope=False)
+            raise
+        owner._reset_negotiation_interface_preview.update(prepared)
+        owner._reset_negotiation_preview_markers.update(markers)
+
+    @contextmanager
+    def _fresh_reset_negotiation_previews(self, pairs: Sequence[tuple[str, str]]):
+        """One fresh read-only epoch before a write or after accepted staging."""
+        owner = self._reset_negotiation_cache_owner()
+        keys = {self._member_key(serial, name) for name, serial in pairs}
+        active = owner._reset_negotiation_preview_epoch
+        if active is not None:
+            if not keys <= active:
+                raise RuntimeError("Nested reset negotiation proof exceeds its fresh exact scope")
+            yield
+            return
+        self.invalidate_reset_negotiation_previews(clear_scope=False)
+        owner._reset_negotiation_preview_epoch = keys
+        try:
+            self._load_reset_negotiation_interface_previews(pairs)
+            recorded = owner.rest_send.response_count
+            owner._fabric_reset_negotiation_rows(refresh=True)
+            if owner.rest_send.response_count <= recorded:
+                raise RuntimeError("Reset negotiation fabric preview returned without a fresh response")
+            yield
+        finally:
+            owner._reset_negotiation_preview_epoch = None
+            self.invalidate_reset_negotiation_previews(clear_scope=False)
+
+    def _reset_negotiation_preview(
+        self,
+        interface_name: str,
+        switch_id: str,
+        *,
+        refresh_fabric: bool = False,
+    ) -> dict[str, list[str]]:
+        """Read exact CLI using only the current planning or fresh guard epoch."""
+        owner = self._reset_negotiation_cache_owner()
+        key = self._member_key(switch_id, interface_name)
+        active = owner._reset_negotiation_preview_epoch
+        if refresh_fabric and active is None:
+            with self._fresh_reset_negotiation_previews([(interface_name, switch_id)]):
+                return self._reset_negotiation_preview(interface_name, switch_id, refresh_fabric=True)
+        if active is not None and key not in active:
+            raise RuntimeError("Reset negotiation proof names an interface outside its fresh epoch")
+        marker = self._reset_negotiation_marker(switch_id)
+        registered = owner._reset_negotiation_preview_scope.get(key)
+        cacheable = active is not None or registered is not None and registered[2] == marker
+        previous_marker = owner._reset_negotiation_preview_markers.get(key)
+        if active is None and previous_marker is not None and previous_marker != marker:
+            self.invalidate_reset_negotiation_previews(clear_scope=False)
+        if not cacheable or key not in owner._reset_negotiation_interface_preview or owner._reset_negotiation_preview_markers.get(key) != marker:
+            if active is not None:
+                raise RuntimeError("Fresh reset negotiation observation changed during its proof")
+            pairs = (
+                [(name, serial) for name, serial, version in owner._reset_negotiation_preview_scope.values() if serial == switch_id and version == marker]
+                if cacheable
+                else [(interface_name, switch_id)]
+            )
+            self._load_reset_negotiation_interface_previews(pairs)
+        by_type = deepcopy(owner._reset_negotiation_interface_preview[key])
+        fabric_rows = self._fabric_reset_negotiation_rows()
+        expected_header = f"interface {interface_name.casefold()}"
+        if switch_id not in fabric_rows:
+            raise RuntimeError(f"Reset negotiation fabric preview omits switch {switch_id}")
+        fabric_row = fabric_rows[switch_id]
+        for kind in ("running", "pending", "expected"):
+            scoped = self._scoped_fabric_reset_lines(fabric_row, kind, interface_name)
+            if kind in {"running", "expected"} and expected_header not in scoped:
+                raise RuntimeError(f"Reset negotiation fabric preview does not identify {kind} interface {switch_id}/{interface_name}")
+            by_type[f"fabric_{kind}"] = scoped
+        return by_type
+
+    def _retain_reset_auto_negotiation(self, interface_name: str, switch_id: str, current: dict | None, *, refresh: bool = False) -> bool:
+        """Keep an explicit enabled negotiation command during an automatic-speed reset.
+
+        Initial deletions retain the positive running command from either
+        preview surface. Accepted reset recovery requires an actual negative
+        pending command; it does not infer safety from the narrower preview.
+        """
+        key = self._member_key(switch_id, interface_name)
+        config = (current or {}).get("configData") or {}
+        network = config.get("networkOS") or {}
+        policy = network.get("policy") or {}
+        if (
+            current is None
+            or current.get("interfaceType") != "ethernet"
+            or network.get("networkOSType") != "nx-os"
+            or policy.get("policyType") not in self.CONVERTIBLE_POLICY_TYPES
+            or policy.get("negotiateAuto") is not True
+        ):
+            return False
+        if self._is_retained_reset_candidate(current):
+            self._reset_auto_negotiation_retained.add(key)
+            # A previous invocation may have accepted this override and then
+            # failed its CLI guard. In-memory deployment blocks do not survive
+            # that invocation; require fresh proof before treating it as an
+            # already-satisfied reset on every replay.
+            self._reset_auto_negotiation_deploy_blocks.add(key)
+            self._verify_reset_auto_negotiation([(interface_name, switch_id)])
+            self._reset_auto_negotiation_checked.add(key)
+            return True
+        if not refresh and key in self._reset_auto_negotiation_checked:
+            return key in self._reset_auto_negotiation_retained
+        is_reset = self._is_absent_delete_reset_target(current)
+        if is_reset and not refresh:
+            # The switch inventory's cached inSync flag can lag staging. Only
+            # the fabric deployment preview can rule out old cleanup entities.
+            fabric_row = self._fabric_reset_negotiation_rows(refresh=refresh).get(switch_id)
+            if fabric_row is None:
+                raise RuntimeError(f"Reset negotiation fabric preview omits switch {switch_id}")
+            if fabric_row["status"] == "inSync":
+                pending = self._scoped_fabric_reset_lines(fabric_row, "pending", interface_name)
+                if "no negotiate auto" not in pending:
+                    self._reset_auto_negotiation_checked.add(key)
+                    return False
+        preview = self._reset_negotiation_preview(interface_name, switch_id, refresh_fabric=refresh)
+        unsafe = "no negotiate auto" in preview["pending"] or "no negotiate auto" in preview["fabric_pending"]
+        retain = "negotiate auto" in preview["running"] or "negotiate auto" in preview["fabric_running"] or is_reset and unsafe
+        if retain:
+            self._reset_auto_negotiation_retained.add(key)
+            if is_reset and unsafe:
+                self._reset_auto_negotiation_repairs.add(key)
+        else:
+            self._reset_auto_negotiation_retained.discard(key)
+        self._reset_auto_negotiation_checked.add(key)
+        return retain
+
+    @staticmethod
+    def _is_retained_reset_candidate(current: dict) -> bool:
+        """Find retained policies that the existing default filter could hide.
+
+        Known non-default fields still make this ordinary configured intent
+        eligible for deletion. Unknown fields ignored by the family filter do
+        not establish a reset: the caller must run the strict fresh verifier.
+        """
+        if not has_retained_reset_auto_negotiation(current.get("configData") or {}):
+            return False
+        # Runtime import avoids the base/subclass import cycle and reuses the
+        # exact filter used by the workflow's prospective no-op classification.
+        from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_trunk_host_interface import (
+            EthernetTrunkHostInterfaceOrchestrator,
+        )
+
+        return EthernetTrunkHostInterfaceOrchestrator._is_unconfigured_default(current)
+
+    def requires_reset_auto_negotiation(self, model_instance: ModelType, current: dict | None) -> bool:
+        """Plan a bounded repair only for an exact accepted default reset echo."""
+        if current is None:
+            return False
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        if self._is_retained_reset_candidate(current):
+            # A loose family filter can ignore unknown API fields. Do not let
+            # its no-op result bypass strict verification on a later process.
+            self._retain_reset_auto_negotiation(model_instance.interface_name, switch_id, current, refresh=True)
+            return False
+        if not self._is_absent_delete_reset_target(current):
+            return False
+        self._retain_reset_auto_negotiation(model_instance.interface_name, switch_id, current)
+        return self._member_key(switch_id, model_instance.interface_name) in self._reset_auto_negotiation_repairs
+
+    @property
+    def reset_auto_negotiation_repairs(self) -> tuple[tuple[str, str], ...]:
+        """Exact planner-proven reset repair identities as (switch ID, interface name)."""
+        return tuple(sorted(self._reset_auto_negotiation_repairs))
+
+    @property
+    def reset_auto_negotiation_deploy_blocks(self) -> tuple[tuple[str, str], ...]:
+        """Accepted physical resets missing required fresh staging or CLI proof."""
+        return tuple(sorted(self._reset_auto_negotiation_deploy_blocks))
+
+    def deploy_targets(self, targets: Sequence[tuple[str, str]]) -> ResponseType | None:
+        blocked = [pair for pair in targets if self._member_key(pair[1], pair[0]) in self._reset_auto_negotiation_deploy_blocks]
+        if blocked:
+            raise RuntimeError(f"Reset negotiation staging remains unverified for {blocked}; refusing deployment")
+        return super().deploy_targets(targets)
+
+    def deploy_accepted_mutations(self) -> list[tuple[str, str]]:
+        """Never let the standalone failure finalizer bypass reset CLI proof."""
+        if self.deploy:
+            unsent = self._unsent_delete_pairs()
+            accepted = [pair for pair in self.pending_deploys if pair not in unsent]
+            blocked = [pair for pair in accepted if self._member_key(pair[1], pair[0]) in self._reset_auto_negotiation_deploy_blocks]
+            if blocked:
+                raise RuntimeError(f"Accepted reset negotiation staging remains unverified for {blocked}; failure-path deployment is blocked")
+        return super().deploy_accepted_mutations()
+
+    def retains_reset_auto_negotiation(self, model_instance: ModelType, current: dict | None) -> bool:
+        """Return the preview-proven prospective reset's negotiation retention."""
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        return self._retain_reset_auto_negotiation(model_instance.interface_name, switch_id, current)
+
+    def _refresh_retained_reset_context(self, pairs: Sequence[tuple[str, str]]) -> None:
+        """Compare fresh intent and CLI before writing a retained reset payload."""
+        retained = [pair for pair in pairs if self._member_key(pair[1], pair[0]) in self._reset_auto_negotiation_retained]
+        if not retained:
+            return
+        before = {(name, switch_id): deepcopy(self._existing_interface(name, switch_id)) for name, switch_id in retained}
+        self.state_snapshot.refresh(list(dict.fromkeys(switch_id for _name, switch_id in retained)))
+        self._membership_index_cache = None
+        with self._fresh_reset_negotiation_previews(retained):
+            for name, switch_id in retained:
+                current = self._existing_interface(name, switch_id)
+                old = before[(name, switch_id)]
+                if (
+                    old is None
+                    or current is None
+                    or old.get("configData") != current.get("configData")
+                    or old.get("interfaceType") != current.get("interfaceType")
+                    or not self._retain_reset_auto_negotiation(name, switch_id, current, refresh=True)
+                ):
+                    raise RuntimeError(f"Reset negotiation context changed for {switch_id}/{name}; rerun with fresh state")
+                if self._membership_index().claiming_parents(switch_id, name):
+                    raise RuntimeError(f"Reset negotiation target {switch_id}/{name} acquired aggregate ownership; refusing the reset")
+                if self._has_blocking_child_subinterfaces(name, switch_id):
+                    raise RuntimeError(f"Reset negotiation target {switch_id}/{name} has child subinterfaces; refusing the reset")
+
+    @contextmanager
+    def staged_child_deletion_context(self, checker):
+        """Use workflow-proven child deletions only during this reset phase.
+
+        Standalone modules have no resolver and retain the live-child guard.
+        Restore prior context even if reset validation or transport fails.
+        """
+        previous = getattr(self, "_staged_child_deletion_check", None)
+        self._staged_child_deletion_check = checker
+        try:
+            yield
+        finally:
+            self._staged_child_deletion_check = previous
+
+    def _has_blocking_child_subinterfaces(self, name: str, switch_id: str) -> bool:
+        """Reject every child except an exact current workflow deletion proof."""
+        checker = getattr(self, "_staged_child_deletion_check", None)
+        for candidate, current in self._switch_interfaces(switch_id).items():
+            if not candidate.startswith(name.casefold() + "."):
+                continue
+            if (
+                not isinstance(current, dict)
+                or current.get("switchId") != switch_id
+                or str(current.get("interfaceName") or "").casefold() != candidate
+                or checker is None
+                or not checker(switch_id, current)
+            ):
+                return True
+        return False
+
+    def _verify_reset_auto_negotiation(self, pairs: Sequence[tuple[str, str]]) -> None:
+        """Refuse success if controller staging still negates retained negotiation."""
+        retained = [pair for pair in pairs if self._member_key(pair[1], pair[0]) in self._reset_auto_negotiation_retained]
+        if not retained:
+            return
+        owner = self._reset_negotiation_cache_owner()
+        active = owner._reset_negotiation_preview_epoch
+        keys = {self._member_key(serial, name) for name, serial in retained}
+        if active is None or not keys <= active:
+            self.state_snapshot.refresh(list(dict.fromkeys(switch_id for _name, switch_id in retained)))
+        with self._fresh_reset_negotiation_previews(retained):
+            for name, switch_id in retained:
+                current = self._existing_interface(name, switch_id)
+                if (
+                    current is None
+                    or not self._is_absent_delete_reset_target(current)
+                    or not has_retained_reset_auto_negotiation(current.get("configData") or {})
+                ):
+                    raise RuntimeError(f"Reset negotiation correction did not reach exact default intent for {switch_id}/{name}")
+                preview = self._reset_negotiation_preview(name, switch_id, refresh_fabric=True)
+                if (
+                    "no negotiate auto" in preview["pending"]
+                    or "no negotiate auto" in preview["fabric_pending"]
+                    or "negotiate auto" not in preview["expected"]
+                    or "negotiate auto" not in preview["fabric_expected"]
+                ):
+                    raise RuntimeError(f"Reset negotiation preview remains unsafe for {switch_id}/{name}; deployment is not authorized")
+                self._reset_auto_negotiation_deploy_blocks.discard(self._member_key(switch_id, name))
+
     def _can_replay_absent_delete(self, existing_data: dict | None) -> bool:
         """Replay only exact ethernet reset echoes, never another policy's staged CLI."""
-
-        return existing_data is not None and self._is_absent_delete_reset_target(existing_data)
+        eligible = existing_data is not None and self._is_absent_delete_reset_target(existing_data)
+        if eligible and has_retained_reset_auto_negotiation(existing_data.get("configData") or {}):
+            # Standalone Ethernet modules use this entry point rather than the
+            # workflow planner for an accepted reset whose deploy is pending.
+            name, switch_id = existing_data.get("interfaceName"), existing_data.get("switchId")
+            if not isinstance(name, str) or not name or not isinstance(switch_id, str) or not switch_id:
+                raise RuntimeError("Retained reset replay requires an exact switch and interface identity")
+            self._retain_reset_auto_negotiation(name, switch_id, existing_data, refresh=True)
+        return eligible
 
     @staticmethod
     def _desired_policy_type(model_instance: ModelType) -> str | None:
@@ -1595,11 +2567,11 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         None
         """
         names = [name.lower() for name, _switch_id in self._pending_normalizes]
-        if len(set(names)) == len(names):
-            return [list(self._pending_normalizes)]
-        groups: dict[str, list[tuple[str, str]]] = defaultdict(list)
-        for pair in self._pending_normalizes:
-            groups[pair[1]].append(pair)
+        unique_names = len(set(names)) == len(names)
+        groups: dict[tuple[str, bool], list[tuple[str, str]]] = defaultdict(list)
+        for name, switch_id in self._pending_normalizes:
+            retain = self._retain_reset_auto_negotiation(name, switch_id, self._existing_interface(name, switch_id))
+            groups[("" if unique_names else switch_id, retain)].append((name, switch_id))
         return list(groups.values())
 
     def _normalize_interfaces(self) -> list[ResponseType]:
@@ -1631,12 +2603,39 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         results: list[ResponseType] = []
         groups = self._normalize_groups()
         for index, group in enumerate(groups):
+            # Capture the source policy before the accepted normalize changes
+            # the shared snapshot. Only routed-to-trunk resets need this
+            # controller-specific sibling-field correction barrier.
+            routed = []
+            for name, switch_id in group:
+                current = self._existing_interface(name, switch_id) or {}
+                config = current.get("configData") or {}
+                network = config.get("networkOS") or {}
+                if (
+                    current.get("interfaceType") == "ethernet"
+                    and config.get("mode") == "routed"
+                    and network.get("networkOSType") == "nx-os"
+                    and (network.get("policy") or {}).get("policyType") == "routedHost"
+                ):
+                    routed.append((name, switch_id))
+            self._reset_auto_negotiation_deploy_blocks.update(self._member_key(switch_id, name) for name, switch_id in routed)
             response_start = self.rest_send.response_count
             try:
                 results.append(self._post_normalize(api_endpoint, group))
             except Exception as e:
                 response = self.rest_send.response_current if self.rest_send.response_count > response_start else None
                 accepted = self._dequeue_accepted_normalizes(group, response)
+                accepted_pairs = [pair for pair in group if pair not in self._pending_normalizes]
+                verification_error = None
+                if accepted_pairs:
+                    try:
+                        # Partial success needs the same staging proof as a
+                        # successful group before its accepted subset can deploy.
+                        accepted_routed = [pair for pair in routed if pair in accepted_pairs]
+                        results.extend(self._correct_normalized_routed_residue(accepted_routed))
+                        self._verify_reset_auto_negotiation(accepted_pairs)
+                    except Exception as error:
+                        verification_error = error
                 rejected = [name for name, switch_id in group if (name, switch_id) in self._pending_normalizes]
                 not_attempted = [name for later in groups[index + 1 :] for name, _switch_id in later]
                 msg = f"Bulk normalize failed for {rejected}: {e}."
@@ -1646,9 +2645,89 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                     msg += " None of these interfaces were reset."
                 if not_attempted:
                     msg += f" Not attempted: {not_attempted}."
+                if verification_error is not None:
+                    msg += f" Accepted reset staging remains unverified: {verification_error}."
                 raise RuntimeError(msg) from e
+            # A successful normalize can leave stale routed-policy fields in
+            # the new trunk policy. Complete their guarded replacement now,
+            # before draining the logical delete or authorizing deployment.
+            results.extend(self._correct_normalized_routed_residue(routed))
             for pair in group:
                 self._pending_normalizes.remove(pair)
+            self._verify_reset_auto_negotiation(group)
+        return results
+
+    def _correct_normalized_routed_residue(self, pairs: Sequence[tuple[str, str]]) -> list[ResponseType]:
+        """Finish accepted routed normalization with staging only.
+
+        ND can echo typed sibling routed fields after the normalize POST. A
+        fresh exact default policy with only that known residue is eligible for
+        one defaults-only PUT-as-replace. Unknown or changed intent is never
+        overwritten, and an uncorrected readback cannot drain the normalize
+        queue or reach the final deployment.
+        """
+        if not pairs:
+            return []
+        serials = list(dict.fromkeys(switch_id for _name, switch_id in pairs))
+        self.state_snapshot.refresh(serials)
+        self._membership_index_cache = None
+        corrections: list[tuple[str, str]] = []
+        for name, switch_id in pairs:
+            current = self._existing_interface(name, switch_id)
+            if current is None or current.get("switchId") != switch_id or current.get("interfaceName") != name or current.get("interfaceType") != "ethernet":
+                raise RuntimeError(f"Normalized reset has no exact fresh interface identity for {switch_id}/{name}")
+            model = self.model_class.from_config(
+                {"switch_ip": self.fabric_context.get_switch_ip(switch_id), "interface_name": name},
+                context={"state": "deleted"},
+            )
+            self._check_port_channel_delete_restriction(model, current, switch_id=switch_id)
+            self._check_fabric_ownership(model, current)
+            if self._has_blocking_child_subinterfaces(name, switch_id):
+                raise RuntimeError(f"Normalized reset {switch_id}/{name} acquired child subinterfaces; refusing correction")
+            if self._is_absent_delete_reset_target(current):
+                continue
+            if not has_typed_routed_sibling_residue(current.get("configData")):
+                raise RuntimeError(f"Normalized reset has unexpected fresh policy fields for {switch_id}/{name}")
+            without_residue = deepcopy(current)
+            policy = without_residue["configData"]["networkOS"]["policy"]
+            for field in ROUTED_SIBLING_RESET_FIELDS:
+                policy.pop(field, None)
+            if not self._is_absent_delete_reset_target(without_residue):
+                raise RuntimeError(f"Normalized reset changed beyond typed routed residue for {switch_id}/{name}")
+            if (switch_id, name.casefold()) in self._fabric_link_endpoints():
+                raise RuntimeError(f"Normalized reset {switch_id}/{name} is a fabric-link endpoint; refusing correction")
+            corrections.append((name, switch_id))
+        results: list[ResponseType] = []
+        for name, switch_id in corrections:
+            endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
+            endpoint.set_identifiers(name)
+            current = self._existing_interface(name, switch_id)
+            retain = self._retain_reset_auto_negotiation(name, switch_id, current)
+            self._refresh_retained_reset_context([(name, switch_id)])
+            if retain:
+                self._reset_auto_negotiation_deploy_blocks.add(self._member_key(switch_id, name))
+            payload = InterfaceDefaultConfig.to_reset_payload(name, switch_id, retain_auto_negotiation=retain)
+            results.append(self._request(path=endpoint.path, verb=endpoint.verb, data=payload))
+        if corrections:
+            self.state_snapshot.refresh(list(dict.fromkeys(switch_id for _name, switch_id in corrections)))
+            self._membership_index_cache = None
+            for name, switch_id in corrections:
+                current = self._existing_interface(name, switch_id)
+                if (
+                    current is None
+                    or current.get("switchId") != switch_id
+                    or current.get("interfaceName") != name
+                    or not self._is_absent_delete_reset_target(current)
+                ):
+                    raise RuntimeError(f"Routed residue correction did not reach exact fresh reset intent for {switch_id}/{name}")
+                if self._membership_index().claiming_parents(switch_id, name):
+                    raise RuntimeError(f"Routed residue correction {switch_id}/{name} acquired aggregate ownership")
+                if self._has_blocking_child_subinterfaces(name, switch_id):
+                    raise RuntimeError(f"Routed residue correction {switch_id}/{name} acquired child subinterfaces")
+        for name, switch_id in pairs:
+            key = self._member_key(switch_id, name)
+            if key not in self._reset_auto_negotiation_retained:
+                self._reset_auto_negotiation_deploy_blocks.discard(key)
         return results
 
     def _post_normalize(self, api_endpoint: EpManageInterfacesNormalize, group: list[tuple[str, str]]) -> ResponseType:
@@ -1671,14 +2750,22 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         - If the normalize request fails for any reason other than the ND 4.3.1 empty-description rejection, or if the resend fails.
         """
-        payload = InterfaceDefaultConfig.to_normalize_payload(group, omit_description=self._normalize_omits_description)
+        self._refresh_retained_reset_context(group)
+        retain = all(self._member_key(switch_id, name) in self._reset_auto_negotiation_retained for name, switch_id in group)
+        if retain:
+            self._reset_auto_negotiation_deploy_blocks.update(self._member_key(switch_id, name) for name, switch_id in group)
+        payload = InterfaceDefaultConfig.to_normalize_payload(
+            group,
+            omit_description=self._normalize_omits_description,
+            retain_auto_negotiation=retain,
+        )
         response_count = self.rest_send.response_count
         try:
             return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
         except Exception:
             if not self._normalize_omits_description and self._rejected_empty_description(response_count):
                 self._normalize_omits_description = True
-                payload = InterfaceDefaultConfig.to_normalize_payload(group, omit_description=True)
+                payload = InterfaceDefaultConfig.to_normalize_payload(group, omit_description=True, retain_auto_negotiation=retain)
                 return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
             raise
 
@@ -1742,8 +2829,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         # Summary
 
         Reset queued interfaces one-at-a-time via PUT-as-replace using the minimal `InterfaceDefaultConfig.to_reset_payload`
-        body. There is no bulk PUT equivalent — this path runs only for interfaces whose wire state carries an unresettable
-        Class C field (`bandwidth`, `debounceLinkupTimer`, `inheritBandwidth`), so the request count stays low in practice.
+        body. There is no bulk PUT equivalent. This path clears unresettable
+        Class C fields, existing storm thresholds, and qualified routed residue.
 
         Fail-fast: on the first PUT failure the remaining interfaces are not attempted. ND has no rollback for a per-interface
         PUT, so interfaces reset before the failure stay at fabric default; the raised error names which interfaces
@@ -1764,7 +2851,11 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         for index, (interface_name, switch_id) in enumerate(pending):
             api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
             api_endpoint.set_identifiers(interface_name)
-            payload = InterfaceDefaultConfig.to_reset_payload(interface_name, switch_id)
+            retain = self._retain_reset_auto_negotiation(interface_name, switch_id, self._existing_interface(interface_name, switch_id))
+            self._refresh_retained_reset_context([(interface_name, switch_id)])
+            payload = InterfaceDefaultConfig.to_reset_payload(interface_name, switch_id, retain_auto_negotiation=retain)
+            if retain:
+                self._reset_auto_negotiation_deploy_blocks.add(self._member_key(switch_id, interface_name))
             try:
                 results.append(self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload))
             except Exception as e:
@@ -1777,6 +2868,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 ) from e
             succeeded.append(interface_name)
             self._pending_resets.remove((interface_name, switch_id))
+            self._verify_reset_auto_negotiation([(interface_name, switch_id)])
         return results
 
     def _xe_reset_interfaces(self) -> list[ResponseType]:
@@ -1875,6 +2967,99 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         except Exception as e:
             raise RuntimeError(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
 
+    def prepare_bulk_member_update(self, model_instance: ModelType) -> dict[str, Any] | None:
+        """Opt-in qualification candidate for ordinary NX-OS member updates."""
+        version = self.rest_send.controller_version or ""
+        match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+        if match is None or tuple(map(int, match.groups())) < (4, 3, 1):
+            return None
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        if self.state_snapshot is None or not self.state_snapshot.has_switch(switch_id):
+            return None
+        current = self.state_snapshot.cached_interface(switch_id, model_instance.interface_name)
+        descriptor = get_member_policy_descriptor(self._existing_policy_type(current))
+        if descriptor is None or descriptor.network_os != "nx-os" or descriptor.pair_aware:
+            return None
+        if not isinstance(current, dict) or current.get("switchId") != switch_id or current.get("interfaceType") != "ethernet":
+            raise RuntimeError("Member bulk update requires an exact observed Ethernet identity")
+        if not self._prepare_member_intent(model_instance, current):
+            raise RuntimeError("Member bulk update requires explicit member-safe intent")
+        self._check_fabric_ownership(model_instance, current)
+        key = self._member_key(switch_id, model_instance.interface_name)
+        return build_member_update_payload(
+            current,
+            self._member_intents[key].requested_values,
+            switch_id=switch_id,
+            pair_validated=bool(self._validated_member_ownership[key].pair_validated),
+        )
+
+    def modify_bulk_members_prepared(self, payloads, *, payload_orchestrators, payload_models, grouping_mode="switch_policy"):
+        """Experimental bounded-group transport retaining member safety.
+
+        Existing generic bulk guards remain unchanged. This path is available
+        only through the workflow's explicit member-batching opt-in. Wider
+        modes are separately named experimental qualification controls.
+        """
+        if grouping_mode not in {"switch_policy", "experimental_policy", "experimental_mixed"}:
+            raise ValueError("Unknown member batching qualification mode")
+        if not 2 <= len(payloads) <= 10000 or len(payload_orchestrators) != len(payloads) or len(payload_models) != len(payloads):
+            raise ValueError("Member bulk update requires 2–10000 aligned items")
+        snapshot = self.state_snapshot
+        requested, owners, observed, grouping = {}, {}, {}, set()
+        for payload, owner, model in zip(payloads, payload_orchestrators, payload_models):
+            if not isinstance(owner, EthernetBaseOrchestrator) or owner.state_snapshot is not snapshot or owner.fabric_name != self.fabric_name:
+                raise ValueError("Member bulk update requires shared family and fabric context")
+            expected = owner.prepare_bulk_member_update(model)
+            if expected is None or expected != payload:
+                raise ValueError("Member bulk payload differs from its proved safe singular body")
+            serial, name = payload["switchId"], payload["interfaceName"]
+            key = serial.casefold(), name.casefold()
+            if key in requested:
+                raise ValueError("Member bulk update contains a repeated exact identity")
+            grouping.add((serial, payload["configData"]["networkOS"]["policy"]["policyType"]))
+            requested[key], owners[key] = (serial, name), owner
+            observed[key] = snapshot.cached_interface(serial, name)
+        if grouping_mode == "switch_policy" and len(grouping) != 1:
+            raise ValueError("switch_policy requires one switch and member policy per request")
+        if grouping_mode == "experimental_policy" and len({policy for _serial, policy in grouping}) != 1:
+            raise ValueError("experimental_policy requires one member policy per request")
+        from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import EpManageInterfacesModify
+
+        endpoint = EpManageInterfacesModify()
+        endpoint.fabric_name = self.fabric_name
+        recorded = self.rest_send.response_count
+        try:
+            result = self._request(path=endpoint.path, verb=endpoint.verb, data={"interfaces": list(payloads)})
+        except Exception:
+            accepted = set()
+            if self.rest_send.response_count > recorded and self.rest_send.return_code == 207:
+                accepted, _exact = self._bulk_modify_classify_result_pairs(requested)
+            for key in accepted:
+                serial, name = requested[key]
+                owners[key]._queue_deploy(name, serial)
+            snapshot.mark_dirty({serial for serial, _name in requested.values()})
+            raise
+        if self.rest_send.response_count <= recorded:
+            snapshot.mark_dirty({serial for serial, _name in requested.values()})
+            raise RuntimeError("Member bulk dispatch returned without a fresh response")
+        accepted, exact = self._bulk_modify_classify_result_pairs(requested)
+        for key in accepted:
+            serial, name = requested[key]
+            owners[key]._queue_deploy(name, serial)
+        if self.rest_send.return_code != 207 or not exact or accepted != set(requested):
+            snapshot.mark_dirty({serial for serial, _name in requested.values()})
+            raise RuntimeError("Member bulk result did not prove exact success for every requested identity")
+        upserts = {}
+        for payload in payloads:
+            key = payload["switchId"].casefold(), payload["interfaceName"].casefold()
+            row = deepcopy(observed[key])
+            row["configData"] = deepcopy(payload["configData"])
+            owners[key]._member_records[owners[key]._member_key(payload["switchId"], payload["interfaceName"])] = row
+            upserts.setdefault(payload["switchId"], []).append(row)
+        for switch_id, rows in upserts.items():
+            snapshot.apply_overlay(switch_id, upserts=rows)
+        return result
+
     def _update_member(self, model_instance: ModelType, switch_id: str, existing_data: dict) -> ResponseType:
         """PUT a validated member-policy payload without changing its membership.
 
@@ -1942,11 +3127,13 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 if existing_data is None:
                     raise AssertionError("Member update requires existing interface data")
                 return self._update_member(model_instance, switch_id, existing_data)
+            if self._staged_detachment_default_corrections(model_instance, existing_data):
+                existing_data = self._refresh_staged_detachment_context(model_instance)
             self._check_fabric_ownership(model_instance, existing_data)
             self._check_port_channel_restrictions(model_instance, existing_data)
             api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
             api_endpoint.set_identifiers(model_instance.interface_name)
-            payload = model_instance.to_payload()
+            payload = self._bulk_modify_payload(model_instance, switch_id)
             payload["switchId"] = switch_id
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
             self._queue_deploy(model_instance.interface_name, switch_id)

@@ -2053,7 +2053,7 @@ def test_mcfg_parent_attachment_validate_and_attach_use_onemanage_payload_shape(
         "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networkAttachments/validateInterfaces?strictModeValidation=false"
     )
     assert coordinator.orchestrator.requests[0]["data"] == {
-        "attachments": [{"networkName": "BLUE_NET", "switchId": "SERIAL1", "vlanId": -1, "interfaces": [], "attach": True}]
+        "attachments": [{"networkName": "BLUE_NET", "switchId": "SERIAL1", "interfaces": [], "attach": True}]
     }
     assert coordinator.orchestrator.requests[1]["path"] == "/api/v1/oneManage/manage/fabrics/MCFG_FAB/networkAttachments"
     assert coordinator.orchestrator.requests[1]["data"] == {
@@ -2405,7 +2405,6 @@ def test_network_attachment_post_validates_interfaces_before_attach():
             {
                 "networkName": "BLUE_NET",
                 "switchId": "SERIAL1",
-                "vlanId": -1,
                 "interfaces": [
                     {
                         "mode": "trunk",

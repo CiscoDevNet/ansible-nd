@@ -10,6 +10,7 @@ import time
 
 from typing import Any, Callable, ClassVar
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
@@ -33,6 +34,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.
     BaseNetworkStrategy,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_staging_effects import NetworkStagingEffects
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_networks import (
     EpManageFabricsNetworksPost,
 )
@@ -61,6 +63,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
 
     strategy: BaseNetworkStrategy | None = None
     trace_hook: Callable[..., None] | None = None
+    staging_effects: NetworkStagingEffects | None = Field(default=None, exclude=True)
     delete_retry_attempts: ClassVar[int] = 3
     delete_retry_delay: ClassVar[int] = 30
     scoped_query_threshold: ClassVar[int] = 5
@@ -523,7 +526,11 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             page_items = self._network_items_from_query_result(result)
             networks.extend(page_items)
 
-            if not self._has_more_unfiltered_pages(result, len(page_items), len(networks)):
+            more = self._has_more_unfiltered_pages(result, len(page_items), len(networks))
+            observer = getattr(self, "staging_effects", None)
+            if isinstance(observer, NetworkStagingEffects):
+                observer.observe_page("definitions", result, page_items, offset, self.unfiltered_query_page_size, more)
+            if not more:
                 break
             if not page_items:
                 break

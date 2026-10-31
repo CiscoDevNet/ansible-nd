@@ -24,10 +24,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
     EthernetTrunkHostInterfaceModel,
+    EthernetTrunkHostPolicyModel,
     XeEthernetTrunkHostPolicyModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import (
     InterfaceDefaultConfig,
+    ROUTED_SIBLING_RESET_FIELDS,
+    has_typed_routed_sibling_residue,
+    has_retained_reset_auto_negotiation,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import (
     EthernetBaseOrchestrator,
@@ -101,6 +105,43 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         return {e.value for e in TrunkHostPolicyTypeEnum} | {e.value for e in XeTrunkHostPolicyTypeEnum}
 
     @staticmethod
+    def unsupported_nx_reset_fields(iface: dict) -> tuple[str, ...]:
+        """Identify fields a modeled NX trunk reset cannot safely account for.
+
+        Check raw containers before response-model parsing can discard unknown
+        keys. Recognized nondefault policy fields still follow the normal reset
+        paths, including the separate Class C replacement correction.
+        """
+        config = iface.get("configData")
+        if config is None:
+            config = {}
+        if not isinstance(config, dict):
+            return ("configData",)
+        network = config.get("networkOS")
+        if network is None:
+            network = {}
+        if not isinstance(network, dict):
+            return ("configData.networkOS",)
+        policy = network.get("policy")
+        if policy is None:
+            policy = {}
+        if not isinstance(policy, dict):
+            return ("configData.networkOS.policy",)
+        fields = ["configData." + str(key) for key in config if key not in {"mode", "networkOS"}]
+        if "mode" in config and config["mode"] != "trunk":
+            fields.append("configData.mode")
+        fields.extend("configData.networkOS." + str(key) for key in network if key not in {"networkOSType", "policy"})
+        if "networkOSType" in network and network["networkOSType"] != "nx-os":
+            fields.append("configData.networkOS.networkOSType")
+        known_policy = {field.alias or name for name, field in EthernetTrunkHostPolicyModel.model_fields.items()}
+        known_policy.update(_default_interface_policy())
+        known_policy.add("ptp")  # Qualified false echo on normalized ND 4.3.1 NX-OS hosts.
+        if iface.get("interfaceType") == "ethernet" and has_typed_routed_sibling_residue(config):
+            known_policy.update(ROUTED_SIBLING_RESET_FIELDS)
+        fields.extend("configData.networkOS.policy." + str(key) for key in policy if key not in known_policy)
+        return tuple(sorted(fields))
+
+    @staticmethod
     def _is_unconfigured_default(iface: dict) -> bool:
         """
         # Summary
@@ -130,6 +171,26 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
             return False
         if policy.get("policyType") == XeTrunkHostPolicyTypeEnum.IOS_XE_TRUNK_HOST.value:
             return EthernetTrunkHostInterfaceOrchestrator._is_unconfigured_xe_default(policy)
+        if EthernetTrunkHostInterfaceOrchestrator.unsupported_nx_reset_fields(iface):
+            return False
+        reset_fields = (
+            set(_default_interface_policy())
+            | {
+                "policyType",
+                "description",
+                "allowedVlans",
+                "nativeVlan",
+                "vlanMappingEntries",
+                "ptp",
+            }
+            | InterfaceDefaultConfig.UNRESETTABLE_FIELDS
+            | InterfaceDefaultConfig.STORM_THRESHOLD_FIELDS
+        )
+        if any(key not in reset_fields for key in policy):
+            return False
+        ptp = policy.get("ptp")
+        if ptp is not None and not (ptp is False or isinstance(ptp, str) and ptp == "false"):
+            return False
         allowed_vlans = policy.get("allowedVlans")
         if allowed_vlans not in (None, "none"):
             return False
@@ -142,6 +203,8 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         for field, default in _default_interface_policy().items():
             if field not in policy or policy[field] is None:
                 continue
+            if field == "extraConfig" and has_retained_reset_auto_negotiation(iface.get("configData") or {}):
+                continue
             if not _wire_value_matches_default(policy[field], default):
                 return False
         # TODO(4.2.1) normalize-unresettable-policy-fields
@@ -149,7 +212,7 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         # ND's validator rejects 0/null for them, so a normalized interface still carries any prior value. We must treat
         # such an interface as configured (not an unconfigured default) so `state: deleted` keeps it in scope and routes
         # it to the per-interface PUT-as-replace reset path. See InterfaceDefaultConfig.UNRESETTABLE_FIELDS for the set.
-        if any(policy.get(field) is not None for field in InterfaceDefaultConfig.UNRESETTABLE_FIELDS):
+        if any(policy.get(field) is not None for field in InterfaceDefaultConfig.UNRESETTABLE_FIELDS | InterfaceDefaultConfig.STORM_THRESHOLD_FIELDS):
             return False
         if policy.get("vlanMappingEntries"):
             return False

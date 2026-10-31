@@ -363,6 +363,33 @@ class NetworkBaseModel(NetworkCommonModel):
     network_template_config: dict[str, str] | None = Field(default=None, alias="networkTemplateConfig")
     interface_group_names: list[str] | None = Field(default=None, alias="interfaceGroupNames")
 
+    def _apply_reverse_diff_scope(self, data: dict[str, Any]) -> None:
+        """Ignore only observed deterministic VXLAN iBGP default echoes.
+
+        Repeated omit/PUT/readback on ND 4.3.1 retains these exact defaults.
+        Non-default values remain removal differences. Allocated multicast
+        groups, VLAN IDs and VNIs deliberately have no default exemption.
+        """
+        super()._apply_reverse_diff_scope(data)
+        if self.network_type != NetworkType.VXLAN_IBGP.value:
+            return
+        if data.get("displayName") == self.network_name:
+            data.pop("displayName", None)
+        defaults = {
+            ("vlanNetworkType",): "normal",
+            ("l2Data", "rtAuto"): False,
+            ("l2Data", "xConnect"): False,
+            ("l3Data", "fabricData", "gatewayOnBorder"): False,
+            ("l3Data", "fabricData", "igmpVersion"): 2,
+            ("l3Data", "fabricData", "ipv6Trm"): False,
+        }
+        for path, default in defaults.items():
+            parent = data
+            for key in path[:-1]:
+                parent = parent.get(key) if isinstance(parent, dict) else None
+            if isinstance(parent, dict) and parent.get(path[-1]) == default:
+                parent.pop(path[-1], None)
+
     @field_validator("network_id", "primary_network_id", "normal_network_id", mode="before")
     @classmethod
     def validate_network_id(cls, v: int | None) -> int | None:

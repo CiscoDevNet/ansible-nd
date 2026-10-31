@@ -1,0 +1,486 @@
+{
+  "source_case": "attachment-repair-forced-16b",
+  "source_sha256": "21cfac696fb4a3319d85c82c659556db641fdb452c14fbbc766ca53bf1921885",
+  "network_definitions": [
+    {
+      "networkMode": "layer3",
+      "vlanId": 191,
+      "displayName": "nacprep_20261028_trunk",
+      "networkStatus": "deployed",
+      "networkName": "nacprep_20261028_trunk",
+      "vlanNetworkType": "normal",
+      "networkId": 29991,
+      "l3Data": {
+        "arpSuppression": false,
+        "fabricData": {
+          "igmpVersion": 2,
+          "netflow": false,
+          "gatewayOnBorder": false,
+          "ipv6Trm": false,
+          "ipv4Trm": false
+        },
+        "gatewayIpv4Address": "172.29.191.1/24",
+        "mtu": 9216
+      },
+      "networkType": "vxlanIbgp",
+      "l2Data": {
+        "fabricData": {
+          "enableIr": false,
+          "multicastGroup": "239.1.1.0"
+        },
+        "xConnect": false,
+        "rtAuto": false
+      },
+      "fabricName": "nac-msd-fabric1",
+      "vrfName": "nacprep_20261028_vrf"
+    },
+    {
+      "networkMode": "layer3",
+      "vlanId": 194,
+      "displayName": "nacprep_20261028_vpc_access",
+      "networkStatus": "deployed",
+      "networkName": "nacprep_20261028_vpc_access",
+      "vlanNetworkType": "normal",
+      "networkId": 29994,
+      "l3Data": {
+        "arpSuppression": false,
+        "fabricData": {
+          "igmpVersion": 2,
+          "netflow": false,
+          "gatewayOnBorder": false,
+          "ipv6Trm": false,
+          "ipv4Trm": false
+        },
+        "gatewayIpv4Address": "172.29.194.1/24",
+        "mtu": 9216
+      },
+      "networkType": "vxlanIbgp",
+      "l2Data": {
+        "fabricData": {
+          "enableIr": false,
+          "multicastGroup": "239.1.1.0"
+        },
+        "xConnect": false,
+        "rtAuto": false
+      },
+      "fabricName": "nac-msd-fabric1",
+      "vrfName": "nacprep_20261028_vrf"
+    },
+    {
+      "networkMode": "layer3",
+      "vlanId": 100,
+      "displayName": "MyNetwork_20000",
+      "networkStatus": "notApplicable",
+      "networkName": "MyNetwork_20000",
+      "vlanNetworkType": "normal",
+      "networkId": 20000,
+      "l3Data": {
+        "routingTag": 12345,
+        "arpSuppression": false,
+        "fabricData": {
+          "igmpVersion": 2,
+          "netflow": false,
+          "gatewayOnBorder": false,
+          "ipv6Trm": false,
+          "ipv4Trm": false
+        },
+        "mtu": 9216
+      },
+      "networkType": "vxlanIbgp",
+      "l2Data": {
+        "fabricData": {
+          "enableIr": false,
+          "multicastGroup": "239.1.1.0"
+        },
+        "xConnect": false,
+        "rtAuto": false
+      },
+      "fabricName": "nac-msd-fabric1",
+      "vrfName": "MyVRF_40001"
+    },
+    {
+      "networkMode": "layer3",
+      "vlanId": 196,
+      "displayName": "nacprep_20261028_converted_trunk",
+      "networkStatus": "deployed",
+      "networkName": "nacprep_20261028_converted_trunk",
+      "vlanNetworkType": "normal",
+      "networkId": 29996,
+      "l3Data": {
+        "arpSuppression": false,
+        "fabricData": {
+          "igmpVersion": 2,
+          "netflow": false,
+          "gatewayOnBorder": false,
+          "ipv6Trm": false,
+          "ipv4Trm": false
+        },
+        "gatewayIpv4Address": "172.29.196.1/24",
+        "mtu": 9216
+      },
+      "networkType": "vxlanIbgp",
+      "l2Data": {
+        "fabricData": {
+          "enableIr": false,
+          "multicastGroup": "239.1.1.0"
+        },
+        "xConnect": false,
+        "rtAuto": false
+      },
+      "fabricName": "nac-msd-fabric1",
+      "vrfName": "nacprep_20261028_vrf"
+    },
+    {
+      "networkMode": "layer3",
+      "vlanId": 197,
+      "displayName": "nacprep_20261028_converted_access",
+      "networkStatus": "deployed",
+      "networkName": "nacprep_20261028_converted_access",
+      "vlanNetworkType": "normal",
+      "networkId": 29997,
+      "l3Data": {
+        "arpSuppression": false,
+        "fabricData": {
+          "igmpVersion": 2,
+          "netflow": false,
+          "gatewayOnBorder": false,
+          "ipv6Trm": false,
+          "ipv4Trm": false
+        },
+        "gatewayIpv4Address": "172.29.197.1/24",
+        "mtu": 9216
+      },
+      "networkType": "vxlanIbgp",
+      "l2Data": {
+        "fabricData": {
+          "enableIr": false,
+          "multicastGroup": "239.1.1.0"
+        },
+        "xConnect": false,
+        "rtAuto": false
+      },
+      "fabricName": "nac-msd-fabric1",
+      "vrfName": "nacprep_20261028_vrf"
+    },
+    {
+      "networkMode": "layer3",
+      "vlanId": 192,
+      "displayName": "nacprep_20261028_access",
+      "networkStatus": "deployed",
+      "networkName": "nacprep_20261028_access",
+      "vlanNetworkType": "normal",
+      "networkId": 29992,
+      "l3Data": {
+        "arpSuppression": false,
+        "fabricData": {
+          "igmpVersion": 2,
+          "netflow": false,
+          "gatewayOnBorder": false,
+          "ipv6Trm": false,
+          "ipv4Trm": false
+        },
+        "gatewayIpv4Address": "172.29.192.1/24",
+        "mtu": 9216
+      },
+      "networkType": "vxlanIbgp",
+      "l2Data": {
+        "fabricData": {
+          "enableIr": false,
+          "multicastGroup": "239.1.1.0"
+        },
+        "xConnect": false,
+        "rtAuto": false
+      },
+      "fabricName": "nac-msd-fabric1",
+      "vrfName": "nacprep_20261028_vrf"
+    },
+    {
+      "networkMode": "layer3",
+      "vlanId": 195,
+      "displayName": "nacprep_20261028_shared",
+      "networkStatus": "deployed",
+      "networkName": "nacprep_20261028_shared",
+      "vlanNetworkType": "normal",
+      "networkId": 29995,
+      "l3Data": {
+        "arpSuppression": false,
+        "fabricData": {
+          "igmpVersion": 2,
+          "netflow": false,
+          "gatewayOnBorder": false,
+          "ipv6Trm": false,
+          "ipv4Trm": false
+        },
+        "gatewayIpv4Address": "172.29.195.1/24",
+        "mtu": 9216
+      },
+      "networkType": "vxlanIbgp",
+      "l2Data": {
+        "fabricData": {
+          "enableIr": false,
+          "multicastGroup": "239.1.1.0"
+        },
+        "xConnect": false,
+        "rtAuto": false
+      },
+      "fabricName": "nac-msd-fabric1",
+      "vrfName": "nacprep_20261028_vrf"
+    },
+    {
+      "networkMode": "layer3",
+      "vlanId": 193,
+      "displayName": "nacprep_20261028_vpc_trunk",
+      "networkStatus": "deployed",
+      "networkName": "nacprep_20261028_vpc_trunk",
+      "vlanNetworkType": "normal",
+      "networkId": 29993,
+      "l3Data": {
+        "arpSuppression": false,
+        "fabricData": {
+          "igmpVersion": 2,
+          "netflow": false,
+          "gatewayOnBorder": false,
+          "ipv6Trm": false,
+          "ipv4Trm": false
+        },
+        "gatewayIpv4Address": "172.29.193.1/24",
+        "mtu": 9216
+      },
+      "networkType": "vxlanIbgp",
+      "l2Data": {
+        "fabricData": {
+          "enableIr": false,
+          "multicastGroup": "239.1.1.0"
+        },
+        "xConnect": false,
+        "rtAuto": false
+      },
+      "fabricName": "nac-msd-fabric1",
+      "vrfName": "nacprep_20261028_vrf"
+    }
+  ],
+  "desired_config": [
+    {
+      "network_name": "nacprep_20261028_trunk",
+      "deploy": false,
+      "is_l2only": false,
+      "vrf_name": "nacprep_20261028_vrf",
+      "network_id": 29991,
+      "vlan_id": 191,
+      "gateway_ipv4_address": "172.29.191.1/24",
+      "netflow_enable": false,
+      "trm_enable": false,
+      "attach": [
+        {
+          "ip_address": "10.122.84.181",
+          "attachment_options": {
+            "svi_enabled": true
+          },
+          "vlan_id": 191,
+          "interfaces": [
+            {
+              "mode": "trunk",
+              "interface_range": "port-channel61"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "network_name": "nacprep_20261028_access",
+      "deploy": false,
+      "is_l2only": false,
+      "vrf_name": "nacprep_20261028_vrf",
+      "network_id": 29992,
+      "vlan_id": 192,
+      "gateway_ipv4_address": "172.29.192.1/24",
+      "netflow_enable": false,
+      "trm_enable": false,
+      "attach": [
+        {
+          "ip_address": "10.122.84.181",
+          "attachment_options": {
+            "svi_enabled": true
+          },
+          "vlan_id": 192,
+          "interfaces": [
+            {
+              "mode": "access",
+              "interface_range": "port-channel62"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "network_name": "nacprep_20261028_shared",
+      "deploy": false,
+      "is_l2only": false,
+      "vrf_name": "nacprep_20261028_vrf",
+      "network_id": 29995,
+      "vlan_id": 195,
+      "gateway_ipv4_address": "172.29.195.1/24",
+      "netflow_enable": false,
+      "trm_enable": false,
+      "attach": [
+        {
+          "ip_address": "10.122.84.181",
+          "attachment_options": {
+            "svi_enabled": true
+          },
+          "vlan_id": 195,
+          "interfaces": [
+            {
+              "mode": "trunk",
+              "interface_range": "port-channel61"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "network_name": "nacprep_20261028_vpc_trunk",
+      "deploy": false,
+      "is_l2only": false,
+      "vrf_name": "nacprep_20261028_vrf",
+      "network_id": 29993,
+      "vlan_id": 193,
+      "gateway_ipv4_address": "172.29.193.1/24",
+      "netflow_enable": false,
+      "trm_enable": false,
+      "attach": [
+        {
+          "ip_address": "10.122.84.183",
+          "attachment_options": {
+            "svi_enabled": true
+          },
+          "vlan_id": 193,
+          "interfaces": [
+            {
+              "mode": "trunk",
+              "interface_range": "port-channel61"
+            }
+          ]
+        },
+        {
+          "ip_address": "10.122.84.184",
+          "attachment_options": {
+            "svi_enabled": true
+          },
+          "vlan_id": 193,
+          "interfaces": [
+            {
+              "mode": "trunk",
+              "interface_range": "port-channel61"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "network_name": "nacprep_20261028_vpc_access",
+      "deploy": false,
+      "is_l2only": false,
+      "vrf_name": "nacprep_20261028_vrf",
+      "network_id": 29994,
+      "vlan_id": 194,
+      "gateway_ipv4_address": "172.29.194.1/24",
+      "netflow_enable": false,
+      "trm_enable": false,
+      "attach": [
+        {
+          "ip_address": "10.122.84.183",
+          "attachment_options": {
+            "svi_enabled": true
+          },
+          "vlan_id": 194,
+          "interfaces": [
+            {
+              "mode": "access",
+              "interface_range": "port-channel62"
+            }
+          ]
+        },
+        {
+          "ip_address": "10.122.84.184",
+          "attachment_options": {
+            "svi_enabled": true
+          },
+          "vlan_id": 194,
+          "interfaces": [
+            {
+              "mode": "access",
+              "interface_range": "port-channel62"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "network_name": "nacprep_20261028_converted_trunk",
+      "deploy": false,
+      "is_l2only": false,
+      "vrf_name": "nacprep_20261028_vrf",
+      "network_id": 29996,
+      "vlan_id": 196,
+      "gateway_ipv4_address": "172.29.196.1/24",
+      "netflow_enable": false,
+      "trm_enable": false,
+      "attach": [
+        {
+          "ip_address": "10.122.84.182",
+          "attachment_options": {
+            "svi_enabled": true
+          },
+          "vlan_id": 196,
+          "interfaces": [
+            {
+              "mode": "trunk",
+              "interface_range": "Ethernet1/43"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "network_name": "nacprep_20261028_converted_access",
+      "deploy": false,
+      "is_l2only": false,
+      "vrf_name": "nacprep_20261028_vrf",
+      "network_id": 29997,
+      "vlan_id": 197,
+      "gateway_ipv4_address": "172.29.197.1/24",
+      "netflow_enable": false,
+      "trm_enable": false,
+      "attach": [
+        {
+          "ip_address": "10.122.84.182",
+          "attachment_options": {
+            "svi_enabled": true
+          },
+          "vlan_id": 197,
+          "interfaces": [
+            {
+              "mode": "access",
+              "interface_range": "Ethernet1/44"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "network_name": "MyNetwork_20000",
+      "deploy": false,
+      "is_l2only": false,
+      "vrf_name": "MyVRF_40001",
+      "network_id": 20000,
+      "vlan_id": 100,
+      "gateway_on_border": false,
+      "routing_tag": 12345,
+      "multicast_group_address": "239.1.1.0",
+      "arp_suppression": false,
+      "netflow_enable": false,
+      "trm_enable": false
+    }
+  ]
+}

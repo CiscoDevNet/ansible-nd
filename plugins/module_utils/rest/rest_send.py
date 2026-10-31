@@ -22,6 +22,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.response_handler import ResponseHandlerProtocol
 from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.sender import SenderProtocol
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
+from ansible_collections.cisco.nd.plugins.module_utils.rest.read_history import compact_consumed_get_response
 
 
 class RestSend:  # pylint: disable=too-many-public-methods
@@ -625,6 +626,27 @@ class RestSend:  # pylint: disable=too-many-public-methods
         `commit()` must be called first.
         """
         return copy.deepcopy(self._response)
+
+    def iter_request_outcomes(self):
+        """Yield immutable accounting metadata without copying controller bodies."""
+        for response, result in zip(self._response, self._result):
+            yield (
+                str(response.get("METHOD") or "").upper(),
+                str(response.get("REQUEST_PATH") or ""),
+                result.get("changed") is True,
+            )
+
+    def compact_successful_read_history(self, response_start: int, *, path: str) -> None:
+        """Drop only consumed successful read bodies for an explicit internal caller.
+
+        Current response, response count, error bodies, mutations and result
+        records remain intact. Ordinary and standalone callers do not opt in.
+        """
+        for index in range(response_start, len(self._response)):
+            response = self._response[index]
+            result = self._result[index] if index < len(self._result) else {}
+            if result.get("success") is True and result.get("changed") is not True:
+                self._response[index] = compact_consumed_get_response(response, path=path)
 
     def history_since(self, response_start: int, result_start: int) -> tuple[list[dict], list[dict]]:
         """Return isolated new records without copying the entire accumulated history."""

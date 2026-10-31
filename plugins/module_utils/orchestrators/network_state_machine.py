@@ -29,6 +29,8 @@ from typing import Any
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_network import (
     BaseNetworkStrategy,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.overlay_deletion_finalizer import OverlayDeletionFinalizer
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_staging_effects import NetworkStagingEffects
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.staged_state_helpers import (
     crud_module_args,
     prepare_crud_state,
@@ -172,6 +174,14 @@ class NetworkStateMachine:
         """
         state = module_args.get("state", "merged")
         config = [dict(network) for network in module_args.get("config") or []]
+        original_digest = getattr(self.coordinator, "_network_staging_request_sha256", None)
+        effects = (
+            NetworkStagingEffects(module_args, strategy, self._check_mode(), original_digest if isinstance(original_digest, str) else None)
+            if state == "staged"
+            else None
+        )
+        if effects is not None:
+            self.coordinator._network_staging_effects = effects
         desired_attachments = self.coordinator._desired_attachment_map(module_args, strategy)
         desired_network_names = self.coordinator._configured_network_names(config)
 
@@ -232,6 +242,8 @@ class NetworkStateMachine:
             self._prepend_traces(result, pre_delete_traces + [pre_attach])
 
             if result.get("failed", False):
+                if effects is not None:
+                    result["network_staging_effects"] = effects.finish(result, sm, current_attachment_details, desired_attachments, [])
                 return result
 
             post_attachment_details = list(current_attachment_details or [])
@@ -267,6 +279,7 @@ class NetworkStateMachine:
             self.coordinator._merge_api_trace(result, post_attach)
 
             if state == "staged":
+                result["network_staging_effects"] = effects.finish(result, sm, current_attachment_details, desired_attachments, post_attachment_details)
                 return result
 
             return self._deploy_after_attachment_changes(
@@ -424,6 +437,8 @@ class NetworkStateMachine:
         """
         Detach and deploy current Network attachments before removing the Network.
         """
+        if module_args.get("deletion_mode", "standard") == "finalize":
+            return OverlayDeletionFinalizer(self.coordinator, "network").run(module_args, strategy)
         config = module_args.get("config") or []
 
         if not config:

@@ -80,6 +80,16 @@ def _planner(
     return InterfaceWorkflowPlanner(snapshot=snapshot, vpc_pair_by_switch_ip=vpc_pairs), recorder
 
 
+def _set_non_vpc_topology(planner: InterfaceWorkflowPlanner) -> None:
+    """Supply complete non-vPC metadata for dependency-only planner fixtures."""
+    context = planner.fabric_context
+    context._switches = [
+        {"switchId": serial, "fabricManagementIp": address, "vpcConfigured": False, "vpcData": {}} for address, serial in context.switch_map.items()
+    ]
+    planner.snapshot._topology_context = context
+    planner.snapshot._topology_pairs = {serial: {} for serial in context.switch_map_by_id}
+
+
 def _loopback(
     switch_ip: str,
     name: str = "loopback10",
@@ -166,7 +176,7 @@ def _wire_interface(
     policy_type: str,
     *,
     network_os_type: str = "nx-os",
-    mode: str = "access",
+    mode: str | None = None,
     oper_mode: str | None = None,
     **policy: Any,
 ) -> dict[str, Any]:
@@ -174,7 +184,7 @@ def _wire_interface(
         "interfaceName": name,
         "interfaceType": interface_type,
         "configData": {
-            "mode": mode,
+            "mode": mode if mode is not None else ("trunk" if policy_type in {"trunkHost", "iosXeTrunkHost"} else "access"),
             "networkOS": {
                 "networkOSType": network_os_type,
                 "policy": {"policyType": policy_type, **policy},
@@ -302,12 +312,12 @@ def test_registry_declares_generic_transition_delete_and_structural_safety_metad
     for resource_type, adapter in INTERFACE_FAMILY_ADAPTERS.items():
         delete_strategy, pair_consistency, owns_members, child_guard = expected[resource_type]
         assert adapter.transition_strategy is InterfaceTransitionStrategy.UPDATE
-        assert adapter.transition_states == IMPLICIT_TRANSITION_STATES
+        assert adapter.transition_states == (frozenset() if resource_type == "loopback" else IMPLICIT_TRANSITION_STATES)
         assert adapter.delete_strategy is delete_strategy
         assert adapter.safety.requires_pair_consistency is pair_consistency
         assert adapter.safety.owns_physical_members is owns_members
         assert adapter.safety.guards_child_subinterfaces is child_guard
-        assert adapter.supports_intra_family_policy_transitions is (resource_type in {"ethernet_routed", "loopback", "subinterface_managed", "svi"})
+        assert adapter.supports_intra_family_policy_transitions is (resource_type in {"ethernet_routed", "subinterface_managed", "svi"})
         assert not hasattr(adapter, "policy_transition_sources")
 
     assert IMPLICIT_TRANSITION_STATES == frozenset({"merged", "replaced"})
@@ -405,6 +415,7 @@ def test_overridden_discovery_preflight_keeps_unchanged_desired_interfaces() -> 
     resource_plan = SimpleNamespace(
         resource_index=0,
         resource_type="svi",
+        adapter=INTERFACE_FAMILY_ADAPTERS["svi"],
         state="overridden",
         orchestrator=orchestrator,
         proposed=[retained],
@@ -764,9 +775,16 @@ def test_implicit_transition_is_generic_across_non_vpc_adapters(
     plan = planner.plan([{"type": resource_type, "state": "merged", "config": [config]}])
 
     resource = plan.resources[0]
-    assert len(resource.transitions) == 1
-    assert resource.operations.creates == ()
-    assert resource.transitions[0].to_policy_type in resource.adapter.policy_types
+    if resource_type == "loopback":
+        # Loopback upserts use the standalone family plan, including discovered
+        # or foreign-policy rows outside its managed collection.
+        assert resource.transitions == ()
+        assert len(resource.operations.creates) == 1
+        assert plan.request_stats["interface_summary_gets"] == 0
+    else:
+        assert len(resource.transitions) == 1
+        assert resource.operations.creates == ()
+        assert resource.transitions[0].to_policy_type in resource.adapter.policy_types
 
 
 def test_svi_transition_accepts_switch_virtual_interface_summary_alias() -> None:
@@ -2613,6 +2631,8 @@ def test_port_channel_current_and_final_members_conflict_with_ethernet_mutation(
     final_members = ["Ethernet1/2"] if current_member else ["Ethernet1/1"]
     planner, _recorder = _planner(responses=responses, summary_responses=summaries)
 
+    _set_non_vpc_topology(planner)
+
     with pytest.raises(InterfaceWorkflowConflictError) as exc_info:
         planner.plan(
             [
@@ -3048,6 +3068,8 @@ def test_ios_xe_host_conversion_precedes_port_channel_attach(monkeypatch) -> Non
         },
     }
 
+    _set_non_vpc_topology(planner)
+
     plan = planner.plan(
         [
             {"type": "port_channel_access", "state": "merged", "config": [desired_parent]},
@@ -3102,6 +3124,8 @@ def test_ios_xe_routed_host_conversion_precedes_routed_port_channel_attach(monke
             }
         },
     }
+
+    _set_non_vpc_topology(planner)
 
     plan = planner.plan(
         [
@@ -3197,6 +3221,8 @@ def test_override_delete_conflicts_with_another_group_desiring_the_identity() ->
 def test_ethernet_mutation_cannot_race_a_new_port_channel_membership() -> None:
     """A physical port cannot be changed independently while a port-channel claims it."""
     planner, _recorder = _planner()
+
+    _set_non_vpc_topology(planner)
 
     with pytest.raises(InterfaceWorkflowConflictError) as exc_info:
         planner.plan(
