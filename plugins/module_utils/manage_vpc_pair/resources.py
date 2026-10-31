@@ -595,8 +595,10 @@ class VpcPairResourceService:
                 self.needs_deployment_handler(result, nd_manage_vpc_pair),
             )
             # A deploy that actually pushed config (e.g. deploying a previously
-            # staged pair) or a save with a declarative diff is a change. A bare
-            # configSave remains idempotent.
+            # staged, still out-of-sync pair) must surface as a module-level
+            # change even when the declarative state produced no diff. Idempotent
+            # no-op runs return deploy_result changed=False, so repeated runs stay
+            # unchanged.
             if deploy_result.get("changed"):
                 result["changed"] = True
 
