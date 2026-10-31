@@ -1,0 +1,74 @@
+---
+- name: Refresh and recheck only an unavailable declared existing link
+  when:
+    - _ndp_plan.rc == 3
+    - (_ndp_plan.stderr | default('')) is search('required existing link is (absent|not healthy) in ND:')
+  vars:
+    _ndp_existing_link_resources: "{{ _ndp_profile.resources | selectattr('existing_link', 'defined') | list }}"
+    _ndp_existing_link_switches: >-
+      {{ ((_ndp_existing_link_resources | map(attribute='switch_ref') | list)
+          + (_ndp_existing_link_resources | map(attribute='existing_link.peer_switch_ref') | list)) | unique | list }}
+  block:
+    - name: Report the existing-link recovery attempt
+      ansible.builtin.debug:
+        msg: >-
+          NDP_EXISTING_LINK_REFRESH attempt={{ _ndp_link_refresh_attempt + 1 }}/3:
+          {{ _ndp_plan.stderr | trim }}
+          Refreshing discovery only; no port bounce, BPDU Guard change, or invented link record.
+
+    - name: Verify endpoint identities before requesting rediscovery
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ _ndp_registry.lab.fabrics[
+            _ndp_registry.lab.switches[_ndp_refresh_switch].baseline_fabric_ref].name }}/switches
+        method: get
+      loop: "{{ _ndp_existing_link_switches }}"
+      loop_control:
+        loop_var: _ndp_refresh_switch
+      register: _ndp_refresh_memberships
+      no_log: true
+      when: _ndp_link_refresh_attempt == 0
+
+    - name: Request one rediscovery for each identity-verified endpoint
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ _ndp_registry.lab.fabrics[_ndp_refresh_expected.baseline_fabric_ref].name }}/switchActions/rediscover
+        method: post
+        content:
+          switchIds: ["{{ _ndp_refresh_expected.serial }}"]
+      vars:
+        _ndp_refresh_expected: "{{ _ndp_registry.lab.switches[_ndp_refresh_membership._ndp_refresh_switch] }}"
+        _ndp_refresh_matches: >-
+          {{ _ndp_refresh_membership.current.switches | default([])
+             | selectattr('switchId', 'defined')
+             | selectattr('switchId', 'equalto', _ndp_refresh_expected.serial)
+             | selectattr('fabricManagementIp', 'defined')
+             | selectattr('fabricManagementIp', 'equalto', _ndp_refresh_expected.seed_ip) | list }}
+      loop: "{{ _ndp_refresh_memberships.results | default([]) }}"
+      loop_control:
+        loop_var: _ndp_refresh_membership
+      no_log: true
+      when:
+        - _ndp_link_refresh_attempt == 0
+        - _ndp_refresh_matches | length == 1
+
+    - name: Allow discovery to update existing-link inventory
+      ansible.builtin.pause:
+        seconds: 15
+
+    - name: Recapture controller state after existing-link discovery
+      ansible.builtin.include_tasks: nd_prerequisite_capture.yaml
+
+    - name: Replan against the fresh existing-link inventory
+      ansible.builtin.command:
+        argv: "{{ _ndp_argv }}"
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+      check_mode: false
+      register: _ndp_refresh_plan
+      failed_when: _ndp_refresh_plan.rc not in [0, 3]
+
+    - name: Preserve the completed plan across skipped refresh iterations
+      ansible.builtin.set_fact:
+        _ndp_plan: "{{ _ndp_refresh_plan }}"

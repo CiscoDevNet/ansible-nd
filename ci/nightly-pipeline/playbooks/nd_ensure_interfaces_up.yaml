@@ -1,0 +1,242 @@
+---
+# Ensure every allowlisted physical interface on every canonical lab switch is
+# administratively UP before the integration suite starts. This is the fabric-wide
+# interface pre-flight: the Jenkins pipeline runs it ONCE, right after the switch
+# membership pre-flight (nd_ensure_switches.yaml) has confirmed the 6+2 topology is
+# present, and BEFORE the first test module. A switch that is a member but whose
+# fabric/vPC/uplink port is administratively shut silently degrades the fabric
+# (read-only drift, aborted builds that recap 0/0, "physical link not found"), so
+# this brings any such port back up before the suite can run on it.
+#
+# SCOPE (data-driven, safe by construction):
+#   * Switches + their interfaces come from tests/nd_prerequisite_profiles.yaml:
+#       lab.switches           - name -> {baseline_fabric_ref, baseline_role, serial}
+#       lab.interface_allowlist - name -> [Ethernet.../...]  (the ports WE own)
+#       lab.fabrics            - ref  -> {name: <real fabric name>}
+#   * Only allowlisted ports are ever touched. The spine and external_edge_2
+#     allowlists are EMPTY by design (underlay guard / unused), so those switches
+#     contribute nothing and their underlay is never altered.
+#   * A port with NO managed interface policy (a free/undiscovered reserved test
+#     port, mode "unknown") is SKIPPED, never brought up and never given a policy -
+#     that keeps the free interface-test ports free. Only a port that already has a
+#     policy and is administratively down is brought up. Policy TYPES are never
+#     changed; only adminState flips false -> true (every other field preserved).
+#
+# TWO MODES (mirrors nd_ensure_switches.yaml):
+#   * AUDIT (default, nd_iface_apply=false): GET + classify + report only, changes
+#     nothing. Add -e nd_iface_fail_on_down=true for a fail-fast audit that exits
+#     non-zero (NDP_IFACE_PREFLIGHT_FAIL) when any allowlisted port is down.
+#   * ENFORCE (nd_iface_apply=true): bring up every allowlisted port that has a
+#     policy and is administratively down, then re-verify. Best-effort: a single
+#     interface that will not come up is reported (NDP_IFACE_STILL_DOWN) but does
+#     NOT fail the play, so one stubborn port never blocks the whole nightly.
+#
+#   ansible-playbook -i inventory.yaml playbooks/nd_ensure_interfaces_up.yaml \
+#     -e nd_iface_apply=true
+- name: Ensure allowlisted fabric interfaces are administratively up (pre-flight)
+  hosts: nd
+  gather_facts: false
+  vars:
+    # Explicit registry override; empty = auto-discover from the candidates below.
+    nd_iface_registry_file: ""
+    # Registry search order (first existing wins). Covers the source layout (playbook
+    # in playbooks/, registry in ../tests/) and the flattened Jenkins install where the
+    # playbook and nd_prerequisite_profiles.yaml sit together at the collection root.
+    nd_iface_registry_candidates:
+      - "{{ playbook_dir }}/nd_prerequisite_profiles.yaml"
+      - "{{ playbook_dir }}/../tests/nd_prerequisite_profiles.yaml"
+      - "{{ playbook_dir }}/tests/nd_prerequisite_profiles.yaml"
+    # Gate live mutation. false = audit only; true = bring down ports up.
+    nd_iface_apply: false
+    # AUDIT-mode fail-fast only: when true a down allowlisted port exits non-zero
+    # (NDP_IFACE_PREFLIGHT_FAIL). In ENFORCE mode this is ignored - the bring-up is
+    # best-effort and a stubborn port is reported, not fatal.
+    nd_iface_fail_on_down: false
+
+  tasks:
+    - name: Locate the prerequisite registry across both layouts
+      ansible.builtin.set_fact:
+        nd_iface_registry_resolved: "{{ lookup('ansible.builtin.first_found', _ff) }}"
+      vars:
+        _ff:
+          files: "{{ ([nd_iface_registry_file] if (nd_iface_registry_file | length > 0) else []) + nd_iface_registry_candidates }}"
+          skip: true
+
+    - name: Load the prerequisite registry when found
+      ansible.builtin.include_vars:
+        file: "{{ nd_iface_registry_resolved }}"
+        name: _ndreg
+      when: nd_iface_registry_resolved | length > 0
+
+    - name: Decide whether a usable registry (lab.switches) is present
+      ansible.builtin.set_fact:
+        nd_iface_registry_ok: >-
+          {{ (nd_iface_registry_resolved | length > 0)
+             and (_ndreg is defined)
+             and (_ndreg.lab is defined)
+             and (_ndreg.lab.switches | default({}) | length > 0)
+             and (_ndreg.lab.interface_allowlist | default({}) | length > 0) }}
+
+    # A missing/empty registry is a no-op, not an error: skip instead of failing.
+    - name: Report the interface pre-flight skip (no usable registry)
+      ansible.builtin.debug:
+        msg: >-
+          NDP_IFACE_PREFLIGHT_SKIP no usable lab.switches/interface_allowlist registry found
+          (searched {{ ([nd_iface_registry_file] if (nd_iface_registry_file | length > 0) else []) + nd_iface_registry_candidates }});
+          skipping interface pre-flight.
+      when: not (nd_iface_registry_ok | bool)
+
+    - name: End the play without failing when the registry is missing
+      ansible.builtin.meta: end_play
+      when: not (nd_iface_registry_ok | bool)
+
+    # Merge each switch's allowlist into its metadata so a single subelements loop can
+    # fan out over (switch x interface). A switch with an empty allowlist (spine,
+    # external_edge_2) carries an empty list and contributes nothing.
+    - name: Fold the interface allowlist into each switch's metadata
+      ansible.builtin.set_fact:
+        _sw_with_ifaces: >-
+          {{ _sw_with_ifaces | default({}) | combine({
+               item.key: (item.value | combine({'ifaces': (_ndreg.lab.interface_allowlist[item.key] | default([]))}))
+             }) }}
+      loop: "{{ _ndreg.lab.switches | dict2items }}"
+      loop_control:
+        label: "{{ item.key }} ({{ (_ndreg.lab.interface_allowlist[item.key] | default([])) | length }} ifaces)"
+
+    - name: Read the current intent of every allowlisted interface
+      cisco.nd.nd_rest:
+        method: get
+        path: "/api/v1/manage/fabrics/{{ _ndreg.lab.fabrics[item.0.value.baseline_fabric_ref].name }}/switches/{{ item.0.value.serial }}/interfaces/{{ item.1 | replace('/', '%2F') }}"
+      register: _iface_probe
+      no_log: true
+      failed_when: false
+      loop: "{{ _sw_with_ifaces | dict2items | subelements('value.ifaces') }}"
+      loop_control:
+        label: "{{ item.0.key }}/{{ item.1 }}"
+
+    # Normalize each probe into a flat classification record. A port with an empty
+    # policy dict is a free/undiscovered port (no_policy); otherwise it is up or down
+    # by its adminState. Deep defaults keep a missing/failed GET safe.
+    - name: Classify every probed interface
+      ansible.builtin.set_fact:
+        _iface_class: "{{ _iface_class | default([]) + [_entry] }}"
+      loop: "{{ _iface_probe.results }}"
+      loop_control:
+        label: "{{ item.item.0.key }}/{{ item.item.1 }}"
+      vars:
+        _sw: "{{ item.item.0 }}"
+        _ifn: "{{ item.item.1 }}"
+        _cur: "{{ item.current | default({}) if (item.current | default({}) is mapping) else {} }}"
+        _cfg: "{{ _cur.configData | default({}) }}"
+        _nos: "{{ _cfg.networkOS | default({}) }}"
+        _pol: "{{ _nos.policy | default({}) }}"
+        _has_policy: "{{ (_pol | length) > 0 }}"
+        _admin: "{{ _pol.adminState | default(false) | bool }}"
+        _entry:
+          label: "{{ _sw.key }}/{{ _ifn }}"
+          switch: "{{ _sw.key }}"
+          role: "{{ _sw.value.baseline_role }}"
+          serial: "{{ _sw.value.serial }}"
+          fabric: "{{ _ndreg.lab.fabrics[_sw.value.baseline_fabric_ref].name }}"
+          ifname: "{{ _ifn }}"
+          state: "{{ 'no_policy' if not (_has_policy | bool) else ('up' if (_admin | bool) else 'down') }}"
+
+    - name: Split the classification into down / up / no-policy buckets
+      ansible.builtin.set_fact:
+        _iface_down_list: "{{ _iface_class | default([]) | selectattr('state', 'equalto', 'down') | list }}"
+        _iface_up_list: "{{ _iface_class | default([]) | selectattr('state', 'equalto', 'up') | list }}"
+        _iface_nopolicy_list: "{{ _iface_class | default([]) | selectattr('state', 'equalto', 'no_policy') | list }}"
+
+    - name: Report the interface pre-flight scope and audit
+      ansible.builtin.debug:
+        msg:
+          - "NDP_IFACE_PREFLIGHT_SCOPE switches={{ _ndreg.lab.switches | length }} allowlisted_interfaces={{ _iface_class | default([]) | length }} apply={{ nd_iface_apply | bool }}"
+          - "NDP_IFACE_PREFLIGHT_AUDIT down={{ _iface_down_list | length }} up={{ _iface_up_list | length }} no_policy_free={{ _iface_nopolicy_list | length }}"
+          - "NDP_IFACE_PREFLIGHT_DOWN {{ (_iface_down_list | map(attribute='label') | list) | default([]) }}"
+
+    # ENFORCE: bring every policied-but-down allowlisted port up, reusing the shared
+    # admin_up_interface helper (it re-GETs, skips a port with no policy, flips
+    # adminState=true preserving every other field, and deploys just that interface).
+    - name: Bring administratively-down allowlisted interfaces up
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/nd_prerequisite/admin_up_interface.yaml"
+      loop: "{{ _iface_down_list }}"
+      loop_control:
+        label: "{{ item.label }}"
+      vars:
+        _auif:
+          fabric: "{{ item.fabric }}"
+          serial: "{{ item.serial }}"
+          ifname: "{{ item.ifname }}"
+          label: "{{ item.label }}"
+      when:
+        - nd_iface_apply | bool
+        - _iface_down_list | length > 0
+
+    # Re-verify only the ports we just acted on, so the log carries proof the suite
+    # is starting on an all-up fabric (best-effort: a still-down port is reported,
+    # not fatal).
+    - name: Re-read the interfaces that were brought up
+      cisco.nd.nd_rest:
+        method: get
+        path: "/api/v1/manage/fabrics/{{ item.fabric }}/switches/{{ item.serial }}/interfaces/{{ item.ifname | replace('/', '%2F') }}"
+      register: _iface_reverify
+      no_log: true
+      failed_when: false
+      loop: "{{ _iface_down_list }}"
+      loop_control:
+        label: "{{ item.label }}"
+      when:
+        - nd_iface_apply | bool
+        - _iface_down_list | length > 0
+
+    - name: Classify the re-verified interfaces (same up/down/no-policy rule)
+      ansible.builtin.set_fact:
+        _iface_reverify_class: "{{ _iface_reverify_class | default([]) + [_rentry] }}"
+      loop: "{{ _iface_reverify.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.label }}"
+      vars:
+        _rcur: "{{ item.current | default({}) if (item.current | default({}) is mapping) else {} }}"
+        _rcfg: "{{ _rcur.configData | default({}) }}"
+        _rnos: "{{ _rcfg.networkOS | default({}) }}"
+        _rpol: "{{ _rnos.policy | default({}) }}"
+        _rhas: "{{ (_rpol | length) > 0 }}"
+        _radmin: "{{ _rpol.adminState | default(false) | bool }}"
+        _rentry:
+          label: "{{ item.item.label }}"
+          state: "{{ 'no_policy' if not (_rhas | bool) else ('up' if (_radmin | bool) else 'down') }}"
+      when:
+        - nd_iface_apply | bool
+        - _iface_down_list | length > 0
+
+    - name: Identify interfaces still administratively down after bring-up
+      ansible.builtin.set_fact:
+        _iface_still_down: "{{ _iface_reverify_class | default([]) | selectattr('state', 'equalto', 'down') | map(attribute='label') | list }}"
+      when:
+        - nd_iface_apply | bool
+        - _iface_down_list | length > 0
+
+    - name: Report the interface pre-flight result (enforce)
+      ansible.builtin.debug:
+        msg:
+          - "NDP_IFACE_PREFLIGHT_APPLIED attempted={{ _iface_down_list | length }} still_down={{ _iface_still_down | default([]) | length }}"
+          - "NDP_IFACE_STILL_DOWN {{ _iface_still_down | default([]) }}"
+      when: nd_iface_apply | bool
+
+    - name: Report the interface pre-flight is clean (enforce, nothing down)
+      ansible.builtin.debug:
+        msg: "NDP_IFACE_PREFLIGHT_OK all allowlisted interfaces are administratively up."
+      when:
+        - nd_iface_apply | bool
+        - (_iface_down_list | length) == 0
+
+    # AUDIT fail-fast (opt-in): make a down port a hard, greppable failure.
+    - name: Fail fast when an allowlisted interface is down (audit fail-fast)
+      ansible.builtin.assert:
+        that:
+          - (_iface_down_list | length) == 0
+        fail_msg: "NDP_IFACE_PREFLIGHT_FAIL {{ _iface_down_list | length }} allowlisted interface(s) administratively down: {{ _iface_down_list | map(attribute='label') | list }}"
+        success_msg: "NDP_IFACE_PREFLIGHT_OK all allowlisted interfaces are administratively up."
+      when:
+        - not (nd_iface_apply | bool)
+        - nd_iface_fail_on_down | bool

@@ -1,0 +1,402 @@
+// Read-only roster discovery with timed device/SNMP probes for leaf_1 and leaf_2.
+pipeline {
+    agent { docker { image 'ansible_nd_setup'; args '--user root' } }
+    options {
+        disableConcurrentBuilds()
+        timeout(time: 30, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '5'))
+    }
+    stages {
+        stage('Probe roster discovery') {
+            steps {
+                script {
+                    try {
+                        sh '''#!/bin/bash
+set -euo pipefail
+if ! command -v ping >/dev/null || ! command -v snmpget >/dev/null || ! command -v snmpwalk >/dev/null; then
+    if command -v apt-get >/dev/null && \
+       timeout 120 apt-get update -qq -o Acquire::Retries=0 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 && \
+       timeout 120 apt-get install -y -qq --no-install-recommends iputils-ping snmp; then
+        echo 'Diagnostic transport tools are available.'
+    else
+        echo 'Diagnostic dependency installation failed; unavailable probes will be reported as tool_missing.' >&2
+    fi
+fi
+'''
+                        withCredentials([
+                            string(credentialsId: 'ANSIBLE_NDFC_USERNAME', variable: 'NDFC_USER'),
+                            string(credentialsId: 'ANSIBLE_NDFC_41_117_PASSWORD', variable: 'NDFC_PASSWORD'),
+                            usernamePassword(credentialsId: 'SWITCH_CREDENTIALS',
+                                usernameVariable: 'ANSIBLE_NXOS_SWITCH_USERNAME',
+                                passwordVariable: 'ANSIBLE_NXOS_SWITCH_PASSWORD')
+                        ]) {
+                            sh '''#!/bin/bash
+set -euo pipefail
+set +x
+umask 077
+probe_exit=0
+"$HOME/ansible/venv/bin/python" -u - <<'PY' | tee discovery_diagnostic.jsonl || probe_exit=$?
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import datetime, timezone
+
+import requests
+import urllib3
+
+# Match the existing lab inventory's certificate setting; no TLS policy changes.
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+base = 'https://192.0.2.117'
+
+# Authoritative lab roster from nd_prerequisite_profiles.yaml (lab.switches), grouped by the
+# fabric each switch is onboarded into (shallow discovery is scoped to a single fabric).
+ROSTER = {
+    'VXLAN_EVPN_Fabric': [
+        {'ip': '192.0.2.195', 'serial': 'SERIAL00001', 'name': 'vxlan_leaf_1', 'role': 'leaf'},
+        {'ip': '192.0.2.196', 'serial': 'SERIAL00002', 'name': 'vxlan_leaf_2', 'role': 'leaf'},
+        {'ip': '192.0.2.194', 'serial': 'SERIAL00003', 'name': 'vxlan_spine_1', 'role': 'spine'},
+        {'ip': '192.0.2.88', 'serial': 'SERIAL00004', 'name': 'vxlan_border_1', 'role': 'border'},
+        {'ip': '192.0.2.85', 'serial': 'SERIAL00008', 'name': 'vxlan_leaf_3', 'role': 'leaf'},
+        {'ip': '192.0.2.86', 'serial': 'SERIAL00009', 'name': 'vxlan_leaf_4', 'role': 'leaf'},
+    ],
+    'External_Connectivity_Fabric': [
+        {'ip': '192.0.2.89', 'serial': 'SERIAL00005', 'name': 'external_edge_1', 'role': 'edge_router'},
+        {'ip': '192.0.2.90', 'serial': 'SERIAL00006', 'name': 'external_edge_2', 'role': 'edge_router'},
+    ],
+}
+
+CREDENTIALS = ('NDFC_USER', 'NDFC_PASSWORD',
+               'ANSIBLE_NXOS_SWITCH_USERNAME', 'ANSIBLE_NXOS_SWITCH_PASSWORD')
+DEEP_SEEDS = ROSTER['VXLAN_EVPN_Fabric'][:2]
+ENTITY_CLASS_OID = '.1.3.6.1.2.1.47.1.1.1.1.5'
+ENTITY_SERIAL_OID = '.1.3.6.1.2.1.47.1.1.1.1.11'
+SSH_COMMANDS = ('show inventory', 'show license host-id')
+secrets = [os.environ.get(name, '') for name in CREDENTIALS]
+
+
+def emit(value):
+    output = json.dumps(value, sort_keys=True)
+    for secret in sorted(set(secrets), key=len, reverse=True):
+        if secret:
+            output = output.replace(secret, '<redacted>')
+            output = output.replace(json.dumps(secret)[1:-1], '<redacted>')
+    print(output, flush=True)
+
+
+def tcp22_open(ip):
+    try:
+        with socket.create_connection((ip, 22), timeout=4):
+            return True
+    except OSError:
+        return False
+
+
+def run_command(arguments, timeout, env=None):
+    if not shutil.which(arguments[0]):
+        return {'ok': False, 'error': 'tool_missing', 'tool': arguments[0]}
+    try:
+        result = subprocess.run(arguments, capture_output=True, text=True,
+                                timeout=timeout, env=env)
+        return {'ok': result.returncode == 0, 'returncode': result.returncode,
+                'stdout': result.stdout[:16000], 'stderr': result.stderr[:4000]}
+    except subprocess.TimeoutExpired:
+        return {'ok': False, 'error': 'timeout', 'timeout_seconds': timeout}
+    except OSError as exc:
+        return {'ok': False, 'error': type(exc).__name__}
+
+
+def ssh_show(ip, command):
+    if command not in SSH_COMMANDS:
+        raise ValueError('Only the diagnostic read-only show commands are allowed')
+    if not shutil.which('ssh'):
+        return {'ok': False, 'error': 'tool_missing', 'tool': 'ssh'}
+    try:
+        import pexpect
+    except ImportError:
+        return {'ok': False, 'error': 'tool_missing', 'tool': 'pexpect'}
+    arguments = ['-T', '-o', 'StrictHostKeyChecking=accept-new',
+                 '-o', 'ConnectTimeout=8', '-o', 'ConnectionAttempts=1',
+                 '-o', 'NumberOfPasswordPrompts=1', '-o', 'PubkeyAuthentication=no',
+                 '-o', 'PreferredAuthentications=keyboard-interactive,password',
+                 os.environ['ANSIBLE_NXOS_SWITCH_USERNAME'] + '@' + ip, command]
+    child = None
+    output = []
+    password_sent = False
+    deadline = time.monotonic() + 20
+    try:
+        child = pexpect.spawn('ssh', arguments, encoding='utf-8',
+                              codec_errors='replace', echo=False)
+        for attempt in range(20):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            matched = child.expect(['(?i)password:', '--More--', pexpect.EOF, pexpect.TIMEOUT],
+                                   timeout=remaining)
+            output.append(child.before or '')
+            if matched == 0:
+                if password_sent:
+                    return {'ok': False, 'error': 'ssh_authentication_failed'}
+                child.sendline(os.environ['ANSIBLE_NXOS_SWITCH_PASSWORD'])
+                password_sent = True
+            elif matched == 1:
+                child.send(' ')
+            elif matched == 2:
+                child.close()
+                text = ''.join(output)
+                rejected = any(marker in text.lower() for marker in (
+                    'invalid command', 'invalid input', 'syntax error', 'permission denied',
+                    'host key verification failed', 'remote host identification has changed'))
+                return {'ok': child.exitstatus == 0 and not rejected,
+                        'exitstatus': child.exitstatus, 'stdout': text[:16000]}
+            else:
+                break
+        return {'ok': False, 'error': 'ssh_timeout', 'stdout': ''.join(output)[:16000]}
+    except (OSError, pexpect.ExceptionPexpect) as exc:
+        return {'ok': False, 'error': type(exc).__name__}
+    finally:
+        if child is not None:
+            child.close(force=True)
+
+
+def snmp_identity(ip, expected_serial):
+    missing = [tool for tool in ('snmpwalk', 'snmpget') if not shutil.which(tool)]
+    if missing:
+        return {'error': 'tool_missing', 'tools': missing,
+                'serial_matches_expected': None, 'attempts': []}
+    username = os.environ['ANSIBLE_NXOS_SWITCH_USERNAME']
+    password = os.environ['ANSIBLE_NXOS_SWITCH_PASSWORD']
+    if any(ord(character) < 32 for character in username + password):
+        return {'error': 'unsupported_snmp_credential_characters',
+                'serial_matches_expected': None, 'attempts': []}
+
+    def quoted(value):
+        value = value.replace(chr(92), chr(92) * 2).replace(chr(34), chr(92) + chr(34))
+        return chr(34) + value + chr(34)
+
+    attempts = []
+    for protocol in ('MD5', 'SHA'):
+        with tempfile.TemporaryDirectory(prefix='nd-discovery-snmp-') as directory:
+            config = os.path.join(directory, 'snmp.conf')
+            descriptor = os.open(config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, 'w') as stream:
+                stream.write(chr(10).join([
+                    'defSecurityName ' + quoted(username), 'defSecurityLevel authNoPriv',
+                    'defAuthType ' + protocol, 'defAuthPassphrase ' + quoted(password), '',
+                ]))
+            environment = dict(os.environ, SNMPCONFPATH=directory,
+                               SNMP_PERSISTENT_DIR=directory, MIBS='')
+            options = ['-v3', '-t', '3', '-r', '0', '-On']
+            classes = run_command(['snmpwalk', *options, '-Oq', '-Oe', ip, ENTITY_CLASS_OID],
+                                  timeout=12, env=environment)
+            attempt = {'protocol': protocol, 'security_level': 'authNoPriv',
+                       'class_probe': classes}
+            attempts.append(attempt)
+            if not classes['ok']:
+                continue
+            indices = []
+            for line in classes.get('stdout', '').splitlines():
+                fields = line.split()
+                if len(fields) == 2 and fields[0].startswith(ENTITY_CLASS_OID + '.') and fields[1] == '3':
+                    index = fields[0].rsplit('.', 1)[-1]
+                    if index.isdigit() and index not in indices:
+                        indices.append(index)
+            if not indices:
+                attempt['error'] = 'chassis_index_missing'
+                continue
+            serial_oids = [ENTITY_SERIAL_OID + '.' + index for index in indices]
+            serials = run_command(['snmpget', *options, '-Oqv', ip, *serial_oids],
+                                 timeout=8, env=environment)
+            attempt.update(serial_oids=serial_oids, serial_probe=serials)
+            values = [value.strip().strip(chr(34)) for value in serials.get('stdout', '').splitlines()]
+            if serials['ok'] and expected_serial in values:
+                return {'serial_matches_expected': True, 'attempts': attempts,
+                        'vantage': 'diagnostic_container'}
+    return {'serial_matches_expected': False, 'attempts': attempts,
+            'vantage': 'diagnostic_container'}
+
+
+def probe_devices():
+    observations = {}
+    for switch in DEEP_SEEDS:
+        ip = switch['ip']
+        observation = {'observed_at': datetime.now(timezone.utc).isoformat(),
+                       'ping': run_command(['ping', '-n', '-c', '2', '-W', '2', ip], timeout=8),
+                       'tcp22_open': tcp22_open(ip)}
+        ssh = {}
+        for key, command in zip(('inventory', 'license_host_id'), SSH_COMMANDS):
+            ssh[key] = (ssh_show(ip, command) if observation['tcp22_open'] else
+                        {'ok': False, 'error': 'tcp22_closed'})
+        ssh['inventory']['serial_matches_expected'] = (
+            switch['serial'] in ssh['inventory'].get('stdout', '') if ssh['inventory']['ok'] else None)
+        observation.update(ssh=ssh, snmp=snmp_identity(ip, switch['serial']))
+        observation['completed_at'] = datetime.now(timezone.utc).isoformat()
+        observations[ip] = observation
+    return observations
+
+
+def classify(observation):
+    inventory = observation.get('ssh', {}).get('inventory', {})
+    snmp = observation.get('snmp', {})
+    checks = [observation.get('ping', {}), inventory,
+              observation.get('ssh', {}).get('license_host_id', {}), snmp]
+    if any(check.get('error') == 'tool_missing' for check in checks):
+        return 'probe_tool_missing'
+    if inventory.get('ok') and inventory.get('serial_matches_expected') is False:
+        return 'device_identity_missing_or_mismatch'
+    if not inventory.get('ok'):
+        if not observation.get('tcp22_open') and not observation.get('ping', {}).get('ok') and not snmp.get('serial_matches_expected'):
+            return 'device_or_management_path_unreachable'
+        return 'ssh_identity_unconfirmed'
+    if not snmp.get('serial_matches_expected'):
+        return 'snmp_identity_unconfirmed'
+    if not observation.get('nd', {}).get('identity_confirmed'):
+        return 'nd_discovery_unconfirmed'
+    return 'identity_confirmed'
+
+
+def login(session):
+    response = session.post(base + '/login', json={
+        'userName': os.environ['NDFC_USER'],
+        'userPasswd': os.environ['NDFC_PASSWORD'], 'domain': 'local'},
+        timeout=(10, 30), allow_redirects=False)
+    if response.status_code not in (200, 201):
+        raise ValueError('controller_login_http_' + str(response.status_code))
+    body = response.json()
+    token = body.get('jwttoken') or body.get('token')
+    if not isinstance(token, str) or not token:
+        raise ValueError('controller_login_token_missing')
+    secrets.append(token)
+    session.headers['Authorization'] = 'Bearer ' + token
+
+
+def discover(session, fabric, switches):
+    verdicts = {switch['ip']: {'identity_confirmed': False, 'snmp_protocol': None,
+                              'attempts': []} for switch in switches}
+    pending = {switch['ip']: switch['serial'] for switch in switches}
+    for protocol in ('md5', 'sha'):
+        if not pending:
+            break
+        try:
+            response = session.post(base + '/api/v1/manage/fabrics/' + fabric + '/actions/shallowDiscovery',
+                json={'seedIpCollection': list(pending), 'maxHop': 0, 'platformType': 'nx-os',
+                      'snmpV3AuthProtocol': protocol,
+                      'username': os.environ['ANSIBLE_NXOS_SWITCH_USERNAME'],
+                      'password': os.environ['ANSIBLE_NXOS_SWITCH_PASSWORD']},
+                timeout=(10, 180), allow_redirects=False)
+            if response.status_code != 200:
+                raise ValueError('discovery_http_' + str(response.status_code))
+            body = response.json()
+            for envelope in ('DATA', 'body'):
+                if isinstance(body, dict) and isinstance(body.get(envelope), dict):
+                    body = body[envelope]
+            if not isinstance(body, dict) or not isinstance(body.get('switches'), list):
+                raise ValueError('unexpected_discovery_response_shape')
+            rows = []
+            for item in body['switches']:
+                if not isinstance(item, dict):
+                    continue
+                rows.append({key: item.get(key) for key in (
+                    'ip', 'seedIp', 'status', 'statusReason', 'serialNumber',
+                    'hostname', 'model', 'softwareVersion') if key in item})
+            emit({'fabric': fabric, 'protocol': protocol, 'http_status': response.status_code,
+                  'warning': body.get('warning'), 'switches': rows})
+            for ip, serial in list(pending.items()):
+                match = [x for x in rows if (x.get('ip') or x.get('seedIp')) == ip]
+                verdicts[ip]['attempts'].append({'protocol': protocol, **(
+                    match[0] if len(match) == 1 else {'error': 'missing_or_duplicate_discovery_record'})})
+                if len(match) == 1 and match[0].get('serialNumber') == serial and ''.join(
+                        c for c in str(match[0].get('status', '')).lower() if c.isalnum()) in ('manageable', 'ok', 'alreadymanaged'):
+                    verdicts[ip].update(identity_confirmed=True, snmp_protocol=protocol)
+                    del pending[ip]
+        except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
+            for ip in pending:
+                verdicts[ip]['attempts'].append({'protocol': protocol, 'error': type(exc).__name__})
+            emit({'fabric': fabric, 'protocol': protocol, 'error': type(exc).__name__})
+    return verdicts
+
+
+def main():
+    if any(not os.environ.get(name, '').strip() for name in CREDENTIALS):
+        emit({'error': 'missing_credential_binding'})
+        return 2
+    session = requests.Session()
+    session.verify = False
+    session.trust_env = False
+    started = time.monotonic()
+    history, verdicts, reachability = [], {}, {}
+    for sample in range(2):
+        if sample:
+            emit({'phase': 'timing_repoll', 'wait_seconds': 60})
+            time.sleep(60)
+        observations = probe_devices()
+        targets = ROSTER if sample == 0 else {'VXLAN_EVPN_Fabric': DEEP_SEEDS}
+        login_error = None
+        try:
+            login(session)
+        except (requests.RequestException, ValueError, KeyError, TypeError, AttributeError) as exc:
+            login_error = type(exc).__name__
+            emit({'phase': 'controller_login', 'sample': sample + 1, 'error': login_error})
+        for fabric, switches in targets.items():
+            if login_error:
+                results = {switch['ip']: {'identity_confirmed': False, 'snmp_protocol': None,
+                           'attempts': [{'error': login_error}]} for switch in switches}
+            else:
+                results = discover(session, fabric, switches)
+            verdicts.update(results)
+            for switch in switches:
+                ip = switch['ip']
+                reachability[ip] = observations[ip]['tcp22_open'] if ip in observations else tcp22_open(ip)
+        for ip, observation in observations.items():
+            observation['nd'] = verdicts[ip]
+            observation['classification'] = classify(observation)
+        history.append(observations)
+        emit({'phase': 'deep_sample', 'sample': sample + 1,
+              'elapsed_seconds': round(time.monotonic() - started, 1), 'devices': observations})
+    comparison = {}
+    for switch in DEEP_SEEDS:
+        ip = switch['ip']
+        before, after = (sample[ip]['classification'] for sample in history)
+        timing = ('recovered_between_samples' if before != 'identity_confirmed' and after == 'identity_confirmed'
+                  else 'regressed_between_samples' if before == 'identity_confirmed' and after != before
+                  else 'stable' if before == after else 'evidence_changed')
+        comparison[ip] = {'role': 'suspect' if ip == DEEP_SEEDS[0]['ip'] else 'healthy_control',
+                          'initial': before, 'final': after, 'timing': timing}
+    emit({'timing_comparison': comparison,
+          'note': 'Direct ping/SSH/SNMP originate in the diagnostic container; ND discovery uses the controller path.'})
+    summary = []
+    for fabric, switches in ROSTER.items():
+        for sw in switches:
+            verdict = verdicts[sw['ip']]
+            summary.append({'name': sw['name'], 'role': sw['role'], 'fabric': fabric,
+                            'seed_ip': sw['ip'], 'expected_serial': sw['serial'],
+                            'tcp22_open': reachability.get(sw['ip'], False),
+                            'identity_confirmed': verdict['identity_confirmed'],
+                            'snmp_protocol': verdict['snmp_protocol']})
+    confirmed_count = sum(1 for row in summary if row['identity_confirmed'])
+    emit({'roster_summary': summary, 'confirmed': confirmed_count, 'total': len(summary)})
+    confirmed = confirmed_count == len(summary)
+    deep_ready = all(row['final'] == 'identity_confirmed' for row in comparison.values())
+    emit({'all_switches_discovery_confirmed': confirmed, 'deep_identity_confirmed': deep_ready})
+    return 0 if confirmed and deep_ready else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
+PY
+chmod 0644 discovery_diagnostic.jsonl
+exit "${probe_exit}"
+'''
+                        }
+                    } finally {
+                        archiveArtifacts artifacts: 'discovery_diagnostic.jsonl', allowEmptyArchive: true
+                    }
+                }
+            }
+        }
+    }
+}
