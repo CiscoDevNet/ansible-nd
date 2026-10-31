@@ -1,0 +1,265 @@
+---
+- name: "ND4X PREFLIGHT: Determine parent checks for selected scenario"
+  ansible.builtin.set_fact:
+    nd4x_check_primary_ethernet_parent: >-
+      {{
+        'all' in (ansible_run_tags | default(['all']))
+        or 'nd4x_demo' in (ansible_run_tags | default(['all']))
+        or 'nd4x_demo_merged' in (ansible_run_tags | default(['all']))
+        or 'nd4x_demo_merged_fanout' in (ansible_run_tags | default(['all']))
+        or 'nd4x_demo_replaced' in (ansible_run_tags | default(['all']))
+        or 'nd4x_demo_deleted' in (ansible_run_tags | default(['all']))
+        or 'nd4x_demo_overridden' in (ansible_run_tags | default(['all']))
+      }}
+    nd4x_check_primary_port_channel_parent: >-
+      {{
+        'all' in (ansible_run_tags | default(['all']))
+        or 'nd4x_demo' in (ansible_run_tags | default(['all']))
+        or 'nd4x_demo_merged' in (ansible_run_tags | default(['all']))
+        or 'nd4x_demo_merged_fanout' in (ansible_run_tags | default(['all']))
+        or 'nd4x_demo_overridden' in (ansible_run_tags | default(['all']))
+      }}
+    nd4x_check_second_switch_parents: >-
+      {{ 'nd4x_demo_overridden' in (ansible_run_tags | default(['all'])) }}
+
+- name: "ND4X PREFLIGHT: Query Nexus Dashboard version"
+  cisco.nd.nd_version:
+    output_level: "{{ nd_info.output_level }}"
+  register: nd4x_version
+
+- name: "ND4X PREFLIGHT: Record ND 4.x support"
+  ansible.builtin.set_fact:
+    nd4x_supported: >-
+      {{ nd4x_version.current.platformVersion is version('4.0.0', '>=') }}
+
+- name: "ND4X PREFLIGHT: Explain unsupported controller skip"
+  ansible.builtin.debug:
+    msg: >-
+      Skipping ND 4.x unmanaged subinterface harness scenarios because
+      controller version {{ nd4x_version.current.platformVersion }} is older
+      than 4.0.0.
+  when: not nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Query switches in the test fabric"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
+    method: get
+  register: nd4x_switch_inventory
+  changed_when: false
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Initialize fabric snapshot queries"
+  ansible.builtin.set_fact:
+    nd4x_fabric_check_mode_queries: []
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Build a snapshot query for every fabric switch"
+  ansible.builtin.set_fact:
+    nd4x_fabric_check_mode_queries: >-
+      {{
+        nd4x_fabric_check_mode_queries
+        + [
+            {
+              'name': 'Snapshot interfaces on switch '
+                      ~ (item.fabricManagementIp | default(item.switchId)),
+              'path': '/api/v1/manage/fabrics/' ~ test_fabric_name
+                       ~ '/switches/' ~ item.switchId ~ '/interfaces',
+              'expected_status': 200,
+              'unordered_paths': ['/interfaces'],
+              'ignore_keys': ['operData']
+            }
+          ]
+      }}
+  loop: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
+  loop_control:
+    label: "{{ item.fabricManagementIp | default(item.switchId) }}"
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Verify full-fabric snapshot coverage"
+  ansible.builtin.assert:
+    that:
+      - nd4x_fabric_check_mode_queries | length > 0
+      - nd4x_fabric_check_mode_queries | length == (nd4x_switch_inventory.current.switches | default([]) | length)
+    fail_msg: >-
+      Could not prepare one predictive snapshot query for every switch in
+      fabric {{ test_fabric_name }}.
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Select switch by management IP"
+  ansible.builtin.set_fact:
+    nd4x_switch_matches: >-
+      {{
+        nd4x_switch_inventory.current.switches
+        | default([])
+        | selectattr('fabricManagementIp', 'equalto', test_switch_ip)
+        | list
+      }}
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Require exactly one matching switch"
+  ansible.builtin.assert:
+    that:
+      - nd4x_switch_matches | length == 1
+    fail_msg: >-
+      Expected exactly one switch with fabricManagementIp {{ test_switch_ip }}
+      in fabric {{ test_fabric_name }}, but found {{ nd4x_switch_matches | length }}.
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Record current switch ID"
+  ansible.builtin.set_fact:
+    test_switch_id: "{{ nd4x_switch_matches[0].switchId }}"
+  when: nd4x_supported | bool
+
+- name: "ND4X PREFLIGHT: Read primary-switch interfaces"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ test_switch_id }}/interfaces
+    method: get
+  register: nd4x_primary_interfaces
+  changed_when: false
+  when:
+    - nd4x_supported | bool
+    - nd4x_check_primary_ethernet_parent | bool or nd4x_check_primary_port_channel_parent | bool
+
+- name: "ND4X PREFLIGHT: Normalize routed primary parent names"
+  ansible.builtin.set_fact:
+    nd4x_primary_routed_interface_names: >-
+      {{
+        nd4x_primary_interfaces.current.interfaces | default([])
+        | selectattr('interfaceName', 'defined')
+        | selectattr('operData.mode', 'defined')
+        | selectattr('operData.mode', 'equalto', 'routed')
+        | map(attribute='interfaceName')
+        | map('lower')
+        | list
+      }}
+  when:
+    - nd4x_supported | bool
+    - nd4x_check_primary_ethernet_parent | bool or nd4x_check_primary_port_channel_parent | bool
+
+- name: "ND4X PREFLIGHT: Require primary Ethernet parent to be routed"
+  ansible.builtin.assert:
+    that:
+      - ethernet_parent | lower in nd4x_primary_routed_interface_names
+    fail_msg: >-
+      Ethernet parent {{ ethernet_parent }} on {{ test_switch_ip }} must exist
+      and have operData.mode=routed for the selected unmanaged subinterface
+      harness scenario. Configure it as an L3/routed parent and retry.
+  when:
+    - nd4x_supported | bool
+    - nd4x_check_primary_ethernet_parent | bool
+
+- name: "ND4X PREFLIGHT: Require primary port-channel parent to be routed"
+  ansible.builtin.assert:
+    that:
+      - port_channel_parent | lower in nd4x_primary_routed_interface_names
+    fail_msg: >-
+      Port-channel parent {{ port_channel_parent }} on {{ test_switch_ip }}
+      must exist and have operData.mode=routed before unmanaged subinterface
+      harness scenario. Configure it as an L3/routed parent and retry.
+  when:
+    - nd4x_supported | bool
+    - nd4x_check_primary_port_channel_parent | bool
+
+- name: "ND4X PREFLIGHT: Select optional second switch by management IP"
+  ansible.builtin.set_fact:
+    nd4x_second_switch_matches: >-
+      {{
+        nd4x_switch_inventory.current.switches
+        | default([])
+        | selectattr(
+            'fabricManagementIp',
+            'equalto',
+            nd_test_switch_ip_2
+          )
+        | list
+      }}
+  when:
+    - nd4x_supported | bool
+    - nd4x_check_second_switch_parents | bool
+    - nd_test_switch_ip_2 is defined
+    - nd_test_switch_ip_2 | length > 0
+
+- name: "ND4X PREFLIGHT: Require optional second switch to be unique"
+  ansible.builtin.assert:
+    that:
+      - nd_test_switch_ip_2 != test_switch_ip
+      - nd4x_second_switch_matches | length == 1
+    fail_msg: >-
+      Expected nd_test_switch_ip_2 to identify one switch distinct from
+      nd_test_switch_ip in fabric {{ test_fabric_name }}.
+  when:
+    - nd4x_supported | bool
+    - nd4x_check_second_switch_parents | bool
+    - nd_test_switch_ip_2 is defined
+    - nd_test_switch_ip_2 | length > 0
+
+- name: "ND4X PREFLIGHT: Record optional second switch ID"
+  ansible.builtin.set_fact:
+    test_switch_id_2: "{{ nd4x_second_switch_matches[0].switchId }}"
+  when:
+    - nd4x_supported | bool
+    - nd4x_check_second_switch_parents | bool
+    - nd_test_switch_ip_2 is defined
+    - nd_test_switch_ip_2 | length > 0
+
+- name: "ND4X PREFLIGHT: Read optional second-switch interfaces"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ test_switch_id_2 }}/interfaces
+    method: get
+  register: nd4x_second_interfaces
+  changed_when: false
+  when:
+    - nd4x_supported | bool
+    - nd4x_check_second_switch_parents | bool
+    - nd_test_switch_ip_2 is defined
+    - nd_test_switch_ip_2 | length > 0
+
+- name: "ND4X PREFLIGHT: Normalize routed optional second-switch parent names"
+  ansible.builtin.set_fact:
+    nd4x_second_routed_interface_names: >-
+      {{
+        nd4x_second_interfaces.current.interfaces | default([])
+        | selectattr('interfaceName', 'defined')
+        | selectattr('operData.mode', 'defined')
+        | selectattr('operData.mode', 'equalto', 'routed')
+        | map(attribute='interfaceName')
+        | map('lower')
+        | list
+      }}
+  when:
+    - nd4x_supported | bool
+    - nd4x_check_second_switch_parents | bool
+    - nd_test_switch_ip_2 is defined
+    - nd_test_switch_ip_2 | length > 0
+
+- name: "ND4X PREFLIGHT: Require optional second Ethernet parent to be routed"
+  ansible.builtin.assert:
+    that:
+      - ethernet_parent | lower in nd4x_second_routed_interface_names
+    fail_msg: >-
+      Ethernet parent {{ ethernet_parent }} on {{ nd_test_switch_ip_2 }} must
+      exist and have operData.mode=routed for the cross-switch overridden
+      harness scenario.
+  when:
+    - nd4x_supported | bool
+    - nd4x_check_second_switch_parents | bool
+    - nd_test_switch_ip_2 is defined
+    - nd_test_switch_ip_2 | length > 0
+
+- name: "ND4X PREFLIGHT: Require optional second port-channel parent to be routed"
+  ansible.builtin.assert:
+    that:
+      - port_channel_parent | lower in nd4x_second_routed_interface_names
+    fail_msg: >-
+      Port-channel parent {{ port_channel_parent }} on {{ nd_test_switch_ip_2 }}
+      must exist and have operData.mode=routed for the cross-switch overridden
+      harness scenario.
+  when:
+    - nd4x_supported | bool
+    - nd4x_check_second_switch_parents | bool
+    - nd_test_switch_ip_2 is defined
+    - nd_test_switch_ip_2 | length > 0
