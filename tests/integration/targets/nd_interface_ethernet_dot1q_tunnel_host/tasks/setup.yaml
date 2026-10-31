@@ -1,0 +1,122 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe)
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: SETUP | Initialize this invocation's ownership flag
+  ansible.builtin.set_fact:
+    dot1q_cleanup_armed: false
+
+- name: SETUP | Require explicit testbed selectors
+  ansible.builtin.assert:
+    that:
+      - not ansible_check_mode
+      - ansible_host is defined
+      - ansible_user is defined
+      - ansible_password is defined
+      - test_fabric_name | length > 0
+      - test_switch_ip | length > 0
+      - test_switch_id | length > 0
+      - test_expected_release in ['4.2.1', '4.3.1']
+      - test_interface_names is sequence and test_interface_names is not string
+      - test_interface_names | length == 3
+      - test_interface_names | unique | length == 3
+      - test_access_vlan | int >= 1
+      - test_access_vlan | int <= 4091
+      - not test_storm_transition or not test_deploy
+      - not test_verify_cli or test_deploy
+      - not test_verify_cli or nd_test_switch_username is defined
+      - not test_verify_cli or nd_test_switch_password is defined
+    fail_msg: >-
+      Supply a controller, credentials, fabric, switch IP/serial, expected ND
+      release, and exactly three distinct reserved NX-OS Ethernet ports. Run
+      normally: individual tasks exercise check mode internally. The optional
+      storm-transition regression is staging/check-mode only (nd_test_deploy=false).
+      Optional CLI verification requires deploy=true and switch SSH credentials.
+
+- name: SETUP | Require canonical physical Ethernet names
+  ansible.builtin.assert:
+    that:
+      - item is string
+      - item is match('^Ethernet[0-9]+/[0-9]+$')
+    fail_msg: Use three existing, dedicated physical Ethernet ports; breakout and logical ports are not this target's scope.
+  loop: "{{ test_interface_names }}"
+
+- name: SETUP | Read the actual ND build
+  cisco.nd.nd_rest:
+    method: get
+    path: /api/v1/infra/about
+  register: dot1q_about
+
+- name: SETUP | Match the actual controller to the selected release
+  ansible.builtin.assert:
+    that:
+      - dot1q_about.status | int == 200
+      - dot1q_about.current.buildVersion is defined
+      - dot1q_about.current.buildVersion is match('^' ~ (test_expected_release | regex_escape) ~ '([.]|$)')
+    fail_msg: "Expected ND {{ test_expected_release }}, received {{ dot1q_about.current | default({}) }}."
+
+- name: SETUP | Resolve fresh switch inventory in the selected fabric
+  cisco.nd.nd_rest:
+    method: get
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name | urlencode | replace('/', '%2F') }}/switches"
+  register: dot1q_switches
+
+- name: SETUP | Match the supplied switch IP and serial to one current inventory row
+  vars:
+    selected_switches: >-
+      {{ dot1q_switches.current.switches | default([])
+         | selectattr('fabricManagementIp', 'equalto', test_switch_ip) | list }}
+  ansible.builtin.assert:
+    that:
+      - dot1q_switches.status | int == 200
+      - selected_switches | length == 1
+      - (selected_switches | first).switchId == test_switch_id
+    fail_msg: The selected fabric must contain exactly one switch matching the supplied management IP and expected chassis serial.
+
+- name: SETUP | Inspect all managed dot1q hosts using the module's paginated read path
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host:
+    fabric_name: "{{ test_fabric_name }}"
+    state: overridden
+    config: []
+  check_mode: true
+  register: dot1q_initial_scope
+
+- name: SETUP | Require an empty dot1q host scope before fabric-wide override tests
+  ansible.builtin.assert:
+    that:
+      - dot1q_initial_scope.before | length == 0
+      - dot1q_initial_scope is not changed
+    fail_msg: >-
+      This suite exercises fabric-wide overridden and config=[] behavior. It
+      requires NO pre-existing dot1qTunnelHost policies anywhere in this fabric.
+      No cleanup or mutation has been armed. Select a dedicated empty test scope.
+
+- name: SETUP | Read all three exact physical interfaces
+  ansible.builtin.include_tasks: read_interfaces.yaml
+
+- name: SETUP | Require down, non-member default-trunk NX-OS ports
+  ansible.builtin.assert:
+    that:
+      - item.status | int == 200
+      - item.current.switchId == test_switch_id
+      - item.current.interfaceName == item.dot1q_read_name
+      - item.current.interfaceType == 'ethernet'
+      - item.current.configData.networkOS.networkOSType == 'nx-os'
+      - item.current.configData.networkOS.policy.policyType == 'trunkHost'
+      - item.current.configData.networkOS.policy.description | default('') == ''
+      - item.current.operData.operationalStatus == 'down'
+      - item.current.operData.portChannelId | int == -1
+    fail_msg: >-
+      Reserve down, unused NX-OS ports already reset to the fabric-default trunk
+      policy. This suite resets those ports to defaults; it does not restore
+      arbitrary original interface configuration. No mutation has been armed.
+  loop: "{{ dot1q_readback.results }}"
+  loop_control:
+    label: "{{ item.dot1q_read_name }}"
+
+- name: SETUP | Record the release and execution mode
+  ansible.builtin.debug:
+    msg: >-
+      Testing {{ dot1q_about.current.buildVersion }} / NX-OS, fabric
+      {{ test_fabric_name }}, switch {{ test_switch_id }}, ports
+      {{ test_interface_names | join(', ') }}, deploy={{ test_deploy }}.

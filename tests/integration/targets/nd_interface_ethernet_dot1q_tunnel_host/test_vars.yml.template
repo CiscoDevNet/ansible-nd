@@ -1,0 +1,18 @@
+---
+# Copy outside the repository and supply actual reserved testbed values.
+# Run separately for 4.2.1 and 4.3.1; do not point this template at production.
+nd_test_expected_release: '4.2.1'
+nd_test_fabric_name: dedicated_test_fabric
+nd_test_switch_ip: 192.0.2.82
+nd_test_switch_id: REPLACE_WITH_VERIFIED_CHASSIS_SERIAL
+nd_test_dot1q_interface_names:
+  - Ethernet1/40
+  - Ethernet1/41
+  - Ethernet1/42
+nd_test_dot1q_vlan: 150
+nd_test_deploy: false
+nd_test_output_level: debug
+nd_test_dot1q_storm_transition: false
+nd_test_verify_cli: false
+# For CLI verification with deploy=true, supply nd_test_switch_username and
+# nd_test_switch_password using inventory, Vault, or environment lookups.

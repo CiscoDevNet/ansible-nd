@@ -179,6 +179,53 @@ def test_mixed_nd_echo_gives_actionable_merged_preflight_error() -> None:
     assert echoed.storm_control_multicast_level_pps == 1000
 
 
+@pytest.mark.parametrize(
+    "old_class,new_class",
+    [(old, new) for old in ("broadcast", "multicast", "unicast") for new in ("broadcast", "multicast", "unicast") if old != new],
+)
+@pytest.mark.parametrize("old_pps", [False, True])
+def test_storm_merge_validates_the_complete_unit_transition(old_class: str, new_class: str, old_pps: bool) -> None:
+    old_suffix = "Pps" if old_pps else ""
+    old_attr = f"storm_control_{old_class}_level" + ("_pps" if old_pps else "")
+    new_attr = f"storm_control_{new_class}_level" + ("" if old_pps else "_pps")
+    existing = EthernetDot1qTunnelHostPolicyModel.from_response(
+        {"policyType": "dot1qTunnelHost", f"stormControl{old_class.title()}Level{old_suffix}": 1000 if old_pps else 10.0}
+    )
+    proposed = EthernetDot1qTunnelHostPolicyModel.from_config({old_attr: 0, new_attr: 10.0 if old_pps else 1000})
+
+    result = existing.merge(proposed)
+
+    assert result is existing
+    assert getattr(existing, old_attr) == 0
+    assert getattr(existing, new_attr) == (10.0 if old_pps else 1000)
+    assert not existing.has_mixed_storm_units()
+
+
+def test_invalid_complete_storm_merge_does_not_mutate_the_existing_policy() -> None:
+    existing = EthernetDot1qTunnelHostPolicyModel.from_response({"policyType": "dot1qTunnelHost", "description": "before", "stormControlUnicastLevel": 10.0})
+    original = existing.model_dump()
+    original_fields = set(existing.model_fields_set)
+    proposed = EthernetDot1qTunnelHostPolicyModel.from_config({"description": "must not apply", "storm_control_broadcast_level_pps": 1000})
+
+    with pytest.raises(ValueError, match="percentage and PPS"):
+        existing.merge(proposed)
+
+    assert existing.model_dump() == original
+    assert existing.model_fields_set == original_fields
+    # An error must not leave the model-local validation suspension enabled.
+    with pytest.raises(ValidationError, match="across the interface"):
+        EthernetDot1qTunnelHostPolicyModel.from_config({"storm_control_broadcast_level": 10.0, "storm_control_unicast_level_pps": 1000})
+    existing.merge(EthernetDot1qTunnelHostPolicyModel.from_config({"description": "later valid edit"}))
+    assert existing.description == "later valid edit"
+
+
+def test_same_class_storm_merge_retains_inherited_counterpart_clearing() -> None:
+    existing = EthernetDot1qTunnelHostPolicyModel.from_response({"policyType": "dot1qTunnelHost", "stormControlBroadcastLevel": 10.0})
+    existing.merge(EthernetDot1qTunnelHostPolicyModel.from_config({"storm_control_broadcast_level_pps": 1000}))
+    assert existing.storm_control_broadcast_level is None
+    assert existing.storm_control_broadcast_level_pps == 1000
+
+
 def test_empty_description_clear_diff_is_idempotent_after_controller_omits_it() -> None:
     identity = {"switch_ip": "192.0.2.11", "interface_name": "Ethernet1/40"}
     proposed = EthernetDot1qTunnelHostInterfaceModel.from_config({**identity, "config_data": {"network_os": {"policy": {"description": ""}}}})

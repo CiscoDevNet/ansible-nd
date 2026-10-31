@@ -1,0 +1,64 @@
+---
+# Optional device verification after a deploy-enabled controller readback.
+- name: VERIFY CLI | Read only the expected physical interfaces over SSH
+  cisco.nxos.nxos_command:
+    commands: >-
+      {{ dot1q_expected | map(attribute='name')
+         | map('regex_replace', '^', 'show running-config interface ') | list }}
+  delegate_to: "{{ test_switch_ip }}"
+  vars:
+    ansible_host: "{{ test_switch_ip }}"
+    ansible_connection: ansible.netcommon.network_cli
+    ansible_network_os: cisco.nxos.nxos
+    # Delegated connection variables resolve against the switch, while the
+    # credentials belong to the original ND inventory host (or its extra-vars).
+    ansible_user: "{{ hostvars[inventory_hostname].nd_test_switch_username }}"
+    ansible_password: "{{ hostvars[inventory_hostname].nd_test_switch_password }}"
+  register: dot1q_cli
+  changed_when: false
+
+- name: VERIFY CLI | Check deployed mode, VLAN, and description on the switch
+  vars:
+    cli: "{{ dot1q_cli.stdout[dot1q_cli_index] }}"
+    expected_policy: "{{ dot1q_cli_expected.policy }}"
+    is_dot1q: "{{ dot1q_cli_expected.policy_type == 'dot1qTunnelHost' }}"
+  ansible.builtin.assert:
+    that:
+      - >-
+        (is_dot1q and 'switchport mode dot1q-tunnel' in cli)
+        or (not is_dot1q and 'switchport mode trunk' in cli)
+      - >-
+        not is_dot1q or 'accessVlan' not in expected_policy
+        or ('switchport access vlan ' ~ (expected_policy.accessVlan | string)) in cli
+      - >-
+        'description' not in expected_policy
+        or (('description ' ~ expected_policy.description) in cli
+            if expected_policy.description | length > 0
+            else cli is not search('(?m)^\s+description '))
+      - >-
+        'cdp' not in expected_policy
+        or (('no cdp enable' not in cli) if expected_policy.cdp
+            else ('no cdp enable' in cli))
+    fail_msg: "Deployed switch configuration does not match expected intent for {{ dot1q_cli_expected.name }}."
+  loop: "{{ dot1q_expected }}"
+  loop_control:
+    loop_var: dot1q_cli_expected
+    index_var: dot1q_cli_index
+    label: "{{ dot1q_cli_expected.name }}"
+
+- name: VERIFY CLI | Retain port-only deployment evidence in memory
+  ansible.builtin.set_fact:
+    dot1q_cli_history: >-
+      {{ dot1q_cli_history | default([])
+         + [{'release': test_expected_release, 'switch_ip': test_switch_ip,
+             'expected': dot1q_expected, 'running_configs': dot1q_cli.stdout}] }}
+
+- name: VERIFY CLI | Write credential-free evidence when requested
+  ansible.builtin.copy:
+    content: "{{ dot1q_cli_history | to_nice_json }}"
+    dest: "{{ nd_test_cli_evidence_file }}"
+    mode: '0600'
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+  when: nd_test_cli_evidence_file is defined

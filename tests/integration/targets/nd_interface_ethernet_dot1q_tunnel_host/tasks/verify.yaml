@@ -1,0 +1,12 @@
+---
+# dot1q_expected is a list of {name, policy_type, policy} records with wire keys.
+- name: VERIFY | Check expected controller policies
+  ansible.builtin.include_tasks: verify_one.yaml
+  loop: "{{ dot1q_expected }}"
+  loop_control:
+    loop_var: dot1q_expected_item
+    label: "{{ dot1q_expected_item.name }}"
+
+- name: VERIFY | Check deployed intent directly on the switch when requested
+  ansible.builtin.include_tasks: verify_cli.yaml
+  when: test_deploy and test_verify_cli

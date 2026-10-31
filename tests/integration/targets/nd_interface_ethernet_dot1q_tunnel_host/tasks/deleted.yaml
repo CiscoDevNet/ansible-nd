@@ -1,0 +1,111 @@
+---
+- name: DELETED | Recreate the run-owned hosts for deletion tests
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host:
+    fabric_name: "{{ test_fabric_name }}"
+    state: merged
+    config: ["{{ dot1q_single }}", "{{ dot1q_fanout }}"]
+
+- name: DELETED | Capture controller intent before the single reset preview
+  ansible.builtin.include_tasks: read_interfaces.yaml
+
+- name: DELETED | Record the single-delete checkpoint
+  ansible.builtin.set_fact:
+    dot1q_checkpoint: "{{ dot1q_readback.results | map(attribute='current.configData') | list }}"
+
+- name: DELETED | Preview identifier-only deletion of the first host
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: &dot1q_delete_single
+    fabric_name: "{{ test_fabric_name }}"
+    state: deleted
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names: ["{{ test_interface_names[0] }}"]
+  check_mode: true
+  register: cm_dot1q_delete_single
+
+- name: DELETED | Prove the delete preview did not change controller intent
+  ansible.builtin.include_tasks: assert_unchanged.yaml
+
+- name: DELETED | Reset only the first physical port
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_delete_single
+  register: nm_dot1q_delete_single
+
+- name: DELETED | Require the named reset and preserve the other host identities
+  ansible.builtin.assert:
+    that:
+      - cm_dot1q_delete_single is changed
+      - nm_dot1q_delete_single is changed
+      - nm_dot1q_delete_single.after | map(attribute='interface_name') | sort == test_interface_names[1:] | sort
+
+- name: DELETED | Read back the reset port and both retained hosts
+  ansible.builtin.include_tasks: verify.yaml
+  vars:
+    dot1q_expected:
+      - {name: "{{ test_interface_names[0] }}", policy_type: trunkHost, policy: {description: ''}}
+      - name: "{{ test_interface_names[1] }}"
+        policy_type: dot1qTunnelHost
+        policy: {accessVlan: "{{ (test_access_vlan | int) + 1 }}", description: ansible-dot1q-fanout}
+      - name: "{{ test_interface_names[2] }}"
+        policy_type: dot1qTunnelHost
+        policy: {accessVlan: "{{ (test_access_vlan | int) + 1 }}", description: ansible-dot1q-fanout}
+
+- name: DELETED | Replay deletion normally
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_delete_single
+  register: nm_dot1q_delete_single_replay
+
+- name: DELETED | Replay deletion in check mode
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_delete_single
+  check_mode: true
+  register: cm_dot1q_delete_single_replay
+
+- name: DELETED | Require single-delete replay to be a no-op
+  ansible.builtin.assert:
+    that:
+      - nm_dot1q_delete_single_replay is not changed
+      - cm_dot1q_delete_single_replay is not changed
+
+- name: DELETED GROUP | Capture controller intent before the grouped reset preview
+  ansible.builtin.include_tasks: read_interfaces.yaml
+
+- name: DELETED GROUP | Record the grouped-delete checkpoint
+  ansible.builtin.set_fact:
+    dot1q_checkpoint: "{{ dot1q_readback.results | map(attribute='current.configData') | list }}"
+
+- name: DELETED GROUP | Preview resetting the remaining two hosts
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: &dot1q_delete_group
+    fabric_name: "{{ test_fabric_name }}"
+    state: deleted
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names: "{{ test_interface_names[1:] }}"
+  check_mode: true
+  register: cm_dot1q_delete_group
+
+- name: DELETED GROUP | Prove grouped check mode did not change controller intent
+  ansible.builtin.include_tasks: assert_unchanged.yaml
+
+- name: DELETED GROUP | Reset the two grouped physical ports
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_delete_group
+  register: nm_dot1q_delete_group
+
+- name: DELETED GROUP | Require no remaining managed hosts
+  ansible.builtin.assert:
+    that:
+      - cm_dot1q_delete_group is changed
+      - nm_dot1q_delete_group is changed
+      - nm_dot1q_delete_group.after | length == 0
+
+- name: DELETED GROUP | Verify physical reset using ND readback
+  ansible.builtin.include_tasks: verify.yaml
+  vars:
+    dot1q_expected:
+      - {name: "{{ test_interface_names[0] }}", policy_type: trunkHost, policy: {description: ''}}
+      - {name: "{{ test_interface_names[1] }}", policy_type: trunkHost, policy: {description: ''}}
+      - {name: "{{ test_interface_names[2] }}", policy_type: trunkHost, policy: {description: ''}}
+
+- name: DELETED GROUP | Replay the grouped reset
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_delete_group
+  register: nm_dot1q_delete_group_replay
+
+- name: DELETED GROUP | Require a no-op grouped replay
+  ansible.builtin.assert:
+    that: nm_dot1q_delete_group_replay is not changed

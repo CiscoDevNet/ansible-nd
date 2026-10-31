@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ConfigDict, Field, ValidationInfo, field_validator, model_validator
@@ -27,6 +28,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.storm_control import StormControlMutexMixin
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
+
+# A multi-field merge can temporarily hold both units before clearing the old
+# traffic class. Suspend only this model's guard while prevalidating a copy and
+# applying that validated merge; direct input/assignment stays strict.
+_DOT1Q_STORM_MERGE: ContextVar[bool] = ContextVar("dot1q_storm_merge", default=False)
 
 
 class EthernetDot1qTunnelHostPolicyModel(StormControlMutexMixin, InterfacePolicyStrictBase):
@@ -110,6 +116,8 @@ class EthernetDot1qTunnelHostPolicyModel(StormControlMutexMixin, InterfacePolicy
         """
         if info.context and info.context.get("mode") == "response":
             return self
+        if _DOT1Q_STORM_MERGE.get():
+            return self
         percentages = (
             self.storm_control_broadcast_level,
             self.storm_control_multicast_level,
@@ -138,7 +146,20 @@ class EthernetDot1qTunnelHostPolicyModel(StormControlMutexMixin, InterfacePolicy
                 "A merged full-policy update could replay that conflict. Use state: replaced with one consistent "
                 "threshold unit across the interface to correct it before merging other properties."
             )
-        return super().merge(other)
+        token = _DOT1Q_STORM_MERGE.set(True)
+        try:
+            candidate = self.model_copy(deep=True)
+            # Preserve the shared mixin's per-class counterpart clearing, but
+            # judge interface-wide units only after every requested field is set.
+            super(EthernetDot1qTunnelHostPolicyModel, candidate).merge(other)
+            if candidate.has_mixed_storm_units():
+                raise ValueError(
+                    "A merged dot1q host policy cannot mix percentage and PPS thresholds across the interface. "
+                    "Explicitly clear existing thresholds from the other unit family."
+                )
+            return super().merge(other)
+        finally:
+            _DOT1Q_STORM_MERGE.reset(token)
 
     def merge_would_change(self, other: NDBaseModel) -> bool:
         """An explicit empty description clears a nonempty ND description."""

@@ -1,0 +1,68 @@
+---
+# cdp=false, bpdu_guard=disable, mtu=default were deliberately set by merged.
+- name: REPLACED | Capture controller intent before the replacement preview
+  ansible.builtin.include_tasks: read_interfaces.yaml
+
+- name: REPLACED | Record the replacement checkpoint
+  ansible.builtin.set_fact:
+    dot1q_checkpoint: "{{ dot1q_readback.results | map(attribute='current.configData') | list }}"
+
+- name: REPLACED | Preview replacing the first host with a sparse policy
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: &dot1q_replace
+    fabric_name: "{{ test_fabric_name }}"
+    state: replaced
+    config: ["{{ dot1q_replacement }}"]
+  check_mode: true
+  register: cm_dot1q_replace
+
+- name: REPLACED | Prove the preview left every physical policy unchanged
+  ansible.builtin.include_tasks: assert_unchanged.yaml
+
+- name: REPLACED | Replace only the named dot1q host
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_replace
+  register: nm_dot1q_replace
+
+- name: REPLACED | Require the replacement
+  ansible.builtin.assert:
+    that:
+      - cm_dot1q_replace is changed
+      - nm_dot1q_replace is changed
+
+- name: REPLACED | Verify omitted fields reset to defaults and unnamed hosts survive
+  ansible.builtin.include_tasks: verify.yaml
+  vars:
+    dot1q_expected:
+      - name: "{{ test_interface_names[0] }}"
+        policy_type: dot1qTunnelHost
+        policy:
+          accessVlan: "{{ (test_access_vlan | int) + 2 }}"
+          description: ansible-dot1q-replaced
+          cdp: true
+          bpduGuard: enable
+          bpduFilter: enable
+          mtu: jumbo
+      - name: "{{ test_interface_names[1] }}"
+        policy_type: dot1qTunnelHost
+        policy:
+          accessVlan: "{{ (test_access_vlan | int) + 1 }}"
+          description: ansible-dot1q-fanout
+      - name: "{{ test_interface_names[2] }}"
+        policy_type: dot1qTunnelHost
+        policy:
+          accessVlan: "{{ (test_access_vlan | int) + 1 }}"
+          description: ansible-dot1q-fanout
+
+- name: REPLACED | Replay in check mode
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_replace
+  check_mode: true
+  register: cm_dot1q_replace_replay
+
+- name: REPLACED | Replay normally
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_replace
+  register: nm_dot1q_replace_replay
+
+- name: REPLACED | Require both replays to be no-ops
+  ansible.builtin.assert:
+    that:
+      - cm_dot1q_replace_replay is not changed
+      - nm_dot1q_replace_replay is not changed

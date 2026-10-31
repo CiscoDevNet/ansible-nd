@@ -1,0 +1,128 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe)
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: MERGED | Capture physical intent before the create preview
+  ansible.builtin.set_fact:
+    dot1q_checkpoint: "{{ dot1q_readback.results | map(attribute='current.configData') | list }}"
+
+- name: MERGED | Preview a single interface and a grouped two-interface create
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: &dot1q_create
+    fabric_name: "{{ test_fabric_name }}"
+    state: merged
+    config: ["{{ dot1q_single }}", "{{ dot1q_fanout }}"]
+  check_mode: true
+  register: cm_dot1q_create
+
+- name: MERGED | Require a change for the preview
+  ansible.builtin.assert:
+    that: cm_dot1q_create is changed
+
+- name: MERGED | Prove create check mode left all physical intent unchanged
+  ansible.builtin.include_tasks: assert_unchanged.yaml
+
+- name: MERGED | Create the three dot1q hosts
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_create
+  register: nm_dot1q_create
+
+- name: MERGED | Assert grouped result identity
+  ansible.builtin.assert:
+    that:
+      - nm_dot1q_create is changed
+      - nm_dot1q_create.after | length == 3
+      - nm_dot1q_create.after | map(attribute='switch_ip') | unique | list == [test_switch_ip]
+      - nm_dot1q_create.after | map(attribute='interface_name') | sort == test_interface_names | sort
+
+- name: MERGED | Verify all create values using fresh ND GETs
+  ansible.builtin.include_tasks: verify.yaml
+  vars:
+    dot1q_expected:
+      - name: "{{ test_interface_names[0] }}"
+        policy_type: dot1qTunnelHost
+        policy:
+          accessVlan: "{{ test_access_vlan }}"
+          description: ansible-dot1q-single
+          cdp: false
+          bpduGuard: disable
+          bpduFilter: enable
+          mtu: default
+      - name: "{{ test_interface_names[1] }}"
+        policy_type: dot1qTunnelHost
+        policy:
+          accessVlan: "{{ (test_access_vlan | int) + 1 }}"
+          description: ansible-dot1q-fanout
+      - name: "{{ test_interface_names[2] }}"
+        policy_type: dot1qTunnelHost
+        policy:
+          accessVlan: "{{ (test_access_vlan | int) + 1 }}"
+          description: ansible-dot1q-fanout
+
+- name: MERGED | Replay the same intent in check mode
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_create
+  check_mode: true
+  register: cm_dot1q_create_replay
+
+- name: MERGED | Replay the same intent normally
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_create
+  register: nm_dot1q_create_replay
+
+- name: MERGED | Assert replay is a no-op
+  ansible.builtin.assert:
+    that:
+      - cm_dot1q_create_replay is not changed
+      - nm_dot1q_create_replay is not changed
+
+- name: MERGED | Capture intent before a description-only update
+  ansible.builtin.include_tasks: read_interfaces.yaml
+
+- name: MERGED | Record the update checkpoint
+  ansible.builtin.set_fact:
+    dot1q_checkpoint: "{{ dot1q_readback.results | map(attribute='current.configData') | list }}"
+
+- name: MERGED | Preview a description-only update
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: &dot1q_merge_description
+    fabric_name: "{{ test_fabric_name }}"
+    state: merged
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names: ["{{ test_interface_names[0] }}"]
+        config_data:
+          network_os:
+            policy:
+              description: ansible-dot1q-merged-description
+  check_mode: true
+  register: cm_dot1q_update
+
+- name: MERGED | Prove the update preview left controller intent unchanged
+  ansible.builtin.include_tasks: assert_unchanged.yaml
+
+- name: MERGED | Apply the description-only update
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_merge_description
+  register: nm_dot1q_update
+
+- name: MERGED | Require the planned and actual update
+  ansible.builtin.assert:
+    that:
+      - cm_dot1q_update is changed
+      - nm_dot1q_update is changed
+
+- name: MERGED | Verify omitted nondefault fields survived the merge
+  ansible.builtin.include_tasks: verify.yaml
+  vars:
+    dot1q_expected:
+      - name: "{{ test_interface_names[0] }}"
+        policy_type: dot1qTunnelHost
+        policy:
+          accessVlan: "{{ test_access_vlan }}"
+          description: ansible-dot1q-merged-description
+          cdp: false
+          bpduGuard: disable
+          mtu: default
+
+- name: MERGED | Replay the partial update
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_merge_description
+  register: nm_dot1q_update_replay
+
+- name: MERGED | Require partial-update idempotency
+  ansible.builtin.assert:
+    that: nm_dot1q_update_replay is not changed
