@@ -6,6 +6,16 @@
 
 # After overridden.yaml, only vpc201 exists. Remove it explicitly and verify idempotency.
 
+- name: "DELETED RECONCILE SETUP: Deploy vpc201 before staging its deletion"
+  cisco.nd.nd_interface_vpc_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ vpc_trunk_host_overridden }}"
+    config_actions:
+      deploy: true
+    state: merged
+
 - name: "DELETED: Remove vpc201 (check mode)"
   cisco.nd.nd_interface_vpc_trunk_host: &delete_vpc
     output_level: "{{ nd_info.output_level }}"
@@ -13,6 +23,8 @@
     config:
       - switch_ip: "{{ test_switch_ip_peer1 }}"
         interface_name: vpc201
+    config_actions:
+      deploy: false
     state: deleted
   check_mode: true
   register: cm_deleted
@@ -27,15 +39,30 @@
       - cm_deleted is changed
       - nm_deleted is changed
 
-- name: "DELETED IDEMPOTENT: Pause for convergence"
-  ansible.builtin.pause:
-    seconds: 30
+- name: "DELETED RECONCILE: Check exact staged delete with deployment enabled"
+  cisco.nd.nd_interface_vpc_trunk_host: &delete_vpc_deploy
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip_peer1 }}"
+        interface_name: vpc201
+    config_actions:
+      deploy: true
+    state: deleted
+  check_mode: true
+  register: cm_deleted_reconcile
 
-- name: "DELETED IDEMPOTENT: Re-apply delete (normal mode)"
-  cisco.nd.nd_interface_vpc_trunk_host: *delete_vpc
+- name: "DELETED RECONCILE: Deploy exact staged delete"
+  cisco.nd.nd_interface_vpc_trunk_host: *delete_vpc_deploy
+  register: nm_deleted_reconcile
+
+- name: "DELETED RECONCILE: Replay deployed delete"
+  cisco.nd.nd_interface_vpc_trunk_host: *delete_vpc_deploy
   register: nm_deleted_idem
 
-- name: "DELETED IDEMPOTENT: Verify no change after second delete"
+- name: "DELETED RECONCILE: Verify pending delete deployed once"
   ansible.builtin.assert:
     that:
+      - cm_deleted_reconcile is changed
+      - nm_deleted_reconcile is changed
       - nm_deleted_idem is not changed

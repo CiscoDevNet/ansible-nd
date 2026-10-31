@@ -103,7 +103,7 @@ During normal execution, the following sequence is used:
 ```text
 module-specific setup
         ↓
-GET configured check_mode_queries state
+read-only configured check_mode_queries state
         ↓
 run target module in predictive check mode
         ↓
@@ -141,12 +141,12 @@ Important behavior:
 
 The harness records the task's original check-mode value before execution and restores it after success or failure.
 
-Snapshot GET operations temporarily disable task check mode because `cisco.nd.nd_rest` does not perform a real HTTP request while operating in check mode.
+Snapshot operations temporarily disable task check mode because `cisco.nd.nd_rest` does not perform a real HTTP request while operating in check mode.
 
 The snapshot operation:
 
 - Temporarily disables task check mode.
-- Performs a read-only GET.
+- Performs the configured read-only GET or POST query.
 - Restores the previous task check-mode value.
 - Never changes the target module's intended predictive execution mode.
 
@@ -397,12 +397,15 @@ Each query supports:
 |---|---:|---|---|
 | `name` | No | Query path | Human-readable query name |
 | `path` | Yes | None | ND REST API path |
+| `method` | No | `get` | Read-only HTTP method: `get` or `post` |
+| `content` | No | None | Request body for a read-only POST query |
 | `expected_status` | No | `200` | Required HTTP response status, or a non-empty list of acceptable statuses |
 | `pagination` | No | None | Optional pagination configuration with required `page_size` and `collection_key`, plus optional `max_pages` (default `10000`) |
 | `unordered_paths` | No | `[]` | JSON pointers relative to `current`; only lists at these paths are treated as unordered. `*` matches one path component, including a list index; `""` names the response itself when it is a list. |
 | `ignore_keys` | No | `[]` | Dictionary keys removed recursively before comparison |
 
-Check-mode snapshot queries always use GET. A method cannot be supplied.
+Check-mode snapshot queries default to GET. Use POST only for an endpoint whose
+POST operation is explicitly read-only, such as a controller collection query.
 
 For a paginated query, configure the list under `current` that should be
 combined:
@@ -418,15 +421,18 @@ The plugin adds or replaces the `max` and `offset` query parameters on `path`
 for each GET request. Contributors should not add those parameters themselves.
 Only the rows under `current.<collection_key>` are combined and compared;
 other top-level response keys are not included in the snapshot comparison.
-For a paginated collection endpoint that reports an empty collection as HTTP
-`404`, include `404` in `expected_status`. An explicitly allowed `404` is
-treated as an empty terminal page even when `current.<collection_key>` is
-absent. A `404` remains an error for non-paginated queries or when it is not
-listed in `expected_status`. For all other responses, the query fails if
+If a query receives HTTP `404`, include `404` in `expected_status` for it to be
+accepted. An accepted `404` produces an empty snapshot: `{}` for a
+non-paginated query, or `{<collection_key>: []}` for a paginated query. For
+pagination, the plugin treats it as the empty terminal page even if
+`current.<collection_key>` is absent. A `404` not listed in `expected_status`
+fails. For other paginated responses, the query fails if
 `current.<collection_key>` is missing or is not a list.
 `max_pages` defaults to `10000`. If that limit is reached without a page
 shorter than `page_size`, the query fails instead of returning a truncated
 snapshot.
+Without `pagination`, a query also fails when the response metadata reports
+that records remain, rather than treating the partial response as complete.
 
 The harness performs:
 
@@ -850,7 +856,8 @@ Do not force unrelated workflows into one large state file. Use one file per sta
 
 ## Registering scenarios in `tasks/main.yaml`
 
-Harness scenarios are opt-in during migration and must use `never`.
+Register each harness scenario with the aggregate `nd4x_demo` tag and a
+scenario-specific tag.
 
 Example:
 
@@ -860,11 +867,9 @@ Example:
     file: nd4x_demo_merged.yaml
     apply:
       tags:
-        - never
         - nd4x_demo
         - nd4x_demo_merged
   tags:
-    - never
     - nd4x_demo
     - nd4x_demo_merged
   when: nd4x_supported | bool
@@ -1492,13 +1497,14 @@ A matching `failed: true` expectation does not verify why the module failed. The
 
 ### Default execution
 
-Harness scenarios use `never` so they do not replace the original suite until migration parity has been approved.
-
-Running the target without harness tags executes the original suite:
+Harness scenarios run as part of the target's normal suite when the ND-version
+condition passes. To run only the original suite during migration, skip the
+aggregate harness tag:
 
 ```bash
 ansible-test network-integration <target> \
   --inventory /absolute/path/to/inventory.networking \
+  --skip-tags nd4x_demo \
   -vv
 ```
 

@@ -13,14 +13,20 @@ in the ND Manage API.
   (GET /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name})
 - `EpManageInterfacesListGet` - List all interfaces on a switch
   (GET /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces)
+- `EpManageInterfacesSummaryGet` - List interface summary records for a fabric
+  (GET /api/v1/manage/fabrics/{fabric_name}/interfacesSummary)
 - `EpManageInterfacesPost` - Create interfaces on a switch
   (POST /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces)
 - `EpManageInterfacesPut` - Update a specific interface
   (PUT /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name})
+- `EpManageInterfacesModify` - Bulk update interfaces in a fabric (ND 4.3.1+)
+  (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/modify)
 - `EpManageInterfacesDelete` - Delete a virtual interface (loopback, SVI); not supported for physical ethernet
   (DELETE /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name})
 - `EpManageInterfacesDeploy` - Deploy interface configurations
   (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/deploy)
+- `EpManageInterfacesPreview` - Preview interface configurations
+  (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/preview)
 - `EpManageInterfacesNormalize` - Reset physical interface configurations to default
   (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/normalize)
 - `EpManageInterfacesRemove` - Bulk delete interfaces
@@ -42,6 +48,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     MaxMixin,
     NetworkNameMixin,
     OffsetMixin,
+    SwitchIdMixin,
     SwitchSerialNumberMixin,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
@@ -60,6 +67,12 @@ class ManageInterfacesListEndpointParams(ClusterNameMixin, FilterMixin, MaxMixin
 
     sort: str | None = Field(default=None, min_length=1, description="Sort field and direction")
     config_only: bool | None = Field(default=None, description="Return config-only interface data")
+
+
+class ManageInterfacesSummaryEndpointParams(ClusterNameMixin, FilterMixin, MaxMixin, OffsetMixin, SwitchIdMixin, EndpointQueryParams):
+    """Endpoint-specific query parameters for fabric interface summaries."""
+
+    sort: str | None = Field(default=None, min_length=1, description="Sort field and direction")
 
 
 class _EpManageInterfacesBase(FabricNameMixin, SwitchSerialNumberMixin, InterfaceNameMixin, NDEndpointBaseModel):
@@ -211,6 +224,36 @@ class EpManageInterfacesListGet(_EpManageInterfacesBase):
         return HttpVerbEnum.GET
 
 
+class EpManageInterfacesSummaryGet(FabricNameMixin, NDEndpointBaseModel):
+    """List interface summary records for a fabric."""
+
+    class_name: Literal["EpManageInterfacesSummaryGet"] = Field(
+        default="EpManageInterfacesSummaryGet",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+    endpoint_params: ManageInterfacesSummaryEndpointParams = Field(
+        default_factory=ManageInterfacesSummaryEndpointParams,
+        description="Endpoint-specific query parameters",
+    )
+
+    @property
+    def path(self) -> str:
+        """Build the fabric interface-summary endpoint path."""
+        if self.fabric_name is None:
+            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
+        path = BasePath.path("fabrics", quote(self.fabric_name, safe=""), "interfacesSummary")
+        query_string = self.endpoint_params.to_query_string()
+        if query_string:
+            return f"{path}?{query_string}"
+        return path
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return ``HttpVerbEnum.GET``."""
+        return HttpVerbEnum.GET
+
+
 class EpManageInterfacesPost(_EpManageInterfacesBase):
     """
     # Summary
@@ -277,6 +320,24 @@ class EpManageInterfacesPut(_EpManageInterfacesBase):
         None
         """
         return HttpVerbEnum.PUT
+
+
+class EpManageInterfacesModify(FabricNameMixin, NDEndpointBaseModel):
+    """ND 4.3.1+ bulk modify endpoint; the caller validates exact item identity."""
+
+    class_name: Literal["EpManageInterfacesModify"] = Field(
+        default="EpManageInterfacesModify", frozen=True, description="Class name for backward compatibility"
+    )
+
+    @property
+    def path(self) -> str:
+        if self.fabric_name is None:
+            raise ValueError("EpManageInterfacesModify.path: fabric_name must be set before accessing path.")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "interfaceActions", "modify")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.POST
 
 
 class EpManageInterfacesDelete(_EpManageInterfacesBase):
@@ -360,6 +421,58 @@ class EpManageInterfacesDeploy(FabricNameMixin, NDEndpointBaseModel):
         if self.fabric_name is None:
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
         return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "interfaceActions", "deploy")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """
+        # Summary
+
+        Return `HttpVerbEnum.POST`.
+
+        ## Raises
+
+        None
+        """
+        return HttpVerbEnum.POST
+
+
+class EpManageInterfacesPreview(FabricNameMixin, NDEndpointBaseModel):
+    """
+    # Summary
+
+    Preview interface configurations for switches.
+
+    - Path: `/api/v1/manage/fabrics/{fabric_name}/interfaceActions/preview`
+    - Verb: POST
+    - Body: `{"interfaces": [{"interfaceName": "...", "switchId": "..."}]}`
+
+    ## Raises
+
+    ### ValueError
+
+    - Via `path` property if `fabric_name` is not set.
+    """
+
+    class_name: Literal["EpManageInterfacesPreview"] = Field(
+        default="EpManageInterfacesPreview", frozen=True, description="Class name for backward compatibility"
+    )
+
+    @property
+    def path(self) -> str:
+        """
+        # Summary
+
+        Build the preview endpoint path.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `fabric_name` is not set before accessing `path`.
+        """
+        if self.fabric_name is None:
+            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "interfaceActions", "preview")
 
     @property
     def verb(self) -> HttpVerbEnum:

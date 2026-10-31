@@ -8,13 +8,27 @@ from __future__ import absolute_import, annotations, division, print_function
 from typing import Any, Callable
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
+    NDStateMachineError,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
+    NDConfigCollection,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_plan import (
+    NDStatePlan,
+    NDStatePlanner,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
+    NDBaseOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    ResponseType,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
+    ResponseHandler,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
@@ -129,7 +143,11 @@ class NDStateMachine:
             # double-transform non-idempotent orchestrators (e.g. nd_vrf/nd_network),
             # reverting user-supplied fields to their hardcoded defaults.
             raw_config = config if config is not None else (self.module.params.get("config") or [])
-            self.proposed = NDConfigCollection.from_ansible_config(data=raw_config, model_class=self.model_class, context={"state": self.state})
+            self.proposed = NDConfigCollection.from_ansible_config(
+                data=raw_config,
+                model_class=self.model_class,
+                context={"state": self.state},
+            )
 
             # Argument-spec ``config.options`` drives pruning of gathered output
             # so it round-trips cleanly as ``config``. Derived from the model,
@@ -139,7 +157,12 @@ class NDStateMachine:
             if callable(get_argument_spec):
                 gathered_spec = get_argument_spec().get("config", {}).get("options", {}) or {}
 
-            self.output.assign(after=self.existing, before=self.before, proposed=self.proposed, gathered_spec=gathered_spec)
+            self.output.assign(
+                after=self.existing,
+                before=self.before,
+                proposed=self.proposed,
+                gathered_spec=gathered_spec,
+            )
 
         except Exception as e:
             raise NDStateMachineError(f"Initialization failed: {str(e)}") from e
@@ -149,15 +172,20 @@ class NDStateMachine:
         """
         Manage state according to desired configuration.
         """
+        if self.state == "gathered":
+            # Read-only state: __init__ already queried the existing objects and
+            # assigned them as ``after`` in the output, so no plan or mutation is needed.
+            return
+
+        plan = self._build_plan()
         if self.state in ["merged", "replaced", "overridden"]:
             proposed_items = list(self.proposed)
 
             # Policy-required-on-create guard (issue #350) runs FIRST: it is local-only (self.existing is
             # already in memory), so it fails before the API-backed capability preflight below and before
-            # _manage_create_update_state mutates self.existing, which NDOutput aliases as `after`. Create
-            # subset = proposed items not present in the existing inventory -- the same key-membership
-            # criterion get_diff_config uses to classify "new" (PR #362 review).
-            items_to_create = [item for item in proposed_items if self.existing.get(item.get_identifier_value()) is None]
+            # _manage_create_update_state mutates self.existing, which NDOutput aliases as `after`. The shared
+            # planner supplies the exact create subset used by standalone and aggregate workflows.
+            items_to_create = list(plan.creates)
 
             # Normalize preflight failures to NDStateMachineError (PR #362 review, gmicol). Both preflight
             # hooks raise a bare RuntimeError (base_interface.preflight_create / the capability preflight),
@@ -178,21 +206,16 @@ class NDStateMachine:
             except Exception as e:
                 raise NDStateMachineError(f"Preflight failed: {e}") from e
 
-            self._manage_create_update_state()
+            self._manage_create_update_state(plan)
 
             if self.state == "overridden":
-                self._manage_override_deletions()
+                self._manage_override_deletions(plan)
 
         elif self.state == "deleted":
             # Capability preflight intentionally NOT run for deletes: removing configuration does not
             # depend on a switch's capability to host the interface type (PR #275 scope decision).
             # The delete-specific guards run via preflight_delete inside _manage_delete_state.
-            self._manage_delete_state()
-
-        elif self.state == "gathered":
-            # Read-only state: __init__ already queried the existing objects and
-            # assigned them as ``after`` in the output, so no changes are made.
-            pass
+            self._manage_delete_state(plan)
 
         else:
             raise NDStateMachineError(f"Invalid state: {self.state}")
@@ -215,12 +238,28 @@ class NDStateMachine:
                 raise NDStateMachineError(error_msg) from e
         return None
 
-    def _manage_create_update_state(self) -> None:
-        """
-        Handle merged/replaced/overridden states.
-        """
+    def _build_plan(self, state: str | None = None) -> NDStatePlan:
+        """Calculate all operations without invoking an orchestrator mutation method."""
+        try:
+            before = getattr(self, "before", None)
+            if before is None:
+                before = self.existing
+            return NDStatePlanner.plan(
+                state=state or self.state,
+                before=before,
+                proposed=self.proposed,
+                ignore_errors=getattr(self, "ignore_errors", False),
+            )
+        except Exception as e:
+            raise NDStateMachineError(str(e)) from e
+
+    def _manage_create_update_state(self, plan: NDStatePlan | None = None) -> None:
+        """Execute the create/update portion of a precomputed state plan."""
+        plan = plan or self._build_plan()
+        execution_baseline = self.existing.copy()
         items_to_create: list[NDBaseModel] = []
         items_to_update: list[NDBaseModel] = []
+        items_with_no_diff: list[NDBaseModel] = []
 
         for proposed_item in self.proposed:
             identifier = None
@@ -253,6 +292,10 @@ class NDStateMachine:
 
                 # No changes needed
                 if diff_status == "no_diff":
+                    # Prefer the complete controller model over a sparse merged
+                    # proposal.  Interface deploy reconciliation needs the full
+                    # parent/member context to validate any derived 207 rows.
+                    items_with_no_diff.append(existing_match or final_candidate)
                     continue
 
                 # Prepare final config based on state
@@ -284,17 +327,148 @@ class NDStateMachine:
         # The policy-required-on-create guard (issue #350) runs in manage_state, before the capability
         # preflight and before this method mutates self.existing (PR #362 review).
 
-        # Execute updates (always individual)
-        for item in items_to_update:
-            self._execute_operation(self.model_orchestrator.update, item, error_msg_prefix=f"Failed to update {item.get_identifier_value()}")
+        # ``deploy: true`` is an execution-state request, not merely an intent
+        # mutation request.  A previous run can have accepted the PUT/POST and
+        # then failed to prove deployment convergence.  On a fresh retry the
+        # intent is ``no_diff`` and would otherwise never be deployed again.
+        # The base hook is a no-op; interface orchestrators preview these exact
+        # resources and queue only those whose convergence is not proven.
+        if items_with_no_diff:
+            try:
+                if self.model_orchestrator.reconcile_no_diff(items_with_no_diff):
+                    self.output.mark_changed()
+            except Exception as e:
+                # Planning above mutates ``self.existing`` before any I/O so
+                # check mode can expose the intended result. Reconciliation is
+                # the first runtime action; if its read-only preview is
+                # contradictory or otherwise fails, no proposed mutation has
+                # been accepted and failure output must retain the execution
+                # baseline rather than advertise every planned create/update.
+                self.existing = execution_baseline.copy()
+                self.output.assign(after=self.existing)
+                raise NDStateMachineError(f"Failed to reconcile unchanged resources: {e}") from e
+
+        # Execute guarded description-only updates and family-qualified full
+        # policy updates in batches on ND 4.3.1. Planning above mutates
+        # ``self.existing`` before I/O so check mode can expose the intended
+        # result. If a real update fails, rebuild ``after`` from the execution
+        # baseline plus only the preceding updates the controller accepted;
+        # otherwise a rejected and every not-yet-attempted update appear as
+        # successful in changed/after output.
+        accepted_updates: list[NDBaseModel] = []
+        try:
+            pending_bulk: list[tuple[NDBaseModel, NDBaseModel | None, dict[str, Any], str]] = []
+
+            def run_singular_update(item: NDBaseModel, previous: NDBaseModel | None) -> None:
+                try:
+                    self._execute_operation(
+                        self.model_orchestrator.update,
+                        item,
+                        previous_model=previous,
+                        error_msg_prefix=f"Failed to update {item.get_identifier_value()}",
+                    )
+                except Exception:
+                    accepted = getattr(self.model_orchestrator, "_accepted_post_write_model", None)
+                    if (
+                        accepted is not None
+                        and getattr(accepted, "switch_ip", None) == getattr(item, "switch_ip", None)
+                        and str(getattr(accepted, "interface_name", "")).casefold() == str(getattr(item, "interface_name", "")).casefold()
+                    ):
+                        accepted_updates.append(accepted)
+                    raise
+                accepted_updates.append(item)
+
+            def flush_bulk() -> None:
+                if not pending_bulk:
+                    return
+                batch = list(pending_bulk)
+                pending_bulk.clear()
+                if len(batch) == 1:
+                    item, previous, _payload, _mode = batch[0]
+                    run_singular_update(item, previous)
+                    return
+                orchestrator = self.model_orchestrator
+                for item, previous, _payload, _mode in batch:
+                    orchestrator.prepare_bulk_modify_context(item, previous)
+                recorded = orchestrator.rest_send.response_count
+                try:
+                    self._execute_operation(
+                        orchestrator.modify_bulk_prepared,
+                        [payload for _item, _previous, payload, _mode in batch],
+                        payload_orchestrators=[orchestrator for _item, _previous, _payload, _mode in batch],
+                        payload_models=[item for item, _previous, _payload, _mode in batch],
+                        payload_modes=[mode for _item, _previous, _payload, mode in batch],
+                        error_msg_prefix=f"Failed to update {len(batch)} interfaces in bulk",
+                    )
+                except Exception:
+                    if orchestrator.rest_send.response_count > recorded and orchestrator.rest_send.return_code == 207:
+                        names = {
+                            (payload["switchId"].casefold(), item.interface_name.casefold()): (payload["switchId"], item.interface_name)
+                            for item, _previous, payload, _mode in batch
+                        }
+                        peer_switch_ids = {
+                            (payload["switchId"].casefold(), item.interface_name.casefold()): payload["configData"]["networkOS"]["policy"]["peerSwitchId"]
+                            for item, _previous, payload, _mode in batch
+                            if str(payload.get("interfaceType") or "").casefold() == "vpc"
+                        }
+                        accepted, _exact = orchestrator._bulk_modify_classify_result_pairs(names, peer_switch_ids=peer_switch_ids)
+                        accepted_updates.extend(
+                            item for item, _previous, payload, _mode in batch if (payload["switchId"].casefold(), item.interface_name.casefold()) in accepted
+                        )
+                    raise
+                accepted_updates.extend(item for item, _previous, _payload, _mode in batch)
+
+            for item in items_to_update:
+                previous = execution_baseline.get(item.get_identifier_value())
+                payload = None
+                mode = "description"
+                prepare = getattr(self.model_orchestrator, "prepare_bulk_description_update", None)
+                if not self.check_mode and not self.ignore_errors and callable(prepare):
+                    payload = prepare(item, previous)
+                if payload is None and not self.check_mode and not self.ignore_errors:
+                    prepare_full = getattr(self.model_orchestrator, "prepare_bulk_full_update", None)
+                    if callable(prepare_full):
+                        payload = prepare_full(item, previous)
+                        mode = "full"
+                if payload is not None:
+                    if pending_bulk and (
+                        len(pending_bulk) >= 10000
+                        or any(
+                            previous_payload["switchId"] == payload["switchId"] and previous_item.interface_name.casefold() == item.interface_name.casefold()
+                            for previous_item, _old, previous_payload, _mode in pending_bulk
+                        )
+                    ):
+                        flush_bulk()
+                    pending_bulk.append((item, previous, payload, mode))
+                    continue
+                flush_bulk()
+                run_singular_update(item, previous)
+            flush_bulk()
+        except Exception:
+            self.existing = execution_baseline.copy()
+            for item in accepted_updates:
+                if not self.existing.replace(item):
+                    self.existing.add(item)
+            if accepted_updates:
+                self.sent.add_many(accepted_updates)
+            self.output.assign(after=self.existing)
+            raise
 
         # Execute creates (bulk or individual)
         if items_to_create:
             if self.supports_bulk_create:
-                self._execute_operation(self.model_orchestrator.create_bulk, items_to_create, error_msg_prefix="Failed to create in bulk")
+                self._execute_operation(
+                    self.model_orchestrator.create_bulk,
+                    items_to_create,
+                    error_msg_prefix="Failed to create in bulk",
+                )
             else:
                 for item in items_to_create:
-                    self._execute_operation(self.model_orchestrator.create, item, error_msg_prefix=f"Failed to create {item.get_identifier_value()}")
+                    self._execute_operation(
+                        self.model_orchestrator.create,
+                        item,
+                        error_msg_prefix=f"Failed to create {item.get_identifier_value()}",
+                    )
 
         # Mark as sent only after successful API operations
         successfully_sent = items_to_update + items_to_create
@@ -312,41 +486,41 @@ class NDStateMachine:
             if getattr(item, "is_unsupported_policy", False):
                 self.module.warn(item.describe_unsupported_policy() + "; it is read-only and will not be modified or deleted by this module.")
 
-    def _manage_override_deletions(self) -> None:
-        """
-        Delete items not in proposed config (for overridden state).
-        """
-        diff_identifiers = self.before.get_diff_identifiers(self.proposed)
-        # Never implicitly delete an unsupported (opaque) object during reconciliation;
-        # it is absent from the user's proposed config only because it cannot be modeled.
-        items_to_delete = [
-            existing_item
-            for identifier in diff_identifiers
-            if (existing_item := self.existing.get(identifier)) is not None and not getattr(existing_item, "is_unsupported_policy", False)
-        ]
-        self._delete_items(items_to_delete)
+    def _manage_override_deletions(self, plan: NDStatePlan | None = None) -> None:
+        """Delete items not in proposed config for overridden state."""
+        plan = plan or self._build_plan("overridden")
+        self._delete_items(list(plan.deletes))
 
-    def _manage_delete_state(self) -> None:
+    def _manage_delete_state(self, plan: NDStatePlan | None = None) -> None:
         """Handle deleted state."""
         items_to_delete = []
+        absent_items = []
         for proposed_item in self.proposed:
             existing_item = self.existing.get(proposed_item.get_identifier_value())
             if existing_item is None:
+                absent_items.append(proposed_item)
                 continue
             # An explicit delete that resolves to an unsupported object fails with a
             # focused message rather than blindly removing something we cannot model.
             if getattr(existing_item, "is_unsupported_policy", False):
                 raise NDStateMachineError(existing_item.describe_unsupported_policy() + "; this module cannot delete it.")
             items_to_delete.append(existing_item)
-        # Delete preflight (switch resolution, port-channel membership) runs here -- before _delete_items, whose
-        # mutation is skipped in check mode -- so a dry run rejects what a normal run would (PR #550 review).
+        # Delete preflight also covers absent targets before deploy-recovery preview: a type-filtered
+        # inventory must not let a named member or fabric-owned interface bypass the delete guards.
+        # This runs before _delete_items, whose mutation is skipped in check mode.
         # Same error normalization as the create/update preflights in manage_state.
         try:
-            self.model_orchestrator.preflight_delete(items_to_delete)
+            self.model_orchestrator.preflight_delete([*items_to_delete, *absent_items])
         except NDStateMachineError:
             raise
         except Exception as e:
             raise NDStateMachineError(f"Preflight failed: {e}") from e
+        if absent_items:
+            try:
+                if self.model_orchestrator.reconcile_absent_deletes(absent_items):
+                    self.output.mark_changed()
+            except Exception as e:
+                raise NDStateMachineError(f"Failed to reconcile absent deleted resources: {e}") from e
         self._delete_items(items_to_delete)
 
     def _delete_items(self, items: list[NDBaseModel]) -> None:
@@ -356,10 +530,18 @@ class NDStateMachine:
 
         # Execute deletes (bulk or individual)
         if self.supports_bulk_delete:
-            self._execute_operation(self.model_orchestrator.delete_bulk, items, error_msg_prefix="Failed to delete in bulk")
+            self._execute_operation(
+                self.model_orchestrator.delete_bulk,
+                items,
+                error_msg_prefix="Failed to delete in bulk",
+            )
         else:
             for item in items:
-                self._execute_operation(self.model_orchestrator.delete, item, error_msg_prefix=f"Failed to delete {item.get_identifier_value()}")
+                self._execute_operation(
+                    self.model_orchestrator.delete,
+                    item,
+                    error_msg_prefix=f"Failed to delete {item.get_identifier_value()}",
+                )
 
         # Mark as removed only after successful API operations, mirroring ``sent``.
         self.removed.add_many(items)

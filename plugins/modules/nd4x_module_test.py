@@ -28,8 +28,9 @@ options:
   state:
     description:
       - State passed to the target ND module.
+      - When omitted, the target module's own default state is preserved.
     type: str
-    required: true
+    required: false
   config:
     description:
       - Configuration passed to the target module.
@@ -61,23 +62,37 @@ options:
         regardless of this option.
     type: bool
     default: true
+  check_mode_only:
+    description:
+      - Whether to execute only the internal check-mode phase and skip the real
+        apply, idempotency, and post-apply REST-query phases.
+      - Requires O(check_mode=true). This is useful for validating predictive
+        failures and re-applying an already-present configuration in check mode.
+      - Global Ansible check mode already executes only the check-mode phase.
+    type: bool
+    default: false
   check_mode_queries:
     description:
       - Read-only ND REST API queries used to capture controller state before
         and after predictive check mode.
       - The normalized before and after states must be equivalent before a real
         apply is allowed.
-      - Query entries support C(name), C(path), C(expected_status),
-        C(unordered_paths), C(ignore_keys), and optional C(pagination). The HTTP
-        method is always C(GET).
+      - Query entries support C(name), C(path), C(method), C(content),
+        C(expected_status), C(unordered_paths), C(ignore_keys), and optional
+        C(pagination). The method defaults to C(GET); C(POST) is also supported
+        for controller endpoints whose POST operation is read-only, such as
+        collection query endpoints.
       - C(pagination) requires C(page_size) and C(collection_key), and accepts
         optional C(max_pages), which defaults to 10000. For each page, the
         plugin sets C(max) and C(offset) on C(path) itself; callers do not add
         those query parameters.
-      - For paginated collection queries, include C(404) in
-        C(expected_status) when the controller reports an empty collection as
-        not found. Such a 404 is treated as an empty terminal page. A 404 is
-        not treated as an empty response for non-paginated queries.
+      - Include C(404) in C(expected_status) for a query to accept a not-found
+        response. An accepted 404 produces an empty snapshot, C({}), for a
+        non-paginated query. For a paginated query, it records an empty list at
+        C(current.<collection_key>).
+        For pagination, the 404 is treated as an empty terminal page, even if
+        C(current.<collection_key>) is absent. A 404 not listed in
+        C(expected_status) fails.
       - With C(pagination), only the rows under
         C(current.<collection_key>) are combined and compared. Other top-level
         keys in the response are not included in the snapshot comparison.
@@ -85,6 +100,9 @@ options:
         when C(current.<collection_key>) is missing or is not a list. It also
         fails if C(max_pages) is reached without receiving a final page shorter
         than C(page_size); the snapshot is never silently truncated.
+      - Without C(pagination), the query fails if response metadata reports
+        that additional records remain, rather than treating a partial page as
+        a complete snapshot.
       - C(unordered_paths) contains JSON pointers relative to the response in
         C(current). Only lists at the named paths are treated as unordered;
         C(*) matches one path component, including a list index. An empty

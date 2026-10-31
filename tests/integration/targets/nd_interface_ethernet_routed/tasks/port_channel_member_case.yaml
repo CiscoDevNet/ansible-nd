@@ -1,0 +1,262 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# IFACE-004 regression coverage for a pre-existing user-owned routed aggregate.
+# The collection cannot create this parent, so main.yaml skips this file unless
+# an NX-OS or IOS-XE routed member interface is explicitly supplied.
+
+- name: "ROUTED PORT-CHANNEL MEMBER: Exercise {{ routed_member_case.expected_policy_type }} safely"
+  block:
+    - name: "ROUTED PORT-CHANNEL MEMBER SETUP: Initialize the mutation guard"
+      ansible.builtin.set_fact:
+        routed_member_mutation_attempted: false
+
+    - name: "ROUTED PORT-CHANNEL MEMBER SETUP: Resolve the test switch id"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ routed_member_case.fabric_name }}/switches"
+        method: get
+      register: routed_member_switches
+
+    - name: "ROUTED PORT-CHANNEL MEMBER SETUP: Save the test switch id"
+      ansible.builtin.set_fact:
+        routed_member_switch_id: >-
+          {{ (routed_member_switches.current.switches
+             | selectattr('fabricManagementIp', 'equalto', routed_member_case.switch_ip) | first).switchId }}
+
+    - name: "ROUTED PORT-CHANNEL MEMBER SETUP: Read the original member"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ routed_member_case.fabric_name }}/switches/{{ routed_member_switch_id }}/interfaces/{{ routed_member_case.interface_name | replace('/', '%2F') }}
+        method: get
+      register: routed_member_before_wire
+
+    - name: "ROUTED PORT-CHANNEL MEMBER SETUP: Verify policy and exact restoration baseline"
+      vars:
+        original_policy: "{{ routed_member_before_wire.current.configData.networkOS.policy }}"
+      ansible.builtin.assert:
+        that:
+          - routed_member_case.baseline_supplied | bool
+          - routed_member_case.baseline_admin_state is boolean
+          - routed_member_case.baseline_description is string
+          - routed_member_case.baseline_extra_config is string
+          - original_policy.policyType == routed_member_case.expected_policy_type
+          - routed_member_before_wire.current.configData.networkOS.networkOSType == routed_member_case.network_os_type
+          - original_policy.portChannelId is defined
+          - (original_policy.adminState | bool) == (routed_member_case.baseline_admin_state | bool)
+          - (original_policy.description | default(none)) == routed_member_case.baseline_description
+          - (original_policy.extraConfig | default(none)) == routed_member_case.baseline_extra_config
+        fail_msg: >-
+          Refusing to mutate {{ routed_member_case.interface_name }}. Explicitly supplied
+          baseline values must exactly match its current adminState, description, and extraConfig.
+
+    - name: "ROUTED PORT-CHANNEL MEMBER MERGED: Preview all safe fields"
+      cisco.nd.nd_interface_ethernet_routed: &merge_routed_member
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ routed_member_case.fabric_name }}"
+        config:
+          - switch_ip: "{{ routed_member_case.switch_ip }}"
+            interface_name: "{{ routed_member_case.interface_name }}"
+            config_data:
+              network_os:
+                network_os_type: "{{ routed_member_case.network_os_type }}"
+                policy:
+                  admin_state: "{{ not (routed_member_case.baseline_admin_state | bool) }}"
+                  description: "IFACE-004 {{ routed_member_case.expected_policy_type }} updated"
+                  extra_config: "logging event trunk-status"
+        config_actions:
+          deploy: false
+        state: merged
+      check_mode: true
+      register: routed_member_check_mode
+
+    - name: "ROUTED PORT-CHANNEL MEMBER MERGED: Mark the mutation attempt"
+      ansible.builtin.set_fact:
+        routed_member_mutation_attempted: true
+
+    - name: "ROUTED PORT-CHANNEL MEMBER MERGED: Apply all safe fields"
+      cisco.nd.nd_interface_ethernet_routed: *merge_routed_member
+      register: routed_member_update
+
+    - name: "ROUTED PORT-CHANNEL MEMBER MERGED: Verify the planned and applied update"
+      vars:
+        routed_member_after: >-
+          {{ routed_member_update.after
+             | selectattr('interface_name', 'equalto', routed_member_case.interface_name) | first }}
+      ansible.builtin.assert:
+        that:
+          - routed_member_check_mode is changed
+          - routed_member_update is changed
+          - routed_member_after.config_data.network_os.policy.admin_state == (not (routed_member_case.baseline_admin_state | bool))
+          - routed_member_after.config_data.network_os.policy.description == "IFACE-004 " ~ routed_member_case.expected_policy_type ~ " updated"
+          - routed_member_after.config_data.network_os.policy.extra_config == "logging event trunk-status"
+
+    - name: "ROUTED PORT-CHANNEL MEMBER MERGED: Read the updated member from the wire"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ routed_member_case.fabric_name }}/switches/{{ routed_member_switch_id }}/interfaces/{{ routed_member_case.interface_name | replace('/', '%2F') }}
+        method: get
+      register: routed_member_after_wire
+
+    - name: "ROUTED PORT-CHANNEL MEMBER MERGED: Verify every modeled preservation field"
+      vars:
+        before_policy: "{{ routed_member_before_wire.current.configData.networkOS.policy }}"
+        after_policy: "{{ routed_member_after_wire.current.configData.networkOS.policy }}"
+        routed_member_preservation_fields:
+          - policyType
+          - portChannelId
+          - portChannelMode
+          - fec
+        before_preserved_policy: >-
+          {{ before_policy | dict2items
+             | selectattr('key', 'in', routed_member_preservation_fields)
+             | list | items2dict }}
+        after_preserved_policy: >-
+          {{ after_policy | dict2items
+             | selectattr('key', 'in', routed_member_preservation_fields)
+             | list | items2dict }}
+      ansible.builtin.assert:
+        that:
+          - before_preserved_policy == after_preserved_policy
+          - routed_member_after_wire.current.interfaceName == routed_member_before_wire.current.interfaceName
+          - routed_member_after_wire.current.interfaceType == routed_member_before_wire.current.interfaceType
+          - routed_member_after_wire.current.configData.mode == routed_member_before_wire.current.configData.mode
+          - >-
+            routed_member_after_wire.current.configData.networkOS.networkOSType
+            == routed_member_before_wire.current.configData.networkOS.networkOSType
+          - after_policy.adminState == (not (routed_member_case.baseline_admin_state | bool))
+          - after_policy.description == "IFACE-004 " ~ routed_member_case.expected_policy_type ~ " updated"
+          - after_policy.extraConfig == "logging event trunk-status"
+
+    - name: "ROUTED PORT-CHANNEL MEMBER IDEMPOTENT: Reapply the safe update"
+      cisco.nd.nd_interface_ethernet_routed: *merge_routed_member
+      register: routed_member_idempotent
+
+    - name: "ROUTED PORT-CHANNEL MEMBER IDEMPOTENT: Verify no second mutation"
+      ansible.builtin.assert:
+        that:
+          - routed_member_idempotent is not changed
+
+    - name: "ROUTED PORT-CHANNEL MEMBER NEGATIVE: Reject an unsafe field"
+      cisco.nd.nd_interface_ethernet_routed:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ routed_member_case.fabric_name }}"
+        config:
+          - switch_ip: "{{ routed_member_case.switch_ip }}"
+            interface_name: "{{ routed_member_case.interface_name }}"
+            config_data:
+              network_os:
+                network_os_type: "{{ routed_member_case.network_os_type }}"
+                policy:
+                  description: "must be rejected atomically"
+                  mtu: 9000
+        config_actions:
+          deploy: false
+        state: merged
+      register: routed_member_unsafe_field
+      ignore_errors: true
+      check_mode: true
+
+    - name: "ROUTED PORT-CHANNEL MEMBER NEGATIVE: Reject membership-changing extra_config"
+      cisco.nd.nd_interface_ethernet_routed:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ routed_member_case.fabric_name }}"
+        config:
+          - switch_ip: "{{ routed_member_case.switch_ip }}"
+            interface_name: "{{ routed_member_case.interface_name }}"
+            config_data:
+              network_os:
+                network_os_type: "{{ routed_member_case.network_os_type }}"
+                policy:
+                  extra_config: "no channel-group 590"
+        config_actions:
+          deploy: false
+        state: merged
+      register: routed_member_unsafe_extra_config
+      ignore_errors: true
+      check_mode: true
+
+    - name: "ROUTED PORT-CHANNEL MEMBER NEGATIVE: Reject replaced state"
+      cisco.nd.nd_interface_ethernet_routed:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ routed_member_case.fabric_name }}"
+        config:
+          - switch_ip: "{{ routed_member_case.switch_ip }}"
+            interface_name: "{{ routed_member_case.interface_name }}"
+            config_data:
+              network_os:
+                network_os_type: "{{ routed_member_case.network_os_type }}"
+                policy:
+                  description: "must be rejected under replaced"
+        config_actions:
+          deploy: false
+        state: replaced
+      register: routed_member_replaced
+      ignore_errors: true
+      check_mode: true
+
+    - name: "ROUTED PORT-CHANNEL MEMBER NEGATIVE: Reject overridden state"
+      cisco.nd.nd_interface_ethernet_routed:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ routed_member_case.fabric_name }}"
+        config:
+          - switch_ip: "{{ routed_member_case.switch_ip }}"
+            interface_name: "{{ routed_member_case.interface_name }}"
+            config_data:
+              network_os:
+                network_os_type: "{{ routed_member_case.network_os_type }}"
+                policy:
+                  description: "must be rejected under overridden"
+        config_actions:
+          deploy: false
+        state: overridden
+      register: routed_member_overridden
+      ignore_errors: true
+      check_mode: true
+
+    - name: "ROUTED PORT-CHANNEL MEMBER NEGATIVE: Reject deleted state"
+      cisco.nd.nd_interface_ethernet_routed:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ routed_member_case.fabric_name }}"
+        config:
+          - switch_ip: "{{ routed_member_case.switch_ip }}"
+            interface_name: "{{ routed_member_case.interface_name }}"
+            config_data:
+              network_os:
+                network_os_type: "{{ routed_member_case.network_os_type }}"
+        config_actions:
+          deploy: false
+        state: deleted
+      register: routed_member_deleted
+      ignore_errors: true
+      check_mode: true
+
+    - name: "ROUTED PORT-CHANNEL MEMBER NEGATIVE: Verify every unsafe request failed"
+      ansible.builtin.assert:
+        that:
+          - routed_member_unsafe_field is failed
+          - routed_member_unsafe_extra_config is failed
+          - routed_member_replaced is failed
+          - routed_member_overridden is failed
+          - routed_member_deleted is failed
+  always:
+    - name: "ROUTED PORT-CHANNEL MEMBER CLEANUP: Restore the validated baseline"
+      cisco.nd.nd_interface_ethernet_routed:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ routed_member_case.fabric_name }}"
+        config:
+          - switch_ip: "{{ routed_member_case.switch_ip }}"
+            interface_name: "{{ routed_member_case.interface_name }}"
+            config_data:
+              network_os:
+                network_os_type: "{{ routed_member_case.network_os_type }}"
+                policy:
+                  admin_state: "{{ routed_member_case.baseline_admin_state }}"
+                  description: "{{ routed_member_case.baseline_description }}"
+                  extra_config: "{{ routed_member_case.baseline_extra_config }}"
+        config_actions:
+          deploy: false
+        state: merged
+      when:
+        - routed_member_mutation_attempted | default(false) | bool

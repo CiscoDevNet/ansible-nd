@@ -17,22 +17,69 @@ with interface-type-specific payload construction and query filtering.
 from __future__ import annotations
 
 import logging
+import re
+from copy import deepcopy
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from time import sleep
 from typing import Any, ClassVar
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    Field,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_deployment_history import (
     EpManageFabricsSwitchesDeploymentHistoryGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDeploy,
+    EpManageInterfacesModify,
+    EpManageInterfacesPreview,
     EpManageInterfacesRemove,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
-from ansible_collections.cisco.nd.plugins.module_utils.interface_capability_preflight import InterfaceCapabilityPreflight
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import ModelType, NDBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.interface_pagination import (
+    InterfacePaginationError,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import (
+    FabricContext,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.interface_bulk_create_guard import (
+    bulk_create_identity_qualified,
+    bulk_create_parent,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.interface_capability_preflight import (
+    InterfaceCapabilityPreflight,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import (
+    InterfaceStateSnapshot,
+    _InterfaceSwitchIdentityMismatch,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_member_interface import (
+    get_member_policy_descriptor,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
+    ModelType,
+    NDBaseOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    ResponseType,
+)
+
+_INTERFACE_HEADER_RE = re.compile(r"(?im)^[ \t]*interface[ \t]+([^ \t\r\n]+)[ \t]*$")
+_DEPLOY_DERIVED_INTERFACE_RE = re.compile(
+    r"(?i)^(?:ethernet|gigabitethernet|tengigabitethernet|twentyfivegige|fortygigabitethernet|hundredgige|port-channel)[0-9][0-9/.:_-]*$"
+)
+
+
+_UNSET_RESPONSE = object()
+
+
+@dataclass(frozen=True)
+class DeferredDeleteRequestGroup:
+    """One controller request boundary for queued interface delete/reset work."""
+
+    queue_name: str
+    targets: tuple[tuple[str, str], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +140,8 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     """
 
     deploy: bool = False
+    workflow_deploy_requested: bool = Field(default=False, exclude=True, repr=False)
+    interface_state_snapshot: InterfaceStateSnapshot | None = Field(default=None, exclude=True, repr=False)
 
     # Subclasses opt in to capability preflight by setting BOTH ClassVars (e.g. loopback sets
     # `interface_type = "loopback"` and `interface_mode = "managed"`). Leaving `interface_type` as ""
@@ -104,6 +153,15 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     xe_removal_requires_discovery: ClassVar[bool] = False
     # Newest deployment-history records read per undiscovered IOS-XE removal candidate (see `_xe_interface_deployed`).
     XE_HISTORY_MAX: ClassVar[int] = 10
+    # NDFC can briefly return a mixed-peer interface snapshot immediately after a deployed vPC
+    # deletion. Restart the complete paginated read instead of publishing partial or mixed state.
+    INTERFACE_INVENTORY_SNAPSHOT_ATTEMPTS: ClassVar[int] = 6
+    INTERFACE_INVENTORY_RETRY_DELAY_SECONDS: ClassVar[int] = 2
+    deferred_delete_queue_names: ClassVar[frozenset[str]] = frozenset({"remove"})
+    # Enable only after the family's full-policy modify behavior is qualified.
+    supports_bulk_full_modify: ClassVar[bool] = False
+    # Qualify only logical NX-OS creates with exact identity and dependency guards.
+    supports_bulk_modify_create: ClassVar[bool] = False
 
     _fabric_context: FabricContext | None = None
     _capability_preflight: InterfaceCapabilityPreflight | None = None
@@ -114,8 +172,9 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         Initialize mutable private state after Pydantic model construction. Pydantic disallows `Field()` on
         underscore-prefixed names, so these are set here to ensure each instance gets its own container: the
-        deploy/remove queues, the `_deploy_attempted` stage flag read by `deploy_accepted_mutations`, and the per-switch interface
-        cache read by `_switch_interfaces`.
+        deploy/remove queues and the `_deploy_attempted` stage flag read by
+        `deploy_accepted_mutations`. Interface inventory is owned by the injected
+        or lazily-created `InterfaceStateSnapshot` provider.
 
         ## Raises
 
@@ -125,6 +184,16 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         self._pending_removes: list[tuple[str, str]] = []
         self._deploy_attempted: bool = False
         self._switch_interfaces_cache: dict[str, dict[str, dict]] = {}
+        self._switch_interfaces_cache_revisions: dict[str, int] = {}
+        self._deploy_derived_identities: dict[tuple[str, str], set[tuple[str, str]]] = {}
+        self._pending_preview_derived_discovery: set[tuple[str, str]] = set()
+        self._absorbed_preview_scoped_child_switches: dict[tuple[str, str], set[str]] = {}
+        self._last_verified_deploy_targets: tuple[tuple[str, str], ...] = ()
+        if self.interface_state_snapshot is not None and self.interface_state_snapshot.fabric_name != self.fabric_name:
+            raise ValueError(
+                f"Injected InterfaceStateSnapshot fabric {self.interface_state_snapshot.fabric_name} does not match "
+                f"orchestrator fabric {self.fabric_name}."
+            )
 
     def apply_config_actions(self, params: Mapping[str, Any]) -> bool:
         """
@@ -166,9 +235,22 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         None
         """
+        if self.interface_state_snapshot is not None:
+            return self.interface_state_snapshot.fabric_context
         if self._fabric_context is None:
             self._fabric_context = FabricContext(rest_send=self.rest_send, fabric_name=self.fabric_name)
         return self._fabric_context
+
+    @property
+    def state_snapshot(self) -> InterfaceStateSnapshot:
+        """Return the injected provider or lazily create a standalone provider."""
+        if self.interface_state_snapshot is None:
+            self.interface_state_snapshot = InterfaceStateSnapshot(
+                fabric_name=self.fabric_name,
+                fabric_context=self.fabric_context,
+                request=self._request,
+            )
+        return self.interface_state_snapshot
 
     def _resolve_switch_id(self, switch_ip: str) -> str:
         """
@@ -203,11 +285,27 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         - Via `_request` if the interface-list API request fails with a non-404 status.
         """
-        if switch_id not in self._switch_interfaces_cache:
-            api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-            interfaces = result.get("interfaces", []) or [] if isinstance(result, dict) else []
-            self._switch_interfaces_cache[switch_id] = {iface["interfaceName"].lower(): iface for iface in interfaces if iface.get("interfaceName")}
+        snapshot = self.state_snapshot
+        if not snapshot.has_switch(switch_id) or self._switch_interfaces_cache_revisions.get(switch_id) != snapshot.switch_revision(switch_id):
+            for attempt in range(1, self.INTERFACE_INVENTORY_SNAPSHOT_ATTEMPTS + 1):
+                try:
+                    self._switch_interfaces_cache[switch_id] = snapshot.load_switch(switch_id)
+                    self._switch_interfaces_cache_revisions[switch_id] = snapshot.switch_revision(switch_id)
+                    break
+                except InterfacePaginationError as error:
+                    retryable = isinstance(error.__cause__, _InterfaceSwitchIdentityMismatch)
+                    if not retryable or attempt == self.INTERFACE_INVENTORY_SNAPSHOT_ATTEMPTS:
+                        raise
+                    delay = self.INTERFACE_INVENTORY_RETRY_DELAY_SECONDS * attempt
+                    self.rest_send.log.warning(
+                        "Interface inventory snapshot %s/%s for switch %r was inconsistent; restarting from offset 0 after %s second(s): %s",
+                        attempt,
+                        self.INTERFACE_INVENTORY_SNAPSHOT_ATTEMPTS,
+                        switch_id,
+                        delay,
+                        error,
+                    )
+                    sleep(delay)
         return self._switch_interfaces_cache[switch_id]
 
     def _switches_to_query(self) -> dict[str, str]:
@@ -291,9 +389,298 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             self._prepare_bulk_item(model_instance, switch_id, **kwargs)
             payload = model_instance.to_payload()
             payload["switchId"] = switch_id
-            group_key = BulkCreateGroupKey(switch_id=switch_id, policy_type=self._desired_policy_type(model_instance))
+            group_key = BulkCreateGroupKey(
+                switch_id=switch_id,
+                policy_type=self._desired_policy_type(model_instance),
+            )
             groups[group_key].append(BulkCreateItem(interface_name=model_instance.interface_name, payload=payload))
         return dict(groups)
+
+    def _bulk_modify_payload(self, model_instance: ModelType, switch_id: str) -> dict[str, Any]:
+        """Build the same full policy body used by the family's singular update."""
+        payload = model_instance.to_payload()
+        payload["switchId"] = switch_id
+        return payload
+
+    def _bulk_modify_guard(self, model_instance: ModelType, current: dict[str, Any]) -> None:
+        """Family hook for write guards that must run before a bulk request."""
+
+    def _bulk_full_modify_guard(self, model_instance: ModelType, current: dict[str, Any]) -> bool:
+        """Family hook to exclude full-policy changes not yet qualified for bulk."""
+        return True
+
+    def _canonicalize_bulk_wire_echo(self, config_data: dict[str, Any]) -> bool:
+        """Family hook for known GET values that must be canonicalized on write.
+
+        It mutates only the supplied deep copy of a complete config. Returning
+        false keeps the singular PUT path (or rejects a prepared bulk body).
+        The low-level preflight applies this to the cached current config too,
+        so only an explicitly registered wire echo may differ from GET.
+        """
+        return True
+
+    def prepare_bulk_description_update(self, model_instance: ModelType, previous_model: ModelType | None = None) -> dict[str, Any] | None:
+        """Return a guarded full payload only for an existing description-only update.
+
+        A non-eligible update keeps its singular PUT. Compare the model's
+        reverse-diff view before/after excluding description, so omitted ND
+        defaults do not hide a real replacement reset. Build the bulk body from
+        the complete wire config, preserving unknown/read-only echo fields.
+        ND 4.3.1 modify can upsert an identity deleted after this preflight; the
+        exact-identity check limits but cannot eliminate that external race.
+        """
+        profile = getattr(self.rest_send, "performance_profile", None)
+
+        def decline(reason: str) -> None:
+            if profile is not None:
+                profile.record_bulk_update_decision(reason)
+            return None
+
+        version = self.rest_send.controller_version or ""
+        match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+        if match is None or tuple(map(int, match.groups())) < (4, 3, 1):
+            return decline("controller_not_431")
+        if previous_model is None:
+            return decline("missing_previous_model")
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        snapshot = self.state_snapshot
+        if not snapshot.has_switch(switch_id):
+            snapshot.load_switch(switch_id)
+        current = snapshot.cached_interface(switch_id, model_instance.interface_name)
+        if current is None or current.get("switchId") != switch_id:
+            return decline("missing_exact_identity")
+        payload = self._bulk_modify_payload(model_instance, switch_id)
+        if (
+            str(current.get("interfaceName") or "").casefold() != model_instance.interface_name.casefold()
+            or str(current.get("interfaceType") or "").casefold() != str(payload.get("interfaceType") or "").casefold()
+        ):
+            return decline("identity_or_family_mismatch")
+        current_config = deepcopy(current.get("configData"))
+        proposed_config = payload.get("configData")
+        if not isinstance(current_config, dict) or not isinstance(proposed_config, dict):
+            return decline("incomplete_config")
+        current_os = current_config.get("networkOS")
+        proposed_os = proposed_config.get("networkOS")
+        if not isinstance(current_os, dict) or not isinstance(proposed_os, dict):
+            return decline("incomplete_network_os")
+        current_policy = current_os.get("policy")
+        proposed_policy = proposed_os.get("policy")
+        if not isinstance(current_policy, dict) or not isinstance(proposed_policy, dict):
+            return decline("incomplete_policy")
+        policy_type = current_policy.get("policyType")
+        if (
+            not isinstance(policy_type, str)
+            or get_member_policy_descriptor(policy_type) is not None
+            or proposed_policy.get("policyType") != policy_type
+            or not isinstance(proposed_policy.get("description"), str)
+            or current_policy.get("description") == proposed_policy.get("description")
+            or ("peerSwitchId" in proposed_policy and current_policy.get("peerSwitchId") != proposed_policy["peerSwitchId"])
+        ):
+            return decline("not_description_only_policy")
+        previous_semantic = previous_model.to_reverse_diff_dict()
+        desired_semantic = model_instance.to_reverse_diff_dict()
+        for semantic in (previous_semantic, desired_semantic):
+            semantic_config = semantic.get("configData") or {}
+            semantic_os = semantic_config.get("networkOS") or {}
+            semantic_policy = semantic_os.get("policy") or {}
+            semantic_policy.pop("description", None)
+        if previous_semantic != desired_semantic:
+            return decline("other_semantic_change")
+        # A description-only change still submits a complete parent policy to
+        # modify. Member-bearing PC/vPC parents retain singular PUT semantics,
+        # even when the requested member list itself is unchanged.
+        if not self._bulk_full_modify_guard(model_instance, current):
+            return decline("member_bearing_parent")
+        self._bulk_modify_guard(model_instance, current)
+        if not self._canonicalize_bulk_wire_echo(current_config):
+            return decline("uncanonicalizable_wire_echo")
+        current_policy["description"] = proposed_policy["description"]
+        if profile is not None:
+            profile.record_bulk_update_decision("eligible")
+        return {
+            "interfaceName": current["interfaceName"],
+            "switchId": switch_id,
+            "interfaceType": current["interfaceType"],
+            "configData": current_config,
+        }
+
+    def prepare_bulk_full_update(self, model_instance: ModelType, previous_model: ModelType | None = None) -> dict[str, Any] | None:
+        """Return the family's singular-PUT body for a qualified 4.3.1 full-policy update.
+
+        The low-level sender rechecks the exact identity, policy, payload
+        equivalence, and family guards for every item before any POST. Keep
+        member policies, IOS-XE, and unqualified families on singular PUT.
+        """
+        if not self.supports_bulk_full_modify or previous_model is None:
+            return None
+        version = self.rest_send.controller_version or ""
+        match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+        if match is None or tuple(map(int, match.groups())) < (4, 3, 1):
+            return None
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        snapshot = self.state_snapshot
+        if not snapshot.has_switch(switch_id):
+            snapshot.load_switch(switch_id)
+        current = snapshot.cached_interface(switch_id, model_instance.interface_name)
+        if current is None or current.get("switchId") != switch_id:
+            return None
+        payload = self._bulk_modify_payload(model_instance, switch_id)
+        if (
+            str(current.get("interfaceName") or "").casefold() != model_instance.interface_name.casefold()
+            or str(current.get("interfaceType") or "").casefold() != str(payload.get("interfaceType") or "").casefold()
+        ):
+            return None
+        current_os = (current.get("configData") or {}).get("networkOS") or {}
+        proposed_os = (payload.get("configData") or {}).get("networkOS") or {}
+        current_policy = current_os.get("policy") or {}
+        proposed_policy = proposed_os.get("policy") or {}
+        policy_type = current_policy.get("policyType")
+        if (
+            current_os.get("networkOSType") != "nx-os"
+            or proposed_os.get("networkOSType") != "nx-os"
+            or not isinstance(policy_type, str)
+            or get_member_policy_descriptor(policy_type) is not None
+            or proposed_policy.get("policyType") != policy_type
+        ):
+            return None
+        if not self._bulk_full_modify_guard(model_instance, current):
+            return None
+        profile = getattr(self.rest_send, "performance_profile", None)
+        if profile is not None:
+            profile.record_bulk_update_decision("eligible_full_policy")
+        return payload
+
+    def prepare_bulk_modify_context(self, model_instance: ModelType, previous_model: ModelType | None = None) -> None:
+        """Family hook to retain deploy evidence before an accepted bulk mutation."""
+
+    def prepare_bulk_create_modify(self, model_instance: ModelType) -> dict[str, Any] | None:
+        """Return a guarded 4.3.1 logical-create payload, or retain ordinary create.
+
+        The ordinary family model and preflight have already run. The modify
+        endpoint's lax upsert validation makes canonical identity bounds,
+        exact absence, pair identity, and discovered routed parents mandatory.
+        Member-bearing parents remain on the established family create path.
+        """
+        if not self.supports_bulk_modify_create or not self.supports_bulk_create:
+            return None
+        version = self.rest_send.controller_version or ""
+        match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+        if match is None or tuple(map(int, match.groups())) < (4, 3, 1):
+            return None
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        payload = self._bulk_modify_payload(model_instance, switch_id)
+        if not bulk_create_identity_qualified(payload):
+            return None
+        snapshot = self.state_snapshot
+        if not snapshot.has_switch(switch_id):
+            snapshot.load_switch(switch_id)
+        if snapshot.cached_interface(switch_id, payload["interfaceName"]) is not None:
+            return None
+        if payload["interfaceType"] == "vpc":
+            peer_id = payload["configData"]["networkOS"]["policy"]["peerSwitchId"]
+            if not snapshot.has_switch(peer_id):
+                snapshot.load_switch(peer_id)
+            if snapshot.cached_interface(peer_id, payload["interfaceName"]) is not None:
+                return None
+        if payload["interfaceType"] == "subInterface":
+            parent_name = bulk_create_parent(payload)
+            parent = snapshot.cached_interface(switch_id, parent_name)
+            if not isinstance(parent, dict) or str(parent.get("interfaceType") or "").casefold() not in {"ethernet", "portchannel"}:
+                return None
+            if (parent.get("configData") or {}).get("mode") != "routed" or (parent.get("operData") or {}).get("mode") != "routed":
+                return None
+        return payload
+
+    def create_bulk_modify_prepared(
+        self,
+        payloads: Sequence[dict[str, Any]],
+        *,
+        payload_orchestrators: Sequence[NDBaseInterfaceOrchestrator],
+        payload_models: Sequence[ModelType],
+    ) -> ResponseType:
+        """Create qualified logical interfaces through one mixed 4.3.1 POST.
+
+        Every item is rechecked against the clean complete inventory and its
+        family's exact model body immediately before transport. A failed or
+        uncertain response dirties all touched switch snapshots and retains
+        only exact accepted targets in their owning deploy queues.
+        """
+        version = self.rest_send.controller_version or ""
+        match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+        if match is None or tuple(map(int, match.groups())) < (4, 3, 1):
+            raise RuntimeError("Mixed bulk create requires confirmed ND 4.3.1 or newer.")
+        if not 2 <= len(payloads) <= 10000 or len(payload_orchestrators) != len(payloads) or len(payload_models) != len(payloads):
+            raise ValueError("Mixed bulk create requires 2–10000 aligned payloads, family orchestrators, and models.")
+        snapshot = self.state_snapshot
+        requested: dict[tuple[str, str], tuple[str, str]] = {}
+        owners: dict[tuple[str, str], NDBaseInterfaceOrchestrator] = {}
+        peer_ids: dict[tuple[str, str], str] = {}
+        touched: set[str] = set()
+        for payload, owner, model in zip(payloads, payload_orchestrators, payload_models):
+            if (
+                not isinstance(payload, dict)
+                or not isinstance(owner, NDBaseInterfaceOrchestrator)
+                or not owner.supports_bulk_modify_create
+                or not isinstance(model, owner.model_class)
+            ):
+                raise ValueError("Mixed bulk create received an unqualified family payload.")
+            sid, name = payload.get("switchId"), payload.get("interfaceName")
+            if not isinstance(sid, str) or not isinstance(name, str) or not bulk_create_identity_qualified(payload):
+                raise ValueError(f"Mixed bulk create refuses an unqualified identity: {sid}/{name}.")
+            key = (sid.casefold(), name.casefold())
+            if key in requested or owner.state_snapshot is not snapshot or owner.fabric_name != self.fabric_name:
+                raise ValueError(f"Mixed bulk create refuses repeated or unrelated identity {sid}/{name}.")
+            if model.interface_name.casefold() != name.casefold() or owner._resolve_switch_id(model.switch_ip) != sid:
+                raise ValueError(f"Mixed bulk create model identity differs from payload {sid}/{name}.")
+            if owner._bulk_modify_payload(model, sid) != payload:
+                raise ValueError(f"Mixed bulk create body differs from the family model for {sid}/{name}.")
+            if not snapshot.has_switch(sid) or snapshot.cached_interface(sid, name) is not None:
+                raise ValueError(f"Mixed bulk create requires complete, absent switch identity {sid}/{name}.")
+            if payload["interfaceType"] == "vpc":
+                peer_id = payload["configData"]["networkOS"]["policy"]["peerSwitchId"]
+                if not snapshot.has_switch(peer_id) or snapshot.cached_interface(peer_id, name) is not None:
+                    raise ValueError(f"Mixed bulk create requires an absent identity on both vPC peers for {sid}/{name}.")
+                peer_ids[key] = peer_id
+                touched.add(peer_id)
+            if payload["interfaceType"] == "subInterface":
+                parent = snapshot.cached_interface(sid, bulk_create_parent(payload))
+                if (
+                    not isinstance(parent, dict)
+                    or (parent.get("configData") or {}).get("mode") != "routed"
+                    or (parent.get("operData") or {}).get("mode") != "routed"
+                ):
+                    raise ValueError(f"Mixed bulk create requires a discovered routed parent for {sid}/{name}.")
+            owner._prepare_deploy_context(model, sid)
+            requested[key] = (sid, name)
+            owners[key] = owner
+            touched.add(sid)
+
+        endpoint = EpManageInterfacesModify()
+        endpoint.fabric_name = self.fabric_name
+        recorded = self.rest_send.response_count
+        try:
+            result = self._request(path=endpoint.path, verb=endpoint.verb, data={"interfaces": list(payloads)})
+        except Exception as error:
+            if self.rest_send.response_count > recorded and self.rest_send.return_code == 207:
+                accepted, _exact = self._bulk_modify_classify_result_pairs(requested, peer_switch_ids=peer_ids)
+                for key in accepted:
+                    sid, name = requested[key]
+                    owners[key]._queue_deploy(name, sid)
+                if accepted:
+                    raise RuntimeError(f"Mixed bulk create accepted {len(accepted)} of {len(requested)} named identities before failure.") from error
+            raise
+        finally:
+            for sid in touched:
+                snapshot.mark_dirty(sid)
+        if self.rest_send.return_code != 207:
+            raise RuntimeError(f"Mixed bulk create expected HTTP 207, received {self.rest_send.return_code}; outcomes are uncertain.")
+        accepted, exact = self._bulk_modify_classify_result_pairs(requested, peer_switch_ids=peer_ids)
+        for key in accepted:
+            sid, name = requested[key]
+            owners[key]._queue_deploy(name, sid)
+        if not exact or accepted != set(requested):
+            raise RuntimeError(f"Mixed bulk create did not report exact success for all {len(requested)} identities; {len(accepted)} accepted.")
+        return result
 
     def _post_bulk_create_group(self, group_key: BulkCreateGroupKey, items: list[BulkCreateItem]) -> ResponseType:
         """
@@ -333,7 +720,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         api_endpoint = self._configure_endpoint(endpoint_class(), switch_sn=group_key.switch_id)
         request_body = {"interfaces": [item.payload for item in items]}
         recorded = self.rest_send.response_count
-        cached_before = self._switch_interfaces_cache.get(group_key.switch_id)
+        cached_before = self.state_snapshot.cached_switch(group_key.switch_id)
         names_before = set(cached_before) if cached_before is not None else None
         try:
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
@@ -354,6 +741,271 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         for item in items:
             self._queue_deploy(item.interface_name, group_key.switch_id)
         return result
+
+    def modify_bulk_prepared(
+        self,
+        payloads: Sequence[dict[str, Any]],
+        *,
+        changed_policy_fields: frozenset[str] = frozenset({"description"}),
+        payload_orchestrators: Sequence[NDBaseInterfaceOrchestrator] | None = None,
+        payload_models: Sequence[ModelType] | None = None,
+        payload_modes: Sequence[str] | None = None,
+    ) -> ResponseType:
+        """Send the 4.3.1 bulk-modify transport for preflighted full PUT bodies.
+
+        This low-level method does not build or validate family policy intent. A
+        caller must first run the same family/member/ownership checks as
+        the singular ``update`` path and split requests at dependency barriers.
+        It deliberately refuses member policies. Cross-switch batches require
+        switch-qualified 207 result names; a bare result name is accepted only
+        for a one-switch batch, where it is unambiguous.
+        ND 4.3.1 also *creates* an absent target submitted to modify, so this
+        path requires a complete, clean preflight snapshot with every
+        requested identity already owned by the same switch and family. That
+        guard does not eliminate an external deletion race after preflight.
+        Description mode permits only the named policy fields to differ from
+        the complete cached config. Full mode instead requires the qualified
+        family's exact singular-PUT model body and its write guards.
+        Standalone and workflow callers use this for description-only updates
+        and explicitly qualified full-policy family updates; other updates
+        retain their singular PUT path.
+        """
+        version = self.rest_send.controller_version or ""
+        match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+        if match is None or tuple(map(int, match.groups())) < (4, 3, 1):
+            raise RuntimeError(f"Bulk interface modify requires confirmed ND 4.3.1 or newer; controller version is {version or 'unknown'!r}.")
+        if len(payloads) < 2 or len(payloads) > 10000:
+            raise ValueError("Bulk interface modify requires 2–10000 prepared interfaces.")
+        if not changed_policy_fields or any(not isinstance(field, str) or not field for field in changed_policy_fields):
+            raise ValueError("Bulk interface modify requires explicit non-empty policy fields allowed to change.")
+        if "policyType" in changed_policy_fields:
+            raise ValueError("Bulk interface modify cannot change policyType.")
+        if payload_orchestrators is not None and len(payload_orchestrators) != len(payloads):
+            raise ValueError("Bulk interface modify needs one family orchestrator for each prepared payload.")
+        if payload_modes is not None and (len(payload_modes) != len(payloads) or any(mode not in ("description", "full") for mode in payload_modes)):
+            raise ValueError("Bulk interface modify needs a valid mode for each prepared payload.")
+        if payload_models is not None and len(payload_models) != len(payloads):
+            raise ValueError("Bulk interface modify needs one model for each prepared payload.")
+        if payload_modes is not None and "full" in payload_modes and (payload_orchestrators is None or payload_models is None):
+            raise ValueError("Full-policy bulk modify requires aligned family orchestrators and models.")
+
+        names: dict[tuple[str, str], tuple[str, str]] = {}
+        deploy_owners: dict[tuple[str, str], NDBaseInterfaceOrchestrator] = {}
+        peer_switch_ids: dict[tuple[str, str], str] = {}
+        switch_ids: set[str] = set()
+        affected_peer_ids: set[str] = set()
+        for index, payload in enumerate(payloads):
+            if not isinstance(payload, dict):
+                raise ValueError("Bulk interface modify requires prepared interface objects.")
+            name = payload.get("interfaceName")
+            switch_id = payload.get("switchId")
+            interface_type = payload.get("interfaceType")
+            config_data = payload.get("configData") or {}
+            network_os = config_data.get("networkOS") if isinstance(config_data, dict) else None
+            policy = network_os.get("policy") if isinstance(network_os, dict) else None
+            policy_type = policy.get("policyType") if isinstance(policy, dict) else None
+            if not isinstance(name, str) or not name.strip() or not isinstance(switch_id, str) or not switch_id.strip():
+                raise ValueError("Bulk interface modify requires exact interfaceName and switchId in every full payload.")
+            if not isinstance(interface_type, str) or not interface_type.strip():
+                raise ValueError(f"Bulk interface modify requires interfaceType for {name!r}.")
+            if not isinstance(policy_type, str) or not policy_type:
+                raise ValueError(f"Bulk interface modify requires a policyType for {name!r}.")
+            if get_member_policy_descriptor(policy_type) is not None:
+                raise ValueError(f"Bulk interface modify cannot bypass member-policy update safety for {name!r}.")
+            key = (switch_id.casefold(), name.casefold())
+            if key in names:
+                raise ValueError(f"Bulk interface modify cannot distinguish repeated name {name!r} on switch {switch_id} in a 207 result.")
+            names[key] = (switch_id, name)
+            deploy_owners[key] = payload_orchestrators[index] if payload_orchestrators is not None else self
+            if interface_type.casefold() == "vpc":
+                peer_switch_id = policy.get("peerSwitchId")
+                if not isinstance(peer_switch_id, str) or not peer_switch_id.strip():
+                    raise ValueError(f"Bulk interface modify requires an authoritative peerSwitchId for vPC {switch_id}/{name}.")
+                peer_switch_ids[key] = peer_switch_id.casefold()
+                affected_peer_ids.add(peer_switch_id)
+            switch_ids.add(switch_id)
+
+        endpoint = EpManageInterfacesModify()
+        endpoint.fabric_name = self.fabric_name
+        snapshot = self.state_snapshot
+        if any(not snapshot.has_switch(switch_id) for switch_id in switch_ids):
+            raise ValueError("Bulk interface modify requires a complete, clean preflighted switch inventory for every switch.")
+        for index, payload in enumerate(payloads):
+            name = payload["interfaceName"]
+            switch_id = payload["switchId"]
+            family_orchestrator = payload_orchestrators[index] if payload_orchestrators is not None else self
+            mode = payload_modes[index] if payload_modes is not None else "description"
+            if (
+                not isinstance(family_orchestrator, NDBaseInterfaceOrchestrator)
+                or family_orchestrator.state_snapshot is not snapshot
+                or family_orchestrator.fabric_name != self.fabric_name
+            ):
+                raise ValueError(f"Bulk interface modify requires shared family context for {switch_id}/{name}.")
+            current = snapshot.cached_interface(switch_id, name)
+            # TODO(4.3.1) interface-modify-upserts-unpaired-vpc: Recheck
+            # whether modify remains an upsert before relaxing this guard.
+            if (
+                current is None
+                or current.get("switchId") != switch_id
+                or str(current.get("interfaceName") or "").casefold() != name.casefold()
+                or str(current.get("interfaceType") or "").casefold() != payload["interfaceType"].casefold()
+            ):
+                raise ValueError(f"Bulk interface modify refuses absent or unowned preflight identity {switch_id}/{name}.")
+            current_config = deepcopy((current or {}).get("configData"))
+            proposed_config = deepcopy(payload.get("configData"))
+            if not isinstance(current_config, dict) or not isinstance(proposed_config, dict):
+                raise ValueError(f"Bulk interface modify requires complete configData for {switch_id}/{name}.")
+            current_network_os = current_config.get("networkOS")
+            proposed_network_os = proposed_config.get("networkOS")
+            if not isinstance(current_network_os, dict) or not isinstance(proposed_network_os, dict):
+                raise ValueError(f"Bulk interface modify requires complete networkOS for {switch_id}/{name}.")
+            current_policy = current_network_os.get("policy")
+            proposed_policy = proposed_network_os.get("policy")
+            if not isinstance(current_policy, dict) or not isinstance(proposed_policy, dict):
+                raise ValueError(f"Bulk interface modify requires complete policy for {switch_id}/{name}.")
+            if not isinstance(current_policy.get("policyType"), str):
+                raise ValueError(f"Bulk interface modify refuses a missing current policyType for {switch_id}/{name}.")
+            if current_policy["policyType"] != proposed_policy.get("policyType"):
+                raise ValueError(f"Bulk interface modify refuses policyType change for {switch_id}/{name}.")
+            if payload["interfaceType"].casefold() == "vpc" and current_policy.get("peerSwitchId") != proposed_policy.get("peerSwitchId"):
+                raise ValueError(f"Bulk interface modify refuses changed vPC peer ownership for {switch_id}/{name}.")
+            if payload["interfaceType"].casefold() in ("portchannel", "vpc"):
+                member_fields = ("ports",) if payload["interfaceType"].casefold() == "portchannel" else ("peer1MemberPorts", "peer2MemberPorts")
+                for field in member_fields:
+                    for policy in (current_policy, proposed_policy):
+                        members = policy.get(field, [])
+                        if members is None:
+                            members = []
+                        if not isinstance(members, list) or members:
+                            raise ValueError(f"Bulk interface modify refuses member-bearing parent {switch_id}/{name} ({field}).")
+            if not family_orchestrator._canonicalize_bulk_wire_echo(current_config):
+                raise ValueError(f"Bulk interface modify refuses an uncanonicalizable wire echo for {switch_id}/{name}.")
+            if mode == "full":
+                model = payload_models[index]
+                if not family_orchestrator.supports_bulk_full_modify or (
+                    model.interface_name.casefold() != name.casefold()
+                    or family_orchestrator._resolve_switch_id(model.switch_ip) != switch_id
+                    or family_orchestrator._bulk_modify_payload(model, switch_id) != payload
+                ):
+                    raise ValueError(f"Bulk interface modify refuses an unqualified full-policy body for {switch_id}/{name}.")
+                if current_network_os.get("networkOSType") != "nx-os" or proposed_network_os.get("networkOSType") != "nx-os":
+                    raise ValueError(f"Bulk interface modify refuses unqualified network OS for {switch_id}/{name}.")
+                if not family_orchestrator._bulk_full_modify_guard(model, current):
+                    raise ValueError(f"Bulk interface modify refuses an unqualified family property change for {switch_id}/{name}.")
+                family_orchestrator._bulk_modify_guard(model, current)
+            else:
+                for policy in (current_policy, proposed_policy):
+                    for field in changed_policy_fields:
+                        policy.pop(field, None)
+                if current_config != proposed_config:
+                    raise ValueError(f"Bulk interface modify would omit or alter unrelated policy/config fields for {switch_id}/{name}.")
+        recorded = self.rest_send.response_count
+        try:
+            result = self._request(
+                path=endpoint.path,
+                verb=endpoint.verb,
+                data={"interfaces": list(payloads)},
+            )
+        except Exception as error:
+            if self.rest_send.response_count > recorded and self.rest_send.return_code == 207:
+                accepted, _exact = self._bulk_modify_classify_result_pairs(names, peer_switch_ids=peer_switch_ids)
+                for key in names:
+                    if key in accepted:
+                        accepted_switch_id, accepted_name = names[key]
+                        deploy_owners[key]._queue_deploy(accepted_name, accepted_switch_id)
+                if accepted:
+                    raise RuntimeError(
+                        f"Bulk interface modify failed after ND accepted {len(accepted)} of {len(names)} named updates; "
+                        "accepted targets remain queued for deployment."
+                    ) from error
+            raise
+        finally:
+            # Even a transport failure can have committed a subset of the request.
+            for switch_id in switch_ids | affected_peer_ids:
+                snapshot.mark_dirty(switch_id)
+
+        if self.rest_send.return_code != 207:
+            raise RuntimeError(f"Bulk interface modify expected HTTP 207, received {self.rest_send.return_code}; update outcomes are uncertain.")
+        accepted, exact = self._bulk_modify_classify_result_pairs(names, peer_switch_ids=peer_switch_ids)
+        for key in names:
+            if key in accepted:
+                accepted_switch_id, accepted_name = names[key]
+                deploy_owners[key]._queue_deploy(accepted_name, accepted_switch_id)
+        if not exact or accepted != set(names):
+            raise RuntimeError(f"Bulk interface modify did not report exact success for all {len(names)} updates; {len(accepted)} were accepted.")
+        return result
+
+    def _bulk_modify_classify_result_pairs(
+        self,
+        requested: Mapping[tuple[str, str], tuple[str, str]],
+        *,
+        peer_switch_ids: Mapping[tuple[str, str], str] | None = None,
+    ) -> tuple[set[tuple[str, str]], bool]:
+        """Retain exact switch/name successes, validating vPC peer IDs when echoed."""
+        data = self.rest_send.response_current.get("DATA")
+        rows = data.get("results") if isinstance(data, dict) else None
+        if not isinstance(rows, list):
+            return set(), False
+        seen: set[tuple[str, str]] = set()
+        accepted: set[tuple[str, str]] = set()
+        switch_ids = {switch_id for switch_id, _name in requested}
+        exact = True
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("name"), str):
+                exact = False
+                continue
+            response_name = row["name"].strip().casefold()
+            # TODO(4.3.1) interface-modify-207-result-name-separators: ND uses
+            # ``~`` for success and may use ``:`` for failure in one response.
+            if "~" in response_name and ":" in response_name:
+                exact = False
+                continue
+            separator = "~" if "~" in response_name else ":" if ":" in response_name else None
+            if separator is not None:
+                parts = response_name.split(separator)
+                if len(parts) not in (2, 3) or any(not part for part in parts):
+                    exact = False
+                    continue
+                if len(parts) == 3:
+                    # ND may echo either peer first. Accept only an unambiguous
+                    # requested owner whose authoritative peer is the other ID.
+                    candidates = (
+                        (owner, parts[2])
+                        for owner, peer in ((parts[0], parts[1]), (parts[1], parts[0]))
+                        if owner != peer and owner in switch_ids and str((peer_switch_ids or {}).get((owner, parts[2])) or "").casefold() == peer
+                    )
+                    matches = [candidate for candidate in candidates if candidate in requested]
+                    if len(matches) != 1:
+                        exact = False
+                        continue
+                    key = matches[0]
+                else:
+                    if parts[0] not in switch_ids:
+                        exact = False
+                        continue
+                    key = (parts[0], parts[1])
+            else:
+                if len(switch_ids) != 1:
+                    exact = False
+                    continue
+                key = (next(iter(switch_ids)), response_name)
+            if key not in requested:
+                exact = False
+                continue
+            if key in seen:
+                exact = False
+                accepted.discard(key)
+                continue
+            seen.add(key)
+            if str(row.get("status") or "").strip().casefold() == "success":
+                accepted.add(key)
+        return accepted, exact and seen == set(requested)
+
+    def _bulk_modify_classify_results(self, requested: Mapping[str, str], switch_id: str) -> tuple[set[str], bool]:
+        """Compatibility wrapper for one-switch callers and result checks."""
+        pairs = {(switch_id.casefold(), name.casefold()): (switch_id, name) for name in requested.values()}
+        accepted, exact = self._bulk_modify_classify_result_pairs(pairs)
+        return {name for _switch_id, name in accepted}, exact
 
     def _created_despite_failure(self, switch_id: str, items: list[BulkCreateItem], names_before: set[str] | None) -> list[str]:
         """
@@ -379,6 +1031,9 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         if names_before is None:
             return []
         self._switch_interfaces_cache.pop(switch_id, None)
+        self._switch_interfaces_cache_revisions.pop(switch_id, None)
+        if self.interface_state_snapshot is not None:
+            self.interface_state_snapshot.invalidate(switch_id)
         try:
             names_now = self._switch_interfaces(switch_id)
         except Exception:  # pylint: disable=broad-exception-caught
@@ -410,6 +1065,16 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             )
         return self._capability_preflight
 
+    def preflight_safety(self, model_instances: Sequence[ModelType]) -> None:
+        """Run local switch-resolution and platform safety checks without capability API calls.
+
+        Aggregate workflows use this in check mode for the exact planned mutation set. Keeping the capability query separate lets
+        them preserve their explicit capability-preflight option while still enforcing the platform contract for every proposed
+        write.
+        """
+        self._require_resolvable_switches(model_instances)
+        self._check_platform_match(model_instances)
+
     def preflight(self, model_instances: Sequence[ModelType]) -> None:
         """
         # Summary
@@ -437,8 +1102,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         - Propagated from `validate_switches_capable` (see its docstring).
         - Propagated from `_check_overridden_removals_discovered` (an override would remove an undiscovered IOS-XE interface).
         """
-        self._require_resolvable_switches(model_instances)
-        self._check_platform_match(model_instances)
+        self.preflight_safety(model_instances)
         self.validate_switches_capable(model_instances)
         self._check_overridden_removals_discovered(model_instances)
 
@@ -520,10 +1184,11 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         - Via `_request` if a deployment-history query fails.
         """
         # TODO(4.2.1) xe-interface-removal-requires-discovery
-        # ND generates the switch-side removal of an IOS-XE logical interface (port-channel, SVI, subinterface) only once it has
+        # ND generates the switch-side removal of an IOS-XE logical interface (port-channel, SVI, subinterface, loopback) only once it has
         # discovered the deployed interface, seconds to minutes after the create deploy. A remove inside that window drops the
-        # intent record, the deploy pushes nothing, and the interface stays on the switch (lab-verified 2026-09-21 on 4.2.1.10 and
-        # 4.3.1.175). NX-OS is unaffected. The record reads `unknown` / `Not discovered` whether the intent was deployed or not, the
+        # intent record, the deploy pushes nothing, and the interface stays on the switch (port-channel/SVI/subinterface verified
+        # 2026-09-21; C8000V loopback verified 2026-10-18 on 4.2.1.10 and 4.3.1.175). NX-OS is unaffected. The record reads
+        # `unknown` / `Not discovered` whether the intent was deployed or not, the
         # per-interface diff reads all-`insert` for both staged intent and a deployed-undiscovered interface with a staged edit, and
         # the pending configuration lists both; only the per-switch deployment history separates them (lab-verified 2026-09-22).
         blocked: list[str] = []
@@ -784,6 +1449,16 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         if pair not in self._pending_deploys:
             self._pending_deploys.append(pair)
 
+    @property
+    def pending_deploys(self) -> tuple[tuple[str, str], ...]:
+        """Return an immutable view of interfaces queued for deployment."""
+        return tuple(self._pending_deploys)
+
+    def queue_deploy_targets(self, targets: Sequence[tuple[str, str]]) -> None:
+        """Add pre-resolved interface targets to the deployment queue."""
+        for interface_name, switch_id in targets:
+            self._queue_deploy(interface_name, switch_id)
+
     def _queue_remove(self, interface_name: str, switch_id: str) -> None:
         """
         # Summary
@@ -798,6 +1473,392 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         pair = (interface_name, switch_id)
         if pair not in self._pending_removes:
             self._pending_removes.append(pair)
+
+    def _register_deploy_derived_identities(
+        self,
+        interface_name: str,
+        switch_id: str,
+        derived_pairs: Sequence[tuple[str, str]],
+    ) -> None:
+        """Record controller result identities that are proven children of one deploy target."""
+
+        parent = self._normalized_interface_pair(interface_name, switch_id)
+        if parent is None:
+            raise RuntimeError(f"Cannot register invalid deploy identity {(interface_name, switch_id)!r}")
+        normalized: set[tuple[str, str]] = set()
+        for derived_name, derived_switch_id in derived_pairs:
+            derived = self._normalized_interface_pair(derived_name, derived_switch_id)
+            if derived is None:
+                raise RuntimeError(f"Cannot register invalid derived deploy identity {(derived_name, derived_switch_id)!r}")
+            if derived != parent:
+                normalized.add(derived)
+        # One update can affect children present either before or after the
+        # transition (for example, a removed port-channel member is still
+        # reported by ND's deploy response).  Accumulate both exact snapshots;
+        # never broaden the allow-list beyond identities proven by those
+        # parent models.
+        self._deploy_derived_identities.setdefault(parent, set()).update(normalized)
+
+    def _operational_port_channel_members(self, switch_id: str, port_channel_id: int) -> list[tuple[str, str]]:
+        """Return exact ethernet identities operationally attached to one port-channel.
+
+        Controller intent can run ahead of switch state when a prior invocation
+        used ``deploy: false``.  A later parent deploy may therefore report a
+        physical member that is absent from the parent's current ``ports`` list.
+        The initial, identity-validated switch inventory still records that
+        exact running-state relationship in ``operData.portChannelId``.  Expose
+        only those same-switch ethernet identities so parent orchestrators can
+        register them as preview-required derived deploy evidence.
+        """
+
+        if not isinstance(port_channel_id, int) or isinstance(port_channel_id, bool) or port_channel_id < 0:
+            return []
+        # State-machine planning populates this cache before mutation.  Do not
+        # turn deploy-result bookkeeping into an otherwise-unexpected inventory
+        # request for direct orchestrator callers.
+        inventory = self._switch_interfaces_cache.get(switch_id)
+        if inventory is None:
+            return []
+        members: list[tuple[str, str]] = []
+        for record in inventory.values():
+            if record.get("interfaceType") != "ethernet":
+                continue
+            oper_data = record.get("operData") or {}
+            if not isinstance(oper_data, Mapping) or oper_data.get("portChannelId") != port_channel_id:
+                continue
+            interface_name = record.get("interfaceName")
+            if isinstance(interface_name, str) and interface_name.strip():
+                members.append((interface_name, switch_id))
+        return members
+
+    def _prepare_deploy_context(self, model_instance: ModelType, switch_id: str) -> None:
+        """Hook for parent orchestrators to register exact derived deploy identities."""
+
+        return None
+
+    def _prepare_no_diff_deploy_context(self, model_instance: ModelType, switch_id: str) -> None:
+        """Hook for parent orchestrators to request pending-child discovery."""
+
+        return None
+
+    def _queue_preview_derived_discovery(self, interface_name: str, switch_id: str) -> None:
+        """Mark one parent whose pending preview must prove stale switch-side children."""
+
+        parent = self._normalized_interface_pair(interface_name, switch_id)
+        if parent is None:
+            raise RuntimeError(f"Cannot register invalid preview discovery identity {(interface_name, switch_id)!r}")
+        self._pending_preview_derived_discovery.add(parent)
+
+    def _register_pending_preview_derived_identities(
+        self,
+        result: ResponseType,
+        pairs: list[tuple[str, str]],
+    ) -> set[tuple[str, str]]:
+        """Register exact ethernet children named by valid parent-scoped pending CLI."""
+
+        originals: dict[tuple[str, str], tuple[str, str]] = {}
+        for name, switch_id in pairs:
+            normalized = self._normalized_interface_pair(name, switch_id)
+            if normalized in self._pending_preview_derived_discovery:
+                originals[normalized] = (name, switch_id)
+        if not originals or not isinstance(result, Mapping):
+            return set()
+        rows = result.get("configurationDiffs")
+        if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+            return set()
+
+        row_by_pair: dict[tuple[str, str], Mapping[str, Any]] = {}
+        for row in rows:
+            if not isinstance(row, Mapping):
+                return set()
+            row_pair = self._normalized_interface_pair(row.get("interfaceName"), row.get("switchId"))
+            if row_pair is None or row_pair in row_by_pair:
+                return set()
+            row_by_pair[row_pair] = row
+
+        verification_pairs = self._preview_verification_pairs(pairs)
+        expected_rows: set[tuple[str, str]] = set()
+        for name, switch_id in verification_pairs:
+            normalized = self._normalized_interface_pair(name, switch_id)
+            if normalized is None:
+                return set()
+            expected_rows.add(normalized)
+        if len(expected_rows) != len(verification_pairs):
+            return set()
+        if set(row_by_pair) != expected_rows:
+            return set()
+
+        processed: set[tuple[str, str]] = set()
+        for parent, original in originals.items():
+            verification: set[tuple[str, str]] = set()
+            for name, switch_id in self._preview_verification_pairs([original]):
+                normalized = self._normalized_interface_pair(name, switch_id)
+                if normalized is not None:
+                    verification.add(normalized)
+            if not verification or not verification.issubset(row_by_pair):
+                continue
+
+            derived: list[tuple[str, str]] = []
+            valid = True
+            for row_pair in verification:
+                row = row_by_pair[row_pair]
+                if str(row.get("status") or "").strip().lower() != "success":
+                    valid = False
+                    break
+                combined_configs = row.get("combinedConfigs")
+                if not isinstance(combined_configs, Sequence) or isinstance(combined_configs, (str, bytes)):
+                    valid = False
+                    break
+                pending = [
+                    entry for entry in combined_configs if isinstance(entry, Mapping) and str(entry.get("configType") or "").strip().lower() == "pending"
+                ]
+                if len(pending) != 1:
+                    valid = False
+                    break
+                pending_lines = pending[0].get("lines")
+                pending_config = pending[0].get("config")
+                if not isinstance(pending_lines, int) or isinstance(pending_lines, bool) or pending_lines < 0 or not isinstance(pending_config, str):
+                    valid = False
+                    break
+                inventory = self._switch_interfaces_cache.get(row_pair[1], {})
+                for interface_name in _INTERFACE_HEADER_RE.findall(pending_config):
+                    record = inventory.get(interface_name.lower())
+                    if isinstance(record, Mapping) and record.get("interfaceType") in {
+                        "ethernet",
+                        "portChannel",
+                    }:
+                        canonical_name = record.get("interfaceName")
+                        if isinstance(canonical_name, str) and canonical_name.strip():
+                            derived.append((canonical_name, row_pair[1]))
+                            continue
+                    # A create preview can name generated child port-channels
+                    # before they exist in the pre-mutation inventory cache.
+                    # Trust only canonical physical/port-channel interface
+                    # headers from the exact parent-scoped preview row.
+                    if _DEPLOY_DERIVED_INTERFACE_RE.fullmatch(interface_name.strip()):
+                        derived.append((interface_name.strip(), row_pair[1]))
+            if not valid:
+                continue
+            self._register_deploy_derived_identities(original[0], original[1], derived)
+            processed.add(parent)
+
+        self._pending_preview_derived_discovery.difference_update(processed)
+        return processed
+
+    def _discover_pending_preview_derived_identities(self, pairs: list[tuple[str, str]]) -> None:
+        """Preview marked parent transitions before deploy and register exact pending children."""
+
+        marked_pairs = [
+            (name, switch_id) for name, switch_id in pairs if self._normalized_interface_pair(name, switch_id) in self._pending_preview_derived_discovery
+        ]
+        if not marked_pairs:
+            return
+        payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name, switch_id in marked_pairs]}
+        preview = self._preview_interfaces(payload)
+        self._register_pending_preview_derived_identities(preview, marked_pairs)
+
+    def _preview_interfaces(self, payload: dict[str, list[dict[str, str]]]) -> ResponseType:
+        """Send the read-only interface preview POST, including in check mode.
+
+        ``RestSend`` simulates every non-GET request while Ansible check mode is
+        active.  The NDFC preview endpoint is a read-only POST, so simulation
+        would discard the controller's ``configurationDiffs`` and make every
+        unchanged ``deploy: true`` request look unconverged.  Temporarily bypass
+        write suppression for this endpoint only and always restore the caller's
+        check-mode setting.
+        """
+
+        api_endpoint = EpManageInterfacesPreview()
+        api_endpoint.fabric_name = self.fabric_name
+        check_mode = self.rest_send.check_mode
+        self.rest_send.check_mode = False
+        try:
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+        finally:
+            self.rest_send.check_mode = check_mode
+
+    def _reconcile_deploy_models(
+        self,
+        model_instances: Sequence[ModelType],
+        *,
+        empty_preview_is_converged: bool,
+    ) -> bool:
+        """Preview exact models and queue unconverged deployment outside check mode."""
+
+        if not self.deploy or not model_instances:
+            return False
+        pairs: list[tuple[str, str]] = []
+        seen_pairs: set[tuple[str, str]] = set()
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            pair = (model_instance.interface_name, switch_id)
+            if pair not in seen_pairs:
+                pairs.append(pair)
+                seen_pairs.add(pair)
+            self._prepare_deploy_context(model_instance, switch_id)
+            self._prepare_no_diff_deploy_context(model_instance, switch_id)
+
+        payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name, switch_id in pairs]}
+        preview = self._preview_interfaces(payload)
+        rows = preview.get("configurationDiffs") if isinstance(preview, Mapping) else None
+        if empty_preview_is_converged and rows == []:
+            return False
+        self._register_pending_preview_derived_identities(preview, pairs)
+        verification_pairs = self._preview_verification_pairs(pairs)
+        pending_pairs, preview_error = self._pending_preview_pairs(preview, verification_pairs)
+        if preview_error is not None:
+            raise RuntimeError(f"Interface preview cannot safely determine deployment state for {verification_pairs}: {preview_error}")
+        deployment_required = bool(pending_pairs)
+        if deployment_required and not self.rest_send.check_mode:
+            deploy_pairs = self._pending_deploy_pairs(pairs, pending_pairs)
+            if not deploy_pairs:
+                raise RuntimeError(f"Pending preview identities cannot be mapped to deploy identities for {verification_pairs}")
+            for interface_name, switch_id in deploy_pairs:
+                self._queue_deploy(interface_name, switch_id)
+        return deployment_required
+
+    def _pending_deploy_pairs(self, pairs: list[tuple[str, str]], pending_pairs: set[tuple[str, str]]) -> list[tuple[str, str]]:
+        """Map pending switch-scoped preview rows to the submitted deploy identities."""
+
+        return [pair for pair in pairs if self._normalized_interface_pair(*pair) in pending_pairs]
+
+    def reconcile_no_diff(self, model_instances: Sequence[ModelType]) -> bool:
+        """Queue unchanged interfaces when preview cannot prove deployment convergence.
+
+        A successful intent mutation can outlive a failed or inconclusive deploy
+        response.  A fresh invocation then has no configuration diff.  For an
+        explicit ``deploy: true`` replay, preview every unchanged target: exact
+        successful rows with zero pending lines need no action; any structurally
+        valid but unconverged result is queued for deployment and will pass
+        through the normal strict 207/preview verification path.
+        """
+
+        return self._reconcile_deploy_models(model_instances, empty_preview_is_converged=False)
+
+    def _can_replay_absent_delete(self, existing_data: dict | None) -> bool:
+        """An absent delete may replay only if no raw interface record remains.
+
+        ``query_all`` filters by policy type, so an absent model can still name
+        an interface owned by another module. Previewing that identity would
+        deploy the other policy's staged configuration.
+        """
+
+        return existing_data is None
+
+    def reconcile_absent_deletes(self, model_instances: Sequence[ModelType]) -> bool:
+        """Recover an accepted deletion whose switch-side deploy remains pending.
+
+        Explicit ``state: deleted`` retains the exact requested identities even
+        after controller intent disappears.  Preview those identities and queue
+        a deploy only when pending configuration remains. Check the unfiltered
+        switch inventory first: a policy-filtered ``query_all`` cannot establish
+        that the name is truly absent. Subclasses may recognize an exact reset
+        echo as a safe replay target. A controller that returns an empty preview
+        for an eligible target is already converged. Check mode performs only
+        the read-only preview and reports whether a normal run would deploy.
+        """
+
+        if not self.deploy or not model_instances:
+            return False
+        replay_targets = []
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            existing_data = self._switch_interfaces(switch_id).get(model_instance.interface_name.strip().lower())
+            if self._can_replay_absent_delete(existing_data):
+                replay_targets.append(model_instance)
+        return self._reconcile_deploy_models(replay_targets, empty_preview_is_converged=True)
+
+    @property
+    def pending_removes(self) -> tuple[tuple[str, str], ...]:
+        """Return an immutable view of interfaces queued for removal."""
+        return tuple(self._pending_removes)
+
+    def queue_remove_targets(self, targets: Sequence[tuple[str, str]]) -> None:
+        """Add pre-resolved interface targets to the removal queue."""
+        for interface_name, switch_id in targets:
+            self._queue_remove(interface_name, switch_id)
+
+    @property
+    def deferred_delete_queues(self) -> dict[str, tuple[tuple[str, str], ...]]:
+        """Return immutable snapshots of every deferred delete/reset queue this orchestrator can flush."""
+        return {"remove": self.pending_removes}
+
+    @property
+    def pending_deferred_delete_targets(self) -> tuple[tuple[str, str], ...]:
+        """Return every queued delete/reset target once, preserving queue and insertion order."""
+        return tuple(dict.fromkeys(target for targets in self.deferred_delete_queues.values() for target in targets))
+
+    def queue_deferred_delete_targets(self, queue_name: str, targets: Sequence[tuple[str, str]]) -> None:
+        """Import pre-resolved targets into one supported deferred delete/reset queue."""
+        if queue_name != "remove":
+            raise ValueError(f"{type(self).__name__} does not support deferred delete queue {queue_name!r}.")
+        self.queue_remove_targets(targets)
+
+    def dequeue_deferred_delete_targets(self, queue_name: str, targets: Sequence[tuple[str, str]]) -> None:
+        """Remove transferred targets from one supported deferred queue without sending a request."""
+        if queue_name != "remove":
+            raise ValueError(f"{type(self).__name__} does not support deferred delete queue {queue_name!r}.")
+        removed = set(targets)
+        self._pending_removes = [target for target in self._pending_removes if target not in removed]
+
+    def deferred_delete_request_groups(self) -> tuple[DeferredDeleteRequestGroup, ...]:
+        """Describe the exact request groups and order used by `remove_pending`."""
+        if not self.pending_removes:
+            return ()
+        return (DeferredDeleteRequestGroup(queue_name="remove", targets=self.pending_removes),)
+
+    def dequeue_deploy_targets(self, targets: Sequence[tuple[str, str]]) -> None:
+        """Remove exact targets from the pending deploy queue without sending a request."""
+        removed = set(targets)
+        self._pending_deploys = [target for target in self._pending_deploys if target not in removed]
+
+    def absorb_deploy_context_from(self, source: NDBaseInterfaceOrchestrator) -> None:
+        """Share exact derived identities and proven vPC pair scopes for a consolidated deploy."""
+
+        if source is self:
+            return
+        for parent, children in source._deploy_derived_identities.items():
+            self._deploy_derived_identities.setdefault(parent, set()).update(children)
+        self._pending_preview_derived_discovery.update(source._pending_preview_derived_discovery)
+        for (
+            parent,
+            switch_ids,
+        ) in source._preview_scoped_deploy_child_switches().items():
+            self._absorbed_preview_scoped_child_switches.setdefault(parent, set()).update(switch_ids)
+
+    def _preview_scoped_deploy_child_switches(self) -> dict[tuple[str, str], set[str]]:
+        """Return only peer scopes already proven by a vPC parent preview."""
+
+        return self._absorbed_preview_scoped_child_switches
+
+    @property
+    def verified_deploy_targets(self) -> tuple[tuple[str, str], ...]:
+        """Targets proven by this orchestrator's last completed deploy request."""
+
+        return self._last_verified_deploy_targets
+
+    def deploy_targets(self, targets: Sequence[tuple[str, str]]) -> ResponseType | None:
+        """
+        Deploy exactly the supplied targets in one request without consulting or replacing this orchestrator's pending queue.
+
+        The aggregate workflow uses this after consolidating queues from multiple families. It is safe on a partial-failure path
+        because callers can pass only targets backed by exact controller-success evidence.
+        """
+        self._last_verified_deploy_targets = ()
+        if not self.deploy:
+            return None
+        requested = list(dict.fromkeys(targets))
+        if not requested:
+            return None
+        try:
+            result = self._deploy_interfaces(requested)
+            # _deploy_interfaces has already required exact 207 success or an
+            # exact zero-pending preview. Preserve that proof for a workflow
+            # whose final REST response may now be the preview, not the deploy.
+            self._last_verified_deploy_targets = tuple(requested)
+            return result
+        except Exception as e:
+            raise RuntimeError(f"Bulk deploy failed for interfaces {requested}: {e}") from e
 
     def deploy_pending(self) -> ResponseType | None:
         """
@@ -820,12 +1881,9 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         if not self.deploy or not self._pending_deploys:
             return None
         self._deploy_attempted = True
-        try:
-            result = self._deploy_interfaces(self._pending_deploys)
-            self._pending_deploys = []
-            return result
-        except Exception as e:
-            raise RuntimeError(f"Bulk deploy failed for interfaces {self._pending_deploys}: {e}") from e
+        result = self.deploy_targets(self._pending_deploys)
+        self._pending_deploys = []
+        return result
 
     def deploy_accepted_mutations(self) -> list[tuple[str, str]]:
         """
@@ -862,7 +1920,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         if not accepted:
             return []
         try:
-            self._deploy_interfaces(accepted)
+            self.deploy_targets(accepted)
         except Exception as e:
             raise RuntimeError(f"Failure-path deploy failed for accepted interfaces {accepted}: {e}") from e
         self._pending_deploys = [pair for pair in self._pending_deploys if pair in unsent]
@@ -883,24 +1941,28 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         """
         return set(self._pending_removes)
 
-    def _accepted_multistatus_names(self) -> set[str]:
+    def _accepted_multistatus_names(self, response: Mapping[str, Any] | None | object = _UNSET_RESPONSE) -> set[str]:
         """
         # Summary
 
-        Return the lower-cased `name` of every `DATA.results[]` item in the most recent response whose `status` is exactly
-        `success` (case/whitespace-tolerant). Used after a bulk POST that failed with HTTP 207 Multi-Status to recover the subset
-        the controller accepted, so that subset can still be queued for deploy (PR #550 review). On a 207 the per-item status
+        Return the lower-cased `name` of every `DATA.results[]` item in `response` whose `status` is exactly `success`
+        (case/whitespace-tolerant). Callers handling a request failure pass the response captured for that exact request; this
+        prevents an earlier HTTP 207 from being mistaken for a later request that failed before producing a response (issue #554).
+        When `response` is omitted, the current response is used for backward compatibility. On a 207 the per-item status
         vocabulary is unreliable (vault: `multi-status-207-status-field-inconsistent`; issue #397), so only an exact `success`
         is trusted — the same allowlist `NdV1Strategy.is_success` applies when classifying the response. Returns an empty set
-        when the last response was not a 207 or carries no `results[]` envelope.
+        when the supplied response was not a 207 or carries no `results[]` envelope.
 
         ## Raises
 
         None
         """
-        if self.rest_send.return_code != 207:
+        response = self.rest_send.response_current if response is _UNSET_RESPONSE else response
+        if not isinstance(response, Mapping):
             return set()
-        data = self.rest_send.response_current.get("DATA")
+        if response.get("RETURN_CODE") != 207:
+            return set()
+        data = response.get("DATA")
         results = data.get("results") if isinstance(data, dict) else None
         if not isinstance(results, list):
             return set()
@@ -921,6 +1983,13 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         Deploy the given interfaces via `interfaceActions/deploy`. Sends the explicit list of `{interfaceName, switchId}` pairs.
 
+        ND 4.3.1 can return HTTP 207 with an empty or incomplete successful `results` array after a successful deploy. When
+        that evidence is merely insufficient, verify the applicable switch-scoped identities through `interfaceActions/preview`
+        and require exact successful identities with zero pending configuration before returning. Contradictory 207 evidence
+        (malformed, failed, duplicate, or unexpected rows) fails closed without preview and preserves the deploy queue. An
+        orchestrator may classify unique successful derived-resource rows as insufficient when that controller endpoint is
+        documented to expand identities; exact preview convergence is still required in that case.
+
         ## Raises
 
         ### Exception
@@ -930,7 +1999,234 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         api_endpoint = EpManageInterfacesDeploy()
         api_endpoint.fabric_name = self.fabric_name
         payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name, switch_id in pairs]}
-        return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+        self._discover_pending_preview_derived_identities(pairs)
+        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+        deploy_return_code = self.rest_send.return_code
+        if deploy_return_code == 207:
+            # TODO(4.3.1) deploy-207-incomplete-success-results
+            deploy_confirmed, deploy_error = self._classify_deploy_results(result, pairs)
+            if deploy_error is not None:
+                raise RuntimeError(f"Deploy multi-status response is contradictory for {pairs}: {deploy_error}")
+            if not deploy_confirmed:
+                verification_pairs = self._preview_verification_pairs(pairs)
+                self._verify_deployed_pairs_with_preview(verification_pairs, payload)
+        return result
+
+    def _preview_verification_pairs(self, pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        """Return identities whose preview convergence proves the submitted deployment.
+
+        Ordinary interfaces map one-to-one. A consolidated workflow may have
+        absorbed an exact vPC parent/peer scope from a source orchestrator;
+        verify both parent copies for that parent only. Pair-aware standalone
+        orchestrators may override this hook with their own peer cache.
+        """
+
+        expanded: list[tuple[str, str]] = []
+        scopes = self._preview_scoped_deploy_child_switches()
+        for interface_name, switch_id in pairs:
+            parent = self._normalized_interface_pair(interface_name, switch_id)
+            peer_switch_ids = scopes.get(parent, set()) if parent is not None else set()
+            for pair in (
+                (interface_name, switch_id),
+                *((interface_name, peer_id) for peer_id in sorted(peer_switch_ids) if peer_id != switch_id),
+            ):
+                if pair not in expanded:
+                    expanded.append(pair)
+        return expanded
+
+    @staticmethod
+    def _normalized_interface_pair(interface_name: object, switch_id: object) -> tuple[str, str] | None:
+        """Return a comparison key for one response identity, or ``None`` when malformed."""
+
+        if not isinstance(interface_name, str) or not interface_name.strip():
+            return None
+        if not isinstance(switch_id, str) or not switch_id.strip():
+            return None
+        return interface_name.strip().lower(), switch_id.strip()
+
+    def _allowed_derived_deploy_pairs(self, pairs: list[tuple[str, str]]) -> set[tuple[str, str]]:
+        """Return only derived identities registered for the submitted parents."""
+
+        allowed: set[tuple[str, str]] = set()
+        for interface_name, switch_id in pairs:
+            parent = self._normalized_interface_pair(interface_name, switch_id)
+            if parent is not None:
+                allowed.update(self._deploy_derived_identities.get(parent, set()))
+        return allowed
+
+    @staticmethod
+    def _is_canonical_deploy_child_name(interface_name: str) -> bool:
+        """Return whether a controller result names a supported derived interface."""
+
+        return _DEPLOY_DERIVED_INTERFACE_RE.fullmatch(interface_name.strip()) is not None
+
+    def _preview_scoped_unregistered_child_requires_verification(
+        self,
+        pair: tuple[str, str],
+        submitted_pairs: list[tuple[str, str]],
+    ) -> bool:
+        """Require strict post-deploy preview for a canonical child of a proven vPC pair.
+
+        Ordinary interfaces have no such scope. A workflow deploy orchestrator
+        can absorb one from a vPC resource, but the 207 child row is never
+        accepted as success without exact post-deploy convergence.
+        """
+
+        if not self._is_canonical_deploy_child_name(pair[0]):
+            return False
+        for interface_name, switch_id in submitted_pairs:
+            parent = self._normalized_interface_pair(interface_name, switch_id)
+            if parent is not None and pair[1] in self._preview_scoped_deploy_child_switches().get(parent, set()):
+                return True
+        return False
+
+    def _classify_deploy_results(self, result: ResponseType, pairs: list[tuple[str, str]]) -> tuple[bool, str | None]:
+        """Classify deploy evidence as exact, insufficient, or contradictory.
+
+        The boolean is true only when one unique successful result identifies
+        every submitted pair. ``(False, None)`` means ND supplied no evidence or
+        only a unique successful subset, for which preview may prove convergence.
+        A non-``None`` error identifies contradictory evidence that must fail
+        closed rather than being replaced by a later preview result.
+        """
+
+        expected = {self._normalized_interface_pair(name, switch_id) for name, switch_id in pairs}
+        if None in expected or len(expected) != len(pairs):
+            return False, "submitted interface identities are invalid or duplicated"
+        if not isinstance(result, Mapping):
+            return False, None
+        if "results" not in result:
+            return False, None
+        results = result.get("results")
+        if not isinstance(results, Sequence) or isinstance(results, (str, bytes)):
+            return False, "results is not a list"
+        if not results:
+            return False, None
+        observed: set[tuple[str, str]] = set()
+        observed_submitted: set[tuple[str, str]] = set()
+        saw_derived_identity = False
+        allowed_derived = self._allowed_derived_deploy_pairs(pairs)
+        for item in results:
+            if not isinstance(item, Mapping):
+                return False, "results contains a non-mapping row"
+            if str(item.get("status") or "").strip().lower() != "success":
+                return False, "results contains a row whose status is not success"
+            pair = self._normalized_interface_pair(item.get("interfaceName"), item.get("switchId"))
+            if pair is None:
+                return (
+                    False,
+                    "results contains a row without a valid interfaceName and switchId",
+                )
+            if pair in observed:
+                return False, f"results contains duplicate identity {pair!r}"
+            observed.add(pair)
+            if pair not in expected:
+                if pair not in allowed_derived:
+                    if not self._preview_scoped_unregistered_child_requires_verification(pair, pairs):
+                        return False, f"results contains unexpected identity {pair!r}"
+                saw_derived_identity = True
+                continue
+            observed_submitted.add(pair)
+        if saw_derived_identity:
+            return False, None
+        return observed_submitted == expected, None
+
+    def _verify_deployed_pairs_with_preview(self, pairs: list[tuple[str, str]], payload: dict[str, list[dict[str, str]]]) -> None:
+        """Fail closed unless preview proves every pair has no pending configuration."""
+
+        preview = self._preview_interfaces(payload)
+        error = self._preview_verification_error(preview, pairs)
+        if error is not None:
+            raise RuntimeError(
+                "Deploy response did not prove exact per-interface success and post-deploy preview " f"did not prove convergence for {pairs}: {error}"
+            )
+
+    @classmethod
+    def _preview_verification_error(cls, result: ResponseType, pairs: list[tuple[str, str]]) -> str | None:
+        """Return ``None`` only for exact successful preview rows with zero pending lines."""
+
+        preview_state, error = cls._classify_preview(result, pairs)
+        if error is not None:
+            return error
+        if preview_state == "pending":
+            return "preview contains pending configuration"
+        return None
+
+    @classmethod
+    def _classify_preview(cls, result: ResponseType, pairs: list[tuple[str, str]]) -> tuple[str, str | None]:
+        """Classify exact preview evidence as ``converged``, ``pending``, or contradictory.
+
+        A structurally valid row with a positive pending-line count proves that
+        deployment is required. Malformed rows, failed statuses, duplicate or
+        unexpected identities, and invalid pending counts are contradictory
+        evidence and must never be converted into a mutating deploy request.
+        """
+
+        pending_pairs, error = cls._pending_preview_pairs(result, pairs)
+        if error is not None:
+            return "contradictory", error
+        return ("pending" if pending_pairs else "converged"), None
+
+    @classmethod
+    def _pending_preview_pairs(cls, result: ResponseType, pairs: list[tuple[str, str]]) -> tuple[set[tuple[str, str]], str | None]:
+        """Validate exact preview evidence and return only identities with pending lines."""
+
+        if not isinstance(result, Mapping):
+            return set(), "preview response is not a mapping"
+        rows = result.get("configurationDiffs")
+        if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+            return set(), "preview response lacks a configurationDiffs list"
+
+        expected = {cls._normalized_interface_pair(name, switch_id) for name, switch_id in pairs}
+        if None in expected or len(expected) != len(pairs):
+            return set(), "submitted interface identities are invalid or duplicated"
+        observed: set[tuple[str, str]] = set()
+        pending_pairs: set[tuple[str, str]] = set()
+        for row in rows:
+            if not isinstance(row, Mapping):
+                return set(), "preview contains a non-mapping row"
+            pair = cls._normalized_interface_pair(row.get("interfaceName"), row.get("switchId"))
+            if pair is None:
+                return (
+                    set(),
+                    "preview contains a row without a valid interfaceName and switchId",
+                )
+            if pair in observed:
+                return set(), f"preview contains duplicate identity {pair!r}"
+            observed.add(pair)
+            if str(row.get("status") or "").strip().lower() != "success":
+                return set(), f"preview status for {pair!r} is not success"
+            combined_configs = row.get("combinedConfigs")
+            if not isinstance(combined_configs, Sequence) or isinstance(combined_configs, (str, bytes)):
+                return set(), f"preview for {pair!r} lacks combinedConfigs"
+            if any(not isinstance(item, Mapping) for item in combined_configs):
+                return (
+                    set(),
+                    f"preview for {pair!r} contains a non-mapping combinedConfigs entry",
+                )
+            if any(not isinstance(item.get("configType"), str) or not item.get("configType").strip() for item in combined_configs):
+                return (
+                    set(),
+                    f"preview for {pair!r} contains a combinedConfigs entry without a valid configType",
+                )
+            pending = [item for item in combined_configs if item.get("configType", "").strip().lower() == "pending"]
+            pending_lines = pending[0].get("lines") if len(pending) == 1 else None
+            if len(pending) != 1 or not isinstance(pending_lines, int) or isinstance(pending_lines, bool) or pending_lines < 0:
+                return (
+                    set(),
+                    f"preview for {pair!r} does not prove zero pending configuration",
+                )
+            if pending_lines > 0:
+                pending_pairs.add(pair)
+
+        if observed != expected:
+            missing = sorted(expected - observed)
+            unexpected = sorted(observed - expected)
+            return (
+                set(),
+                f"preview identities differ from the submitted pairs: missing={missing!r}, unexpected={unexpected!r}",
+            )
+        return pending_pairs, None
 
     def _accepted_multistatus_pairs(self) -> set[tuple[str, str]]:
         """
@@ -1006,6 +2302,16 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
                 msg += f" The controller accepted the removal of {accepted} from the same request; their deploy stays queued."
             raise RuntimeError(msg) from e
 
+    def remove_pending_queue(self, queue_name: str) -> ResponseType | None:
+        """Flush one named deferred delete queue.
+
+        The base interface contract has only the ordinary ``remove`` queue. Ethernet subclasses extend this method so an aggregate
+        executor can preserve reset-family ordering and reconcile each queue from its exact pre/post contents.
+        """
+        if queue_name != "remove":
+            raise ValueError(f"{type(self).__name__} does not support deferred delete queue {queue_name!r}.")
+        return self.remove_pending()
+
     def _remove_interfaces(self) -> ResponseType:
         """
         # Summary
@@ -1024,7 +2330,11 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
 
 
-def finalize_accepted_intent(orchestrator: NDBaseOrchestrator | None, check_mode: bool, module_log: logging.Logger) -> str:
+def finalize_accepted_intent(
+    orchestrator: NDBaseOrchestrator | None,
+    check_mode: bool,
+    module_log: logging.Logger,
+) -> str:
     """
     # Summary
 

@@ -6,33 +6,72 @@
 
 # --- PRECONDITION: second vPC pair must exist (never created here) ---
 #
-# nd_manage_vpc_pair has no `query` state; its read-only mode is `state: gathered`. The module's
-# top-level fabric key is `fabric_name` (not `fabric`), and config.peer1_switch_id / peer2_switch_id
-# are BOTH required (see plugins/modules/nd_manage_vpc_pair.py DOCUMENTATION + vpc_pair_model.py
-# VpcPairPlaybookItemModel) — a peer1-only filter fails Pydantic validation before the request is
-# even sent. Gathered output is `gathered.vpc_pairs` / `gathered.pending_delete_vpc_pairs`
-# (plugins/module_utils/manage_vpc_pair/runner.py), not `response` or `current`.
+# Resolve management IPs through the fabric inventory and require reciprocal
+# authoritative vpcPair records. This avoids depending on nd_manage_vpc_pair's
+# unrelated gathered-result assembly while proving the exact pair identity.
 
-- name: "MULTI-PAIR PRECONDITION: Gather vPC pair state for pair-2 (peer1/peer2)"
-  cisco.nd.nd_manage_vpc_pair:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - peer1_switch_id: "{{ test_switch_ip_pair2_peer1 }}"
-        peer2_switch_id: "{{ test_switch_ip_pair2_peer2 }}"
-    state: gathered
-  register: pair2_query
-  failed_when: false
+- name: "MULTI-PAIR PRECONDITION: Read fabric switch inventory"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
+    method: get
+  register: pair2_switches
 
-- name: "MULTI-PAIR PRECONDITION: Assert the second vPC pair exists"
+- name: "MULTI-PAIR PRECONDITION: Resolve pair-2 switch ids"
+  ansible.builtin.set_fact:
+    pair2_peer1_id: >-
+      {{ (pair2_switches.current.switches | selectattr('fabricManagementIp', 'equalto', test_switch_ip_pair2_peer1)
+         | map(attribute='switchId') | list + ['']) | first }}
+    pair2_peer2_id: >-
+      {{ (pair2_switches.current.switches | selectattr('fabricManagementIp', 'equalto', test_switch_ip_pair2_peer2)
+         | map(attribute='switchId') | list + ['']) | first }}
+
+- name: "MULTI-PAIR PRECONDITION: Assert both pair-2 switches exist"
   ansible.builtin.assert:
     that:
-      - pair2_query is not failed
-      - pair2_query.gathered is defined
-      - pair2_query.gathered.vpc_pairs | default([]) | length > 0
+      - pair2_peer1_id | length > 0
+      - pair2_peer2_id | length > 0
+
+- name: "MULTI-PAIR PRECONDITION: Read pair-2 peer 1 relation"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ pair2_peer1_id }}/vpcPair"
+    method: get
+  register: pair2_peer1_relation
+
+- name: "MULTI-PAIR PRECONDITION: Read pair-2 peer 2 relation"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ pair2_peer2_id }}/vpcPair"
+    method: get
+  register: pair2_peer2_relation
+
+- name: "MULTI-PAIR PRECONDITION: Assert the second vPC pair is reciprocal"
+  ansible.builtin.assert:
+    that:
+      - pair2_peer1_relation.current.switchId == pair2_peer1_id
+      - pair2_peer1_relation.current.peerSwitchId == pair2_peer2_id
+      - pair2_peer2_relation.current.switchId == pair2_peer2_id
+      - pair2_peer2_relation.current.peerSwitchId == pair2_peer1_id
     fail_msg: >-
       The multi-pair scenario requires a second vPC pair ({{ test_switch_ip_pair2_peer1 }}/{{ test_switch_ip_pair2_peer2 }})
       in fabric {{ test_fabric_name }}. Create it first (nd_manage_vpc_pair) or override nd_test_vpc_pair2_peer*_ip.
+
+- name: "MULTI-PAIR SETUP: Remove prior pair-scoped test objects"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip_peer1 }}"
+        interface_name: "{{ vpc_multi_pair_name }}"
+      - switch_ip: "{{ test_switch_ip_pair2_peer1 }}"
+        interface_name: "{{ vpc_multi_pair_name }}"
+    config_actions:
+      deploy: true
+    state: deleted
+  register: mp_setup_cleanup
+
+- name: "MULTI-PAIR SETUP: Verify no pair-scoped test object remains"
+  ansible.builtin.assert:
+    that:
+      - mp_setup_cleanup.after | selectattr('interface_name', 'equalto', vpc_multi_pair_name) | list | length == 0
 
 # --- MERGED: same name + id on both pairs in ONE task (the #356 CONFIRMED failure) ---
 
@@ -43,6 +82,8 @@
     config:
       - "{{ vpc_multi_pair_pair1 }}"
       - "{{ vpc_multi_pair_pair2 }}"
+    config_actions:
+      deploy: true
     state: merged
   check_mode: true
   register: cm_mp_merged
@@ -51,11 +92,24 @@
   cisco.nd.nd_interface_vpc_access: *multi_pair_merge
   register: nm_mp_merged
 
-- name: "MULTI-PAIR MERGED: Verify both creations produced a change"
+- name: "MULTI-PAIR MERGED: Verify two pair-scoped objects and their exact intent"
+  vars:
+    mp_records: "{{ nm_mp_merged.after | selectattr('interface_name', 'equalto', vpc_multi_pair_name) | list }}"
+    mp_pair1_records: "{{ mp_records | selectattr('switch_ip', 'equalto', test_switch_ip_peer1) | list }}"
+    mp_pair2_records: "{{ mp_records | selectattr('switch_ip', 'equalto', test_switch_ip_pair2_peer1) | list }}"
   ansible.builtin.assert:
     that:
       - cm_mp_merged is changed
       - nm_mp_merged is changed
+      - mp_records | length == 2
+      - mp_pair1_records | length == 1
+      - mp_pair2_records | length == 1
+      - mp_pair1_records[0].config_data.network_os.policy.access_vlan == 10
+      - mp_pair2_records[0].config_data.network_os.policy.access_vlan == 11
+      - mp_pair1_records[0].config_data.network_os.policy.peer1_member_ports == [vpc_access_member_multi_pair]
+      - mp_pair1_records[0].config_data.network_os.policy.peer2_member_ports == [vpc_access_member_multi_pair]
+      - mp_pair2_records[0].config_data.network_os.policy.peer1_member_ports == [vpc_access_member_multi_pair]
+      - mp_pair2_records[0].config_data.network_os.policy.peer2_member_ports == [vpc_access_member_multi_pair]
 
 - name: "MULTI-PAIR IDEMPOTENT: Pause for convergence"
   ansible.builtin.pause:
@@ -95,15 +149,31 @@
   cisco.nd.nd_interface_vpc_access:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ vpc_multi_pair_pair1 }}"
+    config: "{{ [vpc_multi_pair_pair1] + vpc_access_bystanders }}"
+    config_actions:
+      deploy: true
     state: overridden
   register: nm_mp_overridden
 
-- name: "MULTI-PAIR OVERRIDDEN: Verify pair 2's copy was removed (a change occurred)"
+- name: "MULTI-PAIR OVERRIDDEN: Verify exactly pair 1 remains"
+  vars:
+    mp_records: "{{ nm_mp_overridden.after | selectattr('interface_name', 'equalto', vpc_multi_pair_name) | list }}"
+    after_keys: >-
+      {%- set keys = [] -%}
+      {%- for item in nm_mp_overridden.after -%}
+      {%- set appended = keys.append(item.switch_ip ~ '/' ~ item.interface_name) -%}
+      {%- endfor -%}
+      {{ keys }}
   ansible.builtin.assert:
     that:
       - nm_mp_overridden is changed
+      - mp_records | length == 1
+      - mp_records[0].switch_ip == test_switch_ip_peer1
+      - mp_records[0].config_data.network_os.policy.access_vlan == 10
+      - mp_records[0].config_data.network_os.policy.peer1_member_ports == [vpc_access_member_multi_pair]
+      - mp_records[0].config_data.network_os.policy.peer2_member_ports == [vpc_access_member_multi_pair]
+      - vpc_access_bystander_keys | difference(after_keys) | length == 0
+      - nm_mp_overridden.after | length == 1 + (vpc_access_bystanders | length)
 
 - name: "MULTI-PAIR OVERRIDDEN IDEMPOTENT: Pause for convergence"
   ansible.builtin.pause:
@@ -113,8 +183,9 @@
   cisco.nd.nd_interface_vpc_access:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ vpc_multi_pair_pair1 }}"
+    config: "{{ [vpc_multi_pair_pair1] + vpc_access_bystanders }}"
+    config_actions:
+      deploy: true
     state: overridden
   register: nm_mp_overridden_idem
 
@@ -132,6 +203,8 @@
     config:
       - switch_ip: "{{ test_switch_ip_peer1 }}"
         interface_name: "{{ vpc_multi_pair_name }}"
+    config_actions:
+      deploy: true
     state: deleted
   register: mp_cleanup
 
@@ -140,15 +213,22 @@
     that:
       - mp_cleanup is changed
 
-# Pair 2's copy is normally removed by the OVERRIDDEN step above; this best-effort delete (no changed
-# assert, failures ignored) keeps the fabric clean if a prior run aborted between the MERGED create
-# and the OVERRIDDEN step.
-- name: "MULTI-PAIR CLEANUP: Delete pair 2's {{ vpc_multi_pair_name }} (best effort)"
+# Pair 2's copy is normally removed by the OVERRIDDEN step above. The exact delete remains mandatory
+# so an aborted run cannot silently leave residue.
+- name: "MULTI-PAIR CLEANUP: Ensure pair 2's {{ vpc_multi_pair_name }} is absent"
   cisco.nd.nd_interface_vpc_access:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip_pair2_peer1 }}"
         interface_name: "{{ vpc_multi_pair_name }}"
+    config_actions:
+      deploy: true
     state: deleted
-  failed_when: false
+  register: mp_cleanup_pair2
+
+- name: "MULTI-PAIR CLEANUP: Verify both pair-scoped objects are absent"
+  ansible.builtin.assert:
+    that:
+      - mp_cleanup.after | selectattr('interface_name', 'equalto', vpc_multi_pair_name) | list | length == 0
+      - mp_cleanup_pair2.after | selectattr('interface_name', 'equalto', vpc_multi_pair_name) | list | length == 0

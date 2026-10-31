@@ -97,7 +97,7 @@
     that:
       - lb100_after.config_data.network_os.policy.ip == "10.100.200.2"
       - lb100_after.config_data.network_os.policy.description == "Updated loopback200 description"
-      - lb100_after.config_data.network_os.policy.route_map_tag == "54321"
+      - lb100_after.config_data.network_os.policy.route_map_tag == 54321
 
 - name: "MERGED UPDATE: Re-apply update for idempotency"
   cisco.nd.nd_interface_loopback: *merge_lb100_updated

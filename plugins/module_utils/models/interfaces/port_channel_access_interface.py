@@ -60,14 +60,17 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
     default_policy_type,
     normalize_member_interface_names,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.netflow import (
+    NetflowAtomicMergeMixin,
+    netflow_validation_suspended,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_common import PortChannelInterfaceBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.storm_control import StormControlMutexMixin
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
 
 
-class PortChannelAccessPolicyModel(StormControlMutexMixin):
+class PortChannelAccessPolicyModel(NetflowAtomicMergeMixin):
     """
     # Summary
 
@@ -106,6 +109,7 @@ class PortChannelAccessPolicyModel(StormControlMutexMixin):
         "pfc": False,
         "portChannelMode": "active",
         "portTypeEdgeTrunk": True,
+        "ports": [],
         "qos": False,
         "speed": "auto",
         "stormControl": False,
@@ -160,7 +164,7 @@ class PortChannelAccessPolicyModel(StormControlMutexMixin):
 
     port_channel_mode: PortChannelModeEnum | None = Field(default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive)")
     port_type_edge_trunk: bool | None = Field(default=None, alias="portTypeEdgeTrunk", description="Configure as edge trunk port (PortFast on trunk)")
-    ports: list[str] | None = Field(default=None, alias="ports", description="Member interface names (e.g. ['Ethernet1/1', 'Ethernet1/2'])")
+    ports: list[str] = Field(default_factory=list, alias="ports", description="Member interface names (e.g. ['Ethernet1/1', 'Ethernet1/2'])")
     qos: bool | None = Field(default=None, alias="qos", description="Enable QoS configuration for this interface")
     qos_policy: str | None = Field(default=None, alias="qosPolicy", description="Custom QoS policy name")
     queuing_policy: str | None = Field(default=None, alias="queuingPolicy", description="Custom queuing policy name")
@@ -230,6 +234,8 @@ class PortChannelAccessPolicyModel(StormControlMutexMixin):
 
         - If `netflow` is true and `netflow_monitor` is missing or empty.
         """
+        if netflow_validation_suspended():
+            return self
         if self.netflow is True and not self.netflow_monitor:
             raise ValueError("netflow_monitor must be provided when netflow is true.")
         return self
@@ -274,6 +280,7 @@ class XePortChannelAccessPolicyModel(InterfacePolicyStrictBase):
         **InterfacePolicyStrictBase.reverse_diff_defaults,
         "bpduGuard": "default",
         "portChannelMode": "active",
+        "ports": [],
     }
 
     policy_type: Literal["iosXeAccessPoHost"] = Field(
@@ -302,7 +309,7 @@ class XePortChannelAccessPolicyModel(InterfacePolicyStrictBase):
     port_channel_mode: XePortChannelModeEnum | None = Field(
         default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive/auto/desirable)"
     )
-    ports: list[str] | None = Field(default=None, alias="ports", description="Member interface names (e.g. ['GigabitEthernet1/0/2'])")
+    ports: list[str] = Field(default_factory=list, alias="ports", description="Member interface names (e.g. ['GigabitEthernet1/0/2'])")
 
     @field_validator("mtu", mode="before")
     @classmethod

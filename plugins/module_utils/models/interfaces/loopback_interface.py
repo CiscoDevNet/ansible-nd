@@ -40,6 +40,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_common import default_network_os_type, default_policy_type
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host, IPv4HostStrict, IPv6Host
 
@@ -134,11 +135,11 @@ class NexusLoopbackPolicyModel(NexusLoopbackPolicyBase):
 
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND 4.2.1 `int_loopback` template defaults (schema-sourced via nd-openapi `intLoopbackTemplate`). Values must be in
-    # the model's DUMPED form: the schema declares routeMapTag as integer 12345, but `coerce_route_map_tag` stores it as
-    # a string (ND 4.2.1 GET-side type drift), so the table holds "12345".
+    # the model's DUMPED form. Both ND 4.2.1 and 4.3.1 declare an integer;
+    # keep the default consistent with integer controller readback and writes.
     reverse_diff_defaults: ClassVar[dict[str, Any]] = {
         **LoopbackPolicyStrictBase.reverse_diff_defaults,
-        "routeMapTag": "12345",
+        "routeMapTag": 12345,
     }
 
     policy_type: Literal["loopback"] = Field(alias="policyType", description="Loopback policy template discriminator")
@@ -146,26 +147,37 @@ class NexusLoopbackPolicyModel(NexusLoopbackPolicyBase):
         default=None, alias="ipv6", description="Loopback IPv6 address (bare host form, e.g. 2001:db8::1; CIDR input is accepted and normalized)"
     )
     vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
-    route_map_tag: str | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
+    route_map_tag: int | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
 
-    # TODO(4.2.1): Remove coerce_route_map_tag once GET-side type drift is fixed.
-    # ND 4.2.1 returns `routeMapTag` as an integer even though the template defines it as a string.
-    # The same drift affects SVI `routingTag` - keep both validators in sync.
+    # TODO(4.2.1) loopback-routemaptag-string-write-version-drift: Recheck when
+    # legacy numeric-string input compatibility can be removed. Both schemas
+    # require an integer on the wire; observed 4.2.1 GET echoes were integers.
+    # Accept a string-valued GET echo defensively, not as a claimed observation.
+    # Do not impose a range absent from intLoopbackTemplate: ND 4.3.1 accepted
+    # and echoed values outside 0..4294967295 in a staged live probe.
     @field_validator("route_map_tag", mode="before")
     @classmethod
     def coerce_route_map_tag(cls, value):
         """
         # Summary
 
-        Coerce `route_map_tag` to a string. The ND API returns this field as an integer, but the template defines it as a string.
+        Normalize an integer or signed decimal-string tag to the integer wire type.
 
         ## Raises
 
-        None
+        ValueError: The tag is a boolean or is not an ASCII decimal integer.
         """
         if value is None:
             return value
-        return str(value)
+        if isinstance(value, bool):
+            raise ValueError("route_map_tag must be an integer, not a boolean")
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isascii():
+            digits = value[1:] if value.startswith(("+", "-")) else value
+            if digits.isdecimal():
+                return int(value)
+        raise ValueError("route_map_tag must be a decimal integer")
 
 
 class SecondaryIpModel(NDNestedModel):
@@ -423,6 +435,25 @@ class LoopbackConfigDataModel(NDNestedModel):
     mode: Literal["managed"] = Field(default="managed", alias="mode", frozen=True)
     network_os: NexusLoopbackNetworkOSModel | XeLoopbackNetworkOSModel = Field(alias="networkOS", discriminator="network_os_type")
 
+    @model_validator(mode="before")
+    @classmethod
+    def default_discriminators(cls, data: Any) -> Any:
+        """Keep pre-union loopback input compatible by injecting the NX-OS and base-policy discriminators."""
+        if not isinstance(data, dict):
+            return data
+        for key in ("network_os", "networkOS"):
+            raw_network_os = data.get(key)
+            if not isinstance(raw_network_os, dict):
+                continue
+            network_os = default_network_os_type(raw_network_os)
+            network_os_type = network_os.get("network_os_type") or network_os.get("networkOSType")
+            for policy_key in ("policy",):
+                if isinstance(network_os.get(policy_key), dict):
+                    base_policy_type = "iosXeLoopback" if network_os_type == "ios-xe" else "loopback"
+                    network_os = {**network_os, policy_key: default_policy_type(network_os[policy_key], base_policy_type)}
+            return {**data, key: network_os}
+        return data
+
 
 class LoopbackInterfaceModel(NDBaseModel):
     """
@@ -539,7 +570,7 @@ class LoopbackInterfaceModel(NDBaseModel):
                                             extra_config=dict(type="str"),
                                             vrf=dict(type="str"),
                                             ipv6=dict(type="str"),
-                                            route_map_tag=dict(type="str"),
+                                            route_map_tag=dict(type="int"),
                                             advertise_loopback=dict(type="bool"),
                                             is_service_reflect=dict(type="bool"),
                                             routing_tag=dict(type="str"),
