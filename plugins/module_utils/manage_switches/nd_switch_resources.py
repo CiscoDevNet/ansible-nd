@@ -24,7 +24,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
 )
 
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
-from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType, PlatformType
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType, PlatformType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
     NDConfigCollection,
 )
@@ -131,6 +131,7 @@ class ApiCallSpec:
     op_type: OperationType
     diff: dict[str, Any] | None = None
     context: str = ""
+    verbosity_level: int = 2
 
 
 @dataclass
@@ -278,11 +279,16 @@ class SwitchServiceContext:
         result = self.nd.rest_send.result_current
         ApiDataChecker.check(response.get("DATA", {}), spec.context, self.log, self.nd.module.fail_json)
 
+        recorded_payload = mask_password(spec.payload)
         self.results.action = spec.action
         self.results.operation_type = spec.op_type
+        self.results.path_current = spec.endpoint.path
+        self.results.verb_current = HttpVerbEnum(spec.endpoint.verb)
+        self.results.payload_current = recorded_payload
+        self.results.verbosity_level_current = spec.verbosity_level
         self.results.response_current = response
         self.results.result_current = result
-        self.results.diff_current = spec.diff if spec.diff is not None else spec.payload
+        self.results.diff_current = mask_password(spec.diff) if spec.diff is not None else recorded_payload
         self.results.register_api_call()
 
         if not result.get("success"):
@@ -1433,6 +1439,7 @@ class SwitchFabricOps:
         self.ctx.results.path_current = endpoint.path
         self.ctx.results.verb_current = endpoint.verb
         self.ctx.results.payload_current = payload
+        self.ctx.results.verbosity_level_current = 2
         self.ctx.results.register_api_call()
 
     def finalize(self, serial_numbers: list[str] | None = None) -> None:
@@ -1658,7 +1665,6 @@ class POAPHandler:
                     f
                     for f in [
                         "hostname",
-                        "image_policy",
                         "discovery_username",
                         "discovery_password",
                     ]
@@ -1671,7 +1677,6 @@ class POAPHandler:
                         "version",
                         "hostname",
                         "config_data",
-                        "image_policy",
                         "discovery_username",
                         "discovery_password",
                     ]
@@ -1876,7 +1881,6 @@ class POAPHandler:
         switch_role = switch_cfg.role
         password = switch_cfg.password
         auth_proto = SnmpV3AuthProtocol.MD5  # POAP/bootstrap always uses MD5
-        image_policy = poap_cfg.image_policy
 
         discovery_username = getattr(poap_cfg, "discovery_username", None)
         discovery_password = getattr(poap_cfg, "discovery_password", None)
@@ -1885,6 +1889,7 @@ class POAPHandler:
         # bootstrap-only operations.
         model = bs.get("model", "")
         version = bs.get("softwareVersion", "")
+        software_image = poap_cfg.software_image
 
         gateway_ip_mask = bs.get("gatewayIpMask") or bs_data.get("gatewayIpMask")
         data_models = bs_data.get("models", [])
@@ -1933,7 +1938,8 @@ class POAPHandler:
         # Bootstrap API response fields
         fingerprint = bs.get("fingerPrint") or bs.get("fingerprint", "")
         public_key = bs.get("publicKey", "")
-        re_add = bs.get("reAdd", False)
+        dhcp_bootstrap_ip = bs.get("dhcpBootstrapIp")
+        seed_switch = bs.get("seedSwitch", False)
         in_inventory = bs.get("inInventory", False)
 
         bootstrap_model = BootstrapImportSwitchModel(
@@ -1948,11 +1954,12 @@ class POAPHandler:
             data=data_block,
             fingerprint=fingerprint,
             publicKey=public_key,
-            reAdd=re_add,
+            dhcpBootstrapIp=dhcp_bootstrap_ip,
+            seedSwitch=seed_switch,
             inInventory=in_inventory,
-            imagePolicy=image_policy or "",
             switchRole=switch_role,
             softwareVersion=version,
+            softwareImage=software_image,
             gatewayIpMask=gateway_ip_mask,
         )
 
@@ -2028,7 +2035,6 @@ class POAPHandler:
         ip = switch_cfg.seed_ip
         model_name = preprov_cfg.model
         version = preprov_cfg.version
-        image_policy = preprov_cfg.image_policy
         gateway_ip_mask = preprov_cfg.config_data.gateway
         switch_role = switch_cfg.role
         password = switch_cfg.password
@@ -2052,7 +2058,6 @@ class POAPHandler:
             discoveryUsername=discovery_username,
             discoveryPassword=discovery_password,
             data=data_block,
-            imagePolicy=image_policy or None,
             switchRole=switch_role,
         )
 
@@ -2546,10 +2551,9 @@ class RMAHandler:
     ) -> RMASwitchModel:
         """Build an RMA model from config and bootstrap data.
 
-        All switch properties (model, version, gateway, modules) are sourced
-        exclusively from the bootstrap API response.  Only the new serial number,
-        optional image policy, and optional discovery credentials come from the
-        playbook config.
+        Bootstrap identity and day-0 fields come from the replacement switch's
+        bootstrap record. The old switch supplies the hostname and management IP;
+        the playbook supplies the new serial number, role, and credentials.
 
         ## Parameters
 
@@ -2576,6 +2580,7 @@ class RMAHandler:
         data_models = bs_data.get("models", [])
         model = bootstrap_data.get("model", "")
         software_version = bootstrap_data.get("softwareVersion", "")
+        software_image = bootstrap_data.get("softwareImage")
         public_key = bootstrap_data.get("publicKey", "")
         finger_print = bootstrap_data.get("fingerPrint") or bootstrap_data.get("fingerprint", "")
 
@@ -2583,7 +2588,7 @@ class RMAHandler:
             gatewayIpMask=gateway_ip_mask,
             model=model,
             softwareVersion=software_version,
-            imagePolicy=rma_cfg.image_policy,
+            softwareImage=software_image,
             switchRole=switch_cfg.role,
             password=switch_cfg.password,
             discoveryAuthProtocol=SnmpV3AuthProtocol.MD5,
@@ -2595,6 +2600,8 @@ class RMAHandler:
             oldSwitchId=old_serial,
             publicKey=public_key,
             fingerPrint=finger_print,
+            dhcpBootstrapIp=bootstrap_data.get("dhcpBootstrapIp"),
+            seedSwitch=bootstrap_data.get("seedSwitch", False),
             data=({"gatewayIpMask": gateway_ip_mask, "models": data_models} if (gateway_ip_mask or data_models) else None),
         )
 
@@ -2607,8 +2614,8 @@ class RMAHandler:
     ) -> None:
         """Submit an RMA provisioning request for one switch.
 
-        The old and new switch IDs are embedded in the payload via
-        ``oldSwitchId`` and ``newSwitchId`` fields on the model.
+        The old switch ID is sent as the endpoint path parameter.  The request
+        body contains only the ND 4.2 ``RMASwitch`` fields.
 
         ## Parameters
 
@@ -2788,7 +2795,8 @@ class NDSwitchResourceModule:
             return
         try:
             fabric_type = self.fabric_details_cache.get_fabric_type()
-            capability = validate_switch_configs_for_fabric_type(self.fabric, fabric_type, configs)
+            controller_version = self.nd.get_rest_send().controller_version if any(cfg.role == SwitchRole.BORDER_SPINE for cfg in configs) else None
+            capability = validate_switch_configs_for_fabric_type(self.fabric, fabric_type, configs, controller_version=controller_version)
             self.log.debug(
                 "Switch capability validation passed for fabric %s using %s matrix",
                 self.fabric,
@@ -3057,7 +3065,7 @@ class NDSwitchResourceModule:
         - None.
         """
         self.results.build_final_result()
-        final = self.results.final_result
+        final = {key: self.results.final_result[key] for key in ("changed", "failed")}
 
         if self.state == "gathered":
             # gathered: expose the already-queried inventory in config shape.
@@ -3114,6 +3122,11 @@ class NDSwitchResourceModule:
 
         if self.msg:
             final["msg"] = self.msg
+        verbosity = getattr(self.nd.module, "_verbosity", 0)
+        if self.module.params.get("output_level", "normal") == "debug":
+            verbosity = max(verbosity, 3)
+        final = self.output.format_with_verbosity(verbosity, results=self.results, **final)
+        final["changed"] = final["changed"] or True in self.results.changed
         if True in self.results.failed:
             self.nd.module.fail_json(**final)
         self.nd.module.exit_json(**final)

@@ -125,7 +125,7 @@ class NDOutput:
         # Level 3+ (-vvv): full controller detail for qualifying tasks.
         if verbosity >= 3:
             for key in ("response", "result", "diff", "metadata", "payload"):
-                output["api_{0}".format(key)] = final.get(key, [])
+                output["api_{0}".format(key)] = [final.get(key, [])[i] for i in indices]
 
         return output
 

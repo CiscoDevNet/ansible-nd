@@ -18,11 +18,14 @@ Covers:
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
+    PrivateAttr,
     field_validator,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
@@ -33,10 +36,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.enums 
     ConfigurationStatus,
     OperationStatus,
     VrfType,
+    VXLAN_VRF_TYPES,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.validators import (
     VrfValidators,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.capabilities import VrfWriteCapabilities
 
 # =============================================================================
 # Nested / shared nested models
@@ -262,28 +267,35 @@ class VxlanCoreData(NDNestedModel):
         alias="ipv6LinkLocal",
         description=("Enables IPv6 link-local option under VRF SVI. " "Not applicable to L3VNI without VLAN config. NX-OS specific"),
     )
+    route_distinguisher_id: int | None = Field(
+        default=None,
+        alias="routeDistinguisherId",
+        ge=0,
+        le=65535,
+        description="VRF route distinguisher ID on IOS XE",
+    )
     disable_rt_auto: bool | None = Field(
         default=False,
         alias="disableRtAuto",
         description=("Applicable to IPv4, IPv6 VPN/EVPN/MVPN. RtAuto automatically " "assigns route targets to VPNs"),
     )
     route_target_import: list[str] | None = Field(
-        default=None,
+        default_factory=list,
         alias="routeTargetImport",
         description="List of VPN import route targets",
     )
     route_target_export: list[str] | None = Field(
-        default=None,
+        default_factory=list,
         alias="routeTargetExport",
         description="List of VPN export route targets",
     )
     evpn_route_target_import: list[str] | None = Field(
-        default=None,
+        default_factory=list,
         alias="evpnRouteTargetImport",
         description="List of EVPN import route targets",
     )
     evpn_route_target_export: list[str] | None = Field(
-        default=None,
+        default_factory=list,
         alias="evpnRouteTargetExport",
         description="List of EVPN export route targets",
     )
@@ -312,6 +324,11 @@ class VxlanFabricInstance(NDNestedModel):
         default=False,
         alias="bgpLogNeighborChange",
         description="Log messages for BGP neighbor up/down event",
+    )
+    enable_vrf_vpn_route_leaking: bool | None = Field(
+        default=False,
+        alias="enableVrfVpnRouteLeaking",
+        description="Enable bidirectional VRF-to-VPN route leaking on NX-OS border switches",
     )
     bgp_allow_as_in: bool | None = Field(
         default=False,
@@ -362,8 +379,8 @@ class VxlanFabricInstance(NDNestedModel):
         max_length=32,
         description="VRF Lite BGP neighbor password",
     )
-    bgp_password_key_type: int | None = Field(
-        default=3,
+    bgp_password_key_type: str | None = Field(
+        default="3des",
         alias="bgpPasswordKeyType",
         description=("Represents the BGP password key type. " "Required if BGP authentication is enabled"),
     )
@@ -388,10 +405,8 @@ class VxlanFabricInstance(NDNestedModel):
 
     @field_validator("bgp_password_key_type", mode="before")
     @classmethod
-    def validate_bgp_key_type(cls, v: int | None) -> int | None:
-        if v is not None and v not in (3, 7):
-            raise ValueError(f"bgpPasswordKeyType must be 3 or 7, got: {v}")
-        return v
+    def validate_bgp_key_type(cls, v: str | None) -> str | None:
+        return VrfValidators.validate_bgp_passwd_encrypt(v)
 
 
 class SecurityGroupData(NDNestedModel):
@@ -460,10 +475,33 @@ class VrfDataModel(NDBaseModel):
     ``coreData`` and ``fabricData`` are captured as typed nested models
     (``VxlanCoreData``, ``VxlanFabricInstance``) for the standard VXLAN
     variant; for other types they are accepted as free-form dicts.
+    Config and response factories select ``ExternalVrfDataModel`` for the
+    External types so their empty-description default stays type-specific.
     """
 
     identifiers: ClassVar[list[str]] = ["vrf_name", "fabric_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
+    exclude_from_diff: ClassVar[set[str]] = {"vrf_status"}
+    payload_exclude_fields: ClassVar[set[str]] = {"vrf_status"}
+    reverse_diff_exclude: ClassVar[set[str]] = {"defaultSecurityGroupTag"}
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {"defaultSecurityAction": "unenforcedOrNone"}
+    _write_capabilities: VrfWriteCapabilities | None = PrivateAttr(default=None)
+
+    @property
+    def write_capabilities(self) -> VrfWriteCapabilities | None:
+        """The runtime write contract; absent on models used outside a workflow."""
+        return self._write_capabilities
+
+    def set_write_capabilities(self, capabilities: VrfWriteCapabilities) -> None:
+        """Bind cached capability metadata without changing observed field values."""
+        self._write_capabilities = capabilities
+
+    def to_payload(self, **kwargs) -> dict[str, Any]:
+        """Export only fields writable on this target's known release."""
+        data = super().to_payload(**kwargs)
+        if self._write_capabilities is not None:
+            self._write_capabilities.filter_fields(data)
+        return data
 
     # vrfCommon required fields
     fabric_name: str = Field(
@@ -476,6 +514,11 @@ class VrfDataModel(NDBaseModel):
         alias="vrfName",
         max_length=94,
         description=("Name of the VRF. For multi-tenant environments, use the " "format tenantName~vrfName."),
+    )
+    description: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Top-level description for External VRFs",
     )
     # vrfCommon optional fields
     vrf_status: ConfigurationStatus | None = Field(
@@ -574,6 +617,273 @@ class VrfDataModel(NDBaseModel):
             raise ValueError(f"vrfType must be one of {VrfType.choices()}, got: {v}")
         return v
 
+    @classmethod
+    def from_config(cls, ansible_config: dict[str, Any], **kwargs) -> "VrfDataModel":
+        """Select the concrete VRF model from the prepared configuration's type."""
+        if cls is VrfDataModel:
+            model_cls = _VRF_MODEL_BY_TYPE.get(ansible_config.get("vrf_type") or ansible_config.get("vrfType"))
+            if model_cls is not None:
+                return model_cls.from_config(ansible_config, **kwargs)
+        return super().from_config(ansible_config, **kwargs)
+
+    @classmethod
+    def from_response(cls, response: dict[str, Any], **kwargs) -> "VrfDataModel":
+        """Select the same concrete VRF model for controller readback."""
+        if cls is VrfDataModel:
+            model_cls = _VRF_MODEL_BY_TYPE.get(response.get("vrfType") or response.get("vrf_type"))
+            if model_cls is not None:
+                return model_cls.from_response(response, **kwargs)
+        return super().from_response(response, **kwargs)
+
+    @classmethod
+    def get_argument_spec(cls) -> dict[str, Any]:
+        """Return the Ansible argument spec for gathered-output pruning."""
+        from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_argument_specs import (
+            vrf_parent_argument_spec,
+            vrf_standalone_argument_spec,
+        )
+
+        return dict(config=dict(type="list", elements="dict", options={**vrf_parent_argument_spec(), **vrf_standalone_argument_spec()}))
+
+    def to_gathered_config(self, **kwargs) -> dict[str, Any]:
+        """Return a replay-safe public config shape for gathered output."""
+        data = self.to_config(**kwargs)
+        description = data.pop("description", None)
+        if self.vrf_type in (VrfType.EXTERNAL_CONNECTIVITY.value, VrfType.VXLAN_EXTERNAL.value) and description is not None:
+            data["vrf_description"] = description
+        core_data = data.pop("core_data", None)
+        fabric_data = data.pop("fabric_data", None)
+        for key in ("fabric_name", "vrf_status", "tenant_name", "service_data", "vrf_type"):
+            data.pop(key, None)
+
+        self._flatten_core_data(data, core_data)
+        self._flatten_fabric_data(data, fabric_data)
+        return data
+
+    def to_diff_dict(self, **kwargs) -> dict[str, Any]:
+        """Compare cleared route targets without expanding sparse intent."""
+        data = super().to_diff_dict(**kwargs)
+        if self.vrf_type in VXLAN_VRF_TYPES and not kwargs.get("exclude_unset", False):
+            core = data.get("coreData") or {}
+            data["coreData"] = core
+            for name, field in VxlanCoreData.model_fields.items():
+                if field.default_factory is list:
+                    alias = field.alias or name
+                    if core.get(alias) is None:
+                        core[alias] = field.get_default(call_default_factory=True)
+            fabric = data.get("fabricData") or {}
+            data["fabricData"] = fabric
+            trm = fabric.get("trmData") or {}
+            fabric["trmData"] = trm
+            for key in ("mvpnRouteTargetImport", "mvpnRouteTargetExport"):
+                if trm.get(key) is None:
+                    trm[key] = []
+        self.normalize_no_vlan(data)
+        if self._write_capabilities is not None:
+            self._write_capabilities.filter_fields(data)
+        return data
+
+    @staticmethod
+    def normalize_no_vlan(data: dict[str, Any]) -> None:
+        """Remove SVI fields that ND may echo on a no-VLAN VRF."""
+        fabric_data = data.get("fabricData") or {}
+        if not isinstance(fabric_data, dict) or fabric_data.get("l3VniWithoutVlan") is not True:
+            return
+        data.pop("vlanId", None)
+        core_data = data.get("coreData")
+        if isinstance(core_data, dict):
+            for key in ("vrfVlanName", "vrfInterfaceDescription", "mtu", "ipv6LinkLocal"):
+                core_data.pop(key, None)
+            if not core_data:
+                data.pop("coreData", None)
+
+    def merge(self, other: "VrfDataModel") -> "VrfDataModel":
+        """Preserve omitted VXLAN core and fabric values in sparse merges."""
+        if not isinstance(other, type(self)):
+            return super().merge(other)
+        merged = other.model_copy(deep=True)
+        for field_name in ("core_data", "fabric_data"):
+            current = getattr(self, field_name)
+            update = getattr(merged, field_name)
+            if field_name in merged.model_fields_set and isinstance(current, dict) and isinstance(update, dict):
+                setattr(merged, field_name, self._merge_nested_data(current, update))
+        result = super().merge(merged)
+        if self.vrf_type in VXLAN_VRF_TYPES and isinstance(self.fabric_data, dict):
+            supplied = other.fabric_data if isinstance(other.fabric_data, dict) else {}
+            self._prune_inherited_trm(self.fabric_data, supplied)
+            if supplied.get("netflow") is False and "netflowMonitor" not in supplied:
+                self.fabric_data.pop("netflowMonitor", None)
+        return result
+
+    def merge_would_change(self, other: "VrfDataModel") -> bool:
+        """Include conditional TRM clears in sparse comparison."""
+        if super().merge_would_change(other):
+            return True
+        if self.vrf_type not in VXLAN_VRF_TYPES:
+            return False
+        supplied = other.fabric_data if isinstance(other.fabric_data, dict) else {}
+        trm = supplied.get("trmData") if isinstance(supplied.get("trmData"), dict) else {}
+        if not any(field in trm for field in ("v4RpAbsent", "v6RpAbsent", "ipv4Trm", "ipv6Trm")) and supplied.get("netflow") is not False:
+            return False
+        candidate = self.model_copy(deep=True)
+        candidate.merge(other)
+        return candidate.to_diff_dict() != self.to_diff_dict()
+
+    @classmethod
+    def _merge_nested_data(cls, current: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:
+        result = deepcopy(current)
+        for key, value in update.items():
+            result[key] = cls._merge_nested_data(result[key], value) if isinstance(result.get(key), dict) and isinstance(value, dict) else value
+        return result
+
+    @staticmethod
+    def _prune_inherited_trm(fabric: dict[str, Any], supplied: dict[str, Any]) -> None:
+        trm = fabric.get("trmData")
+        if not isinstance(trm, dict):
+            return
+        intent = supplied.get("trmData") if isinstance(supplied.get("trmData"), dict) else {}
+
+        def drop_inherited(*fields: str) -> None:
+            for field in fields:
+                if field not in intent and trm.get(field) is not False:
+                    trm.pop(field, None)
+
+        if intent.get("v4RpAbsent") is True:
+            drop_inherited("v4RpExternal", "v4RpAddress")
+        if intent.get("v6RpAbsent") is True:
+            drop_inherited("v6RpExternal", "v6RpAddress")
+        if intent.get("ipv4Trm") is False:
+            drop_inherited("v4RpAbsent", "v4RpExternal", "v4RpAddress", "v4MulticastGroup")
+        if intent.get("ipv6Trm") is False:
+            drop_inherited("v6RpAbsent", "v6RpExternal", "v6RpAddress", "v6MulticastGroup")
+        if ("ipv4Trm" in intent or "ipv6Trm" in intent) and not (trm.get("ipv4Trm") or trm.get("ipv6Trm")):
+            drop_inherited(
+                "loopbackNumber",
+                "l3VniMulticastGroup",
+                "trmOnBgw",
+                "mvpnInterAs",
+                "mvpnRouteTargetImport",
+                "mvpnRouteTargetExport",
+            )
+
+    def _scrub_reverse_diff_dict(self, data: dict[str, Any]) -> None:
+        super()._scrub_reverse_diff_dict(data)
+        if self.vrf_type not in VXLAN_VRF_TYPES:
+            return
+        core = data.get("coreData")
+        if isinstance(core, dict):
+            self._drop_model_defaults(core, VxlanCoreData)
+            if not core:
+                data.pop("coreData", None)
+        fabric = data.get("fabricData")
+        if isinstance(fabric, dict):
+            trm = fabric.get("trmData")
+            if isinstance(trm, dict):
+                self._drop_model_defaults(trm, TrmData)
+                for key in ("ipv4Trm", "ipv6Trm"):
+                    if trm.get(key) is False:
+                        trm.pop(key)
+                if not trm:
+                    fabric.pop("trmData", None)
+            self._drop_model_defaults(fabric, VxlanFabricInstance)
+            if not fabric:
+                data.pop("fabricData", None)
+
+    @staticmethod
+    def _drop_model_defaults(data: dict[str, Any], model_cls: type[NDNestedModel]) -> None:
+        for name, field in model_cls.model_fields.items():
+            alias = field.alias or name
+            if alias in data and data[alias] == field.get_default(call_default_factory=True):
+                data.pop(alias)
+
+    @classmethod
+    def _flatten_core_data(cls, data: dict[str, Any], core_data: Any) -> None:
+        core = cls._nested_config(core_data)
+        if not core:
+            return
+        for target, *source in (
+            ("vrf_vlan_name", "vrf_vlan_name", "vrfVlanName"),
+            ("vrf_intf_desc", "vrf_interface_description", "vrfInterfaceDescription"),
+            ("vrf_description", "vrf_description", "vrfDescription"),
+            ("vrf_int_mtu", "mtu"),
+            ("loopback_route_tag", "routing_tag", "routingTag"),
+            ("redist_direct_rmap", "vrf_route_map", "vrfRouteMap"),
+            ("v6_redist_direct_rmap", "v6_vrf_route_map", "v6VrfRouteMap"),
+            ("max_bgp_paths", "max_bgp_paths", "maxBgpPaths"),
+            ("max_ibgp_paths", "max_ibgp_paths", "maxIbgpPaths"),
+            ("ipv6_linklocal_enable", "ipv6_link_local", "ipv6LinkLocal"),
+            ("route_distinguisher_id", "route_distinguisher_id", "routeDistinguisherId"),
+            ("disable_rt_auto", "disable_rt_auto", "disableRtAuto"),
+            ("import_vpn_rt", "route_target_import", "routeTargetImport"),
+            ("export_vpn_rt", "route_target_export", "routeTargetExport"),
+            ("import_evpn_rt", "evpn_route_target_import", "evpnRouteTargetImport"),
+            ("export_evpn_rt", "evpn_route_target_export", "evpnRouteTargetExport"),
+        ):
+            cls._copy_if_present(data, core, target, *source)
+
+    @classmethod
+    def _flatten_fabric_data(cls, data: dict[str, Any], fabric_data: Any) -> None:
+        fabric = cls._nested_config(fabric_data)
+        if not fabric:
+            return
+        for target, *source in (
+            ("l3vni_wo_vlan", "l3_vni_without_vlan", "l3VniWithoutVlan"),
+            ("bgp_best_path_relax", "bgp_best_path_relax", "bgpBestPathRelax"),
+            ("bgp_log_neighbor_change", "bgp_log_neighbor_change", "bgpLogNeighborChange"),
+            ("enable_vrf_vpn_route_leaking", "enable_vrf_vpn_route_leaking", "enableVrfVpnRouteLeaking"),
+            ("bgp_allow_as_in", "bgp_allow_as_in", "bgpAllowAsIn"),
+            ("bgp_allow_as_in_num", "bgp_allow_as_in_num", "bgpAllowAsInNum"),
+            ("bgp_as_override", "bgp_as_override", "bgpAsOverride"),
+            ("bgp_disable_peer_as_check", "bgp_disable_peer_as_check", "bgpDisablePeerAsCheck"),
+            ("bgp_soft_reconfig_always", "bgp_soft_reconfig_always", "bgpSoftReconfigAlways"),
+            ("adv_host_routes", "advertise_host_route", "advertiseHostRoute"),
+            ("adv_default_routes", "advertise_default_route", "advertiseDefaultRoute"),
+            ("static_default_route", "configure_static_default_route", "configureStaticDefaultRoute"),
+            ("bgp_password", "bgp_password", "bgpPassword"),
+            ("bgp_passwd_encrypt", "bgp_password_key_type", "bgpPasswordKeyType"),
+            ("netflow_enable", "netflow"),
+            ("nf_monitor", "netflow_monitor", "netflowMonitor"),
+        ):
+            cls._copy_if_present(data, fabric, target, *source)
+
+        trm_data = cls._nested_config(fabric.get("trm_data") or fabric.get("trmData"))
+        for target, *source in (
+            ("no_rp", "v4_rp_absent", "v4RpAbsent"),
+            ("rp_external", "v4_rp_external", "v4RpExternal"),
+            ("rp_address", "v4_rp_address", "v4RpAddress"),
+            ("v6_no_rp", "v6_rp_absent", "v6RpAbsent"),
+            ("v6_rp_external", "v6_rp_external", "v6RpExternal"),
+            ("v6_rp_address", "v6_rp_address", "v6RpAddress"),
+            ("rp_loopback_id", "loopback_number", "loopbackNumber"),
+            ("underlay_mcast_ip", "l3_vni_multicast_group", "l3VniMulticastGroup"),
+            ("overlay_mcast_group", "v4_multicast_group", "v4MulticastGroup"),
+            ("v6_overlay_mcast_group", "v6_multicast_group", "v6MulticastGroup"),
+            ("mvpn_inter_as", "mvpn_inter_as", "mvpnInterAs"),
+            ("trm_bgw_msite", "trm_on_bgw", "trmOnBgw"),
+            ("import_mvpn_rt", "mvpn_route_target_import", "mvpnRouteTargetImport"),
+            ("export_mvpn_rt", "mvpn_route_target_export", "mvpnRouteTargetExport"),
+            ("trm_enable", "ipv4_trm", "ipv4Trm"),
+            ("ipv6_trm", "ipv6_trm", "ipv6Trm"),
+        ):
+            cls._copy_if_present(data, trm_data, target, *source)
+
+    @staticmethod
+    def _nested_config(value: Any) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if hasattr(value, "to_config"):
+            return value.to_config()
+        if isinstance(value, dict):
+            return dict(value)
+        return {}
+
+    @staticmethod
+    def _copy_if_present(target: dict[str, Any], source: dict[str, Any], target_key: str, *source_keys: str) -> None:
+        for source_key in source_keys:
+            if source_key in source and source[source_key] is not None:
+                target[target_key] = source[source_key]
+                return
+
     @field_validator("vrf_template_config", mode="before")
     @classmethod
     def validate_vrf_template_config(cls, v: dict[str, str] | None) -> dict[str, str] | None:
@@ -585,6 +895,44 @@ class VrfDataModel(NDBaseModel):
         if bad:
             raise ValueError("vrfTemplateConfig values must be strings for keys: " f"{', '.join(str(key) for key in bad)}")
         return v
+
+
+class ExternalVrfDataModel(VrfDataModel):
+    """External VRF state with required fabric identity and sparse descriptions.
+
+    The inherited ``fabric_name`` field is required in POST and PUT bodies.
+    ND 4.2.1/4.3.1 ``externalVrfBase`` omits ``fabricName``, but the controller
+    requires it for both ``externalConnectivity`` and ``vxlanExternal`` VRFs.
+    """
+
+    vrf_type: Literal[VrfType.EXTERNAL_CONNECTIVITY, VrfType.VXLAN_EXTERNAL] = Field(alias="vrfType")
+    # TODO(4.3.1) external-vrf-get-omits-empty-description: ND omits a cleared description from GET.
+    description: str = Field(default="", max_length=255, description="Description of the External VRF")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_null_read_description(cls, data: Any, info: Any) -> Any:
+        """Treat defensive null readback as an omitted empty description."""
+        if (info.context or {}).get("mode") == "response" and isinstance(data, dict) and "description" in data and data["description"] is None:
+            data = dict(data)
+            data.pop("description")
+        return data
+
+    def to_payload(self, **kwargs) -> dict[str, Any]:
+        """Keep omitted defaults out of writes while retaining explicit clears."""
+        kwargs.setdefault("exclude_unset", True)
+        return super().to_payload(**kwargs)
+
+    def to_config(self, **kwargs) -> dict[str, Any]:
+        """Preserve observed field presence in public and gathered output."""
+        kwargs.setdefault("exclude_unset", True)
+        return super().to_config(**kwargs)
+
+
+_VRF_MODEL_BY_TYPE = {
+    VrfType.EXTERNAL_CONNECTIVITY.value: ExternalVrfDataModel,
+    VrfType.VXLAN_EXTERNAL.value: ExternalVrfDataModel,
+}
 
 
 class VrfCreateRequestModel(NDBaseModel):
@@ -706,6 +1054,7 @@ class VrfPreInformationResponseModel(NDBaseModel):
 
 
 __all__ = [
+    "ExternalVrfDataModel",
     "L4l7ServiceData",
     "Metadata",
     "MetadataCounts",

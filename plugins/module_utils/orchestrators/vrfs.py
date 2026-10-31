@@ -40,8 +40,15 @@ import json
 import time
 
 from typing import Any, Callable, ClassVar
+from functools import cached_property
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import (
+    get_raw_module_args,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import (
+    VrfConfigModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_data_models import (
     TrmData,
     VrfDataModel,
@@ -51,9 +58,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_da
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.enums import (
     VrfType,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.capabilities import VrfWriteCapabilities
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
+    NDBaseOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    ResponseType,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_vrf import (
     BaseVrfStrategy,
 )
@@ -65,6 +77,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 
 NDVrfModel = VrfDataModel
+_EXTERNAL_VRF_TYPES = frozenset({VrfType.EXTERNAL_CONNECTIVITY.value, VrfType.VXLAN_EXTERNAL.value})
+_BGP_KEY_TYPE_NUMBERS = {"3des": 3, "type6": 6, "type7": 7}
+_BGP_KEY_TYPE_NAMES = {number: name for name, number in _BGP_KEY_TYPE_NUMBERS.items()}
 
 
 class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
@@ -104,18 +119,28 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
     trace_hook: Callable[..., None] | None = None
     delete_retry_attempts: ClassVar[int] = 3
     delete_retry_delay: ClassVar[int] = 30
-    scoped_query_threshold: ClassVar[int] = 5
     unfiltered_query_page_size: ClassVar[int] = 10000
 
     def model_post_init(self, __context) -> None:
         if self.strategy is None:
             raise ValueError("NDVrfOrchestrator requires a strategy instance.")
 
+    @cached_property
+    def write_capabilities(self) -> VrfWriteCapabilities:
+        """Reuse the cached connection release for every fabric topology."""
+        return VrfWriteCapabilities(self.rest_send.controller_version)
+
+    def configure_write_models(self, proposed: NDVrfModel, current: NDVrfModel | None) -> None:
+        """Use the same policy for both sides of the existing reconciliation pass."""
+        proposed.set_write_capabilities(self.write_capabilities)
+        if current is not None:
+            current.set_write_capabilities(self.write_capabilities)
+
     # ── Config preprocessing ──────────────────────────────────────
 
     @staticmethod
     def _value(config: dict[str, Any], *names: str, default: Any = None) -> Any:
-        """Return the first present config value across Python and alias names."""
+        """Return the first present config value."""
         for name in names:
             if name in config:
                 return config[name]
@@ -126,48 +151,47 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         """Return True when playbook config explicitly sets fabric-level VRF options."""
         fabric_field_names = {
             "l3vni_wo_vlan",
-            "l3_vni_without_vlan",
             "adv_host_routes",
-            "advertise_host_route",
             "adv_default_routes",
-            "advertise_default_route",
             "static_default_route",
-            "configure_static_default_route",
             "bgp_password",
-            "bgpPassword",
             "bgp_passwd_encrypt",
-            "bgp_password_key_type",
+            "bgp_best_path_relax",
+            "bgp_log_neighbor_change",
+            "enable_vrf_vpn_route_leaking",
+            "bgp_allow_as_in",
+            "bgp_allow_as_in_num",
+            "bgp_as_override",
+            "bgp_disable_peer_as_check",
+            "bgp_soft_reconfig_always",
             "netflow_enable",
-            "netflow",
             "nf_monitor",
-            "netflow_monitor",
             "trm_enable",
-            "ipv4_trm",
             "ipv6_trm",
             "no_rp",
-            "v4_rp_absent",
             "rp_external",
-            "v4_rp_external",
             "rp_address",
-            "v4_rp_address",
+            "v6_no_rp",
+            "v6_rp_external",
+            "v6_rp_address",
             "rp_loopback_id",
-            "loopback_number",
             "underlay_mcast_ip",
-            "l3_vni_multicast_group",
             "overlay_mcast_group",
-            "v4_multicast_group",
+            "v6_overlay_mcast_group",
+            "mvpn_inter_as",
             "trm_bgw_msite",
-            "trm_on_bgw",
             "import_mvpn_rt",
-            "mvpn_route_target_import",
             "export_mvpn_rt",
-            "mvpn_route_target_export",
         }
         return any(name in config for name in fabric_field_names)
 
     def _default_vrf_type(self) -> str:
         """Return the standard VRF type derived from resolved fabric details."""
-        fabric_data = self.strategy.fabric_data if self.strategy else {}
+        return self.default_vrf_type(self.strategy.fabric_data if self.strategy else {})
+
+    @staticmethod
+    def default_vrf_type(fabric_data: dict[str, Any] | None) -> str:
+        """Return the standard VRF type from cached fabric details."""
         for key in ("vrf_type", "vrfType", "managementType"):
             if isinstance(fabric_data, dict) and fabric_data.get(key):
                 return fabric_data[key]
@@ -180,48 +204,89 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             return management["type"]
         return VrfType.VXLAN_IBGP.value
 
+    @staticmethod
+    def _validate_external_vrf_config(config: dict[str, Any], explicit_fields: set[str] | None = None) -> None:
+        """
+        # Summary
+
+        Reject non-default VRF options absent from the External VRF schema.
+
+        ## Raises
+
+        ### ValueError
+
+        - If the configuration requests a VXLAN-only definition or an attachment.
+        """
+        allowed = {
+            "vrf_name",
+            "vrf_description",
+            "vrf_type",
+            "fabric_name",
+            "deploy",
+            "deploy_type",
+        }
+        if explicit_fields is not None:
+            unsupported = sorted(explicit_fields - allowed)
+        else:
+            unsupported = sorted(
+                key
+                for key, value in config.items()
+                if key not in allowed and value is not None and value != getattr(VrfConfigModel.model_fields.get(key), "default", None)
+            )
+        if unsupported:
+            raise ValueError(f"External VRFs support only vrf_name and vrf_description; unsupported options: {', '.join(unsupported)}")
+
     def _transform_child_config_to_payload_model_data(self, config: dict[str, Any], fabric_name: str) -> dict[str, Any]:
         """Transform child overrides into a fabricData-only VRF payload."""
         transformed: dict[str, Any] = {
-            "fabric_name": self._value(config, "fabric_name", "fabricName", default=fabric_name),
-            "vrf_name": self._value(config, "vrf_name", "vrfName"),
+            "fabric_name": self._value(config, "fabric_name", default=fabric_name),
+            "vrf_name": self._value(config, "vrf_name"),
         }
 
         trm_kwargs = {
-            "ipv4_trm": self._value(config, "trm_enable", "ipv4_trm"),
-            "v4_rp_absent": self._value(config, "no_rp", "v4_rp_absent"),
-            "v4_rp_external": self._value(config, "rp_external", "v4_rp_external"),
-            "v4_rp_address": self._value(config, "rp_address", "v4_rp_address"),
-            "loopback_number": self._value(config, "rp_loopback_id", "loopback_number"),
-            "l3_vni_multicast_group": self._value(config, "underlay_mcast_ip", "l3_vni_multicast_group"),
-            "v4_multicast_group": self._value(config, "overlay_mcast_group", "v4_multicast_group"),
-            "trm_on_bgw": self._value(config, "trm_bgw_msite", "trm_on_bgw"),
-            "mvpn_route_target_import": self._value(config, "import_mvpn_rt", "mvpn_route_target_import"),
-            "mvpn_route_target_export": self._value(config, "export_mvpn_rt", "mvpn_route_target_export"),
+            "ipv4_trm": self._value(config, "trm_enable"),
+            "ipv6_trm": self._value(config, "ipv6_trm"),
+            "v4_rp_absent": self._value(config, "no_rp"),
+            "v4_rp_external": self._value(config, "rp_external"),
+            "v4_rp_address": self._value(config, "rp_address"),
+            "v6_rp_absent": self._value(config, "v6_no_rp"),
+            "v6_rp_external": self._value(config, "v6_rp_external"),
+            "v6_rp_address": self._value(config, "v6_rp_address"),
+            "loopback_number": self._value(config, "rp_loopback_id"),
+            "l3_vni_multicast_group": self._value(config, "underlay_mcast_ip"),
+            "v4_multicast_group": self._value(config, "overlay_mcast_group"),
+            "v6_multicast_group": self._value(config, "v6_overlay_mcast_group"),
+            "trm_on_bgw": self._value(config, "trm_bgw_msite"),
+            "mvpn_inter_as": self._value(config, "mvpn_inter_as"),
+            "mvpn_route_target_import": self._value(config, "import_mvpn_rt"),
+            "mvpn_route_target_export": self._value(config, "export_mvpn_rt"),
         }
         trm_kwargs = {k: v for k, v in trm_kwargs.items() if v is not None}
 
         fabric_kwargs = {
-            "l3_vni_without_vlan": self._value(config, "l3vni_wo_vlan", "l3_vni_without_vlan", default=False),
-            "advertise_host_route": self._value(config, "adv_host_routes", "advertise_host_route", default=False),
-            "advertise_default_route": self._value(config, "adv_default_routes", "advertise_default_route", default=True),
-            "configure_static_default_route": self._value(
-                config,
-                "static_default_route",
-                "configure_static_default_route",
-                default=True,
-            ),
-            "bgp_password": self._value(config, "bgp_password", "bgpPassword"),
-            "bgp_password_key_type": self._value(config, "bgp_passwd_encrypt", "bgp_password_key_type", default=3),
-            "netflow": self._value(config, "netflow_enable", "netflow", default=False),
-            "netflow_monitor": self._value(config, "nf_monitor", "netflow_monitor"),
+            "l3_vni_without_vlan": self._value(config, "l3vni_wo_vlan"),
+            "bgp_best_path_relax": self._value(config, "bgp_best_path_relax"),
+            "enable_vrf_vpn_route_leaking": self._value(config, "enable_vrf_vpn_route_leaking"),
+            "bgp_log_neighbor_change": self._value(config, "bgp_log_neighbor_change"),
+            "advertise_host_route": self._value(config, "adv_host_routes"),
+            "advertise_default_route": self._value(config, "adv_default_routes"),
+            "configure_static_default_route": self._value(config, "static_default_route"),
+            "bgp_password": self._value(config, "bgp_password"),
+            "bgp_password_key_type": self._value(config, "bgp_passwd_encrypt"),
+            "bgp_allow_as_in": self._value(config, "bgp_allow_as_in"),
+            "bgp_allow_as_in_num": self._value(config, "bgp_allow_as_in_num"),
+            "bgp_as_override": self._value(config, "bgp_as_override"),
+            "bgp_disable_peer_as_check": self._value(config, "bgp_disable_peer_as_check"),
+            "bgp_soft_reconfig_always": self._value(config, "bgp_soft_reconfig_always"),
+            "netflow": self._value(config, "netflow_enable"),
+            "netflow_monitor": self._value(config, "nf_monitor"),
         }
         fabric_kwargs = {k: v for k, v in fabric_kwargs.items() if v is not None}
         if trm_kwargs:
             fabric_kwargs["trm_data"] = TrmData(**trm_kwargs)
 
         if fabric_kwargs:
-            transformed["fabric_data"] = VxlanFabricInstance(**fabric_kwargs).to_payload()
+            transformed["fabric_data"] = VxlanFabricInstance(**fabric_kwargs).to_payload(exclude_unset=True)
 
         return transformed
 
@@ -234,48 +299,49 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         transform here prevents Ansible config fields from being silently
         dropped by VrfDataModel.extra="ignore".
         """
-        vrf_type = self._value(
-            config,
-            "vrf_type",
-            "vrfType",
-            default=self._default_vrf_type(),
-        )
+        custom_template_fields = {
+            "service_vrf_template_name": ("service_vrf_template_name",),
+            "vrf_template_name": ("vrf_template_name",),
+            "vrf_extension_template_name": ("vrf_extension_template_name",),
+            "vrf_template_config": ("vrf_template_config",),
+        }
+        fabric_vrf_type = self._default_vrf_type()
+        if fabric_vrf_type in _EXTERNAL_VRF_TYPES:
+            self._validate_external_vrf_config(config)
+            requested_type = self._value(config, "vrf_type")
+            if requested_type not in (None, fabric_vrf_type):
+                raise ValueError(f"External fabric requires vrf_type={fabric_vrf_type}, got {requested_type}")
+            transformed = {
+                "fabric_name": self._value(config, "fabric_name", default=fabric_name),
+                "vrf_name": self._value(config, "vrf_name"),
+                "vrf_type": fabric_vrf_type,
+            }
+            description = self._value(config, "vrf_description")
+            if description is not None:
+                transformed["description"] = description
+            return transformed
+        explicit_vrf_type = self._value(config, "vrf_type")
+        has_custom_template_fields = any(self._value(config, *names) is not None for names in custom_template_fields.values())
+        vrf_type = explicit_vrf_type or (VrfType.USER_DEFINED.value if has_custom_template_fields else fabric_vrf_type)
         transformed: dict[str, Any] = {
-            "fabric_name": self._value(config, "fabric_name", "fabricName", default=fabric_name),
-            "vrf_name": self._value(config, "vrf_name", "vrfName"),
+            "fabric_name": self._value(config, "fabric_name", default=fabric_name),
+            "vrf_name": self._value(config, "vrf_name"),
             "vrf_type": vrf_type,
         }
+        is_parent = getattr(self.strategy, "is_parent", False)
 
         optional_top_level = {
-            "tenant_name": ("tenant_name", "tenantName"),
-            "vrf_id": ("vrf_id", "vrfId"),
-            "vlan_id": ("vlan_id", "vlanId"),
-            "default_security_action": (
-                "default_security_action",
-                "defaultSecurityAction",
-            ),
-            "default_security_group_tag": (
-                "default_security_group_tag",
-                "defaultSecurityGroupTag",
-            ),
+            "tenant_name": ("tenant_name",),
+            "vrf_id": ("vrf_id",),
+            "vlan_id": ("vlan_id",),
+            "default_security_action": ("default_security_action",),
+            "default_security_group_tag": ("default_security_group_tag",),
         }
         for target, names in optional_top_level.items():
             value = self._value(config, *names)
             if value is not None:
                 transformed[target] = value
 
-        custom_template_fields = {
-            "service_vrf_template_name": (
-                "service_vrf_template_name",
-                "serviceVrfTemplateName",
-            ),
-            "vrf_template_name": ("vrf_template_name", "vrfTemplateName"),
-            "vrf_extension_template_name": (
-                "vrf_extension_template_name",
-                "vrfExtensionTemplateName",
-            ),
-            "vrf_template_config": ("vrf_template_config", "vrfTemplateConfig"),
-        }
         for target, names in custom_template_fields.items():
             value = self._value(config, *names)
             if value is not None:
@@ -286,106 +352,130 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         if vrf_type == VrfType.USER_DEFINED.value:
             return transformed
 
-        core_data = VxlanCoreData(
-            vrf_vlan_name=self._value(config, "vrf_vlan_name", "vrfVlanName"),
-            vrf_interface_description=self._value(
-                config,
-                "vrf_intf_desc",
-                "vrf_interface_description",
-                "vrfIntfDesc",
-                "vrfInterfaceDescription",
-            ),
-            vrf_description=self._value(config, "vrf_description", "vrfDescription"),
-            mtu=self._value(config, "vrf_int_mtu", "mtu", "vrfIntMtu", default=9216),
-            routing_tag=self._value(
-                config,
-                "loopback_route_tag",
-                "routing_tag",
-                "routingTag",
-                default=12345,
-            ),
-            vrf_route_map=self._value(
-                config,
-                "redist_direct_rmap",
-                "vrf_route_map",
-                "vrfRouteMap",
-                default="FABRIC-RMAP-REDIST-SUBNET",
-            ),
-            v6_vrf_route_map=self._value(
-                config,
-                "v6_redist_direct_rmap",
-                "v6_vrf_route_map",
-                "v6VrfRouteMap",
-                default="FABRIC-RMAP-REDIST-SUBNET",
-            ),
-            max_bgp_paths=self._value(config, "max_bgp_paths", "maxBgpPaths", default=1),
-            max_ibgp_paths=self._value(config, "max_ibgp_paths", "maxIbgpPaths", default=2),
-            ipv6_link_local=self._value(
-                config,
-                "ipv6_linklocal_enable",
-                "ipv6_link_local",
-                "ipv6LinkLocal",
-                default=True,
-            ),
-            disable_rt_auto=self._value(config, "disable_rt_auto", "disableRtAuto", default=False),
-            route_target_import=self._value(config, "import_vpn_rt", "route_target_import"),
-            route_target_export=self._value(config, "export_vpn_rt", "route_target_export"),
-            evpn_route_target_import=self._value(
-                config,
-                "import_evpn_rt",
-                "evpn_route_target_import",
-            ),
-            evpn_route_target_export=self._value(
-                config,
-                "export_evpn_rt",
-                "evpn_route_target_export",
-            ),
-        )
+        core_values = {
+            "vrf_vlan_name": self._value(config, "vrf_vlan_name"),
+            "vrf_interface_description": self._value(config, "vrf_intf_desc"),
+            "vrf_description": self._value(config, "vrf_description"),
+            "mtu": self._value(config, "vrf_int_mtu"),
+            "routing_tag": self._value(config, "loopback_route_tag"),
+            "vrf_route_map": self._value(config, "redist_direct_rmap"),
+            "v6_vrf_route_map": self._value(config, "v6_redist_direct_rmap"),
+            "max_bgp_paths": self._value(config, "max_bgp_paths"),
+            "max_ibgp_paths": self._value(config, "max_ibgp_paths"),
+            "ipv6_link_local": self._value(config, "ipv6_linklocal_enable"),
+            "route_distinguisher_id": self._value(config, "route_distinguisher_id"),
+            "disable_rt_auto": self._value(config, "disable_rt_auto"),
+            "route_target_import": self._value(config, "import_vpn_rt"),
+            "route_target_export": self._value(config, "export_vpn_rt"),
+            "evpn_route_target_import": self._value(config, "import_evpn_rt"),
+            "evpn_route_target_export": self._value(config, "export_evpn_rt"),
+        }
+        core_values = {key: value for key, value in core_values.items() if value is not None}
+        if config.get("l3vni_wo_vlan"):
+            core_values.update(mtu=None, ipv6_link_local=None)
+        core_data = VxlanCoreData(**core_values)
 
         trm_data = TrmData(
-            ipv4_trm=self._value(config, "trm_enable", "ipv4_trm", default=False),
+            ipv4_trm=self._value(config, "trm_enable", default=False),
             ipv6_trm=self._value(config, "ipv6_trm", default=False),
-            v4_rp_absent=self._value(config, "no_rp", "v4_rp_absent", default=False),
-            v4_rp_external=self._value(config, "rp_external", "v4_rp_external", default=False),
-            v4_rp_address=self._value(config, "rp_address", "v4_rp_address"),
-            loopback_number=self._value(config, "rp_loopback_id", "loopback_number"),
-            l3_vni_multicast_group=self._value(config, "underlay_mcast_ip", "l3_vni_multicast_group"),
-            v4_multicast_group=self._value(config, "overlay_mcast_group", "v4_multicast_group"),
-            trm_on_bgw=self._value(config, "trm_bgw_msite", "trm_on_bgw", default=False),
+            v4_rp_absent=self._value(config, "no_rp", default=False),
+            v4_rp_external=self._value(config, "rp_external", default=False),
+            v4_rp_address=self._value(config, "rp_address"),
+            v6_rp_absent=self._value(config, "v6_no_rp", default=False),
+            v6_rp_external=self._value(config, "v6_rp_external", default=False),
+            v6_rp_address=self._value(config, "v6_rp_address"),
+            loopback_number=self._value(config, "rp_loopback_id"),
+            l3_vni_multicast_group=self._value(config, "underlay_mcast_ip"),
+            v4_multicast_group=self._value(config, "overlay_mcast_group"),
+            v6_multicast_group=self._value(config, "v6_overlay_mcast_group"),
+            mvpn_inter_as=self._value(config, "mvpn_inter_as", default=False),
+            trm_on_bgw=self._value(config, "trm_bgw_msite", default=False),
             mvpn_route_target_import=self._value(
                 config,
                 "import_mvpn_rt",
-                "mvpn_route_target_import",
             ),
             mvpn_route_target_export=self._value(
                 config,
                 "export_mvpn_rt",
-                "mvpn_route_target_export",
             ),
         )
 
         fabric_data = VxlanFabricInstance(
-            l3_vni_without_vlan=self._value(config, "l3vni_wo_vlan", "l3_vni_without_vlan", default=False),
-            advertise_host_route=self._value(config, "adv_host_routes", "advertise_host_route", default=False),
-            advertise_default_route=self._value(config, "adv_default_routes", "advertise_default_route", default=True),
+            l3_vni_without_vlan=self._value(config, "l3vni_wo_vlan"),
+            bgp_best_path_relax=self._value(config, "bgp_best_path_relax", default=False),
+            bgp_log_neighbor_change=self._value(config, "bgp_log_neighbor_change", default=False),
+            enable_vrf_vpn_route_leaking=self._value(config, "enable_vrf_vpn_route_leaking", default=False),
+            bgp_allow_as_in=self._value(config, "bgp_allow_as_in", default=False),
+            bgp_allow_as_in_num=self._value(config, "bgp_allow_as_in_num", default=3),
+            bgp_as_override=self._value(config, "bgp_as_override", default=False),
+            bgp_disable_peer_as_check=self._value(config, "bgp_disable_peer_as_check", default=False),
+            bgp_soft_reconfig_always=self._value(config, "bgp_soft_reconfig_always", default=False),
+            advertise_host_route=self._value(config, "adv_host_routes", default=False),
+            advertise_default_route=self._value(config, "adv_default_routes", default=True),
             configure_static_default_route=self._value(
                 config,
                 "static_default_route",
-                "configure_static_default_route",
                 default=True,
             ),
-            bgp_password=self._value(config, "bgp_password", "bgpPassword"),
-            bgp_password_key_type=self._value(config, "bgp_passwd_encrypt", "bgp_password_key_type", default=3),
-            netflow=self._value(config, "netflow_enable", "netflow", default=False),
-            netflow_monitor=self._value(config, "nf_monitor", "netflow_monitor"),
+            bgp_password=self._value(config, "bgp_password"),
+            bgp_password_key_type=self._value(config, "bgp_passwd_encrypt", default="3des"),
+            netflow=self._value(config, "netflow_enable", default=False),
+            netflow_monitor=self._value(config, "nf_monitor"),
             trm_data=trm_data,
         )
 
-        transformed["core_data"] = core_data.to_payload()
-        is_parent = getattr(self.strategy, "is_parent", False)
         is_multicluster = getattr(self.strategy, "is_multicluster", False)
+        core_payload = core_data.to_payload(exclude_unset=self.rest_send.params.get("state", "merged") == "merged")
+        fabric_payload = fabric_data.to_payload()
+        if not is_parent:
+            fabric_sources = {
+                "l3VniWithoutVlan": "l3vni_wo_vlan",
+                "bgpBestPathRelax": "bgp_best_path_relax",
+                "bgpLogNeighborChange": "bgp_log_neighbor_change",
+                "enableVrfVpnRouteLeaking": "enable_vrf_vpn_route_leaking",
+                "bgpAllowAsIn": "bgp_allow_as_in",
+                "bgpAllowAsInNum": "bgp_allow_as_in_num",
+                "bgpAsOverride": "bgp_as_override",
+                "bgpDisablePeerAsCheck": "bgp_disable_peer_as_check",
+                "bgpSoftReconfigAlways": "bgp_soft_reconfig_always",
+                "advertiseHostRoute": "adv_host_routes",
+                "advertiseDefaultRoute": "adv_default_routes",
+                "configureStaticDefaultRoute": "static_default_route",
+                "bgpPassword": "bgp_password",
+                "bgpPasswordKeyType": "bgp_passwd_encrypt",
+                "netflow": "netflow_enable",
+                "netflowMonitor": "nf_monitor",
+            }
+            trm_sources = {
+                "ipv4Trm": "trm_enable",
+                "ipv6Trm": "ipv6_trm",
+                "v4RpAbsent": "no_rp",
+                "v4RpExternal": "rp_external",
+                "v4RpAddress": "rp_address",
+                "v6RpAbsent": "v6_no_rp",
+                "v6RpExternal": "v6_rp_external",
+                "v6RpAddress": "v6_rp_address",
+                "loopbackNumber": "rp_loopback_id",
+                "l3VniMulticastGroup": "underlay_mcast_ip",
+                "v4MulticastGroup": "overlay_mcast_group",
+                "v6MulticastGroup": "v6_overlay_mcast_group",
+                "mvpnInterAs": "mvpn_inter_as",
+                "trmOnBgw": "trm_bgw_msite",
+                "mvpnRouteTargetImport": "import_mvpn_rt",
+                "mvpnRouteTargetExport": "export_mvpn_rt",
+            }
+            trm_payload = fabric_payload.get("trmData", {})
+            trm_payload = {key: value for key, value in trm_payload.items() if trm_sources[key] in config}
+            fabric_payload = {key: value for key, value in fabric_payload.items() if key != "trmData" and (fabric_sources[key] in config)}
+            if trm_payload:
+                fabric_payload["trmData"] = trm_payload
+        if core_payload:
+            transformed["core_data"] = core_payload
+        if is_parent and is_multicluster:
+            transformed.pop("vlan_id", None)
         if not is_parent or (is_multicluster and self._has_explicit_fabric_data(config)):
-            transformed["fabric_data"] = fabric_data.to_payload()
+            if fabric_payload:
+                transformed["fabric_data"] = fabric_payload
         return transformed
 
     def prepare_config_data(self, raw_config):
@@ -393,15 +483,25 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         if not isinstance(raw_config, list):
             return raw_config
         fabric_name = self.strategy.fabric_name
+        external = not self.strategy.is_child and self._default_vrf_type() in _EXTERNAL_VRF_TYPES
+        supplied = get_raw_module_args().get("config") if external else None
+        explicit_entries = supplied if isinstance(supplied, list) and len(supplied) == len(raw_config) else None
         result = []
-        for entry in raw_config:
+        writing = self.rest_send.params.get("state", "merged") in ("merged", "replaced", "overridden", "staged")
+        for index, entry in enumerate(raw_config):
             if isinstance(entry, dict):
+                if writing and not external:
+                    self.write_capabilities.validate_config(entry, fabric_name)
                 if self.strategy.is_child:
                     result.append(self._transform_child_config_to_payload_model_data(entry, fabric_name))
                 else:
+                    if external and explicit_entries is not None and isinstance(explicit_entries[index], dict):
+                        self._validate_external_vrf_config(entry, set(explicit_entries[index]))
                     result.append(self._transform_config_to_payload_model_data(entry, fabric_name))
             else:
                 result.append(entry)
+            if writing and not external and isinstance(result[-1], dict):
+                self.write_capabilities.filter_fields(result[-1], by_alias=False)
         return result
 
     # ── Endpoint factory ──────────────────────────────────────────
@@ -512,14 +612,24 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         try:
             if not scoped_vrf_names:
                 return self._query_all_unfiltered()
-            if self._is_mcfg_parent():
-                return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_vrf_names)
-            if len(scoped_vrf_names) >= self.scoped_query_threshold:
+            return self.query_by_names(scoped_vrf_names)
+        except Exception as e:
+            if scoped_vrf_names:
                 return self._query_all_unfiltered()
-            if len(scoped_vrf_names) > 1:
-                return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_vrf_names)
+            raise Exception(f"Query all VRFs failed: {e}") from e
+
+    def query_by_names(self, vrf_names: list[str]) -> ResponseType:
+        """GET selected VRFs using the most efficient safe query path."""
+        scoped_vrf_names = [name for name in dict.fromkeys(vrf_names) if name]
+        if not scoped_vrf_names:
+            return []
+        # TODO(4.3.1) vrf-multi-name-filter: Manage returns no matches for fielded OR filters, including VXLAN VRFs.
+        if self._is_mcfg_parent() or len(scoped_vrf_names) > 1:
+            return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_vrf_names)
+
+        try:
             endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
-            if scoped_vrf_names and hasattr(endpoint, "endpoint_params"):
+            if hasattr(endpoint, "endpoint_params"):
                 endpoint.endpoint_params.filter = self._vrf_name_filter(scoped_vrf_names)
             result = self._request(
                 path=endpoint.path,
@@ -528,68 +638,15 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 operation_type=OperationType.QUERY,
             )
             if isinstance(result, dict):
-                return self._enrich_mcfg_parent_vrfs_from_children(self._normalize_query_vrf_items(result.get("vrfs") or result.get("items") or []))
-            return self._enrich_mcfg_parent_vrfs_from_children(self._normalize_query_vrf_items(result))
-        except Exception as e:
-            if scoped_vrf_names:
-                return self._query_all_unfiltered()
-            raise Exception(f"Query all VRFs failed: {e}") from e
-
-    def _query_all_scoped(self, vrf_names: list[str]) -> ResponseType:
-        """GET selected VRFs with a single batched filter."""
-        vrfs: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        ordered_names = list(dict.fromkeys(vrf_names))
-        self._append_scoped_vrf_items(vrfs, seen, self._query_all_scoped_batch(ordered_names), ordered_names)
-        return self._enrich_mcfg_parent_vrfs_from_children(vrfs)
+                return self._normalize_query_vrf_items(result.get("vrfs") or result.get("items") or [])
+            return self._normalize_query_vrf_items(result)
+        except Exception:
+            return self._filter_query_items_by_name(self._query_all_unfiltered(), scoped_vrf_names)
 
     @staticmethod
     def _filter_query_items_by_name(items: list[Any], vrf_names: list[str]) -> list[Any]:
         requested = set(vrf_names)
         return [item for item in items or [] if not isinstance(item, dict) or (item.get("vrfName") or item.get("vrf_name")) in requested]
-
-    def _query_all_scoped_batch(self, vrf_names: list[str]) -> list[dict[str, Any]]:
-        endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
-        if hasattr(endpoint, "endpoint_params"):
-            endpoint.endpoint_params.filter = self._vrf_name_filter(vrf_names)
-            endpoint.endpoint_params.max = 1
-        result = self._request(
-            path=endpoint.path,
-            verb=endpoint.verb,
-            not_found_ok=True,
-            operation_type=OperationType.QUERY,
-        )
-        if isinstance(result, dict):
-            return result.get("vrfs") or result.get("items") or []
-        return result or []
-
-    def _query_all_scoped_one(self, vrf_name: str) -> list[dict[str, Any]]:
-        endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
-        if hasattr(endpoint, "endpoint_params"):
-            endpoint.endpoint_params.filter = self._vrf_name_filter([vrf_name])
-        result = self._request(
-            path=endpoint.path,
-            verb=endpoint.verb,
-            not_found_ok=True,
-            operation_type=OperationType.QUERY,
-        )
-        if isinstance(result, dict):
-            return result.get("vrfs") or result.get("items") or []
-        return result or []
-
-    def _append_scoped_vrf_items(
-        self,
-        vrfs: list[dict[str, Any]],
-        seen: set[str],
-        items: list[dict[str, Any]],
-        requested_names: list[str],
-    ) -> None:
-        requested = set(requested_names)
-        for item in items or []:
-            item_name = item.get("vrfName") or item.get("vrf_name") if isinstance(item, dict) else None
-            if item_name and item_name in requested and item_name not in seen:
-                vrfs.append(self._normalize_query_vrf_item(item))
-                seen.add(item_name)
 
     def _query_all_unfiltered(self) -> ResponseType:
         """GET all VRFs without a filter fallback."""
@@ -617,7 +674,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 break
             offset += len(page_items)
 
-        return self._enrich_mcfg_parent_vrfs_from_children(self._normalize_query_vrf_items(vrfs))
+        return self._normalize_query_vrf_items(vrfs)
 
     @staticmethod
     def _vrf_items_from_query_result(result: Any) -> list[dict[str, Any]]:
@@ -636,7 +693,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         if not isinstance(result, dict):
             return False
 
-        metadata = result.get("metadata") or {}
+        metadata = result.get("metadata") or result.get("meta") or {}
         counts = metadata.get("counts") or {}
         remaining = self._safe_int(counts.get("remaining"))
         if remaining is not None:
@@ -677,9 +734,33 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         expression = terms[0] if len(terms) == 1 else "(" + " OR ".join(terms) + ")"
         return expression
 
+    @staticmethod
+    def _normalize_manage_vrf_bgp(item: Any) -> Any:
+        """Keep numeric BGP readback in the same string form as public intent."""
+        if not isinstance(item, dict):
+            return item
+        fabric_data = item.get("fabricData")
+        if isinstance(fabric_data, dict):
+            normalized = {}
+            key_type = fabric_data.get("bgpPasswordKeyType")
+            if isinstance(key_type, int) and key_type in _BGP_KEY_TYPE_NAMES:
+                normalized["bgpPasswordKeyType"] = _BGP_KEY_TYPE_NAMES[key_type]
+            password = fabric_data.get("bgpPassword")
+            if isinstance(password, int) and not isinstance(password, bool):
+                normalized["bgpPassword"] = str(password)
+            if normalized:
+                return dict(item, fabricData={**fabric_data, **normalized})
+        return item
+
     def _normalize_query_vrf_item(self, item: Any) -> Any:
         if not isinstance(item, dict):
             return item
+        vrf_type = item.get("vrfType") or self._default_vrf_type()
+        if vrf_type in _EXTERNAL_VRF_TYPES:
+            normalized = dict(item)
+            normalized.setdefault("fabricName", self.strategy.fabric_name)
+            normalized.setdefault("vrfType", vrf_type)
+            return normalized
         if not (getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False)):
             return item
 
@@ -690,6 +771,12 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             normalized["vrfType"] = self._default_vrf_type()
         if normalized.get("vrfStatus") == "NA":
             normalized["vrfStatus"] = "notApplicable"
+        core_data = normalized.get("coreData")
+        if isinstance(core_data, dict):
+            core_data = dict(core_data)
+            for key in ("vrfVlanName", "vrfInterfaceDescription"):
+                core_data.setdefault(key, "")
+            normalized["coreData"] = core_data
         template_config = normalized.get("vrfTemplateConfig")
         if isinstance(template_config, str):
             try:
@@ -702,98 +789,10 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         return normalized
 
     def _normalize_query_vrf_items(self, items: Any) -> list[Any]:
-        return [self._normalize_query_vrf_item(item) for item in (items or [])]
+        return [self._normalize_manage_vrf_bgp(self._normalize_query_vrf_item(item)) for item in (items or [])]
 
     def _is_mcfg_parent(self) -> bool:
         return bool(getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False))
-
-    def _child_vrf_records_for_mcfg_parent(self) -> dict[str, dict[str, Any]]:
-        """Read child VRFs so parent output can include fabric-instance fields omitted by top-down."""
-        if not self._is_mcfg_parent():
-            return {}
-        members = (self.strategy.fabric_data or {}).get("members") or []
-        if not members:
-            return {}
-
-        from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_fabric_resolver import VrfFabricResolver
-
-        fabric_fields = ("advertiseHostRoute", "advertiseDefaultRoute", "configureStaticDefaultRoute")
-        records_by_name: dict[str, dict[str, Any]] = {}
-        conflicts_by_name: dict[str, set[str]] = {}
-        for member in members:
-            child_fabric_name = member.get("fabricName")
-            if not child_fabric_name:
-                continue
-            child_strategy = VrfFabricResolver.strategy_from_fabric_details(child_fabric_name, member)
-            endpoint = child_strategy.vrfs_get_cls()()
-            endpoint.fabric_name = child_strategy.fabric_name
-            child_strategy.configure_endpoint(endpoint)
-            try:
-                result = self._request(
-                    path=endpoint.path,
-                    verb=endpoint.verb,
-                    not_found_ok=True,
-                    operation_type=OperationType.QUERY,
-                )
-            except Exception:
-                continue
-
-            if isinstance(result, dict):
-                child_items = result.get("vrfs") or result.get("items") or []
-            else:
-                child_items = result or []
-            for item in child_items:
-                if not isinstance(item, dict):
-                    continue
-                name = item.get("vrfName") or item.get("vrf_name")
-                if not name:
-                    continue
-                child_fabric_data = item.get("fabricData") or item.get("fabric_data") or {}
-                if not isinstance(child_fabric_data, dict):
-                    continue
-                aggregate = records_by_name.setdefault(name, {"fabricData": {}})
-                aggregate_fabric_data = aggregate["fabricData"]
-                conflicts = conflicts_by_name.setdefault(name, set())
-                for field in fabric_fields:
-                    if field in conflicts or field not in child_fabric_data:
-                        continue
-                    value = child_fabric_data[field]
-                    if field not in aggregate_fabric_data:
-                        aggregate_fabric_data[field] = value
-                    elif aggregate_fabric_data[field] != value:
-                        aggregate_fabric_data.pop(field, None)
-                        conflicts.add(field)
-        return records_by_name
-
-    def _enrich_mcfg_parent_vrfs_from_children(self, items: list[Any]) -> list[Any]:
-        if not self._is_mcfg_parent() or not items:
-            return items
-
-        child_records = self._child_vrf_records_for_mcfg_parent()
-        if not child_records:
-            return items
-
-        fabric_fields = ("advertiseHostRoute", "advertiseDefaultRoute", "configureStaticDefaultRoute")
-        enriched: list[Any] = []
-        for item in items:
-            if not isinstance(item, dict):
-                enriched.append(item)
-                continue
-            child_record = child_records.get(item.get("vrfName") or item.get("vrf_name"))
-            child_fabric_data = child_record.get("fabricData") if isinstance(child_record, dict) else None
-            if not isinstance(child_fabric_data, dict):
-                enriched.append(item)
-                continue
-
-            parent_item = dict(item)
-            parent_fabric_data = dict(parent_item.get("fabricData") or {})
-            for field in fabric_fields:
-                if field not in parent_fabric_data and field in child_fabric_data:
-                    parent_fabric_data[field] = child_fabric_data[field]
-            if parent_fabric_data:
-                parent_item["fabricData"] = parent_fabric_data
-            enriched.append(parent_item)
-        return enriched
 
     @staticmethod
     def _top_down_bool(value: Any) -> bool | None:
@@ -968,22 +967,98 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         payload = model_instance.to_payload()
         payload["fabricName"] = self.strategy.fabric_name
         payload.setdefault("vrfType", self._default_vrf_type())
-        payload.pop("vlanId", None)
         payload.pop("tenantName", None)
 
         core_data = dict(payload.get("coreData") or {})
         for key in ("vrfVlanName", "vrfInterfaceDescription", "vrfDescription"):
             core_data.setdefault(key, "")
-        for key in ("routeTargetImport", "routeTargetExport", "evpnRouteTargetImport", "evpnRouteTargetExport"):
+        for key in (
+            "routeTargetImport",
+            "routeTargetExport",
+            "evpnRouteTargetImport",
+            "evpnRouteTargetExport",
+        ):
             core_data.setdefault(key, [])
         payload["coreData"] = core_data
         payload["fabricData"] = {}
         return payload
 
-    def _create_or_update_payload(self, model_instance: NDVrfModel) -> dict[str, Any]:
+    def validate_external_vrf_write(self, model_instance: NDVrfModel, *, updating: bool = False) -> None:
+        """
+        # Summary
+
+        Require a controller with readable descriptions and working External VRF updates.
+
+        ## Raises
+
+        ### ValueError
+
+        - If an External description or update requires an unsupported or unknown controller release.
+        """
+        if model_instance.vrf_type not in _EXTERNAL_VRF_TYPES or (not updating and "description" not in model_instance.model_fields_set):
+            return
+        version = self.rest_send.controller_version
+        try:
+            release = tuple(int(part) for part in (version or "").split(".")[:3])
+        except ValueError:
+            release = ()
+        # TODO(4.2.1) external-vrf-update-500-description-not-echoed
+        # ND 4.2.1 omits even nonempty descriptions from GET and rejects External PUT with HTTP 500.
+        # Lab evidence on 4.3.1.175 confirms readable descriptions and successful updates for both types.
+        if len(release) < 3 or release < (4, 3, 1):
+            operation = "an in-place update" if updating else "vrf_description"
+            raise ValueError(
+                f"External VRF '{model_instance.vrf_name}': {operation} requires ND 4.3.1 or later (detected: {version or 'unknown'}). "
+                "ND 4.2.1 does not return descriptions and cannot update External VRFs in place; "
+                "omit vrf_description for name-only creation/reconciliation."
+            )
+
+    def _manage_api_vrf_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Convert canonical BGP key names only for the ND 4.2 request contract."""
+        fabric_data = payload.get("fabricData")
+        if not isinstance(fabric_data, dict):
+            return payload
+        key_type = fabric_data.get("bgpPasswordKeyType")
+        if not isinstance(key_type, str) or key_type not in _BGP_KEY_TYPE_NUMBERS:
+            return payload
+        version = self.rest_send.controller_version
+        if not isinstance(version, str):
+            return payload
+        try:
+            release = tuple(int(part) for part in version.split(".")[:3])
+        except ValueError:
+            release = ()
+        # Unknown releases retain the existing string representation.
+        if len(release) < 3 or release[:2] != (4, 2):
+            return payload
+        return dict(payload, fabricData=dict(fabric_data, bgpPasswordKeyType=_BGP_KEY_TYPE_NUMBERS[key_type]))
+
+    def _create_or_update_payload(self, model_instance: NDVrfModel, *, updating: bool = False) -> dict[str, Any]:
+        if model_instance.vrf_type in _EXTERNAL_VRF_TYPES:
+            self.validate_external_vrf_write(model_instance, updating=updating)
+            payload = model_instance.to_payload()
+            return {key: payload[key] for key in ("fabricName", "vrfName", "vrfType", "description") if key in payload}
+        if model_instance.write_capabilities is None:
+            intent = model_instance.to_payload()
+            if self.strategy.is_parent:
+                intent.pop("fabricData", None)
+            self.write_capabilities.validate_payload(intent, self.strategy.fabric_name)
+        model_instance.set_write_capabilities(self.write_capabilities)
         if getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False):
             return self._mcfg_parent_vrf_payload(model_instance)
-        return model_instance.to_payload()
+        payload = model_instance.to_payload()
+        if not getattr(self.strategy, "is_parent", False) and (payload.get("fabricData") or {}).get("l3VniWithoutVlan") is True:
+            payload.pop("vlanId", None)
+            core_data = payload.get("coreData")
+            if isinstance(core_data, dict):
+                for field in (
+                    "vrfVlanName",
+                    "vrfInterfaceDescription",
+                    "mtu",
+                    "ipv6LinkLocal",
+                ):
+                    core_data.pop(field, None)
+        return self._manage_api_vrf_payload(payload)
 
     # ── Create ────────────────────────────────────────────────────
 
@@ -1028,7 +1103,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 vrf_name=vrf_name,
             )
             endpoint_path = endpoint.path
-            payload = self._create_or_update_payload(model_instance)
+            payload = self._create_or_update_payload(model_instance, updating=True)
             if self.strategy.is_child:
                 payload = {key: value for key, value in payload.items() if key in ("fabricName", "vrfName", "vrfType", "fabricData")}
             return self._request(
@@ -1078,7 +1153,14 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             response = copy.deepcopy(task.response)
             response["handled"] = True
             response["handled_reason"] = "remote multicluster child VRF update is list-visible only"
-            tasks[index] = task.model_copy(update={"result": result, "response": response, "failed": False, "changed": False})
+            tasks[index] = task.model_copy(
+                update={
+                    "result": result,
+                    "response": response,
+                    "failed": False,
+                    "changed": False,
+                }
+            )
             if getattr(results, "_final_result", None) is not None:
                 results._final_result = None
             return

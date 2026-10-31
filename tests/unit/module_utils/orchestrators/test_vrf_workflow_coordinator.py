@@ -13,8 +13,19 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
+from copy import deepcopy
+from urllib.parse import parse_qs, urlsplit
+from typing import Literal
 from unittest.mock import patch
 
+from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field, ValidationError
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_data_models import VrfDataModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.capabilities import VrfWriteCapabilities
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs import vrf_data_models
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators import vrf_workflow_coordinator as coordinator_mod
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_workflow_coordinator import (
     VrfWorkflowCoordinator,
@@ -31,13 +42,20 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_depende
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.multicluster_parent_vrf import (
     MulticlusterParentVrfStrategy,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.multisite_parent_vrf import (
+    MultisiteParentVrfStrategy,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.child_vrf import ChildVrfStrategy
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.standalone_vrf import StandaloneVrfStrategy
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import (
     VrfConfigModel,
     VrfParentConfigModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_argument_specs import (
     vrf_parent_argument_spec,
+    vrf_standalone_argument_spec,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 
 
 class _Module:
@@ -48,6 +66,28 @@ class _Module:
 
     def fail_json(self, **kwargs):
         raise AssertionError(kwargs)
+
+
+@pytest.mark.parametrize("strategy_cls", [MultisiteParentVrfStrategy, MulticlusterParentVrfStrategy])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_parent_vrf_rejects_misplaced_input_before_any_state_machine(strategy_cls, state, check_mode, monkeypatch):
+    spec = {**vrf_parent_argument_spec(), **vrf_standalone_argument_spec()}
+    accepted = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": spec}}).validate(
+        {"config": [{"vrf_name": "BLUE", "trm_enable": False}]}
+    )
+    assert not accepted.error_messages
+    module = _Module({"fabric_name": "PARENT", "state": state, "config": accepted.validated_parameters["config"]}, check_mode=check_mode)
+    strategy = strategy_cls(fabric_name="PARENT", fabric_data={"managementType": "vxlan", "members": []})
+    coordinator = VrfWorkflowCoordinator(module=module, strategy=strategy)
+    calls = []
+    monkeypatch.setattr(coordinator, "_run_state_machine_with_attachments", lambda *_args, **_kwargs: calls.append("parent"))
+    monkeypatch.setattr(coordinator, "_run_child_task", lambda *_args, **_kwargs: calls.append("child"))
+
+    with pytest.raises(AssertionError, match="must be set under child_fabric_config"):
+        coordinator._handle_parent_workflow(dict(module.params), strategy.fabric_type)
+
+    assert not calls
 
 
 class _AttachmentCoordinator:
@@ -148,6 +188,35 @@ def test_vrf_workflow_coordinator_resolves_strategy_with_gen3_restsend():
     assert coordinator.workflow_trace[0]["event"] == "fabric_resolver_start"
 
 
+def test_vrf_parent_child_task_args_use_merged_for_mutating_partial_child_overrides():
+    """
+    # Summary
+
+    Verify generated child tasks use merged semantics for parent mutating
+    states because child_fabric_config carries partial per-child overrides, not
+    full child VRF definitions.
+    """
+    strategy = MulticlusterParentVrfStrategy(
+        fabric_name="MCFG_R",
+        fabric_data={"members": [{"fabricName": "AK-VXLAN", "clusterName": "ND42-REL"}]},
+    )
+
+    for state in ("merged", "replaced", "overridden"):
+        args = strategy.build_child_task_args(
+            child_fabric_name="AK-VXLAN",
+            vrf_configs=[{"vrf_name": "BLUE", "adv_host_routes": True}],
+            state=state,
+        )
+        assert args["state"] == "merged"
+
+    args = strategy.build_child_task_args(
+        child_fabric_name="AK-VXLAN",
+        vrf_configs=[{"vrf_name": "BLUE"}],
+        state="gathered",
+    )
+    assert args["state"] == "gathered"
+
+
 class _ParentStrategy:
     config_model_cls = VrfParentConfigModel
     fabric_data = {"members": [{"fabricName": "AK-VXLAN"}]}
@@ -178,6 +247,270 @@ class _ParentStrategy:
             "state": state,
             "config": vrf_configs,
         }
+
+
+def test_vrf_parent_parse_accepts_child_trm_for_mvpn_targets():
+    """Member-only prerequisites are supplied in the child configuration."""
+    coordinator = VrfWorkflowCoordinator(module=_Module({}), strategy=_ParentStrategy())
+    parsed = coordinator._parse_config(
+        [
+            {
+                "vrf_name": "BLUE",
+                "child_fabric_config": [{"fabric_name": "AK-VXLAN", "trm_enable": True, "import_mvpn_rt": ["65000:1"]}],
+            }
+        ],
+        VrfParentConfigModel,
+        "merged",
+    )
+    assert "trm_enable" not in parsed[0]
+    assert parsed[0]["child_fabric_config"][0]["trm_enable"] is True
+
+
+@pytest.fixture
+def child_vrf_trm_controller(monkeypatch):
+    """Keep real VRF orchestration and replace only controller responses and parent execution."""
+    controller = {
+        "inventory": [
+            {
+                "fabricName": "c1",
+                "vrfName": "BLUE",
+                "vrfType": "vxlanIbgp",
+                "vrfId": 50000,
+                "vlanId": 2001,
+                "fabricData": {
+                    "trmData": {
+                        "ipv4Trm": True,
+                        "ipv6Trm": True,
+                        "v4RpAddress": "10.0.0.2",
+                        "v6RpAddress": "2001:db8::2",
+                        "loopbackNumber": 5,
+                        "l3VniMulticastGroup": "239.1.1.1",
+                    }
+                },
+            }
+        ],
+        "queries": [],
+        "writes": [],
+        "requests": [],
+        "parents": [],
+    }
+
+    def query_all(orchestrator, **_kwargs):
+        controller["queries"].append((orchestrator.strategy.fabric_name, orchestrator.strategy.is_multicluster))
+        return deepcopy(controller["inventory"])
+
+    def request(orchestrator, **kwargs):
+        assert orchestrator.strategy.is_child
+        assert kwargs["verb"] == HttpVerbEnum.PUT
+        payload = kwargs["data"]
+        controller["requests"].append(deepcopy(kwargs))
+        controller["writes"].append(payload)
+        controller["inventory"][0].update(deepcopy(payload))
+        return {}
+
+    def parent_run(_coordinator, module_args, **_kwargs):
+        controller["parents"].append(module_args)
+        return {"changed": False, "failed": False, "output_level": "normal"}
+
+    monkeypatch.setattr(coordinator_mod.NDVrfOrchestrator, "query_all", query_all)
+    monkeypatch.setattr(coordinator_mod.NDVrfOrchestrator, "_request", request)
+    monkeypatch.setattr(VrfWorkflowCoordinator, "_run_state_machine_with_attachments", parent_run)
+    monkeypatch.setattr(VrfWorkflowCoordinator, "_collect_deferred_deploy_payloads", lambda *_args: [])
+    return controller
+
+
+@pytest.mark.parametrize("strategy_cls", [MultisiteParentVrfStrategy, MulticlusterParentVrfStrategy])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
+@pytest.mark.parametrize(
+    "field,value",
+    [("rp_address", "10.0.0.1"), ("v6_rp_address", "2001:db8::1"), ("rp_loopback_id", 6), ("import_mvpn_rt", ["65000:1"])],
+)
+@pytest.mark.parametrize("concrete_child_type", [None, "vxlanIbgp", "vxlanEbgp"])
+def test_parent_sparse_child_trm_update_inherits_enabled_state_and_converges(
+    strategy_cls, state, field, value, child_vrf_trm_controller, concrete_child_type, monkeypatch
+):
+    """Sparse TRM edits pass parent parsing and cached child validation without restating toggles."""
+    controller = child_vrf_trm_controller
+    if concrete_child_type:
+        monkeypatch.setitem(vrf_data_models._VRF_MODEL_BY_TYPE, concrete_child_type, _ConcreteVxlanVrfModel)
+        controller["inventory"][0]["vrfType"] = concrete_child_type
+    multicluster = strategy_cls is MulticlusterParentVrfStrategy
+    member = {
+        "fabricName": "c1",
+        "fabricState": "member",
+        "managementType": "vxlanIbgp",
+        "manageFabricDetails": {"management": {"type": "vxlanIbgp", "tenantRoutedMulticast": True, "tenantRoutedMulticastIpv6": True}},
+    }
+    if multicluster:
+        member["clusterName"] = "cluster1"
+    strategy = strategy_cls(fabric_name="PARENT", fabric_data={"members": [member]})
+    config = [{"vrf_name": "BLUE", "child_fabric_config": [{"fabric_name": "c1", field: value}]}]
+    validator = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": strategy.get_argument_spec()}})
+    validated = validator.validate({"config": config})
+    assert not validated.error_messages
+
+    for run, check_mode in enumerate((True, False, False, True)):
+        args = {"fabric_name": "PARENT", "state": state, "config": deepcopy(validated.validated_parameters["config"]), "output_level": "normal"}
+        coordinator = VrfWorkflowCoordinator(_Module(args, check_mode=check_mode), strategy)
+        result = coordinator._handle_parent_workflow(args, strategy.fabric_type)
+        assert result["failed"] is False
+        assert result["changed"] is (run < 2)
+        assert len(controller["writes"]) == (0 if run == 0 else 1)
+        assert controller["queries"] == [("c1", multicluster)] * (run + 1)
+        assert len(controller["parents"]) == run + 1
+
+    payload = controller["writes"][0]
+    assert set(payload) == {"fabricName", "vrfName", "vrfType", "fabricData"}
+    assert payload["vrfType"] == (concrete_child_type or "vxlanIbgp")
+    public = VrfDataModel.from_response(controller["inventory"][0]).to_gathered_config()
+    assert public[field] == value
+    assert public["trm_enable"] is True
+    assert public["ipv6_trm"] is True
+    assert public["underlay_mcast_ip"] == "239.1.1.1"
+    assert controller["inventory"][0]["vrfId"] == 50000
+    assert controller["inventory"][0]["vlanId"] == 2001
+    assert all("rp_address" not in task["config"][0] and "trm_enable" not in task["config"][0] for task in controller["parents"])
+
+
+@pytest.mark.parametrize("strategy_cls", [MultisiteParentVrfStrategy, MulticlusterParentVrfStrategy])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_parent_child_leaking_uses_controller_release_and_converges(strategy_cls, state, enabled, child_vrf_trm_controller):
+    controller = child_vrf_trm_controller
+    controller["inventory"][0]["fabricData"] = {"enableVrfVpnRouteLeaking": not enabled}
+    multicluster = strategy_cls is MulticlusterParentVrfStrategy
+    member = {"fabricName": "c1", "fabricState": "member", "managementType": "vxlanIbgp"}
+    if multicluster:
+        member["clusterName"] = "cluster1"
+    strategy = strategy_cls(fabric_name="PARENT", fabric_data={"members": [member]})
+    validated = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": strategy.get_argument_spec()}}).validate(
+        {"config": [{"vrf_name": "BLUE", "child_fabric_config": [{"fabric_name": "c1", "enable_vrf_vpn_route_leaking": enabled}]}]}
+    )
+    assert not validated.error_messages
+
+    for run, check_mode in enumerate((True, False, False, True)):
+        args = {"fabric_name": "PARENT", "state": state, "config": deepcopy(validated.validated_parameters["config"]), "output_level": "normal"}
+        coordinator = VrfWorkflowCoordinator(_Module(args, check_mode=check_mode), strategy)
+        coordinator._controller_version = "4.3.1.175"
+        result = coordinator._handle_parent_workflow(args, strategy.fabric_type)
+        assert not result["failed"]
+        assert result["changed"] is (run < 2)
+        assert len(controller["writes"]) == (0 if run == 0 else 1)
+        assert controller["queries"] == [("c1", multicluster)] * (run + 1)
+
+    payload = controller["writes"][0]
+    assert set(payload) == {"fabricName", "vrfName", "vrfType", "fabricData"}
+    assert payload["fabricData"]["enableVrfVpnRouteLeaking"] is enabled
+    assert all("enable_vrf_vpn_route_leaking" not in task["config"][0] for task in controller["parents"])
+    endpoint = urlsplit(controller["requests"][0]["path"])
+    assert endpoint.path == "/api/v1/manage/fabrics/c1/vrfs/BLUE"
+    assert parse_qs(endpoint.query) == ({"clusterName": ["cluster1"]} if multicluster else {})
+
+
+class _ConcreteVxlanVrfModel(VrfDataModel):
+    """Exercise future concrete dispatch without changing the shipping registry."""
+
+    vrf_type: Literal["vxlan", "vxlanIbgp", "vxlanEbgp"] = Field(alias="vrfType")
+
+
+@pytest.mark.parametrize("strategy_cls", [MultisiteParentVrfStrategy, MulticlusterParentVrfStrategy])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("existing_mode", [False, True])
+@pytest.mark.parametrize("explicit_mode", [None, False, True])
+def test_parent_child_l3vni_mode_preserves_state_and_reuses_inventory(*, strategy_cls, state, existing_mode, explicit_mode, child_vrf_trm_controller):
+    """Sparse child mode preservation converges using one inventory snapshot per run."""
+    controller = child_vrf_trm_controller
+    controller["inventory"][0]["fabricData"] = {"l3VniWithoutVlan": existing_mode, "bgpLogNeighborChange": False}
+    multicluster = strategy_cls is MulticlusterParentVrfStrategy
+    member = {
+        "fabricName": "c1",
+        "fabricState": "member",
+        "managementType": "vxlanIbgp",
+        "manageFabricDetails": {"management": {"type": "vxlanIbgp", "l3VniNoVlanDefaultOption": not existing_mode}},
+    }
+    if multicluster:
+        member["clusterName"] = "cluster1"
+    strategy = strategy_cls(fabric_name="PARENT", fabric_data={"members": [member]})
+    child = {"fabric_name": "c1", "bgp_log_neighbor_change": True}
+    if explicit_mode is not None:
+        child["l3vni_wo_vlan"] = explicit_mode
+    config = [{"vrf_name": "BLUE", "child_fabric_config": [child]}]
+    validated = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": strategy.get_argument_spec()}}).validate({"config": config})
+    assert not validated.error_messages
+    expected = existing_mode if explicit_mode is None else explicit_mode
+
+    for run, check_mode in enumerate((True, False, False, True)):
+        args = {"fabric_name": "PARENT", "state": state, "config": deepcopy(validated.validated_parameters["config"]), "output_level": "normal"}
+        coordinator = VrfWorkflowCoordinator(_Module(args, check_mode=check_mode), strategy)
+        result = coordinator._handle_parent_workflow(args, strategy.fabric_type)
+        assert not result["failed"]
+        assert result["changed"] is (run < 2)
+        assert len(controller["writes"]) == (0 if run == 0 else 1)
+        assert controller["queries"] == [("c1", multicluster)] * (run + 1)
+
+    payload = controller["writes"][0]
+    assert set(payload) == {"fabricName", "vrfName", "vrfType", "fabricData"}
+    assert payload["fabricData"]["l3VniWithoutVlan"] is expected
+    assert controller["inventory"][0]["vlanId"] == 2001
+    assert all("l3vni_wo_vlan" not in task["config"][0] for task in controller["parents"])
+
+
+@pytest.mark.parametrize("multicluster", [False, True])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("vrf_type", ["vxlan", "vxlanIbgp", "vxlanEbgp"])
+def test_sparse_new_child_type_uses_cached_fabric_context(multicluster, state, vrf_type, child_vrf_trm_controller, monkeypatch):
+    controller = child_vrf_trm_controller
+    controller["inventory"] = []
+    monkeypatch.setitem(vrf_data_models._VRF_MODEL_BY_TYPE, vrf_type, _ConcreteVxlanVrfModel)
+    strategy = ChildVrfStrategy(
+        fabric_name="c1",
+        fabric_data={"management": {"type": vrf_type}},
+        cluster_name="cluster1" if multicluster else None,
+    )
+    config = [{"vrf_name": "BLUE", "bgp_log_neighbor_change": False}]
+    module = _Module({"fabric_name": "c1", "state": state, "config": config, "output_level": "info"}, check_mode=True)
+    coordinator = VrfWorkflowCoordinator(module, strategy)
+    sm, original_config, original_state = coordinator._new_state_machine(module.params)
+    try:
+        proposed = sm.proposed.get(("BLUE", "c1"))
+        assert isinstance(proposed, _ConcreteVxlanVrfModel)
+        assert proposed.to_payload(exclude_unset=True) == {
+            "fabricName": "c1",
+            "vrfName": "BLUE",
+            "vrfType": vrf_type,
+            "fabricData": {"bgpLogNeighborChange": False},
+        }
+        assert sm.output.format()["proposed"][0]["vrf_type"] == vrf_type
+        assert controller["queries"] == [("c1", multicluster)]
+        assert controller["writes"] == []
+    finally:
+        coordinator._restore_state_machine_params(original_config, original_state)
+    assert module.params["config"] is config
+
+
+@pytest.mark.parametrize("strategy_cls", [MultisiteParentVrfStrategy, MulticlusterParentVrfStrategy])
+@pytest.mark.parametrize("child_state", ["disabled", "absent", "explicit_false"])
+def test_parent_sparse_child_rp_requires_effective_trm_before_parent_work(strategy_cls, child_state, child_vrf_trm_controller):
+    """An unavailable or explicitly disabled prerequisite fails before any parent or child write."""
+    controller = child_vrf_trm_controller
+    child = {"fabric_name": "c1", "rp_address": "10.0.0.1"}
+    if child_state == "disabled":
+        controller["inventory"][0]["fabricData"]["trmData"] = {"ipv4Trm": False, "ipv6Trm": False}
+    elif child_state == "absent":
+        controller["inventory"] = []
+    else:
+        child["trm_enable"] = False
+    strategy = strategy_cls(
+        fabric_name="PARENT",
+        fabric_data={"members": [{"fabricName": "c1", "fabricState": "member", "managementType": "vxlanIbgp"}]},
+    )
+    for check_mode in (False, True):
+        args = {"fabric_name": "PARENT", "state": "merged", "config": [{"vrf_name": "BLUE", "child_fabric_config": [child]}]}
+        coordinator = VrfWorkflowCoordinator(_Module(args, check_mode=check_mode), strategy)
+        with pytest.raises(ValidationError, match="rp_address requires trm_enable=True on the child"):
+            coordinator._handle_parent_workflow(args, strategy.fabric_type)
+    assert controller["parents"] == []
+    assert controller["writes"] == []
 
 
 class _McfgParentStrategy(_ParentStrategy):
@@ -211,6 +544,295 @@ class _StandaloneStrategy:
         return False
 
 
+class _FabricDefaultStrategy(_StandaloneStrategy):
+    fabric_data = {"manageFabricDetails": {"management": {"l3VniNoVlanDefaultOption": True}}}
+
+
+@pytest.fixture
+def external_vrf_workflow(monkeypatch):
+    """Run real argspec/coordinator/CRUD against release-shaped External readback."""
+    stored = []
+    requests = []
+
+    def run(*, vrf_type, version, state, config, check_mode=False):
+        accepted = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": vrf_standalone_argument_spec()}}).validate(
+            {"config": [{**entry, "deploy": False} for entry in config]}
+        )
+        assert not accepted.error_messages
+        args = {"fabric_name": "ISN", "state": state, "config": deepcopy(accepted.validated_parameters["config"]), "output_level": "debug"}
+        original = deepcopy(args)
+        coordinator = VrfWorkflowCoordinator(
+            _Module(deepcopy(args), check_mode=check_mode), StandaloneVrfStrategy(fabric_name="ISN", fabric_data={"management": {"type": vrf_type}})
+        )
+
+        def rest_send(params):
+            rest = RestSend(params)
+            rest.controller_version = version
+            return rest
+
+        def request(_self, **kwargs):
+            requests.append(kwargs)
+            if kwargs["verb"] == HttpVerbEnum.GET:
+                if "/networks" in kwargs["path"]:
+                    return {"networks": []}
+                return {"vrfs": deepcopy(stored)}
+            assert not check_mode
+            if kwargs["path"].endswith("/vrfActions/remove"):
+                stored[:] = [item for item in stored if item["vrfName"] not in kwargs["data"]["vrfNames"]]
+                return {}
+            payloads = kwargs["data"]["vrfs"] if kwargs["verb"] == HttpVerbEnum.POST else [kwargs["data"]]
+            for payload in payloads:
+                assert payload["fabricName"] == "ISN"
+                assert payload["vrfType"] == vrf_type
+                assert set(payload) <= {"fabricName", "vrfName", "vrfType", "description"}
+                if version == "4.2.1.10":
+                    assert kwargs["verb"] == HttpVerbEnum.POST, "The known-broken External PUT must never be sent"
+                    assert "description" not in payload
+                saved = deepcopy(payload)
+                if saved.get("description") == "":
+                    saved.pop("description")
+                stored[:] = [item for item in stored if item["vrfName"] != saved["vrfName"]] + [saved]
+            return {}
+
+        monkeypatch.setattr(coordinator, "_new_rest_send", rest_send)
+        monkeypatch.setattr(coordinator_mod.NDVrfOrchestrator, "_request", request)
+        monkeypatch.setattr(coordinator, "_current_attachment_details_ignore_missing", lambda *_args: [])
+        requests.clear()
+        try:
+            result = coordinator._handle_standalone_workflow(args, "standalone")
+            assert not result.get("failed")
+            return result
+        finally:
+            assert coordinator.module.params == original
+
+    return run, stored, requests
+
+
+@pytest.mark.parametrize("vrf_type", ["externalConnectivity", "vxlanExternal"])
+@pytest.mark.parametrize("version", ["4.2.1.10", None])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("description", ["probe", ""])
+@pytest.mark.parametrize("exists", [False, True])
+def test_external_vrf_unsupported_descriptions_fail_before_any_write(*, external_vrf_workflow, vrf_type, version, state, check_mode, description, exists):
+    run, stored, requests = external_vrf_workflow
+    if exists:
+        stored.append({"fabricName": "ISN", "vrfName": "BLUE", "vrfType": vrf_type})
+    before = deepcopy(stored)
+    with pytest.raises(ValueError, match=r"requires ND 4\.3\.1 or later"):
+        run(
+            vrf_type=vrf_type,
+            version=version,
+            state=state,
+            config=[{"vrf_name": "NEW_FIRST"}, {"vrf_name": "BLUE", "vrf_description": description}],
+            check_mode=check_mode,
+        )
+    assert stored == before
+    assert len(requests) == 1 and requests[0]["verb"] == HttpVerbEnum.GET
+
+
+@pytest.mark.parametrize("vrf_type", ["externalConnectivity", "vxlanExternal"])
+@pytest.mark.parametrize("version", ["4.2.1.10", None])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+def test_external_vrf_name_only_creation_and_repeats_remain_supported(external_vrf_workflow, vrf_type, version, state):
+    run, stored, requests = external_vrf_workflow
+    config = [{"vrf_name": "BLUE"}]
+    for check_mode, expected in ((True, True), (False, True), (False, False), (True, False)):
+        assert run(vrf_type=vrf_type, version=version, state=state, config=config, check_mode=check_mode)["changed"] is expected
+        assert sum(item["verb"] == HttpVerbEnum.GET for item in requests) == 1
+        assert sum(item["verb"] != HttpVerbEnum.GET for item in requests) == int(expected and not check_mode)
+    assert stored == [{"fabricName": "ISN", "vrfName": "BLUE", "vrfType": vrf_type}]
+
+
+@pytest.mark.parametrize("vrf_type", ["externalConnectivity", "vxlanExternal"])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+def test_external_vrf_43_description_lifecycle_converges(external_vrf_workflow, vrf_type, state):
+    run, stored, requests = external_vrf_workflow
+    for description in ("probe", "probe2", ""):
+        config = [{"vrf_name": "BLUE", "vrf_description": description}]
+        for check_mode, expected in ((True, True), (False, True), (False, False), (True, False)):
+            assert run(vrf_type=vrf_type, version="4.3.1.175", state=state, config=config, check_mode=check_mode)["changed"] is expected
+            assert sum(item["verb"] == HttpVerbEnum.GET for item in requests) == 1
+            assert sum(item["verb"] != HttpVerbEnum.GET for item in requests) == int(expected and not check_mode)
+        assert stored[0].get("description", "") == description
+
+
+@pytest.mark.parametrize("vrf_type", ["externalConnectivity", "vxlanExternal"])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+def test_external_vrf_43_omitted_description_preserves_state_semantics(external_vrf_workflow, vrf_type, state):
+    run, stored, requests = external_vrf_workflow
+    stored.append({"fabricName": "ISN", "vrfName": "BLUE", "vrfType": vrf_type, "description": "probe"})
+    changed = state != "merged"
+    for check_mode, expected in ((True, changed), (False, changed), (False, False), (True, False)):
+        assert run(vrf_type=vrf_type, version="4.3.1.175", state=state, config=[{"vrf_name": "BLUE"}], check_mode=check_mode)["changed"] is expected
+        assert sum(item["verb"] == HttpVerbEnum.GET for item in requests) == 1
+        assert sum(item["verb"] != HttpVerbEnum.GET for item in requests) == int(expected and not check_mode)
+    assert stored[0].get("description", "") == ("probe" if state == "merged" else "")
+
+
+@pytest.mark.parametrize("vrf_type", ["externalConnectivity", "vxlanExternal"])
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_external_vrf_42_blocks_any_in_place_update(external_vrf_workflow, vrf_type, state, check_mode):
+    """Even an unexpected echoed description cannot permit an authoritative PUT."""
+    run, stored, requests = external_vrf_workflow
+    stored.append({"fabricName": "ISN", "vrfName": "BLUE", "vrfType": vrf_type, "description": "unexpected readback"})
+    before = deepcopy(stored)
+    if state == "merged":
+        assert not run(vrf_type=vrf_type, version="4.2.1.10", state=state, config=[{"vrf_name": "BLUE"}], check_mode=check_mode)["changed"]
+    else:
+        with pytest.raises(ValueError, match="an in-place update requires ND 4.3.1 or later"):
+            run(vrf_type=vrf_type, version="4.2.1.10", state=state, config=[{"vrf_name": "BLUE"}], check_mode=check_mode)
+    assert stored == before
+    assert len(requests) == 1 and requests[0]["verb"] == HttpVerbEnum.GET
+
+
+@pytest.mark.parametrize("vrf_type", ["externalConnectivity", "vxlanExternal"])
+@pytest.mark.parametrize("state", ["gathered", "deleted"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_external_vrf_42_read_delete_selectors_ignore_description(external_vrf_workflow, vrf_type, state, check_mode):
+    run, stored, requests = external_vrf_workflow
+    stored.append({"fabricName": "ISN", "vrfName": "BLUE", "vrfType": vrf_type})
+    result = run(vrf_type=vrf_type, version="4.2.1.10", state=state, config=[{"vrf_name": "BLUE", "vrf_description": "unobservable"}], check_mode=check_mode)
+    assert result["changed"] is (state == "deleted")
+    writes = [item for item in requests if item["verb"] != HttpVerbEnum.GET]
+    assert len(writes) == int(state == "deleted" and not check_mode)
+    assert all(item["path"].endswith("/vrfActions/remove") for item in writes)
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged", "gathered", "deleted"])
+def test_vrf_parsing_leaves_l3vni_creation_default_until_inventory_lookup(state):
+    """Parsing must not turn a fabric creation default into requested mode."""
+    coordinator = VrfWorkflowCoordinator(module=_Module({}), strategy=_FabricDefaultStrategy())
+    assert "l3vni_wo_vlan" not in coordinator._parse_config([{"vrf_name": "BLUE"}], VrfConfigModel, state)[0]
+    assert coordinator._parse_config([{"vrf_name": "BLUE", "vlan_id": 2001}], VrfConfigModel, state)[0]["vlan_id"] == 2001
+    assert coordinator._parse_config([{"vrf_name": "BLUE", "l3vni_wo_vlan": False}], VrfConfigModel, state)[0]["l3vni_wo_vlan"] is False
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+def test_vrf_parent_does_not_inject_fabric_l3vni_default(state):
+    coordinator = VrfWorkflowCoordinator(module=_Module({}), strategy=_ParentStrategy())
+    parsed = coordinator._parse_config([{"vrf_name": "BLUE", "vlan_id": 2001}], VrfParentConfigModel, state)
+    assert "l3vni_wo_vlan" not in parsed[0]
+    assert parsed[0]["vlan_id"] == 2001
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize(
+    "existing_mode,fabric_default,fields,expected",
+    [
+        (None, True, {}, True),
+        (None, False, {}, False),
+        (None, True, {"vlan_id": 2001}, False),
+        (None, True, {"vrf_vlan_name": "BLUE_VLAN"}, False),
+        (None, True, {"vrf_intf_desc": "BLUE SVI"}, False),
+        (False, True, {}, False),
+        (True, False, {}, True),
+        (True, True, {"vlan_id": 2001}, False),
+        (False, False, {"l3vni_wo_vlan": True}, True),
+        (True, True, {"l3vni_wo_vlan": False}, False),
+    ],
+)
+def test_vrf_l3vni_workflow_create_update_and_repeat(*, state, check_mode, existing_mode, fabric_default, fields, expected, monkeypatch):
+    """Actual parsing, CRUD, check-mode planning and normalized repeats obey mode precedence."""
+    entry = {"vrf_name": "BLUE", "vrf_id": 50001, "deploy": False, **fields}
+    accepted = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": vrf_standalone_argument_spec()}}).validate({"config": [entry]})
+    assert not accepted.error_messages
+    stored = (
+        []
+        if existing_mode is None
+        else [{"fabricName": "AK-VXLAN", "vrfName": "BLUE", "vrfId": 50001, "vrfType": "vxlanIbgp", "fabricData": {"l3VniWithoutVlan": existing_mode}}]
+    )
+    requests = []
+
+    def request(_self, **kwargs):
+        requests.append(kwargs)
+        if kwargs["verb"] == HttpVerbEnum.GET:
+            return {"vrfs": deepcopy(stored)}
+        assert not check_mode
+        assert kwargs["verb"] in (HttpVerbEnum.POST, HttpVerbEnum.PUT)
+        payload = deepcopy(kwargs["data"]["vrfs"][0] if kwargs["verb"] == HttpVerbEnum.POST else kwargs["data"])
+        assert payload["fabricData"]["l3VniWithoutVlan"] is expected
+        if expected:
+            assert "vlanId" not in payload
+            assert not {"vrfVlanName", "vrfInterfaceDescription", "mtu", "ipv6LinkLocal"}.intersection(payload.get("coreData") or {})
+            payload.setdefault("coreData", {}).update({"mtu": 9216, "ipv6LinkLocal": True})
+        stored[:] = [payload]
+        return {}
+
+    monkeypatch.setattr(coordinator_mod.NDVrfOrchestrator, "_request", request)
+    strategy = StandaloneVrfStrategy(fabric_name="AK-VXLAN", fabric_data={"management": {"type": "vxlanIbgp", "l3VniNoVlanDefaultOption": fabric_default}})
+
+    def run():
+        module_args = {"fabric_name": "AK-VXLAN", "state": state, "config": deepcopy(accepted.validated_parameters["config"]), "output_level": "debug"}
+        coordinator = VrfWorkflowCoordinator(_Module(deepcopy(module_args), check_mode=check_mode), strategy)
+        monkeypatch.setattr(coordinator, "_new_rest_send", RestSend)
+        monkeypatch.setattr(coordinator, "_current_attachment_details_ignore_missing", lambda *_args: [])
+        plan_attachments = coordinator._desired_attachment_map
+
+        def desired_attachments(args, active_strategy):
+            assert args["config"][0]["l3vni_wo_vlan"] is expected
+            return plan_attachments(args, active_strategy)
+
+        monkeypatch.setattr(coordinator, "_desired_attachment_map", desired_attachments)
+        result = coordinator._handle_standalone_workflow(module_args, "standalone")
+        assert not result.get("failed")
+        assert result["proposed"][0]["fabric_data"]["l3VniWithoutVlan"] is expected
+        return result
+
+    first = run()
+    # This minimal fixture omits core defaults that an authoritative definition explicitly applies.
+    changed = (
+        state != "merged"
+        or existing_mode is None
+        or existing_mode is not expected
+        or any(key in fields for key in ("vlan_id", "vrf_vlan_name", "vrf_intf_desc"))
+    )
+    assert first["changed"] is changed
+    assert sum(item["verb"] == HttpVerbEnum.GET for item in requests) == 1
+    assert sum(item["verb"] != HttpVerbEnum.GET for item in requests) == int(changed and not check_mode)
+    if check_mode:
+        assert run()["changed"] is changed
+    else:
+        requests.clear()
+        assert run()["changed"] is False
+        assert len(requests) == 1 and requests[0]["verb"] == HttpVerbEnum.GET
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize(
+    "field,value", [("vlan_id", 2001), ("vrf_vlan_name", "BLUE_VLAN"), ("vrf_intf_desc", "BLUE SVI"), ("vrf_int_mtu", 9216), ("ipv6_linklocal_enable", False)]
+)
+def test_vrf_explicit_no_vlan_rejects_svi_before_any_write(state, check_mode, field, value, monkeypatch):
+    """Explicit contradictions still fail before CRUD in normal and check mode."""
+    module_args = {"fabric_name": "AK-VXLAN", "state": state, "config": [{"vrf_name": "BLUE", "l3vni_wo_vlan": True, field: value}]}
+    strategy = StandaloneVrfStrategy(fabric_name="AK-VXLAN", fabric_data={"management": {"l3VniNoVlanDefaultOption": True}})
+    coordinator = VrfWorkflowCoordinator(_Module(deepcopy(module_args), check_mode=check_mode), strategy)
+    requests = []
+
+    def request(_self, **kwargs):
+        requests.append(kwargs)
+        assert kwargs["verb"] == HttpVerbEnum.GET
+        return {"vrfs": []}
+
+    monkeypatch.setattr(coordinator_mod.NDVrfOrchestrator, "_request", request)
+    monkeypatch.setattr(coordinator, "_new_rest_send", RestSend)
+    with pytest.raises((AssertionError, ValidationError), match=field):
+        coordinator._handle_standalone_workflow(module_args, "standalone")
+    assert len(requests) == int(state == "merged")
+    assert coordinator.module.params == module_args
+
+
+def test_standalone_merged_parsing_defers_cross_field_dependencies():
+    coordinator = VrfWorkflowCoordinator(_Module({}), _StandaloneStrategy())
+    intent = {"vrf_name": "BLUE", "rp_address": "192.0.2.9"}
+    assert coordinator._parse_config([intent], VrfConfigModel, "merged") == [intent]
+    with pytest.raises(AssertionError, match="require trm_enable=True"):
+        coordinator._parse_config([intent], VrfConfigModel, "replaced")
+
+
 class _ChildStrategy:
     config_model_cls = VrfConfigModel
     fabric_type = "multisite_child"
@@ -239,6 +861,8 @@ class _AttachmentQueryOrchestrator:
         self.strategy = strategy
         self.responses = responses
         self.requests = []
+        self.rest_send = RestSend({"check_mode": False})
+        self.request_check_modes = []
 
     def _make_endpoint(self, endpoint_cls):
         endpoint = endpoint_cls()
@@ -247,6 +871,7 @@ class _AttachmentQueryOrchestrator:
 
     def _request(self, **kwargs):
         self.requests.append(kwargs)
+        self.request_check_modes.append(self.rest_send.check_mode)
         return self.responses.pop(0)
 
 
@@ -293,6 +918,10 @@ class _ReplacedVrfCoordinator:
         self.state_machine.state = module_args["state"]
         self.calls.append(("new_state_machine",))
         return self.state_machine, "original-config", "original-state"
+
+    @staticmethod
+    def _preflight_fabric_features(*_args, **_kwargs):
+        pass
 
     def _current_attachment_details_ignore_missing(self, _module_args, _strategy, vrf_names):
         self.calls.append(("initial_query", vrf_names))
@@ -385,6 +1014,10 @@ class _StagedVrfCoordinator:
         self.state_machine.state = module_args["state"]
         self.calls.append(("new_state_machine", module_args["state"], list(module_args.get("config") or [])))
         return self.state_machine, "original-config", "original-state"
+
+    @staticmethod
+    def _preflight_fabric_features(*_args, **_kwargs):
+        pass
 
     def _current_attachment_details_ignore_missing(self, _module_args, _strategy, vrf_names):
         self.calls.append(("attachment_query", vrf_names))
@@ -562,6 +1195,25 @@ def test_vrf_replaced_first_create_with_attachment_skips_missing_pre_query():
     ]
 
 
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_vrf_feature_preflight_rejects_before_replaced_attachment_or_crud(check_mode):
+    coordinator = _ReplacedVrfCoordinator()
+    coordinator.module.check_mode = check_mode
+
+    def reject_feature(*_args, **_kwargs):
+        raise ValueError("fabric feature disabled")
+
+    coordinator._preflight_fabric_features = reject_feature
+
+    with pytest.raises(ValueError, match="fabric feature disabled"):
+        VrfStateMachine(coordinator).run(
+            {"state": "replaced", "config": [{"vrf_name": "BLUE", "attach": [{"switch_id": "SERIAL1"}]}]},
+            _StandaloneStrategy(),
+        )
+
+    assert not any(call[0] in ("pre", "post", "manage_state") for call in coordinator.calls)
+
+
 def test_vrf_replaced_existing_unattached_vpc_expands_peer_from_raw_rows():
     """
     # Summary
@@ -686,10 +1338,278 @@ def test_vrf_delete_wait_timeout_ignores_removed_override_and_scales_adaptively_
     manager = VrfAttachmentManager(coordinator=Coordinator())
 
     # Stale top-level timeout values no longer override this internal wait policy.
-    assert manager._delete_wait_timeout({"timeout": 300}, 1) == 30
-    assert manager._delete_wait_timeout({"timeout": 300}, 30) == 30
-    assert manager._delete_wait_timeout({"timeout": 300}, 31) == 35
-    assert manager._delete_wait_timeout({"timeout": 300}, 6000) == 900
+    assert manager._delete_wait_timeout(1) == 600
+    assert manager._delete_wait_timeout(30) == 600
+    assert manager._delete_wait_timeout(31) == 630
+    assert manager._delete_wait_timeout(6000) == 900
+
+
+def test_vrf_delete_wait_uses_scoped_vrf_query_and_attachment_gate():
+    class Module:
+        params = {}
+
+        def fail_json(self, **kwargs):
+            raise AssertionError(kwargs)
+
+    class Coordinator:
+        module = Module()
+
+        def __init__(self):
+            self.queried_names = []
+            self.queried_attachments = []
+
+        def _current_attachment_details(self, _module_args, _strategy, vrf_names):
+            self.queried_attachments.append(vrf_names)
+            return [
+                {"vrfName": "OTHER", "switchId": "OTHER-SWITCH", "attach": True, "status": "pending"},
+                {"vrfName": "BLUE", "switchId": "FDO123", "attach": False, "status": "notApplicable"},
+            ]
+
+        def _query_current_vrfs_by_names(self, _module_args, _strategy, vrf_names):
+            self.queried_names.append(vrf_names)
+            return [{"vrfName": "BLUE", "vrfStatus": "notApplicable"}]
+
+        def _query_current_vrfs(self, *_args):
+            raise AssertionError("delete readiness must use scoped VRF queries")
+
+    coordinator = Coordinator()
+    manager = VrfAttachmentManager(coordinator=coordinator)
+
+    manager.wait_for_vrfs_delete_ready(
+        {"config": [{"vrf_name": "BLUE"}]},
+        _StandaloneStrategy(),
+    )
+
+    assert coordinator.queried_attachments == [["BLUE"]]
+    assert coordinator.queried_names == [["BLUE"]]
+
+
+def test_vrf_delete_wait_blocks_on_pending_attachment_even_when_vrf_status_is_ready():
+    class Module:
+        params = {}
+
+        def fail_json(self, **kwargs):
+            raise RuntimeError(kwargs)
+
+    class Coordinator:
+        module = Module()
+
+        def _current_attachment_details(self, _module_args, _strategy, vrf_names):
+            assert vrf_names == ["BLUE"]
+            return [{"vrfName": "BLUE", "switchId": "FDO123", "attach": False, "status": "pending"}]
+
+        def _query_current_vrfs_by_names(self, _module_args, _strategy, vrf_names):
+            assert vrf_names == ["BLUE"]
+            return [{"vrfName": "BLUE", "vrfStatus": "notApplicable"}]
+
+    manager = VrfAttachmentManager(coordinator=Coordinator())
+    manager.delete_wait_base_timeout = 0
+    manager.delete_wait_extra_chunk_timeout = 0
+    manager.delete_wait_max_timeout = 0
+    manager.delete_wait_delay = 0
+    manager.undeploy_retry_attempts = 0
+
+    with pytest.raises(RuntimeError, match="last_attachment_blockers"):
+        manager.wait_for_vrfs_delete_ready(
+            {"config": [{"vrf_name": "BLUE"}]},
+            _StandaloneStrategy(),
+        )
+
+
+def test_vrf_delete_wait_retries_undeploy_for_pending_status():
+    class Module:
+        params = {}
+
+        def fail_json(self, **kwargs):
+            raise RuntimeError(kwargs["msg"])
+
+    class Coordinator:
+        module = Module()
+
+        def _current_attachment_details(self, _module_args, _strategy, vrf_names):
+            assert vrf_names == ["BLUE"]
+            return []
+
+        def _query_current_vrfs_by_names(self, _module_args, _strategy, vrf_names):
+            assert vrf_names == ["BLUE"]
+            return [{"vrfName": "BLUE", "vrfStatus": "pending"}]
+
+    manager = VrfAttachmentManager(coordinator=Coordinator())
+    manager.delete_wait_base_timeout = 0
+    manager.delete_wait_extra_chunk_timeout = 0
+    manager.delete_wait_max_timeout = 0
+    manager.delete_wait_delay = 0
+    manager.undeploy_retry_attempts = 1
+    deploy_payloads = []
+    manager.deploy_vrf_attachments = lambda _module_args, _strategy, payload: deploy_payloads.append(payload)
+
+    with pytest.raises(RuntimeError, match="Timed out waiting for VRFs"):
+        manager.wait_for_vrfs_delete_ready(
+            {"config": [{"vrf_name": "BLUE"}]},
+            _StandaloneStrategy(),
+        )
+
+    assert deploy_payloads == [{"vrfNames": ["BLUE"]}]
+
+
+@pytest.mark.parametrize(
+    "source,status,switch_id",
+    [
+        ("attachment", "failed", "FDO123"),
+        ("attachment", "outOfSync", "FDO123"),
+        ("attachment", "failed", None),
+        ("attachment", "outOfSync", None),
+        ("vrf", "failed", None),
+        ("vrf", "outOfSync", None),
+    ],
+)
+def test_vrf_delete_wait_retries_and_blocks_failed_or_out_of_sync_status(source, status, switch_id):
+    class Module:
+        params = {}
+
+        def fail_json(self, **kwargs):
+            raise RuntimeError(kwargs)
+
+    class Coordinator:
+        module = Module()
+
+        def _current_attachment_details(self, _module_args, _strategy, vrf_names):
+            assert vrf_names == ["BLUE"]
+            return [{"vrfName": "BLUE", "switchId": switch_id, "attach": False, "status": status}] if source == "attachment" else []
+
+        def _query_current_vrfs_by_names(self, _module_args, _strategy, vrf_names):
+            assert vrf_names == ["BLUE"]
+            return [{"vrfName": "BLUE", "vrfStatus": status if source == "vrf" else "notApplicable"}]
+
+    manager = VrfAttachmentManager(coordinator=Coordinator())
+    manager.delete_wait_base_timeout = 0
+    manager.delete_wait_extra_chunk_timeout = 0
+    manager.delete_wait_max_timeout = 0
+    manager.delete_wait_delay = 0
+    manager.undeploy_retry_attempts = 1
+    deploy_payloads = []
+    manager.deploy_vrf_attachments = lambda _module_args, _strategy, payload: deploy_payloads.append(payload)
+
+    with pytest.raises(RuntimeError, match="Timed out waiting for VRFs"):
+        manager.wait_for_vrfs_delete_ready(
+            {"config": [{"vrf_name": "BLUE"}]},
+            _StandaloneStrategy(),
+        )
+
+    expected = {"vrfNames": ["BLUE"]}
+    if source == "attachment" and switch_id:
+        expected["switchIds"] = [switch_id]
+    assert deploy_payloads == [expected]
+
+
+@pytest.mark.parametrize(
+    "attachment,expected_status,blocks",
+    [
+        ({}, "", False),
+        ({"attach": True}, "", True),
+        ({"attach": "true"}, "", True),
+        ({"attach": False, "configStatus": "notApplicable"}, "notApplicable", False),
+        ({"attach": False, "status": "pending"}, "pending", True),
+    ],
+)
+def test_vrf_delete_attachment_status_selection_and_blocking(attachment, expected_status, blocks):
+    assert VrfAttachmentManager.attachment_status(attachment) == expected_status
+    assert VrfAttachmentManager.attachment_blocks_delete(attachment) is blocks
+
+
+def test_vrf_switch_resolution_skips_inventory_when_no_attachment_ips_are_requested():
+    manager = VrfAttachmentManager(_StagedVrfAttachmentCoordinator())
+    assert manager.resolve_switch_ids({}, _StandaloneStrategy(), [{"vrf_name": "BLUE", "attach": [{}]}]) == {}
+
+
+def test_vrf_delete_wait_observes_pending_then_ready():
+    polls = []
+
+    class Coordinator:
+        module = _Module({})
+
+        @staticmethod
+        def _current_attachment_details(_module_args, _strategy, _names):
+            polls.append("poll")
+            if len(polls) == 1:
+                return [{"vrfName": "BLUE", "switchId": "S1", "attach": False, "status": "pending"}]
+            return []
+
+        @staticmethod
+        def _query_current_vrfs_by_names(_module_args, _strategy, _names):
+            return [{"vrfName": "BLUE", "vrfStatus": "notApplicable"}]
+
+    manager = VrfAttachmentManager(Coordinator())
+    manager.undeploy_retry_attempts = 0
+    manager.delete_wait_delay = 0
+    manager._delete_wait_deadline = lambda _count: (float("inf"), 1)
+    with patch("ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_attachment_manager.time.sleep") as sleep:
+        manager.wait_for_vrfs_delete_ready({}, _StandaloneStrategy(), ["BLUE"])
+    assert polls == ["poll", "poll"]
+    sleep.assert_called_once_with(0)
+
+
+def test_vrf_gathered_output_uses_public_config_shape():
+    model = VrfDataModel.from_response(
+        {
+            "fabricName": "fab1",
+            "vrfName": "BLUE_VRF",
+            "vrfStatus": "deployed",
+            "vrfId": 50001,
+            "vlanId": 2001,
+            "vrfType": "vxlan",
+            "coreData": {
+                "vrfVlanName": "BLUE_VLAN",
+                "vrfInterfaceDescription": "blue vrf svi",
+                "vrfDescription": "blue tenant vrf",
+                "mtu": 9000,
+                "routingTag": 12345,
+                "vrfRouteMap": "FABRIC-RMAP-REDIST-SUBNET",
+                "v6VrfRouteMap": "FABRIC-RMAP-REDIST-SUBNET",
+                "maxBgpPaths": 2,
+                "maxIbgpPaths": 3,
+                "ipv6LinkLocal": True,
+                "disableRtAuto": True,
+                "routeTargetImport": ["65000:1"],
+                "routeTargetExport": ["65000:2"],
+                "evpnRouteTargetImport": ["65000:3"],
+                "evpnRouteTargetExport": ["65000:4"],
+            },
+            "fabricData": {
+                "l3VniWithoutVlan": False,
+                "advertiseHostRoute": True,
+                "advertiseDefaultRoute": False,
+                "configureStaticDefaultRoute": False,
+                "netflow": True,
+                "netflowMonitor": "VRF_MON",
+                "trmData": {
+                    "ipv4Trm": True,
+                    "v4RpAbsent": True,
+                    "l3VniMulticastGroup": "239.1.1.21",
+                    "trmOnBgw": True,
+                    "mvpnRouteTargetImport": ["65000:5"],
+                    "mvpnRouteTargetExport": ["65000:6"],
+                },
+            },
+        }
+    )
+    output = NDOutput(output_level="normal", state="gathered")
+    output.assign(
+        after=NDConfigCollection(VrfDataModel, [model]),
+        gathered_spec=VrfDataModel.get_argument_spec()["config"]["options"],
+    )
+
+    gathered = output.format()["gathered"][0]
+
+    for internal_key in ("fabric_name", "vrf_status", "vrf_type", "core_data", "fabric_data"):
+        assert internal_key not in gathered
+    assert gathered["vrf_name"] == "BLUE_VRF"
+    assert gathered["vrf_vlan_name"] == "BLUE_VLAN"
+    assert gathered["vrf_intf_desc"] == "blue vrf svi"
+    assert gathered["vrf_int_mtu"] == 9000
+    assert gathered["nf_monitor"] == "VRF_MON"
+    assert gathered["underlay_mcast_ip"] == "239.1.1.21"
+    VrfConfigModel.from_config(gathered)
 
 
 def test_vrf_attachment_query_missing_fallback_uses_unscoped_read():
@@ -736,6 +1656,7 @@ def test_vrf_attachment_query_walks_paginated_results():
         },
     ]
     orchestrator = _AttachmentQueryOrchestrator(strategy, responses)
+    orchestrator.rest_send.check_mode = True
     results = _Results()
 
     class Coordinator:
@@ -752,7 +1673,26 @@ def test_vrf_attachment_query_walks_paginated_results():
     assert orchestrator.requests[0]["path"].endswith("/vrfAttachments/query?offset=0&max=1&includeAll=true")
     assert orchestrator.requests[1]["path"].endswith("/vrfAttachments/query?offset=1&max=1&includeAll=true")
     assert orchestrator.requests[0]["data"] == {"vrfNames": ["BLUE"]}
+    assert orchestrator.request_check_modes == [False, False]
+    assert orchestrator.rest_send.check_mode is True
     assert results.finalized == 2
+
+
+def test_vrf_attachment_query_restores_check_mode_after_failure():
+    strategy = _StandaloneStrategy()
+    orchestrator = _AttachmentQueryOrchestrator(strategy, [])
+    orchestrator.rest_send.check_mode = True
+    results = _Results()
+
+    class Coordinator:
+        def _new_vrf_orchestrator(self, _module_args, _strategy):
+            return orchestrator, results
+
+    with pytest.raises(IndexError):
+        VrfAttachmentManager(Coordinator()).current_attachment_details({}, strategy, ["BLUE"])
+    assert orchestrator.request_check_modes == [False]
+    assert orchestrator.rest_send.check_mode is True
+    assert results.finalized == 0
 
 
 def test_vrf_workflow_coordinator_00001_arg_spec_blocks_invalid_child_suboptions():
@@ -832,86 +1772,16 @@ def test_vrf_workflow_coordinator_00003_child_rejects_direct_attach():
         raise AssertionError("child attach was not rejected")
 
 
-def test_vrf_workflow_coordinator_000035_mcfg_parent_scrubs_child_scoped_defaults():
-    """
-    # Summary
-
-    Verify defaulted parent fabric options are removed from MCFG parent rows
-    that are controlled through child_fabric_config.
-    """
-    parent_vrf = {
-        "vrf_name": "ansible-mcfg-vrf",
-        "l3vni_wo_vlan": False,
-        "adv_host_routes": False,
-        "adv_default_routes": True,
-        "static_default_route": True,
-        "netflow_enable": False,
-        "trm_enable": False,
-        "max_bgp_paths": 4,
-    }
-
-    VrfWorkflowCoordinator._remove_defaulted_mcfg_parent_fabric_options(parent_vrf)
-
-    assert parent_vrf == {
-        "vrf_name": "ansible-mcfg-vrf",
-        "max_bgp_paths": 4,
-    }
-
-
-def test_vrf_workflow_coordinator_000036_mcfg_parent_keeps_nondefault_fabric_options():
-    """
-    # Summary
-
-    Verify non-default MCFG parent fabric options survive the default scrub.
-    """
-    parent_vrf = {
-        "vrf_name": "ansible-mcfg-vrf",
-        "l3vni_wo_vlan": True,
-        "adv_host_routes": True,
-        "adv_default_routes": False,
-        "static_default_route": False,
-        "netflow_enable": True,
-    }
-
-    VrfWorkflowCoordinator._remove_defaulted_mcfg_parent_fabric_options(parent_vrf)
-
-    assert parent_vrf == {
-        "vrf_name": "ansible-mcfg-vrf",
-        "l3vni_wo_vlan": True,
-        "adv_host_routes": True,
-        "adv_default_routes": False,
-        "static_default_route": False,
-        "netflow_enable": True,
-    }
-
-
-def test_vrf_workflow_coordinator_000037_mcfg_parent_scrubs_child_owned_fabric_options():
-    """
-    # Summary
-
-    Verify MCFG parent rows with child_fabric_config leave fabric-instance
-    options to the child manage endpoint.
-    """
-    parent_vrf = {
-        "vrf_name": "ansible-mcfg-vrf",
-        "vrf_id": 9008037,
-        "l3vni_wo_vlan": True,
-        "adv_host_routes": True,
-        "adv_default_routes": False,
-        "static_default_route": False,
-        "bgp_password": "abcdef12",
-        "bgp_passwd_encrypt": 3,
-        "netflow_enable": True,
-        "max_bgp_paths": 4,
-    }
-
-    VrfWorkflowCoordinator._remove_child_owned_mcfg_parent_fabric_options(parent_vrf)
-
-    assert parent_vrf == {
-        "vrf_name": "ansible-mcfg-vrf",
-        "vrf_id": 9008037,
-        "max_bgp_paths": 4,
-    }
+def test_vrf_parent_rejects_child_only_fields_for_msd_and_mcfg():
+    """Both parent topologies use the same typed ownership rule."""
+    for strategy in (_ParentStrategy(), _McfgParentStrategy()):
+        coordinator = VrfWorkflowCoordinator(_Module({}), strategy)
+        with pytest.raises(AssertionError, match="must be set under child_fabric_config"):
+            coordinator._parse_config(
+                [{"vrf_name": "BLUE", "vrf_id": 50001, "adv_host_routes": True, "trm_enable": True, "netflow_enable": False}],
+                VrfParentConfigModel,
+                "merged",
+            )
 
 
 def test_vrf_workflow_coordinator_000038_attachment_match_treats_missing_extra_config_as_empty():
@@ -1179,6 +2049,148 @@ def test_vrf_workflow_coordinator_00005_attach_fields_map_to_api_payload():
     assert payload["instanceValues"]["routeTargetImport"] == ["65000:10"]
 
 
+def test_vrf_workflow_coordinator_attachment_options_do_not_emit_dpu_secure_default():
+    """
+    # Summary
+
+    Verify VRF attachment instanceValues do not emit the smart-switch
+    dpuSecure default unless the user explicitly sets it.
+    """
+    module_args = {
+        "fabric_name": "AK-VXLAN",
+        "state": "merged",
+        "config": [
+            {
+                "vrf_name": "ansible-vrf",
+                "attach": [
+                    {
+                        "ip_address": "192.0.2.10",
+                        "attachment_options": {
+                            "loopback_id": 10,
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    coordinator = VrfWorkflowCoordinator(
+        module=_Module(dict(module_args)),
+        strategy=_StandaloneStrategy(),
+    )
+
+    object.__setattr__(coordinator, "_resolve_switch_ids", lambda *_args: {"192.0.2.10": "FDO123"})
+
+    desired = coordinator._desired_attachment_map(module_args, _StandaloneStrategy())
+
+    assert desired[("ansible-vrf", "FDO123")]["instanceValues"] == {
+        "loopbackId": 10,
+    }
+
+
+def test_vrf_workflow_coordinator_explicit_false_dpu_secure_is_preserved():
+    """
+    # Summary
+
+    Verify explicit dpu_secure: false is still sent as user intent.
+    """
+    module_args = {
+        "fabric_name": "AK-VXLAN",
+        "state": "merged",
+        "config": [
+            {
+                "vrf_name": "ansible-vrf",
+                "attach": [
+                    {
+                        "ip_address": "192.0.2.10",
+                        "attachment_options": {
+                            "dpu_secure": False,
+                            "loopback_id": 10,
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    coordinator = VrfWorkflowCoordinator(
+        module=_Module(dict(module_args)),
+        strategy=_StandaloneStrategy(),
+    )
+
+    object.__setattr__(coordinator, "_resolve_switch_ids", lambda *_args: {"192.0.2.10": "FDO123"})
+
+    desired = coordinator._desired_attachment_map(module_args, _StandaloneStrategy())
+
+    assert desired[("ansible-vrf", "FDO123")]["instanceValues"] == {
+        "dpuSecure": False,
+        "loopbackId": 10,
+    }
+
+
+def test_vrf_attachment_post_preserves_only_requested_dpu_secure():
+    """
+    # Summary
+
+    Verify final VRF attachment POST omits unrequested dpuSecure and preserves
+    explicit dpuSecure false.
+    """
+    calls = []
+
+    class Module:
+        check_mode = False
+
+    class Coordinator:
+        module = Module()
+
+        def _new_vrf_orchestrator(self, _module_args, _strategy):
+            class Orchestrator:
+                def _make_endpoint(self, endpoint_cls):
+                    return endpoint_cls(fabric_name="fab1")
+
+                def _request(self, **kwargs):
+                    calls.append(kwargs)
+                    return {"results": [{"status": "success"}]}
+
+            return Orchestrator(), {}
+
+        def _finalize_api_trace(self, _results, deploy_targets=None):
+            return {"changed": True, "failed": False, "deploy_targets": deploy_targets or {}}
+
+    manager = VrfAttachmentManager(Coordinator())
+    payloads = [
+        {
+            "vrfName": "BLUE",
+            "switchId": "SERIAL1",
+            "attach": True,
+            "instanceValues": {"routeTargetImport": ["65000:101"]},
+        },
+        {
+            "vrfName": "GREEN",
+            "switchId": "SERIAL2",
+            "attach": True,
+            "instanceValues": {"dpuSecure": False, "routeTargetImport": ["65000:102"]},
+        },
+    ]
+
+    manager.post_vrf_attachments({}, _StandaloneStrategy(), payloads, {}, OperationType.CREATE)
+
+    assert calls[0]["data"] == {
+        "attachments": [
+            {
+                "vrfName": "BLUE",
+                "switchId": "SERIAL1",
+                "instanceValues": {"routeTargetImport": ["65000:101"]},
+                "attach": True,
+            },
+            {
+                "vrfName": "GREEN",
+                "switchId": "SERIAL2",
+                "instanceValues": {"dpuSecure": False, "routeTargetImport": ["65000:102"]},
+                "attach": True,
+            },
+        ]
+    }
+
+
 def test_vrf_workflow_coordinator_00010_parent_child_results_keep_state_machine_shape():
     """
     # Summary
@@ -1247,6 +2259,21 @@ def test_vrf_workflow_coordinator_00010_parent_child_results_keep_state_machine_
     assert "child_fabric" not in child
 
 
+@pytest.mark.parametrize("output_level", ["normal", "info", "debug"])
+@pytest.mark.parametrize("with_child", [False, True])
+def test_vrf_parent_result_keeps_top_level_output_level(output_level, with_child):
+    coordinator = VrfWorkflowCoordinator.__new__(VrfWorkflowCoordinator)
+    parent_result = {"changed": False, "failed": False, "output_level": output_level, "before": [], "after": []}
+    child_results = [{"child_fabric": "CHILD", "changed": False, "failed": False, "output_level": output_level}] if with_child else []
+
+    result = coordinator._build_structured_result(parent_result, child_results, "PARENT", "multisite_parent", "multisite")
+
+    assert result["output_level"] == output_level
+    if with_child:
+        assert result["parent_fabric"]["output_level"] == output_level
+        assert result["child_fabrics"][0]["output_level"] == output_level
+
+
 def test_vrf_workflow_coordinator_00011_child_exception_returns_structured_failure():
     """
     # Summary
@@ -1281,6 +2308,7 @@ def test_vrf_workflow_coordinator_00011_child_exception_returns_structured_failu
 
     assert result["changed"] is True
     assert result["failed"] is True
+    assert result["output_level"] == "debug"
     assert "AK-VXLAN" in result["msg"]
     child = result["child_fabrics"][0]
     assert child["fabric_name"] == "AK-VXLAN"
@@ -1322,6 +2350,7 @@ def test_vrf_workflow_coordinator_00020_parent_deploy_deferred_after_child_tasks
         module=_Module(dict(module_args)),
         strategy=_ParentStrategy(),
     )
+    object.__setattr__(coordinator, "_preflight_child_feature_tasks", lambda *_args: call_order.append("preflight"))
     call_order = []
 
     def run_parent(args, defer_deploy=False):
@@ -1373,11 +2402,36 @@ def test_vrf_workflow_coordinator_00020_parent_deploy_deferred_after_child_tasks
 
     result = coordinator._handle_parent_workflow(dict(module_args), "multisite_parent")
 
-    assert call_order == ["parent", "child", "deploy"]
+    assert call_order == ["preflight", "parent", "child", "deploy"]
     assert result["changed"] is True
+    assert result["output_level"] == "debug"
     assert result["fabric_type"] == "multisite_parent"
     assert result["parent_fabric"]["fabric_type"] == "multisite_parent"
     assert result["child_fabrics"][0]["fabric_type"] == "multisite_child"
+
+
+def test_vrf_child_reuses_preflight_inventory_when_parent_is_unchanged():
+    coordinator = VrfWorkflowCoordinator(module=_Module({"output_level": "normal"}), strategy=_ParentStrategy())
+    prepared = object()
+    calls = []
+
+    class StateMachineWrapper:
+        @staticmethod
+        def run_basic(module_args, strategy, prebuilt_sm):
+            calls.append((module_args, strategy, prebuilt_sm))
+            return {"changed": False, "failed": False}
+
+    def unexpected_query(*_args, **_kwargs):
+        raise AssertionError("second GET")
+
+    object.__setattr__(coordinator, "_vrf_state_machine", StateMachineWrapper)
+    object.__setattr__(coordinator, "_run_state_machine", unexpected_query)
+    strategy = _ChildStrategy()
+    module_args = {"state": "merged", "config": []}
+    result = coordinator._run_child_task({"fabric": "CHILD", "strategy": strategy, "module_args": module_args, "preflight_state_machine": prepared})
+
+    assert result["failed"] is False
+    assert calls == [(module_args, strategy, prepared)]
 
 
 def test_vrf_workflow_coordinator_00030_build_pending_vrf_deploy_payload():
@@ -2060,6 +3114,7 @@ def test_vrf_workflow_coordinator_00080_overridden_deploys_omitted_detach_before
     object.__setattr__(coordinator, "_wait_for_vrfs_delete_ready", wait)
     object.__setattr__(coordinator, "_apply_attachment_phase", attachment_phase)
     object.__setattr__(coordinator, "_desired_attachment_map", lambda *_args: {})
+    object.__setattr__(coordinator, "_preflight_fabric_features", lambda *_args, **_kwargs: None)
     object.__setattr__(coordinator, "_format_state_machine_output", format_output)
     object.__setattr__(coordinator, "_restore_state_machine_params", lambda *_args: None)
     object.__setattr__(coordinator, "_build_pending_vrf_deploy_payloads", lambda *_args: [])
@@ -2595,6 +3650,7 @@ def test_vrf_workflow_coordinator_00085_overridden_new_vrf_queries_attachments_a
     object.__setattr__(coordinator, "_current_attachment_details_ignore_missing", attachment_details)
     object.__setattr__(coordinator, "_current_attachment_details", new_attachment_details)
     object.__setattr__(coordinator, "_apply_deleted_attachment_phase", detach)
+    object.__setattr__(coordinator, "_preflight_fabric_features", lambda *_args, **_kwargs: None)
     object.__setattr__(coordinator, "_current_attachment_map", fail_current_attachment_query)
     object.__setattr__(
         coordinator,
@@ -2716,3 +3772,194 @@ def test_vrf_workflow_coordinator_delete_dependency_check_batches_network_query(
             "networkName": "ansible-net-17",
         }
     ]
+
+
+@pytest.mark.parametrize(
+    "response,expected",
+    [
+        ([{"vrfName": "BLUE"}], [{"vrfName": "BLUE"}]),
+        ({"vrfs": [{"vrfName": "BLUE"}]}, [{"vrfName": "BLUE"}]),
+        ({"items": [{"vrfName": "BLUE"}]}, [{"vrfName": "BLUE"}]),
+        ({"unexpected": 1}, []),
+        (None, []),
+    ],
+)
+def test_vrf_scoped_query_result_shapes(response, expected):
+    coordinator = VrfWorkflowCoordinator(_Module({"state": "deleted", "config": []}), _StandaloneStrategy())
+
+    class Orchestrator:
+        def query_by_names(self, names):
+            assert names == ["BLUE"]
+            return response
+
+    coordinator._new_vrf_orchestrator = lambda *_args: (Orchestrator(), None)
+    assert coordinator._query_current_vrfs_by_names({"state": "deleted"}, coordinator.strategy, ["BLUE"]) == expected
+
+
+@pytest.mark.parametrize("state", ["merged", "gathered"])
+def test_vrf_orchestrator_creation_keeps_parent_queries_at_parent_scope(state, monkeypatch):
+    from types import SimpleNamespace
+
+    coordinator = VrfWorkflowCoordinator(_Module({"state": "original", "config": [{"vrf_name": "ORIGINAL"}]}), _StandaloneStrategy())
+    calls = []
+
+    class Orchestrator:
+        def __init__(self, **kwargs):
+            assert "enrich_mcfg_parent_from_children" not in kwargs
+            calls.append(kwargs["strategy"])
+
+        @staticmethod
+        def prepare_config_data(config):
+            return config
+
+    monkeypatch.setattr(coordinator_mod, "NDVrfOrchestrator", Orchestrator)
+    monkeypatch.setattr(coordinator, "_new_rest_send", RestSend)
+    coordinator._new_vrf_orchestrator({"state": state, "config": []}, coordinator.strategy)
+    snapshot = SimpleNamespace(existing={}, proposed={})
+    monkeypatch.setattr(coordinator_mod, "NDStateMachine", lambda **_kwargs: snapshot)
+    sm, original_config, original_state = coordinator._new_state_machine({"state": state, "config": []})
+    assert sm is snapshot
+    coordinator._restore_state_machine_params(original_config, original_state)
+    assert calls == [coordinator.strategy, coordinator.strategy]
+    assert coordinator.module.params == {"state": "original", "config": [{"vrf_name": "ORIGINAL"}]}
+
+
+@pytest.mark.parametrize(
+    ("state", "existing", "explicit_v6", "expect_fallback"),
+    [
+        ("merged", False, False, True),
+        ("merged", True, False, True),
+        ("merged", True, True, True),
+        ("replaced", True, False, True),
+        ("overridden", True, False, True),
+    ],
+)
+def test_vrf_sparse_ipv4_map_preserves_existing_ipv6_override(monkeypatch, state, existing, explicit_v6, expect_fallback):
+    coordinator = VrfWorkflowCoordinator(_Module({"state": "original", "config": []}), _StandaloneStrategy())
+    existing_models = (
+        [
+            VrfDataModel.from_response(
+                {
+                    "fabricName": "AK-VXLAN",
+                    "vrfName": "BLUE",
+                    "coreData": {
+                        "vrfRouteMap": "OLD-V4",
+                        "v6VrfRouteMap": "CUSTOM-V6",
+                    },
+                }
+            )
+        ]
+        if existing
+        else []
+    )
+
+    class Orchestrator:
+        configure_write_models = coordinator_mod.NDVrfOrchestrator.configure_write_models
+
+        def __init__(self, **_kwargs):
+            self.write_capabilities = VrfWriteCapabilities("4.3.1.175")
+
+        @staticmethod
+        def prepare_config_data(config):
+            return [
+                {
+                    "fabric_name": "AK-VXLAN",
+                    "vrf_name": "BLUE",
+                    "core_data": {
+                        "vrfRouteMap": "NEW-V4",
+                        **({"v6VrfRouteMap": "CUSTOM-V6"} if explicit_v6 else {}),
+                    },
+                }
+            ]
+
+    class StateMachine:
+        def __init__(self, module, model_orchestrator):
+            self.model_orchestrator = model_orchestrator
+            self.existing = NDConfigCollection(VrfDataModel, existing_models)
+            self.proposed = NDConfigCollection.from_ansible_config(module.params["config"], VrfDataModel)
+
+    monkeypatch.setattr(coordinator_mod, "NDVrfOrchestrator", Orchestrator)
+    monkeypatch.setattr(coordinator_mod, "NDStateMachine", StateMachine)
+    monkeypatch.setattr(coordinator, "_new_rest_send", RestSend)
+    entry = {"vrf_name": "BLUE", "redist_direct_rmap": "NEW-V4"}
+    if explicit_v6:
+        entry["v6_redist_direct_rmap"] = "CUSTOM-V6"
+    sm, original_config, original_state = coordinator._new_state_machine({"state": state, "config": [entry]})
+    try:
+        proposed = sm.proposed.get(("BLUE", "AK-VXLAN"))
+        assert ("v6VrfRouteMap" in proposed.core_data) is (expect_fallback and (state != "merged" or not existing or explicit_v6))
+        if existing:
+            assert sm.existing.get_diff_config(proposed, exclude_unset=state == "merged") == "changed"
+        if existing and state == "merged" and not explicit_v6:
+            merged = sm.existing.merge(proposed)
+            assert merged.core_data["v6VrfRouteMap"] == "CUSTOM-V6"
+            assert merged.to_payload()["coreData"] == {
+                "vrfRouteMap": "NEW-V4",
+                "v6VrfRouteMap": "CUSTOM-V6",
+            }
+    finally:
+        coordinator._restore_state_machine_params(original_config, original_state)
+
+
+def test_standalone_effective_validation_failure_restores_module_params(monkeypatch):
+    original = {"state": "original", "config": []}
+    coordinator = VrfWorkflowCoordinator(_Module(original.copy()), _StandaloneStrategy())
+
+    class Orchestrator:
+        configure_write_models = coordinator_mod.NDVrfOrchestrator.configure_write_models
+
+        def __init__(self, **_kwargs):
+            self.write_capabilities = VrfWriteCapabilities("4.3.1.175")
+
+        @staticmethod
+        def prepare_config_data(_config):
+            return [{"fabric_name": "AK-VXLAN", "vrf_name": "BLUE", "fabric_data": {"trmData": {"v4RpAddress": "192.0.2.9"}}}]
+
+    class StateMachine:
+        def __init__(self, module, model_orchestrator):
+            self.model_orchestrator = model_orchestrator
+            self.existing = NDConfigCollection(VrfDataModel)
+            self.proposed = NDConfigCollection.from_ansible_config(module.params["config"], VrfDataModel)
+
+    monkeypatch.setattr(coordinator_mod, "NDVrfOrchestrator", Orchestrator)
+    monkeypatch.setattr(coordinator_mod, "NDStateMachine", StateMachine)
+    monkeypatch.setattr(coordinator, "_new_rest_send", RestSend)
+    with pytest.raises(ValidationError, match="require trm_enable=True"):
+        coordinator._new_state_machine({"state": "merged", "config": [{"vrf_name": "BLUE", "rp_address": "192.0.2.9"}]})
+    assert coordinator.module.params == original
+
+
+def test_vrf_parent_skips_child_task_when_only_fabric_name_is_given(monkeypatch):
+    coordinator = VrfWorkflowCoordinator(_Module({"fabric_name": "MSD", "state": "merged", "config": []}), _ParentStrategy())
+    monkeypatch.setattr(coordinator, "_parse_config", lambda config, *_args: config)
+    monkeypatch.setattr(coordinator, "_run_state_machine_with_attachments", lambda *_args, **_kwargs: {"changed": False, "failed": False})
+    monkeypatch.setattr(coordinator, "_collect_deferred_deploy_payloads", lambda *_args: [])
+    monkeypatch.setattr(coordinator, "_build_structured_result", lambda *_args: {"changed": False, "failed": False})
+    result = coordinator._handle_parent_workflow(
+        {"fabric_name": "MSD", "state": "merged", "config": [{"vrf_name": "BLUE", "child_fabric_config": [{"fabric_name": "AK-VXLAN"}]}]},
+        "multisite_parent",
+    )
+    assert result == {"changed": False, "failed": False}
+    assert any(entry["event"] == "child_task_skipped_without_child_options" for entry in coordinator.workflow_trace)
+
+
+@pytest.mark.parametrize("child_value", [False, True])
+def test_mcfg_child_l3vni_override_reaches_child(monkeypatch, child_value):
+    """MCFG routes explicit no-VLAN intent through the child path."""
+    coordinator = VrfWorkflowCoordinator(_Module({"fabric_name": "MCFG_C", "state": "merged", "config": []}), _McfgParentStrategy())
+    monkeypatch.setattr(coordinator.strategy, "child_fabric_members", lambda: ["nacfab"])
+    monkeypatch.setattr(coordinator, "_parse_config", lambda config, *_args: config)
+    monkeypatch.setattr(coordinator, "_preflight_child_feature_tasks", lambda *_args: None)
+    monkeypatch.setattr(coordinator, "_run_state_machine_with_attachments", lambda *_args, **_kwargs: {"changed": False, "failed": False})
+    monkeypatch.setattr(coordinator, "_collect_deferred_deploy_payloads", lambda *_args: [])
+    monkeypatch.setattr(coordinator, "_build_structured_result", lambda *_args: {"changed": False, "failed": False})
+    child_tasks = []
+    monkeypatch.setattr(coordinator, "_run_child_task", lambda task: (child_tasks.append(task) or {"changed": False, "failed": False}))
+    child = {"fabric_name": "nacfab", "l3vni_wo_vlan": child_value}
+    module_args = {
+        "fabric_name": "MCFG_C",
+        "state": "merged",
+        "config": [{"vrf_name": "BLUE", "child_fabric_config": [child]}],
+    }
+    coordinator._handle_parent_workflow(module_args, "multicluster_parent")
+    assert child_tasks[0]["module_args"]["config"][0]["l3vni_wo_vlan"] is child_value

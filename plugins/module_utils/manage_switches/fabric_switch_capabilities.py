@@ -62,7 +62,7 @@ BROAD_FABRIC_ROLES = frozenset(
     }
 )
 
-CAMPUS_VXLAN_IOS_XE_ROLES = frozenset({SwitchRole.LEAF, SwitchRole.SPINE})
+CAMPUS_VXLAN_IOS_XE_ROLES = frozenset({SwitchRole.LEAF, SwitchRole.SPINE, SwitchRole.BORDER, SwitchRole.BORDER_SPINE})
 
 CAMPUS_VXLAN_NX_OS_ROLES = frozenset(
     {
@@ -212,11 +212,19 @@ def _enum_value(value: Any) -> str:
     return value.value if hasattr(value, "value") else str(value)
 
 
-def _supported_roles_for_platform(capability: FabricSwitchCapability, platform_type: PlatformType) -> frozenset[SwitchRole]:
+def _supported_roles_for_platform(capability: FabricSwitchCapability, platform_type: PlatformType, controller_version: str | None) -> frozenset[SwitchRole]:
     """Return supported roles for the supplied platform within a fabric family."""
     if capability.roles_by_platform is None:
         return capability.roles
-    return capability.roles_by_platform.get(platform_type, capability.roles)
+    roles = capability.roles_by_platform.get(platform_type, capability.roles)
+    if capability.family == "Campus VXLAN" and platform_type == PlatformType.IOS_XE:
+        try:
+            release = tuple(int(part) for part in (controller_version or "").split(".")[:3])
+        except ValueError:
+            release = ()
+        if release < (4, 3, 1):
+            return roles - {SwitchRole.BORDER_SPINE}
+    return roles
 
 
 def _resolve_preserve_config(capability: FabricSwitchCapability, preserve_config: bool | None) -> bool:
@@ -267,6 +275,7 @@ def validate_switch_configs_for_fabric_type(
     fabric_name: str,
     fabric_type: str,
     configs: list[SwitchConfigModel],
+    controller_version: str | None = None,
 ) -> FabricSwitchCapability:
     """
     # Summary
@@ -292,12 +301,15 @@ def validate_switch_configs_for_fabric_type(
                 f"{prefix}: platform_type '{_enum_value(cfg.platform_type)}' is not supported for {capability.family} fabric "
                 f"'{fabric_name}' (type '{fabric_type}'). Supported platform_type values: {_enum_values(capability.platform_types)}."
             )
-        supported_roles = _supported_roles_for_platform(capability, platform_type)
+        supported_roles = _supported_roles_for_platform(capability, platform_type, controller_version)
         if role is not None and role not in supported_roles:
             role_display = _enum_value(cfg.role) if cfg.role else "<unspecified>"
+            release_detail = ""
+            if capability.family == "Campus VXLAN" and platform_type == PlatformType.IOS_XE and role == SwitchRole.BORDER_SPINE:
+                release_detail = f" IOS-XE borderSpine requires ND 4.3.1 or later (detected: {controller_version or 'unknown'})."
             errors.append(
                 f"{prefix}: role '{role_display}' is not supported for platform_type '{_enum_value(cfg.platform_type)}' in "
-                f"{capability.family} fabric '{fabric_name}' (type '{fabric_type}'). Supported role values: {_enum_values(supported_roles)}."
+                f"{capability.family} fabric '{fabric_name}' (type '{fabric_type}'). Supported role values: {_enum_values(supported_roles)}.{release_detail}"
             )
         cfg.preserve_config = _resolve_preserve_config(capability, cfg.preserve_config)
         if cfg.preserve_config not in capability.preserve_config_values:

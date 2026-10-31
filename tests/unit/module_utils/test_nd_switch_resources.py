@@ -48,6 +48,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.fabric_switch_capabilities import (
     CAPABILITY_BY_FABRIC_TYPE,
+    CAMPUS_VXLAN_IOS_XE_ROLES,
+    CAMPUS_VXLAN_NX_OS_ROLES,
+    CAMPUS_VXLAN_ROLES,
     SUPPORTED_SWITCH_ONBOARDING_FABRIC_TYPES,
     SwitchFabricCapabilityError,
     validate_switch_configs_for_fabric_type,
@@ -87,6 +90,7 @@ class FakeRestSend:
         self.send_interval = 5
         self.response_current = {}
         self.result_current = {}
+        self.controller_version = "4.2.1.10"
 
 
 class FakeND:
@@ -102,6 +106,9 @@ class FakeND:
         self.calls = []
 
     def _get_rest_send(self):
+        return self.rest_send
+
+    def get_rest_send(self):
         return self.rest_send
 
     def request(self, path=None, *, verb, data=None):
@@ -309,10 +316,13 @@ def _bootstrap_entry(serial="POAP1", hostname="api-host"):
         "serialNumber": serial,
         "model": "N9K-C93180YC-EX",
         "softwareVersion": "10.3(1)",
+        "softwareImage": "nxos64-cs.10.3.1.F.bin",
         "hostname": hostname,
         "gatewayIpMask": "192.0.2.1/24",
         "fingerPrint": "fingerprint",
         "publicKey": "public-key",
+        "dhcpBootstrapIp": "192.0.2.50",
+        "seedSwitch": False,
         "switchRole": "spine",
         "data": {"models": ["N9K-C93180YC-EX"], "gatewayIpMask": "192.0.2.1/24"},
     }
@@ -386,9 +396,10 @@ def test_switch_service_context_api_call_registers_successful_result():
     response = ctx.api_call(
         ApiCallSpec(
             endpoint=SimpleNamespace(path="/api/test", verb="POST"),
-            payload={"payload": True},
+            payload={"payload": True, "password": "secret"},
             action="create",
             op_type=OperationType.CREATE,
+            verbosity_level=4,
         )
     )
 
@@ -396,6 +407,12 @@ def test_switch_service_context_api_call_registers_successful_result():
     assert nd.calls[0]["timeout"] == 1
     assert results.metadata[0]["action"] == "create"
     assert results.diffs[0]["payload"] is True
+    assert results.path == ["/api/test"]
+    assert results.verb == [HttpVerbEnum.POST]
+    assert results.payload == [{"payload": True, "password": "********"}]
+    assert results.diffs[0]["password"] == "********"
+    assert results.verbosity_level == [4]
+    assert nd.calls[0]["data"]["password"] == "secret"
 
 
 def test_switch_service_context_api_call_fails_on_request_error_and_unsuccessful_result():
@@ -423,6 +440,9 @@ def test_switch_service_context_api_call_fails_on_request_error_and_unsuccessful
                 context="create switch",
             )
         )
+    assert failed_ctx.results.path == ["/api/test"]
+    assert failed_ctx.results.verb == [HttpVerbEnum.POST]
+    assert failed_ctx.results.verbosity_level == [2]
 
 
 def test_validate_configs_accepts_dict_and_rejects_duplicates():
@@ -507,6 +527,24 @@ def test_fabric_capability_validation_rejects_new_campus_leaf_before_writes():
 
     with pytest.raises(FailJsonError, match="role 'leaf' is not supported for platform_type 'nx-os' in Campus VXLAN"):
         resource.manage_state()
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize(("version", "allowed"), [("4.2.1.10", False), ("4.3.1.1", True)])
+def test_resource_validates_campus_border_spine_using_controller_version(version, allowed, check_mode):
+    """Normal and check mode use the actual release before switch discovery or writes."""
+    config = _cfg(role="border_spine", platform_type="ios-xe", preserve_config=False)
+    resource = _resource(check_mode=check_mode)
+    resource.fabric_details_cache = SimpleNamespace(get_fabric_type=lambda: "vxlanCampus")
+    resource.nd.rest_send.controller_version = version
+
+    if allowed:
+        resource._validate_fabric_capabilities([config])
+    else:
+        with pytest.raises(FailJsonError, match="IOS-XE borderSpine requires ND 4.3.1 or later"):
+            resource._validate_fabric_capabilities([config])
+
+    assert resource.nd.calls == []
 
 
 def test_existing_campus_ios_xe_leaf_omitted_platform_is_idempotent():
@@ -595,18 +633,30 @@ def test_existing_read_side_platform_actionable_write_does_not_default_to_nxos()
         resource.manage_state()
 
 
-@pytest.mark.parametrize("role", ["leaf", "spine"])
-def test_fabric_capability_validation_allows_campus_ios_xe_leaf_spine(role):
-    """Campus VXLAN accepts leaf/spine roles for IOS-XE switches."""
-    capability = validate_switch_configs_for_fabric_type("Campus_AK", "vxlanCampus", [_cfg(role=role, platform_type="ios-xe", preserve_config=False)])
+@pytest.mark.parametrize(
+    ("version", "role"),
+    [
+        (version, role)
+        for version, roles in (("4.2.1.10", ("leaf", "spine", "border")), ("4.3.1.1", ("leaf", "spine", "border", "border_spine")))
+        for role in roles
+    ],
+)
+def test_fabric_capability_validation_allows_campus_ios_xe_roles(version, role):
+    """Campus IOS-XE role support follows the controller release."""
+    capability = validate_switch_configs_for_fabric_type(
+        "Campus_AK", "vxlanCampus", [_cfg(role=role, platform_type="ios-xe", preserve_config=False)], controller_version=version
+    )
 
     assert capability.family == "Campus VXLAN"
 
 
+@pytest.mark.parametrize("version", ["4.2.1.10", "4.3.1.1"])
 @pytest.mark.parametrize("role", ["border_gateway", "border_gateway_spine", "border_gateway_super_spine"])
-def test_fabric_capability_validation_allows_campus_nxos_border_gateway_roles(role):
+def test_fabric_capability_validation_allows_campus_nxos_border_gateway_roles(version, role):
     """Campus VXLAN accepts border-gateway roles for NX-OS switches."""
-    capability = validate_switch_configs_for_fabric_type("Campus_AK", "vxlanCampus", [_cfg(role=role, platform_type="nx-os", preserve_config=False)])
+    capability = validate_switch_configs_for_fabric_type(
+        "Campus_AK", "vxlanCampus", [_cfg(role=role, platform_type="nx-os", preserve_config=False)], controller_version=version
+    )
 
     assert capability.family == "Campus VXLAN"
 
@@ -629,6 +679,107 @@ def test_fabric_capability_validation_rejects_campus_nxos_leaf():
             "vxlanCampus",
             [_cfg(role="leaf", platform_type="nx-os", preserve_config=False)],
         )
+
+
+@pytest.mark.parametrize("version", ["4.2.0", "4.2.1.10", "4.3.0", None, "unknown"])
+def test_fabric_capability_validation_rejects_campus_ios_border_spine_without_supported_release(version):
+    """Border Spine is unavailable on 4.2 and must not be guessed when version is unknown."""
+    with pytest.raises(SwitchFabricCapabilityError, match="IOS-XE borderSpine requires ND 4.3.1 or later"):
+        validate_switch_configs_for_fabric_type(
+            "Campus_AK", "vxlanCampus", [_cfg(role="border_spine", platform_type="ios-xe", preserve_config=False)], controller_version=version
+        )
+
+
+def test_campus_role_set_is_derived_from_platform_role_sets():
+    """The Campus-wide role catalog adds no roles outside its platform catalogs."""
+    assert CAMPUS_VXLAN_ROLES == CAMPUS_VXLAN_IOS_XE_ROLES | CAMPUS_VXLAN_NX_OS_ROLES
+
+
+def test_fabric_capability_validation_allows_campus_ios_border_spine_on_exact_431_release():
+    """Border Spine starts at ND 4.3.1, not at the later build suffix."""
+    capability = validate_switch_configs_for_fabric_type(
+        "Campus_AK", "vxlanCampus", [_cfg(role="border_spine", platform_type="ios-xe", preserve_config=False)], controller_version="4.3.1"
+    )
+
+    assert capability.family == "Campus VXLAN"
+
+
+@pytest.mark.parametrize("version", ["4.2.1.10", "4.3.1.1"])
+@pytest.mark.parametrize("role", ["leaf", "spine", "border", "border_spine"])
+def test_fabric_capability_validation_rejects_campus_ios_roles_on_nxos(version, role):
+    """Catalyst-only Campus roles must not pass for Nexus switches."""
+    with pytest.raises(SwitchFabricCapabilityError, match="not supported for platform_type 'nx-os' in Campus VXLAN"):
+        validate_switch_configs_for_fabric_type(
+            "Campus_AK", "vxlanCampus", [_cfg(role=role, platform_type="nx-os", preserve_config=False)], controller_version=version
+        )
+
+
+@pytest.mark.parametrize("version", ["4.2.1.10", "4.3.1.1"])
+@pytest.mark.parametrize("role", ["border_gateway", "border_gateway_spine", "border_gateway_super_spine"])
+def test_fabric_capability_validation_rejects_campus_nxos_roles_on_ios(version, role):
+    """Nexus-only Campus roles must not pass for Catalyst switches."""
+    with pytest.raises(SwitchFabricCapabilityError, match="not supported for platform_type 'ios-xe' in Campus VXLAN"):
+        validate_switch_configs_for_fabric_type(
+            "Campus_AK", "vxlanCampus", [_cfg(role=role, platform_type="ios-xe", preserve_config=False)], controller_version=version
+        )
+
+
+@pytest.mark.parametrize(
+    ("role", "api_role"),
+    [
+        ("border", "border"),
+        ("border_spine", "borderSpine"),
+        ("border_gateway", "borderGateway"),
+        ("border_gateway_spine", "borderGatewaySpine"),
+        ("border_gateway_super_spine", "borderGatewaySuperSpine"),
+    ],
+)
+def test_campus_roles_serialize_to_change_roles_api(role, api_role):
+    """Explicit public role spellings reach the Manage API in its camel-case form."""
+    nd = FakeND()
+    ctx = _ctx(nd=nd)
+    fabric_ops = SwitchFabricOps(ctx, fabric_utils=SimpleNamespace())
+
+    fabric_ops.bulk_update_roles([("SW1", _cfg(role=role))])
+
+    assert nd.calls[-1]["data"] == {"switchRoles": [{"switchId": "SW1", "role": api_role}]}
+
+
+@pytest.mark.parametrize(
+    ("platform_type", "role", "api_role"),
+    [
+        ("ios-xe", "leaf", "leaf"),
+        ("ios-xe", "spine", "spine"),
+        ("ios-xe", "border", "border"),
+        ("ios-xe", "border_spine", "borderSpine"),
+        ("nx-os", "border_gateway", "borderGateway"),
+        ("nx-os", "border_gateway_spine", "borderGatewaySpine"),
+        ("nx-os", "border_gateway_super_spine", "borderGatewaySuperSpine"),
+    ],
+)
+def test_campus_roles_serialize_to_add_switch_api(platform_type, role, api_role):
+    """Every documented Campus role is preserved in the submitted add request."""
+    nd = FakeND()
+    fabric_ops = SwitchFabricOps(_ctx(nd=nd), fabric_utils=SimpleNamespace())
+    cfg = _cfg(role=role, platform_type=platform_type, preserve_config=False)
+
+    fabric_ops.bulk_add(
+        BulkAddSpec(
+            switches=[
+                (
+                    cfg,
+                    {"hostname": "sw1", "ip": cfg.seed_ip, "serialNumber": "SW1", "model": "N9K-C93180YC-EX", "softwareVersion": "10.3(1)"},
+                )
+            ],
+            username="admin",
+            password="password",
+            auth_proto="MD5",
+            platform_type=platform_type,
+            preserve_config=False,
+        )
+    )
+
+    assert nd.calls[-1]["data"]["switches"][0]["switchRole"] == api_role
 
 
 def test_fabric_capability_validation_allows_unspecified_role():
@@ -1170,6 +1321,7 @@ def test_fabric_ops_finalize_honors_switch_and_global_deploy_modes():
     assert [entry["action"] for entry in results.metadata] == ["config_save", "deploy_switches"]
     assert results.path == ["/config-save", "/switch-deploy"]
     assert results.payload == [None, {"switchIds": ["SERIAL1"]}]
+    assert results.verbosity_level == [2, 2]
     assert [response["RETURN_CODE"] for response in results.responses] == [200, 200]
 
     calls.clear()
@@ -1212,10 +1364,25 @@ def test_poap_handler_builds_and_submits_bootstrap_preprovision_and_swap():
     fabric_ops = RecordingFabricOps()
     handler = POAPHandler(ctx, fabric_ops, RecordingWait(), StaticBootstrapCache({"POAP1": bootstrap}))
 
-    handler.handle([_cfg("192.0.2.10", poap={"serial_number": "POAP1", "hostname": "user-host"})])
+    handler.handle(
+        [
+            _cfg(
+                "192.0.2.10",
+                poap={
+                    "serial_number": "POAP1",
+                    "hostname": "user-host",
+                    "software_image": "nxos64-cs.10.6.4.M.bin",
+                },
+            )
+        ]
+    )
     assert ctx.results.metadata[-1]["action"] == "bootstrap"
     assert ctx.results.diffs[-1]["switches"][0]["hostname"] == "api-host"
     assert ctx.results.diffs[-1]["switches"][0]["switchRole"] == "spine"
+    assert ctx.results.diffs[-1]["switches"][0]["softwareImage"] == "nxos64-cs.10.6.4.M.bin"
+    assert ctx.results.diffs[-1]["switches"][0]["dhcpBootstrapIp"] == "192.0.2.50"
+    assert "imagePolicy" not in ctx.results.diffs[-1]["switches"][0]
+    assert "reAdd" not in ctx.results.diffs[-1]["switches"][0]
     assert fabric_ops.post_add_calls[-1].context == "bootstrap"
 
     preprov_cfg = _cfg(
@@ -1231,6 +1398,9 @@ def test_poap_handler_builds_and_submits_bootstrap_preprovision_and_swap():
     handler.handle([preprov_cfg])
     assert ctx.results.metadata[-1]["action"] == "preprovision"
     assert ctx.results.diffs[-1]["switches"][0]["serialNumber"] == "PRE1"
+    assert ctx.results.diffs[-1]["switches"][0]["softwareVersion"] == "10.3(1)"
+    assert "softwareImage" not in ctx.results.diffs[-1]["switches"][0]
+    assert "imagePolicy" not in ctx.results.diffs[-1]["switches"][0]
 
     swap_cfg = _cfg(
         "192.0.2.30",
@@ -1248,6 +1418,46 @@ def test_poap_handler_builds_and_submits_bootstrap_preprovision_and_swap():
     swap_handler.handle([swap_cfg], [_sw("192.0.2.30", "OLD1")])
     assert cache.refreshes == 1
     assert [entry["action"] for entry in swap_handler.ctx.results.metadata] == ["swap_serial", "bootstrap"]
+
+
+@pytest.mark.parametrize("output_level,verbosity", [("normal", 0), ("normal", 2), ("normal", 3), ("debug", 0)])
+def test_poap_handler_records_submitted_request_at_documented_verbosity(output_level, verbosity):
+    nd = FakeND()
+    ctx = _ctx(nd=nd, results=Results())
+    handler = POAPHandler(ctx, RecordingFabricOps(), RecordingWait(), StaticBootstrapCache({"POAP1": _bootstrap_entry("POAP1")}))
+
+    handler.handle([_cfg("192.0.2.10", poap={"serial_number": "POAP1", "hostname": "poap1"})])
+
+    assert len(nd.calls) == 1
+    request = nd.calls[0]
+    assert request["path"] == "/api/v1/manage/fabrics/FAB1/switchActions/importBootstrap"
+    assert request["verb"] == HttpVerbEnum.POST
+    effective_verbosity = max(verbosity, 3) if output_level == "debug" else verbosity
+    output = NDOutput(output_level).format_with_verbosity(effective_verbosity, results=ctx.results)
+    if effective_verbosity < 2:
+        assert "api_paths" not in output
+        assert "api_verbs" not in output
+        assert "api_payload" not in output
+    else:
+        assert output["api_paths"] == [request["path"]]
+        assert output["api_verbs"] == [request["verb"]]
+        if effective_verbosity < 3:
+            assert "api_payload" not in output
+        else:
+            assert output["api_payload"] == [mask_password(request["data"])]
+            assert output["api_diff"][0]["switches"][0]["password"] == "********"
+
+
+def test_poap_handler_omits_software_image_when_not_requested():
+    """POAP import sends softwareImage only when the playbook selects one."""
+    bootstrap = _bootstrap_entry("POAP1")
+    ctx = _ctx(results=Results())
+    handler = POAPHandler(ctx, RecordingFabricOps(), RecordingWait(), StaticBootstrapCache({"POAP1": bootstrap}))
+
+    handler.handle([_cfg("192.0.2.10", poap={"serial_number": "POAP1", "hostname": "user-host"})])
+
+    assert ctx.results.diffs[-1]["switches"][0]["softwareVersion"] == "10.3(1)"
+    assert "softwareImage" not in ctx.results.diffs[-1]["switches"][0]
 
 
 def test_poap_handler_requires_bootstrap_identity_fields():
@@ -1334,17 +1544,26 @@ def test_rma_handler_requires_bootstrap_identity_fields():
 def test_rma_handler_full_success_and_ready_finalize_failures():
     """RMA success submits provision, waits for replacement, saves credentials, and finalizes."""
     old_switch = _sw("192.0.2.12", "OLD1", discovery_status="unreachable", system_mode="maintenance", hostname="old-host")
-    cfg = _cfg("192.0.2.12", rma=[{"new_serial_number": "NEW1", "image_policy": "gold"}])
+    cfg = _cfg("192.0.2.12", rma=[{"new_serial_number": "NEW1"}])
     fabric_ops = RecordingFabricOps()
     wait = RecordingWait()
-    ctx = _ctx(results=Results())
-    handler = RMAHandler(ctx, fabric_ops, wait, StaticBootstrapCache({"NEW1": _bootstrap_entry("NEW1")}))
+    nd = FakeND()
+    ctx = _ctx(nd=nd, results=Results())
+    bootstrap = _bootstrap_entry("NEW1")
+    bootstrap["seedSwitch"] = True
+    handler = RMAHandler(ctx, fabric_ops, wait, StaticBootstrapCache({"NEW1": bootstrap}))
 
     handler.handle([cfg], [old_switch])
 
     assert ctx.results.metadata[0]["action"] == "rma"
     assert ctx.results.diffs[0]["old_switch_id"] == "OLD1"
     assert ctx.results.diffs[0]["new_switch_id"] == "NEW1"
+    assert "oldSwitchId" not in nd.calls[0]["data"]
+    assert "imagePolicy" not in nd.calls[0]["data"]
+    assert nd.calls[0]["data"]["ip"] == "192.0.2.12"
+    assert nd.calls[0]["data"]["dhcpBootstrapIp"] == "192.0.2.50"
+    assert nd.calls[0]["data"]["seedSwitch"] is True
+    assert nd.calls[0]["data"]["softwareImage"] == "nxos64-cs.10.3.1.F.bin"
     assert wait.rma_calls == [["NEW1"]]
     assert fabric_ops.saved_credentials == [[("NEW1", cfg)]]
     assert fabric_ops.finalized == [["NEW1"]]
@@ -1356,6 +1575,25 @@ def test_rma_handler_full_success_and_ready_finalize_failures():
     handler = RMAHandler(_ctx(), RecordingFabricOps(fail_finalize=True), RecordingWait(), StaticBootstrapCache({"NEW1": _bootstrap_entry("NEW1")}))
     with pytest.raises(FailJsonError, match="Failed to finalize"):
         handler.handle([cfg], [old_switch])
+
+
+@pytest.mark.parametrize("bootstrap_fields", [{"dhcpBootstrapIp": "", "seedSwitch": False}, {}])
+def test_rma_handler_optional_bootstrap_fields(bootstrap_fields):
+    """RMA omits absent DHCP addresses and defaults an absent seed flag to false."""
+    bootstrap = _bootstrap_entry("NEW1")
+    bootstrap.pop("dhcpBootstrapIp")
+    bootstrap.pop("seedSwitch")
+    bootstrap.update(bootstrap_fields)
+    nd = FakeND()
+    handler = RMAHandler(_ctx(nd=nd), RecordingFabricOps(), RecordingWait(), StaticBootstrapCache({"NEW1": bootstrap}))
+
+    handler.handle(
+        [_cfg("192.0.2.12", rma=[{"new_serial_number": "NEW1"}])],
+        [_sw("192.0.2.12", "OLD1", discovery_status="unreachable", system_mode="maintenance")],
+    )
+
+    assert "dhcpBootstrapIp" not in nd.calls[0]["data"]
+    assert nd.calls[0]["data"]["seedSwitch"] is False
 
 
 def test_resource_module_check_mode_output_and_deleted_state():
@@ -1601,6 +1839,50 @@ def test_exit_json_gathered_allows_read_side_platform_values():
     assert final["gathered"][0]["password"] == "<password>"
 
 
+@pytest.mark.parametrize("output_level,verbosity", [("normal", 0), ("debug", 0), ("normal", 2), ("normal", 3)])
+def test_exit_json_filters_api_details_and_preserves_switch_output(output_level, verbosity):
+    resource = _resource(state="merged", check_mode=True, existing=[_sw("192.0.2.10", "SERIAL1")], output_level=output_level)
+    resource.module._verbosity = verbosity
+    cfg = _cfg("192.0.2.11")
+    resource.proposed_cfgs = [cfg]
+    resource._plan = _empty_plan(to_add=[cfg])
+    for level in (2, 3, 4):
+        resource.results.action = "query"
+        resource.results.operation_type = OperationType.QUERY
+        resource.results.path_current = f"/api/v1/test/{level}"
+        resource.results.verb_current = HttpVerbEnum.GET
+        resource.results.verbosity_level_current = level
+        resource.results.payload_current = {"level": level}
+        resource.results.response_current = {"level": level}
+        resource.results.result_current = {"success": True, "changed": False}
+        resource.results.diff_current = {"level": level}
+        resource.results.register_api_call()
+
+    resource.exit_json()
+
+    final = resource.module.exit_kwargs
+    assert final["changed"] is True
+    assert final["before"][0]["seed_ip"] == "192.0.2.10"
+    assert final["after"][1]["seed_ip"] == "192.0.2.11"
+    assert final["diff"][0]["_action"] == "added"
+    for key in ("path", "verb", "payload", "response", "result", "metadata", "verbosity_level"):
+        assert key not in final
+    effective_verbosity = max(verbosity, 3) if output_level == "debug" else verbosity
+    if effective_verbosity < 2:
+        assert not any(key.startswith("api_") for key in final)
+    else:
+        levels = [level for level in (2, 3, 4) if level <= effective_verbosity]
+        assert final["api_paths"] == [f"/api/v1/test/{level}" for level in levels]
+        assert len(final["api_verbs"]) == len(levels)
+        if effective_verbosity == 2:
+            assert "api_payload" not in final
+        else:
+            assert final["api_payload"] == [{"level": level} for level in levels]
+            assert [response["level"] for response in final["api_response"]] == levels
+            assert [diff["level"] for diff in final["api_diff"]] == levels
+            assert len(final["api_result"]) == len(final["api_metadata"]) == len(levels)
+
+
 def test_exit_json_check_mode_uses_synthetic_before_after_diff():
     """exit_json check-mode branch delegates to the synthetic check-mode output builder."""
     existing = [_sw("192.0.2.10", "SERIAL1")]
@@ -1681,7 +1963,7 @@ def test_utils_payload_masking_and_payload_builders_do_not_mutate_input():
     payload = {
         "password": "top-secret",
         "switches": [
-            {"serialNumber": "SERIAL1", "password": "switch-secret"},
+            {"serialNumber": "SERIAL1", "password": "switch-secret", "credentials": {"discoveryPassword": "discovery-secret"}},
             {"serialNumber": "SERIAL2"},
         ],
     }
@@ -1690,8 +1972,10 @@ def test_utils_payload_masking_and_payload_builders_do_not_mutate_input():
 
     assert masked["password"] == "********"
     assert masked["switches"][0]["password"] == "********"
+    assert masked["switches"][0]["credentials"]["discoveryPassword"] == "********"
     assert payload["password"] == "top-secret"
     assert payload["switches"][0]["password"] == "switch-secret"
+    assert payload["switches"][0]["credentials"]["discoveryPassword"] == "discovery-secret"
 
     utils = PayloadUtils()
     assert utils.build_credentials_payload(["SERIAL1"], "admin", "password") == {
