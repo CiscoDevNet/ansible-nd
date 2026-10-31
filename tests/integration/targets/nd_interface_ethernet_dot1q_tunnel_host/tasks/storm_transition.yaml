@@ -1,0 +1,90 @@
+---
+# Optional regression: clear a unicast percentage limit and set broadcast PPS
+# in one merge. Preview and stage the transition on ND without deployment.
+# Physical storm-unit transition qualification is tracked separately in #533.
+- name: STORM REGRESSION | Seed an unicast percentage-only policy without deployment
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host:
+    fabric_name: "{{ test_fabric_name }}"
+    state: merged
+    config_actions:
+      deploy: false
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names: ["{{ test_interface_names[0] }}"]
+        config_data:
+          network_os:
+            policy:
+              access_vlan: "{{ test_access_vlan }}"
+              description: ansible-dot1q-storm-regression
+              storm_control: true
+              storm_control_unicast_level: 10.0
+
+- name: STORM REGRESSION | Verify the existing policy uses percentage units only
+  ansible.builtin.include_tasks: verify.yaml
+  vars:
+    dot1q_expected:
+      - name: "{{ test_interface_names[0] }}"
+        policy_type: dot1qTunnelHost
+        policy:
+          stormControl: true
+          stormControlUnicastLevel: 10.0
+
+- name: STORM REGRESSION | Capture controller intent before the valid merge preview
+  ansible.builtin.include_tasks: read_interfaces.yaml
+
+- name: STORM REGRESSION | Record the transition checkpoint
+  ansible.builtin.set_fact:
+    dot1q_checkpoint: "{{ dot1q_readback.results | map(attribute='current.configData') | list }}"
+
+- name: STORM REGRESSION | Plan clearing the old percentage and setting broadcast PPS
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: &dot1q_storm_transition
+    fabric_name: "{{ test_fabric_name }}"
+    state: merged
+    config_actions:
+      deploy: false
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names: ["{{ test_interface_names[0] }}"]
+        config_data:
+          network_os:
+            policy:
+              storm_control_unicast_level: 0
+              storm_control_broadcast_level_pps: 1000
+  check_mode: true
+  register: cm_dot1q_storm_transition
+
+- name: STORM REGRESSION | Require the valid completed policy to plan a change
+  ansible.builtin.assert:
+    that: cm_dot1q_storm_transition is changed
+
+- name: STORM REGRESSION | Prove no transition was applied to ND
+  ansible.builtin.include_tasks: assert_unchanged.yaml
+
+- name: STORM REGRESSION | Stage the completed consistent merge without deployment
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_storm_transition
+  register: nm_dot1q_storm_transition
+
+- name: STORM REGRESSION | Read actual staged units from ND
+  cisco.nd.nd_rest:
+    method: get
+    path: "{{ dot1q_interfaces_path }}{{ test_interface_names[0] | replace('/', '%2F') }}"
+  register: dot1q_storm_readback
+
+- name: STORM REGRESSION | Require the old percentage to clear and the PPS intent to persist
+  vars:
+    policy: "{{ dot1q_storm_readback.current.configData.networkOS.policy }}"
+  ansible.builtin.assert:
+    that:
+      - nm_dot1q_storm_transition is changed
+      - dot1q_storm_readback.status | int == 200
+      - policy.policyType == 'dot1qTunnelHost'
+      - policy.stormControlBroadcastLevelPps | int == 1000
+      - policy.stormControlUnicastLevel | default(0) | float == 0
+
+- name: STORM REGRESSION | Replay the staged unit change
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_storm_transition
+  register: nm_dot1q_storm_replay
+
+- name: STORM REGRESSION | Require an idempotent staged transition
+  ansible.builtin.assert:
+    that: nm_dot1q_storm_replay is not changed

@@ -1,0 +1,7 @@
+---
+- name: Run the standalone dot1q-tunnel host integration target
+  hosts: nd
+  gather_facts: false
+  serial: 1
+  roles:
+    - role: "{{ playbook_dir }}"

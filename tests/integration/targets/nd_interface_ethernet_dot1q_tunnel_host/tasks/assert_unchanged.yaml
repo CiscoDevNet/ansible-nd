@@ -1,0 +1,10 @@
+---
+# Caller captures dot1q_checkpoint before the check-mode/negative task.
+- name: CHECK MODE | Read controller intent after the preview or rejected input
+  ansible.builtin.include_tasks: read_interfaces.yaml
+
+- name: CHECK MODE | Require all three physical policies to remain unchanged
+  ansible.builtin.assert:
+    that:
+      - dot1q_readback.results | map(attribute='current.configData') | list == dot1q_checkpoint
+    fail_msg: A preview or rejected input changed controller intent on the reserved test ports.
