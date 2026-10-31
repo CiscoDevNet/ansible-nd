@@ -72,6 +72,8 @@ def test_actual_manager_validation_and_attach_serializers_preserve_optional_vlan
         # Use the existing write-strict model to check that emitted values fit
         # the same portable contract without depending on a local spec path.
         NetworkAttachmentModel.model_validate(row)
+        # Require built-in integers, excluding bool and subclasses from the payload.
+        # pylint: disable-next=unidiomatic-typecheck
         assert "vlanId" not in row or type(row["vlanId"]) is int and 2 <= row["vlanId"] <= 4094
     assert all("deploy" not in request["path"] for request in coordinator.requests)
 

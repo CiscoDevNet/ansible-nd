@@ -81,7 +81,7 @@ class NetworkStagingEffects:
             if not isinstance(name, str) or not name or kind != "definitions" and (not isinstance(identity[1], str) or not identity[1]):
                 self.unknown.add(kind + "_identity_or_intent_unproven")
                 continue
-            if kind != "definitions" and type(row.get("attach")) is not bool:
+            if kind != "definitions" and not isinstance(row.get("attach"), bool):
                 self.unknown.add(kind + "_identity_or_intent_unproven")
             if identity in cursor["seen"]:
                 self.unknown.add(kind + "_duplicate_identity")
@@ -172,7 +172,7 @@ class NetworkStagingEffects:
         bounded = {"svi_enabled", "sviEnabled", "is_active", "isActive"}
         if isinstance(values, Mapping):
             unbounded = any(
-                (key not in bounded or type(value) is not bool) and not (key in {"dpuSecure", "dpu_secure"} and value is False)
+                (key not in bounded or not isinstance(value, bool)) and not (key in {"dpuSecure", "dpu_secure"} and value is False)
                 for key, value in values.items()
             )
         else:

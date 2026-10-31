@@ -41,7 +41,8 @@ def actual_noop_upserts(*, params, plan, snapshot, request_sha256, desired_diges
             (params.get("config_actions") or {}).get("deploy", False)
             or not (params.get("verify") or {}).get("enabled", False)
             or plan.changed
-            or type(plan.mutation_count) is not int
+            # Only built-in integers are valid proof; exclude bool and subclasses.
+            or type(plan.mutation_count) is not int  # pylint: disable=unidiomatic-typecheck
             or plan.mutation_count != 0
             or getattr(plan, "member_preparations", ())
             or not plan.resources

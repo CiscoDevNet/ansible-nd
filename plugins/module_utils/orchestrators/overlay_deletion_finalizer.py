@@ -202,6 +202,8 @@ class OverlayDeletionFinalizer:
                 query_class = EpManageFabricsNetworkAttachmentsQueryPost if self.resource == "network" else EpManageFabricsVrfAttachmentsQueryPost
                 expected = query_class()
                 expected.fabric_name = strategy.fabric_name
+                # Exact endpoint identity prevents subclasses from bypassing check mode.
+                # pylint: disable-next=unidiomatic-typecheck
                 if type(endpoint) is not query_class or verb != HttpVerbEnum.POST or urlsplit(path).path != urlsplit(expected.path).path:
                     raise ValueError("Check-mode finalization requires a recognized read-only attachment query")
                 runtime.check_mode = False

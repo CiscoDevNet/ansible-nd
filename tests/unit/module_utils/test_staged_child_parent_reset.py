@@ -198,7 +198,7 @@ def test_routed_residue_correction_stages_only_under_proven_child_delete(monkeyp
     monkeypatch.setattr(planner.snapshot, "refresh", lambda _ids: _advance_snapshot(planner.snapshot))
     monkeypatch.setattr(ethernet, "_check_port_channel_delete_restriction", lambda *_a, **_k: None)
     monkeypatch.setattr(ethernet, "_check_fabric_ownership", lambda *_a, **_k: None)
-    monkeypatch.setattr(ethernet, "_fabric_link_endpoints", lambda: set())
+    monkeypatch.setattr(ethernet, "_fabric_link_endpoints", set)
     monkeypatch.setattr(ethernet, "_retain_reset_auto_negotiation", lambda *_a, **_k: False)
     writes = []
 
