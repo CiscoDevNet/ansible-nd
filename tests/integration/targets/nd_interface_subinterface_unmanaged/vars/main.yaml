@@ -60,3 +60,85 @@ cleanup_config:
     interface_name: "{{ ethernet_parent }}.29"
   - switch_ip: "{{ test_switch_ip }}"
     interface_name: "{{ port_channel_parent }}.25"
+
+# --- ND 4.x harness coverage ---
+# These IDs do not overlap the legacy suite's .20-.29 range. Harness scenarios
+# use deploy=false, so they validate controller intent without pushing changes
+# to the switch. The parent ports must already be routed (L3). The destructive
+# cross-switch override scenario additionally requires nd_test_switch_ip_2.
+
+nd4x_subinterface_unmanaged_destructive_tests_enabled: >-
+  {{
+    nd_subinterface_unmanaged_destructive_tests_enabled
+    | default(false)
+    | bool
+  }}
+
+nd4x_subif_eth_40:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ ethernet_parent }}.40"
+
+nd4x_subif_eth_41:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ ethernet_parent }}.41"
+
+nd4x_subif_eth_42:
+  switch_ip: "{{ nd_test_switch_ip_2 | default('') }}"
+  interface_name: "{{ ethernet_parent }}.42"
+
+nd4x_subif_eth_49:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ ethernet_parent }}.49"
+
+nd4x_subif_eth_49_secondary:
+  switch_ip: "{{ nd_test_switch_ip_2 | default('') }}"
+  interface_name: "{{ ethernet_parent }}.49"
+
+nd4x_subif_pc_45:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_name: "{{ port_channel_parent }}.45"
+
+nd4x_subif_pc_45_secondary:
+  switch_ip: "{{ nd_test_switch_ip_2 | default('') }}"
+  interface_name: "{{ port_channel_parent }}.45"
+
+nd4x_subif_cleanup_config:
+  - "{{ nd4x_subif_eth_40 }}"
+  - "{{ nd4x_subif_eth_41 }}"
+  - "{{ nd4x_subif_eth_49 }}"
+  - "{{ nd4x_subif_pc_45 }}"
+
+nd4x_subif_override_cleanup_config: >-
+  {{
+    nd4x_subif_cleanup_config
+    +
+    (
+      [
+        nd4x_subif_eth_42,
+        nd4x_subif_eth_49_secondary,
+        nd4x_subif_pc_45_secondary
+      ]
+      if nd_test_switch_ip_2 is defined and nd_test_switch_ip_2 | length > 0
+      else []
+    )
+  }}
+
+nd4x_subif_overridden_allowed_resources: >-
+  {{
+    [
+      nd4x_subif_eth_40,
+      nd4x_subif_eth_41,
+      nd4x_subif_eth_49,
+      nd4x_subif_pc_45
+    ]
+    +
+    (
+      [
+        nd4x_subif_eth_42,
+        nd4x_subif_eth_49_secondary,
+        nd4x_subif_pc_45_secondary
+      ]
+      if nd_test_switch_ip_2 is defined and nd_test_switch_ip_2 | length > 0
+      else []
+    )
+  }}

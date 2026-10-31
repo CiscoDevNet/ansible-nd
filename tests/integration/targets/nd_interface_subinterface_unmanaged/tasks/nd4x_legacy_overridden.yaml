@@ -1,0 +1,141 @@
+---
+- name: "LEGACY OVERRIDDEN SAFETY: Require explicit destructive-test opt-in"
+  ansible.builtin.assert:
+    that:
+      - nd4x_subinterface_unmanaged_destructive_tests_enabled | bool
+    fail_msg: >-
+      The legacy overridden test is fabric-wide and may delete unmanaged
+      subinterfaces omitted from its configuration. Set
+      nd_subinterface_unmanaged_destructive_tests_enabled=true and use a
+      dedicated test fabric before selecting the legacy_overridden tag.
+
+- name: "LEGACY OVERRIDDEN PREFLIGHT: Query switches in the test fabric"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
+    method: get
+  register: nd4x_legacy_switch_inventory
+  changed_when: false
+
+- name: "LEGACY OVERRIDDEN PREFLIGHT: Query interfaces on every fabric switch"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ item.switchId }}/interfaces
+    method: get
+  loop: "{{ nd4x_legacy_switch_inventory.current.switches | default([]) }}"
+  loop_control:
+    label: "{{ item.fabricManagementIp | default(item.switchId) }}"
+  register: nd4x_legacy_fabric_interfaces
+  changed_when: false
+
+- name: "LEGACY OVERRIDDEN PREFLIGHT: Verify complete interface inventory"
+  ansible.builtin.assert:
+    that:
+      - nd4x_legacy_switch_inventory.current.switches | default([]) | length > 0
+      - nd4x_legacy_fabric_interfaces.results | default([]) | length == (nd4x_legacy_switch_inventory.current.switches | default([]) | length)
+      - >-
+        nd4x_legacy_fabric_interfaces.results
+        | selectattr('current.interfaces', 'defined')
+        | list | length == (nd4x_legacy_switch_inventory.current.switches | default([]) | length)
+    fail_msg: >-
+      Could not read the full interface inventory for every switch in fabric
+      {{ test_fabric_name }}. No overridden operation was run.
+
+- name: "LEGACY OVERRIDDEN PREFLIGHT: Initialize current unmanaged scope"
+  ansible.builtin.set_fact:
+    nd4x_legacy_existing_unmanaged_subinterfaces: []
+
+- name: "LEGACY OVERRIDDEN PREFLIGHT: Collect current unmanaged subinterfaces"
+  ansible.builtin.set_fact:
+    nd4x_legacy_existing_unmanaged_subinterfaces: >-
+      {{
+        nd4x_legacy_existing_unmanaged_subinterfaces
+        + [
+            {
+              'switch_ip': legacy_interface.0.item.fabricManagementIp
+                              | default(legacy_interface.0.item.switchId),
+              'interface_name': legacy_interface.1.interfaceName
+            }
+          ]
+      }}
+  loop: >-
+    {{
+      query(
+        'ansible.builtin.subelements',
+        nd4x_legacy_fabric_interfaces.results,
+        'current.interfaces',
+        {'skip_missing': True}
+      )
+    }}
+  loop_control:
+    loop_var: legacy_interface
+    label: >-
+      {{ legacy_interface.0.item.fabricManagementIp
+         | default(legacy_interface.0.item.switchId) }}
+      {{ legacy_interface.1.interfaceName | default('unknown') }}
+  when:
+    - legacy_interface.1.interfaceType | default('') == 'subInterface'
+    - >-
+      legacy_interface.1.get('configData', {})
+      .get('networkOS', {})
+      .get('policy', {})
+      .get('policyType', '') == 'monitorSubinterface'
+
+- name: "LEGACY OVERRIDDEN PREFLIGHT: Reject unmanaged resources outside reserved scope"
+  vars:
+    nd4x_legacy_unexpected_unmanaged_subinterfaces: >-
+      {{
+        nd4x_legacy_existing_unmanaged_subinterfaces
+        | difference(cleanup_config)
+        | list
+      }}
+  ansible.builtin.assert:
+    that:
+      - nd4x_legacy_unexpected_unmanaged_subinterfaces | length == 0
+    fail_msg: >-
+      Unsafe overridden testbed. Existing unmanaged subinterfaces were found
+      outside this target's reserved .20-.29 resources. No overridden operation
+      was run. Use a dedicated test fabric and remove or account for unrelated
+      unmanaged subinterfaces before retrying.
+
+- name: Run guarded legacy overridden state test
+  block:
+    - name: "LEGACY OVERRIDDEN SETUP: Clear reserved unmanaged subinterfaces"
+      cisco.nd.nd_interface_subinterface_unmanaged:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ cleanup_config }}"
+        config_actions:
+          deploy: false
+        state: deleted
+
+    - name: "LEGACY OVERRIDDEN SETUP: Create the expected legacy entry state"
+      cisco.nd.nd_interface_subinterface_unmanaged:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ subif_eth_20 }}"
+          - "{{ subif_eth_21 }}"
+          - "{{ subif_eth_22 }}"
+          - "{{ subif_eth_29 }}"
+          - "{{ subif_pc_25 }}"
+        config_actions:
+          deploy: false
+        state: merged
+
+    - name: Run original legacy overridden assertions
+      ansible.builtin.include_tasks:
+        file: overridden.yaml
+        apply:
+          tags:
+            - legacy_overridden
+
+  always:
+    - name: "LEGACY OVERRIDDEN CLEANUP: Remove reserved unmanaged subinterfaces"
+      cisco.nd.nd_interface_subinterface_unmanaged:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ cleanup_config }}"
+        config_actions:
+          deploy: false
+        state: deleted

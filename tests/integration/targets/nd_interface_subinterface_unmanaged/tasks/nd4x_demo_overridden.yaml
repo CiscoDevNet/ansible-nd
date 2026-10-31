@@ -1,0 +1,197 @@
+---
+- name: "OVERRIDDEN SAFETY: Require explicit destructive-test opt-in"
+  ansible.builtin.assert:
+    that:
+      - nd4x_subinterface_unmanaged_destructive_tests_enabled | bool
+      - nd_test_switch_ip_2 is defined
+      - nd_test_switch_ip_2 | default('') | length > 0
+      - nd4x_second_switch_matches | default([]) | length == 1
+    fail_msg: >-
+      The overridden test is fabric-wide and can delete unmanaged
+      subinterfaces omitted from the desired configuration. Run only on a
+      dedicated test fabric with two test switches, set
+      nd_test_switch_ip_2, and set
+      nd_subinterface_unmanaged_destructive_tests_enabled=true.
+
+- name: "OVERRIDDEN PREFLIGHT: Query interfaces on every fabric switch"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name
+      }}/switches/{{ item.switchId }}/interfaces
+    method: get
+  loop: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
+  loop_control:
+    label: "{{ item.fabricManagementIp | default(item.switchId) }}"
+  register: nd4x_fabric_interface_inventory
+  changed_when: false
+
+- name: "OVERRIDDEN PREFLIGHT: Initialize current unmanaged scope"
+  ansible.builtin.set_fact:
+    nd4x_existing_unmanaged_subinterfaces: []
+
+- name: "OVERRIDDEN PREFLIGHT: Collect current unmanaged subinterfaces"
+  ansible.builtin.set_fact:
+    nd4x_existing_unmanaged_subinterfaces: >-
+      {{
+        nd4x_existing_unmanaged_subinterfaces
+        + [
+            {
+              'switch_ip': fabric_interface.0.item.fabricManagementIp
+                              | default(fabric_interface.0.item.switchId),
+              'interface_name': fabric_interface.1.interfaceName
+            }
+          ]
+      }}
+  loop: >-
+    {{
+      query(
+        'ansible.builtin.subelements',
+        nd4x_fabric_interface_inventory.results,
+        'current.interfaces',
+        {'skip_missing': True}
+      )
+    }}
+  loop_control:
+    loop_var: fabric_interface
+    label: >-
+      {{ fabric_interface.0.item.fabricManagementIp
+         | default(fabric_interface.0.item.switchId) }}
+      {{ fabric_interface.1.interfaceName | default('unknown') }}
+  when:
+    - fabric_interface.1.interfaceType | default('') == 'subInterface'
+    - >-
+      fabric_interface.1.get('configData', {})
+      .get('networkOS', {})
+      .get('policy', {})
+      .get('policyType', '') == 'monitorSubinterface'
+
+- name: "OVERRIDDEN PREFLIGHT: Reject unmanaged resources outside reserved scope"
+  vars:
+    unexpected_unmanaged_subinterfaces: >-
+      {{
+        nd4x_existing_unmanaged_subinterfaces
+        | difference(nd4x_subif_overridden_allowed_resources)
+        | list
+      }}
+  ansible.builtin.assert:
+    that:
+      - unexpected_unmanaged_subinterfaces | length == 0
+    fail_msg: >-
+      Unsafe overridden testbed. Existing unmanaged subinterfaces were found
+      outside the reserved IDs on the two configured test switches. No
+      override was applied.
+
+- name: Run unmanaged subinterface overridden harness tests
+  block:
+    - name: "OVERRIDDEN SETUP: Remove reserved unmanaged subinterfaces"
+      cisco.nd.nd_interface_subinterface_unmanaged:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_subif_override_cleanup_config }}"
+        state: deleted
+
+    - name: "OVERRIDDEN SETUP: Create the reserved unmanaged subinterfaces"
+      cisco.nd.nd_interface_subinterface_unmanaged:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ nd4x_subif_eth_40 }}"
+          - "{{ nd4x_subif_eth_41 }}"
+          - "{{ nd4x_subif_eth_42 }}"
+          - "{{ nd4x_subif_eth_49_secondary }}"
+          - "{{ nd4x_subif_pc_45_secondary }}"
+        state: merged
+
+    - name: "OVERRIDDEN: Retain resources across both test switches"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_subinterface_unmanaged
+        state: overridden
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: false
+        config:
+          - "{{ nd4x_subif_eth_40 }}"
+          - "{{ nd4x_subif_pc_45_secondary }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate primary-switch retention and removal
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(@.interfaceName ==
+                  '{{ ethernet_parent }}.40')].configData.networkOS.policy.policyType
+                equals: monitorSubinterface
+              - jsonpath: >-
+                  $.current.interfaces[?(@.interfaceName ==
+                  '{{ ethernet_parent }}.41')]
+                exists: false
+          - name: Validate secondary-switch retention and removal
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id_2 }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(@.interfaceName ==
+                  '{{ port_channel_parent | lower }}.45')].configData.networkOS.policy.policyType
+                equals: monitorSubinterface
+              - jsonpath: >-
+                  $.current.interfaces[?(@.interfaceName ==
+                  '{{ ethernet_parent }}.42')]
+                exists: false
+              - jsonpath: >-
+                  $.current.interfaces[?(@.interfaceName ==
+                  '{{ ethernet_parent }}.49')]
+                exists: false
+      register: nd4x_overridden_subinterfaces
+
+    - name: "OVERRIDDEN: Verify returned retained and removed subinterfaces"
+      ansible.builtin.assert:
+        that:
+          - nd4x_overridden_subinterfaces.first_run_result.after
+            | selectattr('switch_ip', 'equalto', test_switch_ip)
+            | selectattr('interface_name', 'equalto', ethernet_parent ~ '.40')
+            | list | length == 1
+          - nd4x_overridden_subinterfaces.first_run_result.after
+            | selectattr('switch_ip', 'equalto', test_switch_ip)
+            | selectattr('interface_name', 'equalto', ethernet_parent ~ '.41')
+            | list | length == 0
+          - nd4x_overridden_subinterfaces.first_run_result.after
+            | selectattr('switch_ip', 'equalto', nd_test_switch_ip_2)
+            | selectattr('interface_name', 'equalto', ethernet_parent ~ '.42')
+            | list | length == 0
+          - nd4x_overridden_subinterfaces.first_run_result.after
+            | selectattr('switch_ip', 'equalto', nd_test_switch_ip_2)
+            | selectattr('interface_name', 'equalto', ethernet_parent ~ '.49')
+            | list | length == 0
+          - nd4x_overridden_subinterfaces.first_run_result.after
+            | selectattr('switch_ip', 'equalto', nd_test_switch_ip_2)
+            | selectattr('interface_name', 'equalto', port_channel_parent ~ '.45')
+            | list | length == 1
+          - nd4x_overridden_subinterfaces.second_run_result.changed == false
+          - nd4x_overridden_subinterfaces.nd_query_results | length == 2
+  always:
+    - name: "OVERRIDDEN CLEANUP: Remove reserved unmanaged subinterfaces"
+      cisco.nd.nd_interface_subinterface_unmanaged:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_subif_override_cleanup_config }}"
+        state: deleted

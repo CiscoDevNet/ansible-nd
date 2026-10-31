@@ -1,0 +1,159 @@
+---
+- name: Run unmanaged subinterface merged harness tests
+  block:
+    - name: "MERGED SETUP: Remove reserved unmanaged subinterfaces"
+      cisco.nd.nd_interface_subinterface_unmanaged:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_subif_cleanup_config }}"
+        state: deleted
+
+    - name: "MERGED: Create Ethernet and port-channel subinterfaces"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_subinterface_unmanaged
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: false
+        config:
+          - "{{ nd4x_subif_eth_40 }}"
+          - "{{ nd4x_subif_eth_41 }}"
+          - "{{ nd4x_subif_pc_45 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate unmanaged Ethernet subinterface .40
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(@.interfaceName ==
+                  '{{ ethernet_parent }}.40')]
+                exists: true
+              - jsonpath: >-
+                  $.current.interfaces[?(@.interfaceName ==
+                  '{{ ethernet_parent }}.40')].configData.networkOS.policy.policyType
+                equals: monitorSubinterface
+          - name: Validate unmanaged port-channel subinterface .45
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(@.interfaceName ==
+                  '{{ port_channel_parent | lower }}.45')]
+                exists: true
+              - jsonpath: >-
+                  $.current.interfaces[?(@.interfaceName ==
+                  '{{ port_channel_parent | lower }}.45')].configData.networkOS.policy.policyType
+                equals: monitorSubinterface
+          - name: Validate second unmanaged Ethernet subinterface .41
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(@.interfaceName ==
+                  '{{ ethernet_parent }}.41')].configData.networkOS.policy.policyType
+                equals: monitorSubinterface
+      register: nd4x_merged_subinterfaces
+
+    - name: "MERGED: Verify returned unmanaged policy and idempotency"
+      vars:
+        ethernet_after: >-
+          {{
+            nd4x_merged_subinterfaces.first_run_result.after
+            | selectattr('interface_name', 'equalto', ethernet_parent ~ '.40')
+            | first
+          }}
+        port_channel_after: >-
+          {{
+            nd4x_merged_subinterfaces.first_run_result.after
+            | selectattr('interface_name', 'equalto', port_channel_parent ~ '.45')
+            | first
+          }}
+        ethernet_41_after: >-
+          {{
+            nd4x_merged_subinterfaces.first_run_result.after
+            | selectattr('interface_name', 'equalto', ethernet_parent ~ '.41')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - ethernet_after.config_data.network_os.policy.policy_type == 'monitorSubinterface'
+          - ethernet_41_after.config_data.network_os.policy.policy_type == 'monitorSubinterface'
+          - port_channel_after.config_data.network_os.policy.policy_type == 'monitorSubinterface'
+          - nd4x_merged_subinterfaces.second_run_result.changed == false
+          - nd4x_merged_subinterfaces.nd_query_results | length == 3
+
+    - name: "MERGED IDEMPOTENT: Predictively reapply existing unmanaged subinterfaces"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_subinterface_unmanaged
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: false
+        config:
+          - "{{ nd4x_subif_eth_40 }}"
+          - "{{ nd4x_subif_eth_41 }}"
+          - "{{ nd4x_subif_pc_45 }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Revalidate an existing unmanaged subinterface
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(@.interfaceName ==
+                  '{{ ethernet_parent }}.40')].configData.networkOS.policy.policyType
+                equals: monitorSubinterface
+      register: nd4x_merged_idempotent_subinterfaces
+
+    - name: "MERGED IDEMPOTENT: Verify predictive and apply no-op"
+      ansible.builtin.assert:
+        that:
+          - nd4x_merged_idempotent_subinterfaces.check_mode_result.changed == false
+          - nd4x_merged_idempotent_subinterfaces.first_run_result.changed == false
+          - nd4x_merged_idempotent_subinterfaces.second_run_result.changed == false
+  always:
+    - name: "MERGED CLEANUP: Remove reserved unmanaged subinterfaces"
+      cisco.nd.nd_interface_subinterface_unmanaged:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_subif_cleanup_config }}"
+        state: deleted

@@ -1,0 +1,88 @@
+---
+- name: Run unmanaged subinterface deleted harness tests
+  block:
+    - name: "DELETED SETUP: Remove reserved unmanaged subinterfaces"
+      cisco.nd.nd_interface_subinterface_unmanaged:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_subif_cleanup_config }}"
+        state: deleted
+
+    - name: "DELETED SETUP: Create subinterfaces to remove"
+      cisco.nd.nd_interface_subinterface_unmanaged:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ nd4x_subif_eth_40 }}"
+          - "{{ nd4x_subif_eth_41 }}"
+        state: merged
+
+    - name: "DELETED: Remove unmanaged subinterface .40"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_subinterface_unmanaged
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: false
+        config:
+          - "{{ nd4x_subif_eth_40 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Verify unmanaged subinterface .40 is absent
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(@.interfaceName ==
+                  '{{ ethernet_parent }}.40')]
+                exists: false
+      register: nd4x_deleted_subinterface
+
+    - name: "DELETED: Verify removal and idempotency"
+      ansible.builtin.assert:
+        that:
+          - nd4x_deleted_subinterface.first_run_result.after
+            | selectattr('interface_name', 'equalto', ethernet_parent ~ '.40')
+            | list | length == 0
+          - nd4x_deleted_subinterface.second_run_result.changed == false
+          - nd4x_deleted_subinterface.nd_query_results | length == 1
+  always:
+    - name: "DELETED CLEANUP: Remove reserved unmanaged subinterfaces"
+      cisco.nd.nd_interface_subinterface_unmanaged:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_subif_cleanup_config }}"
+        state: deleted
+      register: nd4x_deleted_cleanup
+
+    - name: "DELETED CLEANUP: Verify every reserved unmanaged subinterface is absent"
+      vars:
+        remaining: >-
+          {{
+            nd4x_deleted_cleanup.after
+            | selectattr(
+                'interface_name',
+                'in',
+                nd4x_subif_cleanup_config | map(attribute='interface_name') | list
+              )
+            | list
+          }}
+      ansible.builtin.assert:
+        that:
+          - remaining | length == 0
