@@ -488,6 +488,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         link = self._fabric_link_endpoints().get((switch_id, interface_name.lower()))
         if link is None:
             return
+        # Pylint 3.3.1 can misread string keys inside Python 3.11 f-strings.
+        # pylint: disable=implicit-str-concat
         raise RuntimeError(
             f"Interface {interface_name} on switch {switch_ip} is an endpoint of fabric link "
             f"{link.get('linkId')} ({(link.get('configData') or {}).get('policyType')}: {link.get('srcSwitchName')} "
@@ -495,6 +497,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             f"fabric-owned intent with policy '{self._desired_policy_type(model_instance)}'; fabric links must be changed through "
             f"the fabric link workflow, not an interface module."
         )
+        # pylint: enable=implicit-str-concat
 
     @staticmethod
     def _is_ios_xe(iface: dict) -> bool:
