@@ -3434,3 +3434,54 @@ def test_overridden_still_rejects_an_unknown_configured_switch_before_inventory(
         planner.plan([{"type": "loopback", "state": "overridden", "config": [_loopback("192.0.2.99")]}])
 
     assert recorder.calls == []
+
+
+# =============================================================================
+# Test: MPLS Handoff precondition reaches the planner's safety hook (PR #596)
+# =============================================================================
+
+HANDOFF_OFF_PLAN = r"MPLS Handoff is disabled on fabric 'fabric_1'; mplsLoopback requires it for loopback207 \(192\.0\.2\.1\)"
+
+
+def _mpls_loopback(switch_ip: str, name: str = "loopback207") -> dict[str, Any]:
+    return _loopback(switch_ip, name, policy_type="mplsLoopback", policy={"ip": "10.3.3.1/32"})
+
+
+def test_check_mode_planning_rejects_new_mpls_loopback_when_handoff_is_disabled() -> None:
+    """The planner's safety hook applies the MPLS Handoff precondition, so a dry run refuses what normal execution refuses."""
+    planner, recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": []}])
+    planner.fabric_context._fabric_details = {"name": "fabric_1", "management": {"type": "vxlanIbgp", "mplsHandoff": False}}
+
+    with pytest.raises(InterfaceWorkflowValidationError, match=HANDOFF_OFF_PLAN):
+        planner.plan([{"type": "loopback", "state": "merged", "config": [_mpls_loopback("192.0.2.1")]}])
+
+    assert len(recorder.calls) == 1
+    assert {getattr(call["verb"], "value", call["verb"]) for call in recorder.calls} == {"GET"}
+
+
+def test_check_mode_planning_rejects_mpls_conversion_when_handoff_is_disabled() -> None:
+    """A `replaced` conversion of a plain loopback to `mplsLoopback` is refused by the same hook, before any write."""
+    current = _wire_loopback("loopback207", "loopback", ip="10.3.3.1/32")
+    planner, recorder = _planner(
+        switches={"192.0.2.1": "SERIAL1"},
+        responses=[{"interfaces": [current]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
+    )
+    planner.fabric_context._fabric_details = {"name": "fabric_1", "management": {"type": "vxlanIbgp", "mplsHandoff": False}}
+
+    with pytest.raises(InterfaceWorkflowValidationError, match=HANDOFF_OFF_PLAN):
+        planner.plan([{"type": "loopback", "state": "replaced", "config": [_mpls_loopback("192.0.2.1")]}])
+
+    assert len(recorder.calls) == 2
+    assert {getattr(call["verb"], "value", call["verb"]) for call in recorder.calls} == {"GET"}
+
+
+def test_check_mode_planning_keeps_an_unchanged_mpls_loopback_a_no_op() -> None:
+    """An `mplsLoopback` that already is one plans as unchanged and never fetches the fabric body (the recorder holds no such response)."""
+    current = _wire_loopback("loopback207", "mplsLoopback", ip="10.3.3.1/32", adminState=True, dciRoutingProtocol="isis", dciRoutingTag="MPLS_UNDERLAY")
+    planner, recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": [current]}])
+
+    plan = planner.plan([{"type": "loopback", "state": "merged", "config": [_mpls_loopback("192.0.2.1")]}])
+
+    assert plan.changed is False
+    assert len(recorder.calls) == 1
