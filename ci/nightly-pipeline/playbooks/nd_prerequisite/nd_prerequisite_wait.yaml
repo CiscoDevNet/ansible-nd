@@ -3,8 +3,8 @@
 # allowed to start while a required virtual vPC pair is still absent or pending.
 - name: Wait for required virtual vPC pairs to become active
   cisco.nd.nd_manage_vpc_pair:
-    fabric: "{{ _ndp_fabric_name_by_ref[_ndp_vpc_operation.fabric_ref] }}"
-    state: query
+    fabric_name: "{{ _ndp_fabric_name_by_ref[_ndp_vpc_operation.fabric_ref] }}"
+    state: gathered
     config:
       - peer1_switch_id: "{{ _ndp_switch_serial[_ndp_vpc_operation.peer_refs[0]] }}"
         peer2_switch_id: "{{ _ndp_switch_serial[_ndp_vpc_operation.peer_refs[1]] }}"
@@ -15,7 +15,7 @@
   register: _ndp_vpc_convergence
   until:
     - not (_ndp_vpc_convergence.failed | default(false))
-    - _ndp_vpc_convergence.query.vpc_pairs | default([]) | length > 0
+    - _ndp_vpc_convergence.gathered.vpc_pairs | default([]) | length > 0
   retries: "{{ _ndp_profile.timeouts.retries }}"
   delay: "{{ _ndp_profile.timeouts.poll_seconds }}"
   no_log: true

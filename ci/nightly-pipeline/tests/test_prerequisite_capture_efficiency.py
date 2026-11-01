@@ -30,6 +30,21 @@ else:
 p.write_text(json.dumps(state)); module.exit_json(changed=method != 'get', status=200, current=current)
 '''
 
+FAKE_VPC_MODULE = r'''
+import json, os
+from pathlib import Path
+from ansible.module_utils.basic import AnsibleModule
+module = AnsibleModule(argument_spec={
+    'fabric_name': {'type': 'str', 'required': True},
+    'state': {'type': 'str', 'choices': ['gathered'], 'required': True},
+    'config': {'type': 'list', 'elements': 'dict', 'required': True}})
+ledger = Path(os.environ['NDP_CAPTURE_FIXTURE_LEDGER'])
+state = json.loads(ledger.read_text())
+state['reads'].append('vpc:' + module.params['fabric_name'])
+ledger.write_text(json.dumps(state))
+module.exit_json(changed=False, gathered=state['responses']['vpc'])
+'''
+
 
 def tasks(filename):
     return yaml.safe_load((PREREQUISITES / filename).read_text())
@@ -54,6 +69,7 @@ def run(tmp_path, selected, values, responses=None, replan_operations=None):
     modules = tmp_path / "collections/ansible_collections/cisco/nd/plugins/modules"
     modules.mkdir(parents=True)
     (modules / "nd_rest.py").write_text(FAKE_MODULE)
+    (modules / "nd_manage_vpc_pair.py").write_text(FAKE_VPC_MODULE)
     ledger = tmp_path / "ledger.json"
     ledger.write_text(json.dumps({"responses": responses or {}, "reads": [], "writes": [], "plans": 0,
                                   "replan_operations": replan_operations or []}))
@@ -207,6 +223,31 @@ def test_readonly_verification_keeps_checks_without_redundant_capture_or_replan(
         assert "Reserved interfaces are present" in completed.stdout
     if scenario in {"logical", "all_readonly", "mixed"}:
         assert "namespace is unused" in completed.stdout
+
+
+@pytest.mark.parametrize("scenario", ("ready", "missing_pair", "peer_out_of_sync", "missing_peer"))
+def test_vpc_wait_uses_gathered_contract_and_requires_both_peers_in_sync(tmp_path, scenario):
+    peers = [{"switchId": "FIXTURE0001", "additionalData": {"configSyncStatus": "inSync"}},
+             {"switchId": "FIXTURE0002", "additionalData": {"configSyncStatus": "inSync"}}]
+    if scenario == "peer_out_of_sync":
+        peers[1]["additionalData"]["configSyncStatus"] = "outOfSync"
+    if scenario == "missing_peer":
+        peers.pop()
+    pairs = [] if scenario == "missing_pair" else [{"switchId": "FIXTURE0001", "peerSwitchId": "FIXTURE0002"}]
+    values = {"nd_prerequisite_mode": "live", "nd_prerequisite_apply": True,
+              "_ndp_fabric_name_by_ref": {"primary": "fixture-primary"},
+              "_ndp_switch_serial": {"one": "FIXTURE0001", "two": "FIXTURE0002"},
+              "_ndp_result": {"operations": [{"operation": "ensure_virtual_vpc", "fabric_ref": "primary",
+                                               "peer_refs": ["one", "two"]}]},
+              "_ndp_profile": {"timeouts": {"retries": 1, "poll_seconds": 0}}}
+    responses = {"vpc": {"vpc_pairs": pairs},
+                 "/api/v1/manage/fabrics/fixture-primary/switches": {"switches": peers}}
+    completed, ledger, _ = run(tmp_path, tasks("nd_prerequisite_wait.yaml"), values, responses)
+    assert (completed.returncode == 0) is (scenario == "ready"), completed.stdout + completed.stderr
+    assert ledger["reads"].count("vpc:fixture-primary") == (2 if scenario == "missing_pair" else 1)
+    assert not ledger["writes"]
+    expected_peer_reads = 0 if scenario == "missing_pair" else 1 if scenario == "ready" else 2
+    assert ledger["reads"].count("/api/v1/manage/fabrics/fixture-primary/switches") == expected_peer_reads
 
 
 def test_unknown_operation_still_fails_the_original_contract_before_execution(tmp_path):
