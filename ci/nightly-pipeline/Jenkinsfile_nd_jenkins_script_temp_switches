@@ -221,7 +221,7 @@ def SWITCH_CREDENTIALS_ID = 'SWITCH_CREDENTIALS'
 @Field
 def CONSUL_PREFLIGHT_FILES = ['nd_ensure_switches.yaml', 'action_plugins/nd_switch_discovery.py']
 @Field
-def SWITCH_LIFECYCLE_CONSUL_PREFIX = 'releases/predelete-interface-remediation-20261102'
+def SWITCH_LIFECYCLE_CONSUL_PREFIX = 'releases/predelete-proactive-leaf-tor-20261102'
 
 @Field
 def CONSUL_PREREQUISITE_FILES = [
