@@ -19,6 +19,8 @@ def test_predelete_waits_for_all_six_switches_before_removal(tmp_path, scenario)
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert len(state['selected_calls']) == 1
     assert len(state['selected_calls'][0]) == 6
+    assert any(path.endswith('/actions/deploy') for path in state['rest_writes'])
+    assert not any(path.endswith('/switchActions/deploy') for path in state['rest_writes'])
     assert state['predelete_polls'] >= (2 if scenario == 'predelete_pending_then_ready' else 1)
     assert 'NDP_SWITCH_PREDELETE_DEPLOY_CONFIRMED' in completed.stdout
     assert completed.stdout.index('NDP_SWITCH_PREDELETE_DEPLOY_CONFIRMED') < completed.stdout.index('NDP_SWITCH_REMOVE_ACCEPTED')
@@ -47,7 +49,7 @@ def test_unconfirmed_predelete_gate_never_removes_or_onboards(tmp_path, scenario
     assert 'NDP_SWITCH_PREDELETE_DEPLOY_CONFIRMED' not in completed.stdout
     assert 'DO_NOT_PRINT_ME' not in completed.stdout and 'RAW_PAYLOAD' not in completed.stdout
     if scenario in {'predelete_save_400', 'predelete_save_module_failure', 'predelete_save_code_200'}:
-        assert not any(path.endswith('/switchActions/deploy') for path in state['rest_writes'])
+        assert not any(path.endswith('/actions/deploy') for path in state['rest_writes'])
     if scenario in {'predelete_inventory_403', 'predelete_inventory_code', 'predelete_deployment_failed'}:
         assert state['predelete_polls'] == 1
     if scenario in {'predelete_disabled', 'predelete_outer_budget_expired'}:

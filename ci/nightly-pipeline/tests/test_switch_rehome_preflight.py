@@ -62,21 +62,23 @@ if a['method']:
             fail(status=200, current={}, msg='password=DO_NOT_PRINT_ME')
         if a['path'].endswith('/actions/configSave') and scenario == 'predelete_save_code_200':
             finish(changed=True, status=200, current={'code':400, 'message':'password=DO_NOT_PRINT_ME RAW_PAYLOAD'})
-        if a['path'].endswith('/switchActions/deploy'):
+        if a['path'].endswith('/actions/deploy'):
+            assert a['content'] == {}
+            deploy_ids = ['FIXTURE'+str(index+1).zfill(4) for index in range(len(s['original']))]
             responses = {
                 'predelete_deploy_207_generic': (207, {'status':'Configuration deployment completed', 'note':'password=DO_NOT_PRINT_ME RAW_PAYLOAD'}),
                 'predelete_deploy_207_terminal': (207, {'status':'success'}),
-                'predelete_deploy_207_subset_items': (207, {'items':[{'switchId':a['content']['switchIds'][0], 'status':'success'}]}),
-                'predelete_subset_missing_status': (207, {'status':'Configuration deployment completed for ['+a['content']['switchIds'][0]+'].'}),
+                'predelete_deploy_207_subset_items': (207, {'items':[{'switchId':deploy_ids[0], 'status':'success'}]}),
+                'predelete_subset_missing_status': (207, {'status':'Configuration deployment completed for ['+deploy_ids[0]+'].'}),
                 'predelete_deploy_code_200': (200, {'code':400, 'message':'password=DO_NOT_PRINT_ME RAW_PAYLOAD'}),
                 'predelete_deploy_code_207': (207, {'code':400, 'message':'password=DO_NOT_PRINT_ME RAW_PAYLOAD'}),
                 'predelete_deploy_nested_code': (207, {'status':'Configuration deployment completed', 'details':{'error':{'code':400, 'message':'password=DO_NOT_PRINT_ME'}}}),
-                'predelete_deploy_mixed_items': (207, {'items':[{'switchId':identity, 'status':'failed' if index else 'success', 'message':'password=DO_NOT_PRINT_ME'} for index,identity in enumerate(a['content']['switchIds'])]}),
+                'predelete_deploy_mixed_items': (207, {'items':[{'switchId':identity, 'status':'failed' if index else 'success', 'message':'password=DO_NOT_PRINT_ME'} for index,identity in enumerate(deploy_ids)]}),
                 'predelete_deploy_unknown': (207, {'status':'arbitrary unknown reply', 'message':'RAW_PAYLOAD'}),
                 'predelete_deploy_unknown_mapping': (207, {'requestId':'RAW_PAYLOAD'}),
                 'predelete_deploy_unknown_missing_status': (207, {'status':'arbitrary unknown reply'}),
                 'predelete_deploy_async_not_ready': (207, {'status':'Deployment in progress'}),
-                'predelete_deploy_207_pending_items': (207, {'items':[{'switchId':identity, 'status':'queued'} for identity in a['content']['switchIds']]}),
+                'predelete_deploy_207_pending_items': (207, {'items':[{'switchId':identity, 'status':'queued'} for identity in deploy_ids]}),
                 'predelete_deploy_failed_status': (207, {'status':'DeploymentFailed'}),
                 'predelete_deploy_not_completed': (207, {'status':'Configuration deployment not completed'}),
                 'predelete_deploy_unsuccessful': (207, {'status':'Configuration deployment completed unsuccessfully'}),
@@ -91,13 +93,13 @@ if a['method']:
                 finish(changed=True,status=http,current=body)
             if scenario == 'predelete_deploy_403': fail(status=403, msg='Deploy denied password=DO_NOT_PRINT_ME')
             if scenario == 'predelete_deploy_207_refused':
-                finish(changed=True, status=207, current={'items':[{'switchId':identity,'status':'failed','message':'password=DO_NOT_PRINT_ME'} for identity in a['content']['switchIds']]})
+                finish(changed=True, status=207, current={'items':[{'switchId':identity,'status':'failed','message':'password=DO_NOT_PRINT_ME'} for identity in deploy_ids]})
             if scenario == 'predelete_deploy_207_items':
-                finish(changed=True, status=207, current={'items':[{'switchId':identity,'status':'success'} for identity in a['content']['switchIds']]})
+                finish(changed=True, status=207, current={'items':[{'switchId':identity,'status':'success'} for identity in deploy_ids]})
             if scenario == 'predelete_deploy_207_message':
-                finish(changed=True, status=207, current={'status':'Configuration deployment completed for ['+', '.join(a['content']['switchIds'])+'].'})
+                finish(changed=True, status=207, current={'status':'Configuration deployment completed for ['+', '.join(deploy_ids)+'].'})
             if scenario == 'predelete_deploy_207_partial_message':
-                finish(changed=True, status=207, current={'status':'Configuration deployment completed for ['+a['content']['switchIds'][0]+'].'})
+                finish(changed=True, status=207, current={'status':'Configuration deployment completed for ['+deploy_ids[0]+'].'})
             if scenario == 'predelete_deploy_bad_body': finish(changed=True, status=207, current={})
         finish(changed=True, status=200, current={})
     requested = a['content']['switchIds']; s['selected_calls'].append(requested)

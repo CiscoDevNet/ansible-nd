@@ -720,15 +720,11 @@
               loop_control:
                 loop_var: _nd_predelete_check
 
-            - name: Deploy all leaving switches before removing any switches
+            - name: Deploy each source fabric before removing any switches
               cisco.nd.nd_rest:
                 method: post
-                path: "/api/v1/manage/fabrics/{{ _rf }}/switchActions/deploy"
-                content:
-                  switchIds: >-
-                    {{ nd_rehome_moves
-                       | selectattr('from_fabric', 'equalto', _rf)
-                       | map(attribute='serial') | list }}
+                path: "/api/v1/manage/fabrics/{{ _rf }}/actions/deploy"
+                content: {}
               loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
               loop_control:
                 loop_var: _rf
