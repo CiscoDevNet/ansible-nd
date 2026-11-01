@@ -301,6 +301,8 @@ println table
 
 
 def test_bundle_archives_module_round_timing_report(active_pipeline):
+    source = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    assert re.search(r"@com\.cloudbees\.groovy\.cps\.NonCPS\s+def sortedModuleTimingResults\(", source)
     active_pipeline(r'''
 def writes = [:]
 def archives = []

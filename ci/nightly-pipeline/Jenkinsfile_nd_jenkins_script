@@ -2665,13 +2665,18 @@ def publishModuleActivityReport() {
 
 @Field List SWITCH_LIFECYCLE_TIMINGS = []
 
+@com.cloudbees.groovy.cps.NonCPS
+def sortedModuleTimingResults(results) {
+    results.toList().sort { first, second ->
+        (second.phase_seconds?.execution ?: 0) <=> (first.phase_seconds?.execution ?: 0)
+    }
+}
+
 def bundleAllLogs() {
     def zipName = "nd_nightly_logs_build_${BUILD_NUMBER}.zip"
     try {
         def timingFile = "pipeline_timing_build_${BUILD_NUMBER}.txt"
-        def timingRows = MODULE_ACTIVITY_RESULTS.values().toList().sort { first, second ->
-            (second.phase_seconds?.execution ?: 0) <=> (first.phase_seconds?.execution ?: 0)
-        }.collect { row ->
+        def timingRows = sortedModuleTimingResults(MODULE_ACTIVITY_RESULTS.values()).collect { row ->
             "${row.module} | ND ${row.nd ?: row.version ?: '?'} | ${row.round_label ?: row.scope ?: '?'} | " +
                 ['prerequisites', 'execution', 'cleanup', 'parsing', 'archiving'].collect { phase ->
                     "${phase}: ${formatPhaseDuration(row.phase_seconds?.get(phase))}"
