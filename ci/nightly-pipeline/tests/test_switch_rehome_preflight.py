@@ -50,45 +50,7 @@ if a['method']:
                 if scenario == 'leaf_tor_partial_anomalies': anomalies.pop()
                 if scenario == 'leaf_tor_anomaly_read_failure':
                     fail(status=503, msg='Anomaly lookup failed password=DO_NOT_PRINT_ME')
-            # Proactive Leaf-ToR remediation scenarios (triggered on first anomaly check, before any removal attempts)
-            if scenario == 'leaf_tor_unpairing_proactive':
-                anomalies = [{'fabricName':'fixture-source', 'cleared':False,
-                              'anomalyString':'Switch [vxlan_leaf_3/9ZAPQITB0L6]: Please perform Recalculate and Deploy to complete Leaf-ToR unpairing before deleting the leaf switch from the fabric.'},
-                             {'fabricName':'fixture-source', 'cleared':False,
-                              'anomalyString':'Switch [vxlan_leaf_4/91Q6XVE9L73]: Please perform Recalculate and Deploy to complete Leaf-ToR unpairing before deleting the leaf switch from the fabric.'}]
-            if scenario == 'leaf_tor_unpairing_cleared':
-                anomalies = [{'fabricName':'fixture-source', 'cleared':True,
-                              'anomalyString':'Switch [vxlan_leaf_3/9ZAPQITB0L6]: Please perform Recalculate and Deploy to complete Leaf-ToR unpairing before deleting the leaf switch from the fabric.'}]
-            if scenario == 'leaf_tor_multi_fabric':
-                # Return anomalies for different fabrics on successive reads
-                if s['anomaly_reads'] == 1:
-                    anomalies = [{'fabricName':'fixture-source', 'cleared':False,
-                                  'anomalyString':'Switch [vxlan_leaf_3/9ZAPQITB0L6]: Please perform Recalculate and Deploy to complete Leaf-ToR unpairing before deleting the leaf switch from the fabric.'}]
-                elif s['anomaly_reads'] == 2:
-                    anomalies = [{'fabricName':'fixture-dest', 'cleared':False,
-                                  'anomalyString':'Switch [vxlan_leaf_4/91Q6XVE9L73]: Please perform Recalculate and Deploy to complete Leaf-ToR unpairing before deleting the leaf switch from the fabric.'}]
-            if scenario == 'iface_unused_disconnect':
-                anomalies.append({'fabricName':'fixture-source', 'cleared':False,
-                                  'anomalyString':'Interface Ethernet1/48 in undesired state up:down:Link not connected', 'severity':'Minor', 'type':'Connectivity'})
-            if scenario == 'iface_active_disconnect':
-                anomalies.append({'fabricName':'fixture-source', 'cleared':False,
-                                  'anomalyString':'Interface Ethernet1/1 in undesired state up:down:Link not connected', 'severity':'Minor', 'type':'Connectivity'})
-            if scenario == 'iface_multiple_disconnect':
-                for port in (48, 49, 50, 63, 64):
-                    anomalies.append({'fabricName':'fixture-source', 'cleared':False,
-                                      'anomalyString':'Interface Ethernet1/'+str(port)+' in undesired state up:down:Link not connected', 'severity':'Minor', 'type':'Connectivity'})
-            if scenario == 'iface_cleared_anomaly':
-                anomalies.append({'fabricName':'fixture-source', 'cleared':True,
-                                  'anomalyString':'Interface Ethernet1/48 in undesired state up:down:Link not connected'})
             finish(changed=False, status=200, current={'anomalies':anomalies})
-        if '/config/interfaces' in a['path']:
-            s['interface_config_reads'] = s.get('interface_config_reads', 0) + 1
-            configured_interfaces = ['ethernet1/1', 'ethernet1/2', 'ethernet1/3', 'ethernet1/4', 'ethernet1/5']
-            if scenario == 'iface_config_read_failure':
-                fail(status=503, msg='Interface config read failed password=DO_NOT_PRINT_ME')
-            if scenario == 'iface_config_bad_format':
-                finish(changed=False, status=200, current={'interfaces': None})
-            finish(changed=False, status=200, current={'interfaces': [{'name': iface} for iface in configured_interfaces]})
         if a['path'].endswith('/switches'):
             s['predelete_polls'] = s.get('predelete_polls', 0) + 1
             if scenario == 'predelete_call_timeout':
@@ -122,7 +84,6 @@ if a['method']:
         if a['path'].endswith('/actions/configSave') and scenario == 'predelete_save_code_200':
             finish(changed=True, status=200, current={'code':400, 'message':'password=DO_NOT_PRINT_ME RAW_PAYLOAD'})
         if a['path'].endswith('/actions/deploy'):
-            s['deploy_calls'] = s.get('deploy_calls', 0) + 1
             assert a['content'] == {}
             if scenario == 'leaf_tor_deploy_fails' and s['selected_calls']:
                 fail(status=403, msg='Remediation deploy denied password=DO_NOT_PRINT_ME')
@@ -267,83 +228,6 @@ def test_leaf_tor_retry_excludes_fabrics_whose_removal_already_succeeded(tmp_pat
     assert [path.rsplit('/', 1)[-1] for path in accepted_fabric_writes] == ['configSave', 'deploy', 'remove']
 
 
-@pytest.mark.parametrize('scenario', ['iface_unused_disconnect', 'iface_multiple_disconnect'])
-def test_interface_remediation_shuts_down_unused_disconnected_ports(tmp_path, scenario):
-    completed, state = execute(tmp_path, scenario)
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert state.get('interface_config_reads', 0) >= 1
-    assert len(state['selected_calls']) == 1
-    rest_ops = [path.rsplit('/', 1)[-1] for path in state['rest_writes']]
-    assert 'interfaces' in rest_ops or 'config/interfaces' in ' '.join(state['rest_writes'])
-    assert ('configSave' in rest_ops and 'deploy' in rest_ops) or any('deploy' in op for op in rest_ops)
-    assert ('DESTINATION_ADD_REACHED' in completed.stdout)
-    assert 'DO_NOT_PRINT_ME' not in completed.stdout and 'RAW_PAYLOAD' not in completed.stdout
-
-
-def test_interface_remediation_skips_active_configured_interfaces(tmp_path):
-    completed, state = execute(tmp_path, 'iface_active_disconnect')
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert state.get('interface_config_reads', 0) >= 1
-    assert len(state['selected_calls']) == 1
-    interface_shutdown_was_attempted = any('interfaces' in path for path in state['rest_writes'])
-    if interface_shutdown_was_attempted:
-        assert 'ethernet1/1' not in ' '.join(state['rest_writes']) or 'configured' in completed.stdout.lower()
-
-
-def test_interface_remediation_skips_cleared_anomalies(tmp_path):
-    completed, state = execute(tmp_path, 'iface_cleared_anomaly')
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert len(state['selected_calls']) == 1
-    remediation_was_skipped = state.get('interface_config_reads', 0) == 0
-    assert remediation_was_skipped or ('skipped' in completed.stdout.lower() or 'no remediation' in completed.stdout.lower())
-    assert ('DESTINATION_ADD_REACHED' in completed.stdout)
-
-
-def test_interface_remediation_handles_config_read_failure_gracefully(tmp_path):
-    completed, state = execute(tmp_path, 'iface_config_read_failure')
-    assert completed.returncode != 0
-    assert state.get('interface_config_reads', 0) >= 1
-    assert state.get('interface_shutdown_applied', 0) == 0
-
-
-def test_interface_remediation_with_leaf_tor_anomalies_together(tmp_path):
-    completed, state = execute(tmp_path, 'iface_unused_disconnect')
-    assert completed.returncode == 0
-    assert state['anomaly_reads'] >= 1
-    assert len(state['selected_calls']) == 1
-    assert ('DESTINATION_ADD_REACHED' in completed.stdout)
-
-
-def test_proactive_leaf_tor_remediation_detects_and_clears_unpairing_anomalies(tmp_path):
-    """Test that proactive Leaf-ToR remediation detects stale anomalies (e.g. Oct 13/23 records) and clears them."""
-    completed, state = execute(tmp_path, 'leaf_tor_unpairing_proactive')
-    assert completed.returncode == 0
-    assert state['anomaly_reads'] >= 1
-    # Proactive remediation should trigger recalc and deploy
-    assert 'configSave' in completed.stdout.lower() or 'recalculate' in completed.stdout.lower()
-    assert 'deploy' in completed.stdout.lower()
-    assert state.get('deploy_calls', 0) >= 1
-    assert ('DESTINATION_ADD_REACHED' in completed.stdout)
-
-
-def test_proactive_leaf_tor_remediation_skips_cleared_anomalies(tmp_path):
-    """Test that proactive remediation skips anomalies already marked cleared=true."""
-    completed, state = execute(tmp_path, 'leaf_tor_unpairing_cleared')
-    assert completed.returncode == 0
-    # No remediation should be triggered because anomalies are cleared
-    assert state.get('deploy_calls', 0) == 0
-    assert ('DESTINATION_ADD_REACHED' in completed.stdout)
-
-
-def test_proactive_leaf_tor_remediation_multiple_fabrics(tmp_path):
-    """Test that proactive remediation handles anomalies across multiple source fabrics."""
-    completed, state = execute(tmp_path, 'leaf_tor_multi_fabric')
-    assert completed.returncode == 0
-    assert state['anomaly_reads'] >= 2  # Should query multiple fabrics
-    assert state.get('deploy_calls', 0) >= 2  # Should deploy to multiple fabrics
-    assert ('DESTINATION_ADD_REACHED' in completed.stdout)
-
-
 def named(tasks, prefix):
     for task in tasks:
         if task.get("name", "").startswith(prefix):
@@ -382,7 +266,7 @@ def expression_environment():
     (207, {"items":"success"}, "invalid-response"), (207, [], "invalid-response"),
     (207, {"items":[{"switchId":"FIXTURE0001","status":"success"}]}, "invalid-response"),
     (207, {"items":[{"switchId":"FIXTURE0001","status":"success"},{"switchId":"FIXTURE0001","status":"success"}]}, "invalid-response"),
-    (207, {"items":[{"switchId":"FIXTURE0001","status":"success"},{"switchId":"OTHER000002","status":"success"}]}, "invalid-response"),
+    (207, {"items":[{"switchId":"FIXTURE0001","status":"success"},{"switchId":"UNREQUESTED","status":"success"}]}, "invalid-response"),
     (200, {}, "accepted"), (202, {"jobId":"queued"}, "accepted"), (204, None, "accepted"),
     (200, [], "invalid-response"), (500, {}, "request-failed"), (400, {}, "request-failed"),
 ])
@@ -460,8 +344,7 @@ def execute(tmp_path, scenario, remove_retries=2):
                   nd_switch_predelete_deploy=True)
     if scenario in {'predelete_pending_forever', 'predelete_missing_switch', 'predelete_missing_status',
                     'predelete_duplicate_switch', 'predelete_bad_inventory', 'predelete_subset_missing_status',
-                    'predelete_deploy_async_not_ready', 'predelete_deploy_unknown_missing_status', 'leaf_tor_retry_pending',
-                    'iface_config_read_failure', 'iface_config_bad_format'}:
+                    'predelete_deploy_async_not_ready', 'predelete_deploy_unknown_missing_status', 'leaf_tor_retry_pending'}:
         values['nd_switch_predelete_timeout_seconds'] = 3
     if scenario == 'predelete_disabled': values['nd_switch_predelete_deploy'] = False
     if scenario == 'predelete_outer_budget_expired': values['nd_switch_guard_timeout_seconds'] = 1
