@@ -32,6 +32,25 @@ def fail(**result):
     p.write_text(json.dumps(s)); m.fail_json(**result)
 if a['method']:
     if a['method'] == 'get':
+        if '/anomalies/details?' in a['path']:
+            s['anomaly_reads'] = s.get('anomaly_reads', 0) + 1
+            anomalies = []
+            if scenario.startswith('leaf_tor_') and s['selected_calls']:
+                anomalies = [{'fabricName':'fixture-source', 'cleared':False,
+                              'anomalyString':'Switch [FIXTURE'+str(index).zfill(4)+']: Please perform Recalculate and Deploy to complete Leaf-ToR unpairing before deleting the leaf switch from the fabric.'}
+                             for index in (5, 6)]
+                if scenario == 'leaf_tor_foreign_anomaly':
+                    for anomaly in anomalies: anomaly['fabricName'] = 'another-fabric'
+                if scenario == 'leaf_tor_cleared':
+                    for anomaly in anomalies: anomaly['cleared'] = True
+                if scenario == 'leaf_tor_other_anomaly':
+                    for anomaly in anomalies: anomaly['anomalyString'] = 'Unrelated interface warning'
+                if scenario == 'leaf_tor_wrong_identity':
+                    anomalies[-1]['anomalyString'] = anomalies[-1]['anomalyString'].replace('FIXTURE0006', 'FIXTURE00060')
+                if scenario == 'leaf_tor_partial_anomalies': anomalies.pop()
+                if scenario == 'leaf_tor_anomaly_read_failure':
+                    fail(status=503, msg='Anomaly lookup failed password=DO_NOT_PRINT_ME')
+            finish(changed=False, status=200, current={'anomalies':anomalies})
         if a['path'].endswith('/switches'):
             s['predelete_polls'] = s.get('predelete_polls', 0) + 1
             if scenario == 'predelete_call_timeout':
@@ -39,7 +58,9 @@ if a['method']:
                 time.sleep(3)
             rows = [{'switchId':'FIXTURE'+str(index+1).zfill(4),
                      'additionalData':{'systemMode':'normal','configSyncStatus':'inSync'}}
-                    for index in range(len(s['original']))]
+                    for index, address in enumerate(s['original']) if address in s['present']]
+            if scenario == 'leaf_tor_retry_pending' and s['selected_calls']:
+                rows[-1]['additionalData']['configSyncStatus'] = 'pending'
             if scenario == 'predelete_pending_then_ready' and s['predelete_polls'] == 1 or scenario in ('predelete_pending_forever', 'predelete_deploy_async_not_ready'):
                 rows[-1]['additionalData']['configSyncStatus'] = 'pending'
             if scenario == 'predelete_deployment_failed': rows[-1]['additionalData']['configSyncStatus'] = 'failed'
@@ -64,6 +85,8 @@ if a['method']:
             finish(changed=True, status=200, current={'code':400, 'message':'password=DO_NOT_PRINT_ME RAW_PAYLOAD'})
         if a['path'].endswith('/actions/deploy'):
             assert a['content'] == {}
+            if scenario == 'leaf_tor_deploy_fails' and s['selected_calls']:
+                fail(status=403, msg='Remediation deploy denied password=DO_NOT_PRINT_ME')
             deploy_ids = ['FIXTURE'+str(index+1).zfill(4) for index in range(len(s['original']))]
             responses = {
                 'predelete_deploy_207_generic': (207, {'status':'Configuration deployment completed', 'note':'password=DO_NOT_PRINT_ME RAW_PAYLOAD'}),
@@ -112,10 +135,20 @@ if a['method']:
     if scenario == 'http_400': fail(status=400, msg='ND Error4102: Recalculate and Deploy is required password=DO_NOT_PRINT_ME', payload={'private':'RAW_PAYLOAD'})
     if scenario == 'generic_failure': fail(msg='Unknown local result error')
     refused = set(requested[-2:]) if scenario in ('partial_then_success', 'partial_forever') else set()
+    first_refusal = 2 if scenario == 'leaf_tor_multi_fabric' else 1
+    if scenario.startswith('leaf_tor_') and (attempt == first_refusal or scenario == 'leaf_tor_forever'):
+        refused = set(requested[-2:])
     items = [{'switchId': identity, 'status':'failed' if identity in refused else 'success',
               'errorCode':'ND-4102' if identity in refused else '0',
               'message': ('Failed to delete the switch['+identity+']. Please check Anomalies for possible reasons. password=DO_NOT_PRINT_ME') if identity in refused else 'Deleted successfully',
               'private': {'password':'RAW_PAYLOAD'}} for identity in requested]
+    if refused:
+        s['present'] = [address for index, address in enumerate(s['original'])
+                        if address in s['present'] and 'FIXTURE'+str(index+1).zfill(4) not in set(requested)-refused]
+    if scenario == 'leaf_tor_malformed_refusal': items[-1] = dict(items[0])
+    if scenario == 'leaf_tor_auth_refusal':
+        for item in items:
+            if item['status'] == 'failed': item['message'] = 'Unauthorized. Check Anomalies.'
     if scenario == 'malformed_207': items=[]
     if scenario == 'duplicate_identity': items[-1]=dict(items[0])
     if scenario == 'wrong_identity': items[-1]['switchId']='UNREQUESTED0001'
@@ -126,7 +159,9 @@ if a['method']:
     if scenario == 'bad_body': body='invalid response shape'
     if scenario == 'body_errors': body={'error':{'message':'Controller rejected operation'},'private':'RAW_PAYLOAD'}
     accepted = not refused and scenario not in ('malformed_207','duplicate_identity','wrong_identity','unknown_item_status','missing_item','bad_body','body_errors','source_never_absent')
-    if accepted: s['present']=[]
+    if accepted:
+        s['present'] = [address for index, address in enumerate(s['original'])
+                        if address in s['present'] and 'FIXTURE'+str(index+1).zfill(4) not in requested]
     code=202 if scenario=='accepted_202' else 204 if scenario=='accepted_204' else 200 if scenario=='accepted_200' else 207
     if code==202:body={'jobId':'queued-fixture-job'}
     if code==204:body=None
@@ -148,6 +183,49 @@ fail(msg='The switch-module deleted workflow must not be invoked for normal reho
 
 def guard():
     return yaml.safe_load(GUARD.read_text())[0]
+
+
+@pytest.mark.parametrize('scenario', ['leaf_tor_then_success', 'leaf_tor_forever', 'leaf_tor_deploy_fails'])
+def test_leaf_tor_refusal_recalculates_deploys_and_retries_only_refused_switches(tmp_path, scenario):
+    completed, state = execute(tmp_path, scenario)
+    assert (completed.returncode == 0) is (scenario == 'leaf_tor_then_success'), completed.stdout + completed.stderr
+    assert len(state['selected_calls']) == (1 if scenario == 'leaf_tor_deploy_fails' else 2)
+    assert len(state['selected_calls'][0]) == 6
+    if len(state['selected_calls']) == 2:
+        assert state['selected_calls'][1] == ['FIXTURE0005', 'FIXTURE0006']
+    assert state['anomaly_reads'] >= 2
+    assert [path.rsplit('/', 1)[-1] for path in state['rest_writes']] == (
+        ['configSave', 'deploy', 'remove', 'configSave', 'deploy']
+        + ([] if scenario == 'leaf_tor_deploy_fails' else ['remove']))
+    assert ('DESTINATION_ADD_REACHED' in completed.stdout) is (scenario == 'leaf_tor_then_success')
+    assert state['module_delete_calls'] == 0
+    assert 'DO_NOT_PRINT_ME' not in completed.stdout and 'RAW_PAYLOAD' not in completed.stdout
+
+
+@pytest.mark.parametrize('scenario', [
+    'leaf_tor_foreign_anomaly', 'leaf_tor_cleared', 'leaf_tor_other_anomaly',
+    'leaf_tor_wrong_identity', 'leaf_tor_partial_anomalies', 'leaf_tor_anomaly_read_failure',
+    'leaf_tor_malformed_refusal', 'leaf_tor_auth_refusal', 'leaf_tor_retry_pending',
+])
+def test_unverified_leaf_tor_remediation_never_retries_deletion(tmp_path, scenario):
+    completed, state = execute(tmp_path, scenario)
+    assert completed.returncode != 0, completed.stdout + completed.stderr
+    assert len(state['selected_calls']) == 1
+    assert state['source_gets'] == 0
+    assert 'DESTINATION_ADD_REACHED' not in completed.stdout
+    assert len(state['rest_writes']) == (5 if scenario == 'leaf_tor_retry_pending' else 3)
+    assert 'DO_NOT_PRINT_ME' not in completed.stdout and 'RAW_PAYLOAD' not in completed.stdout
+
+
+def test_leaf_tor_retry_excludes_fabrics_whose_removal_already_succeeded(tmp_path):
+    completed, state = execute(tmp_path, 'leaf_tor_multi_fabric')
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert state['selected_calls'] == [
+        ['FIXTURE0001', 'FIXTURE0002', 'FIXTURE0003', 'FIXTURE0004'],
+        ['FIXTURE0005', 'FIXTURE0006'], ['FIXTURE0005', 'FIXTURE0006'],
+    ]
+    accepted_fabric_writes = [path for path in state['rest_writes'] if '/fixture-accepted/' in path]
+    assert [path.rsplit('/', 1)[-1] for path in accepted_fabric_writes] == ['configSave', 'deploy', 'remove']
 
 
 def named(tasks, prefix):
@@ -249,6 +327,9 @@ def execute(tmp_path, scenario, remove_retries=2):
     moves = [{"fabric": "fixture-destination", "from_fabric": "fixture-source", "seed_ip": ip,
               "serial": "FIXTURE" + str(index + 1).zfill(4), "name": "fixture-" + str(index)}
              for index, ip in enumerate(ips)]
+    if scenario == 'leaf_tor_multi_fabric':
+        for move in moves[:4]:
+            move['from_fabric'] = 'fixture-accepted'
     values = {"ansible_python_interpreter": sys.executable, "nd_switch_apply": True,
               "_nd_switch_clock": guard()["vars"]["_nd_switch_clock"],
               "nd_missing_switches": moves, "nd_rehome_moves": moves,
@@ -263,7 +344,7 @@ def execute(tmp_path, scenario, remove_retries=2):
                   nd_switch_predelete_deploy=True)
     if scenario in {'predelete_pending_forever', 'predelete_missing_switch', 'predelete_missing_status',
                     'predelete_duplicate_switch', 'predelete_bad_inventory', 'predelete_subset_missing_status',
-                    'predelete_deploy_async_not_ready', 'predelete_deploy_unknown_missing_status'}:
+                    'predelete_deploy_async_not_ready', 'predelete_deploy_unknown_missing_status', 'leaf_tor_retry_pending'}:
         values['nd_switch_predelete_timeout_seconds'] = 3
     if scenario == 'predelete_disabled': values['nd_switch_predelete_deploy'] = False
     if scenario == 'predelete_outer_budget_expired': values['nd_switch_guard_timeout_seconds'] = 1

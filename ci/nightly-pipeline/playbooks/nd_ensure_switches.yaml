@@ -652,7 +652,8 @@
         # runs included a specific pending Leaf-ToR unpairing refusal; a generic
         # "check Anomalies" refusal does not establish that same cause. Acceptance
         # of save/deploy is insufficient: require fresh configSyncStatus=inSync.
-        - name: Measure switch lifecycle deploy-settle
+        - &nd_predelete_gate
+          name: Measure switch lifecycle deploy-settle
           block:
             - name: Start deploy-settle timing
               ansible.builtin.set_fact:
@@ -673,6 +674,28 @@
               ansible.builtin.assert:
                 that: _nd_predelete_remaining | float > 0
                 fail_msg: "NDP_SWITCH_PREDELETE_DEPLOY_BLOCKED: the switch guard has no remaining deployment budget; no switch was removed."
+
+            - &nd_read_remove_anomalies
+              name: Check source fabric anomalies before removal or remediation
+              cisco.nd.nd_rest:
+                method: get
+                path: "/api/v1/analyze/anomalies/details?fabricName={{ _rf | urlencode }}&max=200"
+              loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
+              loop_control:
+                loop_var: _rf
+                label: "{{ _rf }}"
+              register: nd_remove_anomalies
+              failed_when: >-
+                nd_remove_anomalies.failed | default(false)
+                or nd_remove_anomalies.status | default(0) | int != 200
+                or nd_remove_anomalies.current | default(none) is not mapping
+                or nd_remove_anomalies.current.anomalies | default(none) is not sequence
+                or nd_remove_anomalies.current.anomalies is string
+                or nd_remove_anomalies.current.anomalies is mapping
+              timeout: "{{ _nd_predelete_call_limit }}"
+              vars:
+                ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
+              no_log: true
 
             - name: Recalculate each source fabric before removing any switches
               cisco.nd.nd_rest:
@@ -829,7 +852,7 @@
               ansible.builtin.fail:
                 msg: >-
                   NDP_SWITCH_PREDELETE_DEPLOY_BLOCKED: {{ ansible_failed_task.name }} failed;
-                  no switch removal or destination onboarding was attempted.
+                  no further switch removal or destination onboarding was attempted.
           always:
             - name: Report deploy-settle duration without replacing its result
               ansible.builtin.debug:
@@ -862,13 +885,14 @@
                 loop_var: _rm
                 label: "{{ _rm.key }}"
 
-            - name: Remove each switch from the fabric it is leaving
+            - &nd_normal_remove_request
+              name: Remove each switch from the fabric it is leaving
               cisco.nd.nd_rest:
                 method: post
                 path: "/api/v1/manage/fabrics/{{ _rm.key }}/switchActions/remove"
                 content:
                   switchIds: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _rm.key) | map(attribute='serial') | list }}"
-              loop: "{{ nd_rehome_removals | dict2items }}"
+              loop: "{{ dict(nd_rehome_moves | groupby('from_fabric')) | dict2items }}"
               loop_control:
                 loop_var: _rm
                 label: "{{ _rm.key }} ({{ _rm.value | length }} switch(es))"
@@ -891,7 +915,8 @@
               failed_when: false
               no_log: true
 
-            - name: Classify the immediate normal removal response without exposing API payloads
+            - &nd_normal_remove_classifier
+              name: Classify the immediate normal removal response without exposing API payloads
               ansible.builtin.set_fact:
                 nd_rehome_delete_reports: "{{ nd_rehome_delete_reports | default([]) + [_remove_report] }}"
               vars:
@@ -967,7 +992,8 @@
                 label: "{{ _removal._rm.key }}"
               no_log: true
 
-            - name: Require acceptance of every requested normal removal before source polling
+            - &nd_normal_remove_acceptance
+              name: Require acceptance of every requested normal removal before source polling
               ansible.builtin.assert:
                 that:
                   - _report.classification == 'accepted'
@@ -988,6 +1014,117 @@
             # converge; an unconfirmed removal fails this move before onboarding begins.
 
             - name: Complete delete timing
+              ansible.builtin.set_fact:
+                _nd_phase_delete_status: success
+          rescue:
+            - name: Restrict remediation to explicit per-switch removal refusals
+              ansible.builtin.assert:
+                that:
+                  - ansible_failed_task.name == 'Require acceptance of every requested normal removal before source polling'
+                  - nd_rehome_delete_reports | default([]) | selectattr('classification', 'equalto', 'refused') | list | length > 0
+                  - nd_rehome_delete_reports | rejectattr('classification', 'in', ['accepted', 'refused']) | list | length == 0
+                fail_msg: "NDP_SWITCH_REMOVE_REJECTED: this failure is not an eligible anomaly refusal; no remediation retry will run."
+
+            - *nd_read_remove_anomalies
+
+            - name: Initialize the bounded anomaly remediation scope
+              ansible.builtin.set_fact:
+                _nd_remove_retry_moves: []
+                _nd_remove_original_reports: "{{ nd_rehome_delete_reports }}"
+
+            - name: Identify only refused switches with matching Leaf-ToR unpairing anomalies
+              ansible.builtin.set_fact:
+                _nd_remove_retry_moves: >-
+                  {{ _nd_remove_retry_moves + (nd_rehome_moves
+                     | selectattr('from_fabric', 'equalto', _removal._rm.key)
+                     | selectattr('serial', 'in', _retry_scope.ids) | list) }}
+              failed_when: not (_retry_scope.valid | bool)
+              vars:
+                _requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _removal._rm.key) | map(attribute='serial') | list }}"
+                _anomalies: >-
+                  {{ (nd_remove_anomalies.results | selectattr('_rf', 'equalto', _removal._rm.key)
+                     | map(attribute='current.anomalies') | first | default([])) }}
+                _retry_scope: >-
+                  {%- set body = _removal.jsondata if _removal.jsondata is defined else _removal.current | default(none) -%}
+                  {%- set items = body.get('items') if body is mapping else none -%}
+                  {%- set ns = namespace(valid=true, seen=[], refused=[], matched=[]) -%}
+                  {%- if _removal.status | default(0) | int not in [200, 207]
+                      or body is not mapping or body.get('error') or body.get('errors')
+                      or items is not sequence or items is string or items is mapping
+                      or items | length != _requested_ids | length -%}
+                    {%- set ns.valid = false -%}
+                  {%- else -%}
+                    {%- for item in items -%}
+                      {%- if item is not mapping -%}
+                        {%- set ns.valid = false -%}
+                      {%- else -%}
+                        {%- set identity = item.get('switchId') -%}
+                        {%- set status = item.get('status', '') | string | trim | lower -%}
+                        {%- set reason = item.get('message', item.get('reason', '')) -%}
+                        {%- if identity is not string or identity not in _requested_ids or identity in ns.seen
+                            or status not in ['success', 'failed', 'failure', 'error', 'denied', 'rejected'] -%}
+                          {%- set ns.valid = false -%}
+                        {%- else -%}
+                          {%- set ns.seen = ns.seen + [identity] -%}
+                          {%- if status != 'success' -%}
+                            {%- if reason is not string or reason is not search('(?i)anomal|recalculate.*deploy|leaf.to.r|leaf-tor')
+                                or reason is search('(?i)authentication|unauthorized|forbidden|permission denied|invalid credentials') -%}
+                              {%- set ns.valid = false -%}
+                            {%- endif -%}
+                            {%- set ns.refused = ns.refused + [identity] -%}
+                          {%- endif -%}
+                        {%- endif -%}
+                      {%- endif -%}
+                    {%- endfor -%}
+                    {%- for identity in ns.refused -%}
+                      {%- for anomaly in _anomalies if anomaly is mapping -%}
+                        {%- set text = anomaly.get('anomalyString', '') | string | lower -%}
+                        {%- if anomaly.get('fabricName') == _removal._rm.key and anomaly.get('cleared') is sameas false
+                            and ('[' ~ (identity | lower) ~ ']' in text or '/' ~ (identity | lower) ~ ']' in text)
+                            and 'leaf-tor unpairing' in text and text is search('recalculate\\s+and\\s+deploy') -%}
+                          {%- set ns.matched = ns.matched + [identity] -%}
+                        {%- endif -%}
+                      {%- endfor -%}
+                    {%- endfor -%}
+                  {%- endif -%}
+                  {{- {'valid': ns.valid and ns.refused | length > 0
+                       and ns.seen | length == _requested_ids | length
+                       and ns.refused | difference(ns.matched) | length == 0,
+                       'ids': ns.refused if ns.valid else []} -}}
+              loop: "{{ nd_rehome_removed.results }}"
+              loop_control:
+                loop_var: _removal
+                label: "{{ _removal._rm.key }}"
+              when: >-
+                (nd_rehome_delete_reports | selectattr('fabric', 'equalto', _removal._rm.key)
+                 | map(attribute='classification') | first) == 'refused'
+              no_log: true
+
+            - name: Require a nonempty verified anomaly remediation scope
+              ansible.builtin.assert:
+                that: _nd_remove_retry_moves | length > 0
+                fail_msg: "NDP_SWITCH_REMOVE_REJECTED: no matching Leaf-ToR remediation scope was verified."
+
+            - name: Report the single bounded anomaly remediation retry
+              ansible.builtin.debug:
+                msg: >-
+                  NDP_SWITCH_REMOVE_ANOMALY_RETRY: Recalculate and fabric-wide Deploy,
+                  verify fresh inSync, then retry normal removal once for
+                  {{ _nd_remove_retry_moves | length }} refused switch(es); already accepted switches are excluded.
+
+            - name: Reconcile Leaf-ToR unpairing and retry only the refused switches once
+              vars:
+                nd_rehome_moves: "{{ _nd_remove_retry_moves }}"
+              block:
+                - *nd_predelete_gate
+                - name: Retain accepted fabric outcomes before classifying the retry
+                  ansible.builtin.set_fact:
+                    nd_rehome_delete_reports: "{{ _nd_remove_original_reports | selectattr('classification', 'equalto', 'accepted') | list }}"
+                - *nd_normal_remove_request
+                - *nd_normal_remove_classifier
+                - *nd_normal_remove_acceptance
+
+            - name: Complete delete timing after verified anomaly remediation
               ansible.builtin.set_fact:
                 _nd_phase_delete_status: success
           always:
