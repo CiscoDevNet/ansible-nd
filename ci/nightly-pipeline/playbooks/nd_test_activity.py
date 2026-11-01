@@ -521,7 +521,7 @@ def _summarize_catalog(log, module, run_id, build, fabric, collection_root, test
     runner_outcomes = {"base": set(), "cleanup": set()}
     untagged_seen = set()
     markers, modules = set(), set()
-    state = {"current": None, "recap": False, "recap_rows": 0, "recap_failed": 0,
+    state = {"current": None, "recap": False, "recap_rows": 0, "recap_failed": 0, "recap_rescued": 0,
              "exit_code": None, "exit_conflict": False,
              "module_skip": False, "outside_failure": False, "outside_reasons": set(), "unmatched_case": False,
              "last_case": None, "last_path": None}
@@ -668,6 +668,8 @@ def _summarize_catalog(log, module, run_id, build, fabric, collection_root, test
                     state["recap_failed"] += int(match.group(2))
                     unreachable = re.search(r"\bunreachable=(\d+)\b", line)
                     state["recap_failed"] += int(unreachable.group(1)) if unreachable else 0
+                    rescued = re.search(r"\brescued=(\d+)\b", line)
+                    state["recap_rescued"] += int(rescued.group(1)) if rescued else 0
             if "NDP_MODULE_SKIPPED" in line:
                 state["module_skip"] = True
         finish_task()
@@ -683,18 +685,36 @@ def _summarize_catalog(log, module, run_id, build, fabric, collection_root, test
         result["notes"].append(execution_error + "; no case counts accepted")
         return result
     result["validated"] = True
-    for phase, outcomes in phase_outcomes.items():
-        result[phase] = "Failed" if "failed" in outcomes else "Ran" if {"ok", "ignored"} & outcomes else "Skipped" if outcomes == {"skipped"} else "Not observed"
-        runner = runner_outcomes[phase]
-        if "failed" in runner:
-            result[phase] = "Runner failed" if result[phase] == "Not observed" else result[phase] + " (runner failed)"
-        elif result[phase] == "Not observed" and {"ok", "ignored"} & runner:
-            result[phase] = "Runner observed"
     exit_conflict = state["exit_conflict"] or (
         exit_code is not None and state["exit_code"] is not None and exit_code != state["exit_code"]
     )
     if exit_code is None:
         exit_code = state["exit_code"]
+    recovered = (not exit_conflict and state["recap_rows"] > 0 and not state["recap_failed"]
+                 and state["recap_rescued"] > 0 and exit_code == 0)
+    if recovered:
+        for outcomes in list(phase_outcomes.values()) + list(runner_outcomes.values()):
+            if "failed" in outcomes:
+                outcomes.discard("failed")
+                outcomes.add("rescued")
+        for tasks in observed.values():
+            for outcomes in tasks.values():
+                if "failed" in outcomes:
+                    outcomes.discard("failed")
+                    outcomes.add("rescued")
+        result["handled_failures"] = list(result["failure"])
+        result["failure"] = []
+        state["outside_failure"] = False
+        result["notes"].append("final recap and exit confirm rescued failures; missing case validation remains incomplete")
+    for phase, outcomes in phase_outcomes.items():
+        result[phase] = "Failed" if "failed" in outcomes else "Rescued" if "rescued" in outcomes else "Ran" if {"ok", "ignored"} & outcomes else "Skipped" if outcomes == {"skipped"} else "Not observed"
+        runner = runner_outcomes[phase]
+        if "failed" in runner:
+            result[phase] = "Runner failed" if result[phase] == "Not observed" else result[phase] + " (runner failed)"
+        elif "rescued" in runner and result[phase] == "Not observed":
+            result[phase] = "Runner rescued"
+        elif result[phase] == "Not observed" and {"ok", "ignored"} & runner:
+            result[phase] = "Runner observed"
     if exit_conflict:
         result["notes"].append("execution metadata/raw exit statuses disagree; invocation result unknown")
     elif state["recap_failed"] or (exit_code is not None and exit_code != 0):
@@ -765,6 +785,10 @@ def _summarize_catalog(log, module, run_id, build, fabric, collection_root, test
         if "failed" in outcomes:
             totals["failed"] += 1
             record_case(identity, case, "failed")
+            continue
+        if "rescued" in outcomes:
+            totals["incomplete"] += 1
+            record_case(identity, case, "incomplete", "rescued failure; successful case validation not established")
             continue
         assertions = case["assertions"]
         assertion_results = [tasks.get(name, set()) for name in assertions]

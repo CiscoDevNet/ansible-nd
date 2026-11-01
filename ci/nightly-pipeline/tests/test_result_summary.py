@@ -300,6 +300,46 @@ println table
     assert fold.index("PHASE_TIMING_RESULTS[key]") < fold.index('archiveArtifacts artifacts: skiplistFile')
 
 
+def test_bundle_archives_module_round_timing_report(active_pipeline):
+    active_pipeline(r'''
+def writes = [:]
+def archives = []
+def shells = []
+script.metaClass.writeFile = { Map options -> writes[options.file.toString()] = options.text.toString() }
+script.metaClass.archiveArtifacts = { Map options -> archives.add(options.artifacts.toString()) }
+script.metaClass.withEnv = { Object entries, Closure body -> body.call() }
+script.metaClass.timeout = { Map options, Closure body -> body.call() }
+script.metaClass.sh = { Object command -> shells.add(command.toString()); return 0 }
+script.MODULE_ACTIVITY_RESULTS.putAll([
+    first: [module: 'example', nd: '4.3', round_label: 'iBGP', phase_seconds: [execution: 2, parsing: 0.1]],
+    second: [module: 'example', nd: '4.3', round_label: 'eBGP', phase_seconds: [execution: 12, parsing: 0.2]],
+    unknown: [module: 'unstarted', nd: '4.3', round_label: 'eBGP']
+])
+script.PHASE_TIMING_RESULTS.putAll([first: [execution: 2, parsing: 0.1], second: [execution: 12, parsing: 0.2]])
+script.SWITCH_LIFECYCLE_TIMINGS.addAll([
+    [nd: '4.3', round: 'eBGP', phase: 'pre', seconds: 123, exit_code: 2],
+    [nd: '4.3', round: 'iBGP', phase: 'home', seconds: 1.5, exit_code: null]
+])
+script.bundleAllLogs()
+def report = writes['pipeline_timing_build_122.txt']
+assert report != null
+assert report.contains('FINAL TIME BREAKDOWN')
+assert report.contains('Build elapsed (to report)')
+assert report.contains('Phase subtotal is not build wall time')
+assert report.contains('example | ND 4.3 | iBGP | prerequisites: N/A | execution: 00h 00m 02.000s')
+assert report.contains('example | ND 4.3 | eBGP | prerequisites: N/A | execution: 00h 00m 12.000s')
+assert report.indexOf('example | ND 4.3 | eBGP') < report.indexOf('example | ND 4.3 | iBGP')
+assert report.contains('unstarted | ND 4.3 | eBGP | prerequisites: N/A | execution: N/A')
+assert report.contains('SWITCH LIFECYCLE INVOCATIONS (wall time; separate from module phase totals)')
+assert report.contains('ND 4.3 | eBGP | pre | 00h 02m 03.000s | exit: 2')
+assert report.contains('ND 4.3 | iBGP | home | 00h 00m 01.500s | exit: unavailable')
+assert archives.contains('pipeline_timing_build_122.txt')
+assert archives.contains('nd_nightly_logs_build_122.zip')
+assert shells.any { it.contains("'pipeline_timing_build_' + os.environ['BUILD_NUMBER'] + '.txt'") }
+assert script.binding.env.PIPELINE_FAILED != 'true'
+''')
+
+
 @pytest.mark.parametrize("scenario", ["null_message", "nonzero_exit", "success"])
 def test_active_structured_results_preserve_failures_and_case_counts(active_pipeline, scenario):
     active_pipeline("def scenario = " + repr(scenario) + "\n" + r'''

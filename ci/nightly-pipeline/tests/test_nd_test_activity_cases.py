@@ -355,3 +355,53 @@ def test_catalog_from_previous_classification_version_is_rebuilt(tmp_path):
     rebuilt = REPORT.freeze_catalog(COLLECTION, module, frozen)
     assert rebuilt["catalog_version"] == REPORT.CATALOG_VERSION
     assert rebuilt["catalog"]["cases"]["tasks/nd_vpc_pair_merge.yaml::MERGE::TC1"]["state"] == "merged"
+
+
+@pytest.mark.parametrize("adapter", ["text", "events"])
+@pytest.mark.parametrize("terminal_failure", [False, True])
+def test_rescued_cleanup_is_not_a_terminal_failure(tmp_path, adapter, terminal_failure):
+    collection, module = synthetic_collection(tmp_path, [
+        {"name": "TEARDOWN - expected failure", "ansible.builtin.fail": {"msg": "expected"}},
+    ])
+    rows = records_for(collection, module, "tasks/main.yaml")
+    log, used, _ = emit_log(tmp_path, rows, collection=collection, module=module,
+                           outcomes={rows[0]["key"]: "failed"})
+    code = 2 if terminal_failure else 0
+    text = log.read_text().replace("rescued=0", "rescued=1")
+    if not terminal_failure:
+        text = text.replace("failed=1", "failed=0").replace("[ANSIBLE_EXIT_STATUS: 2]", "[ANSIBLE_EXIT_STATUS: 0]")
+    log.write_text(text)
+    Path(str(log) + ".execution.json").write_text(json.dumps({"module": module, "run_id": "current", "exit_code": code}))
+    if adapter == "events":
+        events_for(log, used, code, collection=collection, module=module)
+        summary_path = Path(str(log) + ".event-summary.json")
+        summary = json.loads(summary_path.read_text())
+        summary["counts"]["rescued"] = 1
+        summary_path.write_text(json.dumps(summary))
+        result = REPORT.summarize_events(log, module, "current", "132", "iBGP", collection)
+    else:
+        result = REPORT.summarize(log, module, "current", "132", "iBGP", collection)
+    assert result["result"] == ("FAIL" if terminal_failure else "PASS")
+    assert result["cleanup"] == ("Failed" if terminal_failure else "Rescued")
+    assert bool(result["failure"]) is terminal_failure
+    if not terminal_failure:
+        assert result["handled_failures"]
+
+
+
+def test_rescued_authored_assertion_does_not_become_a_pass(tmp_path):
+    collection, module = synthetic_collection(tmp_path, [
+        {"name": "Merged TC1 - create", "nd_fixture": {"state": "merged"}},
+        {"name": "Merged TC1 - verify", "ansible.builtin.assert": {"that": [False]}},
+    ])
+    rows = records_for(collection, module, "tasks/main.yaml")
+    log, _, _ = emit_log(tmp_path, rows, collection=collection, module=module,
+                        outcomes={rows[1]["key"]: "failed"})
+    log.write_text(log.read_text().replace("failed=1", "failed=0").replace("rescued=0", "rescued=1")
+                   .replace("[ANSIBLE_EXIT_STATUS: 2]", "[ANSIBLE_EXIT_STATUS: 0]"))
+    Path(str(log) + ".execution.json").write_text(json.dumps({"module": module, "run_id": "current", "exit_code": 0}))
+    result = REPORT.summarize(log, module, "current", "132", "iBGP", collection)
+    assert result["result"] == "PASS"
+    assert result["testcase_totals"] == {"started": 1, "passed": 0, "failed": 0, "skipped": 0, "incomplete": 1}
+    assert result["coverage"] == "INCOMPLETE"
+

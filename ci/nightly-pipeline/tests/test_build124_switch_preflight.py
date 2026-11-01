@@ -66,6 +66,10 @@ script.metaClass.sh = { Object options ->
 def caught = null
 try { script.runSwitchMembershipSync(config, phase, '') } catch (Exception e) { caught = e }
 assert shells.size() == 1
+assert script.SWITCH_LIFECYCLE_TIMINGS.size() == 1
+assert script.SWITCH_LIFECYCLE_TIMINGS[0].phase == phase
+assert script.SWITCH_LIFECYCLE_TIMINGS[0].seconds >= 0
+assert script.SWITCH_LIFECYCLE_TIMINGS[0].exit_code == exitCode
 assert shells[0].contains('-e "nd_switch_preserve_config=false"')
 assert shells[0].contains('-e "nd_switch_rehome_fabrics_csv=${PREFLIGHT_REHOME_FABRICS}"')
 assert shells[0].contains('timeout "${PREFLIGHT_TIMEOUT}" ansible-playbook')
@@ -100,6 +104,10 @@ def caught = null
 try { script.runSwitchMembershipSync(config, phase, '') } catch (Exception e) { caught = e }
 if (phase == 'post') { assert caught == null }
 else { assert caught != null && caught.is(failure) }
+assert script.SWITCH_LIFECYCLE_TIMINGS.size() == 1
+assert script.SWITCH_LIFECYCLE_TIMINGS[0].phase == phase
+assert script.SWITCH_LIFECYCLE_TIMINGS[0].seconds >= 0
+assert script.SWITCH_LIFECYCLE_TIMINGS[0].exit_code == null
 assert logs.any { it.contains('NDP_SWITCH_MEMBERSHIP_COMMAND_EXCEPTION phase=' + phase) && it.contains('command exit status is unavailable') }
 assert !logs.any { it.startsWith('NDP_SWITCH_MEMBERSHIP_RESULT') || it.startsWith('NDP_SWITCH_MEMBERSHIP_READY:') }
 if (phase != 'pre') { assert context.ND_SWITCH_RESTORE_FAILED == 'true' && context.PIPELINE_FAILED == 'true' }
@@ -113,6 +121,9 @@ script.metaClass.sh = { Object options -> throw failure }
 def caught = null
 try { script.runSwitchMembershipSync(config, phase, '') } catch (Exception e) { caught = e }
 assert caught != null && caught.is(failure)
+assert script.SWITCH_LIFECYCLE_TIMINGS.size() == 1
+assert script.SWITCH_LIFECYCLE_TIMINGS[0].phase == phase
+assert script.SWITCH_LIFECYCLE_TIMINGS[0].exit_code == null
 assert !logs.any { it.startsWith('NDP_SWITCH_MEMBERSHIP_COMMAND_EXCEPTION') || it.startsWith('NDP_SWITCH_MEMBERSHIP_RESULT') || it.startsWith('NDP_SWITCH_MEMBERSHIP_READY:') }
 ''')
 
