@@ -84,7 +84,8 @@ options:
                     - Use V(iosXeLoopbackShutNoshut) to manage only the admin state of an IOS-XE loopback.
                     - Use V(iosXeUnderlayLoopback) for an IOS-XE underlay (NVE source) loopback.
                     - Use V(iosXeInternalLoopback) for an IOS-XE internal loopback (IPv4/IPv6 and PIM options).
-                    - Use V(csrLoopback) for a CSR loopback.
+                    - Use V(csrLoopback) for a CSR loopback. Supported on Nexus Dashboard releases before 4.3.1; on 4.3.1 and later
+                      the module fails before writing.
                     - Use V(csr1kvLoopback) for a CSR1kv loopback (admin state and freeform config only).
                     type: str
                     required: true
@@ -516,6 +517,7 @@ EXAMPLES = r"""
       deploy: true
     state: deleted
 
+# csrLoopback is supported on Nexus Dashboard releases before 4.3.1; on 4.3.1 and later the module fails before writing.
 - name: Merge a CSR loopback
   cisco.nd.nd_interface_loopback:
     fabric_name: fabric-xe
