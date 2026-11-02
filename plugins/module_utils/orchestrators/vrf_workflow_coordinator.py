@@ -25,10 +25,16 @@ from typing import Any
 
 from ansible.module_utils.basic import AnsibleModule
 
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.controller import ConfigActionsController
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import RESOURCE_CONFIG_ACTIONS
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import get_raw_module_args
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActions, ConfigActionsContext
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import VrfConfigModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrfs import NDVrfOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.backends.resource import ResourceConfigActionsBackend
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_attachment_manager import (
     VrfAttachmentManager,
 )
@@ -76,6 +82,7 @@ class VrfWorkflowCoordinator:
     ):
         self.module = module
         self.strategy = strategy
+        self.config_actions: ConfigActions | None = None
         self._trace_started_at = time.monotonic()
         self._workflow_trace: list[dict[str, Any]] = []
         if initial_workflow_trace:
@@ -111,6 +118,7 @@ class VrfWorkflowCoordinator:
         module_args: dict = dict(self.module.params)
         try:
             self._normalize_module_args(module_args)
+            self._resolve_config_actions(module_args)
             if self.strategy is None:
                 self.strategy = self._resolve_strategy(module_args)
             self._trace(
@@ -135,6 +143,21 @@ class VrfWorkflowCoordinator:
             self._trace("workflow_error", error=repr(exc), exception=type(exc).__name__)
             raise
 
+        if module_args.get("state") == "staged" and self.config_actions is not None:
+            staged_result = ConfigActionsController(
+                RESOURCE_CONFIG_ACTIONS,
+                ResourceConfigActionsBackend("vrfNames", lambda _payload: None),
+            ).execute(
+                self.config_actions,
+                ConfigActionsContext(
+                    fabric_names=(module_args["fabric_name"],),
+                    state="staged",
+                    check_mode=self.module.check_mode,
+                    eligible=False,
+                    reason="staged_state",
+                ),
+            )
+            result.setdefault("config_actions", []).append(staged_result.to_result())
         self._trace("workflow_end", changed=result.get("changed"), failed=result.get("failed"))
         return self._attach_workflow_trace(result)
 
@@ -205,6 +228,22 @@ class VrfWorkflowCoordinator:
         """Normalize legacy module-level aliases before workflow routing."""
         if module_args.get("state") == "query":
             module_args["state"] = "gathered"
+
+    def _resolve_config_actions(self, module_args: dict) -> ConfigActions:
+        """Parse resource deployment intent before topology or mutation calls."""
+        try:
+            actions = parse_config_actions(
+                params=module_args,
+                raw_args=get_raw_module_args(),
+                policy=RESOURCE_CONFIG_ACTIONS,
+                state=module_args.get("state"),
+            )
+        except ValueError as exc:
+            self.module.fail_json(msg=f"Invalid config_actions: {exc}")
+            raise
+        self.config_actions = actions
+        self._trace("config_actions_resolved", config_actions=actions.to_result())
+        return actions
 
     def _validate_topology_argument_scope(
         self,
@@ -416,7 +455,7 @@ class VrfWorkflowCoordinator:
             for deploy_payload in deploy_payloads:
                 if deploy_payload:
                     self._trace("parent_deferred_deploy_start", deploy_payload=deploy_payload)
-                    deploy_trace = self._deploy_vrf_attachments(
+                    deploy_trace = self._run_vrf_config_actions(
                         parent_module_args,
                         self.strategy,
                         deploy_payload,
@@ -702,9 +741,9 @@ class VrfWorkflowCoordinator:
 
         ND rejects VRF removal while attached or pending attachment changes are
         present.  For ``state=deleted`` the requested ``attach`` block and
-        per-VRF ``deploy`` boolean are intentionally ignored; only
-        ``deploy_type`` controls whether the pre-delete deployment is scoped to
-        switches or to the VRF.
+        per-VRF ``deploy`` boolean is intentionally ignored. The shared
+        module-level action type controls whether the required deployment is
+        scoped to switches or to the VRF.
         """
         return self._vrf_state_machine().run_deleted(module_args, strategy)
 
@@ -788,6 +827,9 @@ class VrfWorkflowCoordinator:
                     result[key] = payloads + result[key]
                 else:
                     result[key].extend(payloads)
+        config_action_results = trace.get("config_actions") or []
+        if config_action_results:
+            result.setdefault("config_actions", []).extend(config_action_results)
 
         verbosity = self.module._verbosity if hasattr(self.module, "_verbosity") else 0
         if self.module.params.get("output_level") == "debug":
@@ -884,11 +926,11 @@ class VrfWorkflowCoordinator:
 
     def _deploy_enabled_by_vrf(self, config: list[dict]) -> dict[str, bool]:
         """Return per-VRF deploy intent; omitted deploy defaults to True."""
-        return deploy_enabled_by_vrf(config)
+        return deploy_enabled_by_vrf(config, self.config_actions)
 
     def _deploy_type_by_vrf(self, config: list[dict]) -> dict[str, str]:
-        """Return per-VRF deploy scope; omitted deploy_type defaults to switch."""
-        return deploy_type_by_vrf(config)
+        """Return the module-level deploy scope for each VRF."""
+        return deploy_type_by_vrf(config, self.config_actions)
 
     def _desired_attachment_map(
         self,
@@ -1063,9 +1105,10 @@ class VrfWorkflowCoordinator:
         config: list[dict],
         module_args: dict,
         strategy: BaseVrfStrategy,
+        actions: ConfigActions | None = None,
     ) -> list[dict[str, Any]]:
         """Build a deploy request for configured VRFs already pending in ND."""
-        return self.attachments.build_pending_vrf_deploy_payloads(result, config, module_args, strategy)
+        return self.attachments.build_pending_vrf_deploy_payloads(result, config, module_args, strategy, actions=actions)
 
     def _query_current_vrfs(
         self,
@@ -1117,6 +1160,52 @@ class VrfWorkflowCoordinator:
                 "check_mode_deploy_payloads": [deploy_payload],
             }
         return self.attachments.deploy_vrf_attachments(module_args, strategy, deploy_payload)
+
+    def _run_vrf_config_actions(
+        self,
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+        deploy_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Execute one optional VRF deploy through the shared controller."""
+        resources = tuple(deploy_payload.get("vrfNames") or ())
+        switch_ids = tuple(deploy_payload.get("switchIds") or ())
+        actions = self.config_actions or ConfigActions(
+            save=False,
+            deploy=True,
+            type="switch" if switch_ids else "resource",
+            provided=False,
+        )
+        backend = ResourceConfigActionsBackend(
+            "vrfNames",
+            lambda payload: self._deploy_vrf_attachments(module_args, strategy, payload),
+        )
+        result = ConfigActionsController(RESOURCE_CONFIG_ACTIONS, backend).execute(
+            actions,
+            ConfigActionsContext(
+                fabric_names=(strategy.fabric_name,),
+                state=module_args.get("state"),
+                check_mode=self.module.check_mode,
+                eligible=module_args.get("state") != "staged",
+                reason="staged_state" if module_args.get("state") == "staged" else "actions_requested",
+                switch_ids=switch_ids,
+                resources=resources,
+            ),
+        )
+        if result.status == "failed":
+            failed = next((step for step in result.actions if step.status == "failed"), None)
+            detail = failed.error if failed is not None else result.reason
+            raise RuntimeError(f"VRF config action deploy failed: {detail}")
+
+        trace: dict[str, Any] = {}
+        for step in result.actions:
+            if step.status == "completed" and isinstance(step.response, dict):
+                trace = dict(step.response)
+                break
+        trace["config_actions"] = [result.to_result()]
+        if result.status == "planned":
+            trace.update(changed=True, failed=False, check_mode_deploy_payloads=[deploy_payload])
+        return trace
 
     # ── Child task runner ─────────────────────────────────────────
 

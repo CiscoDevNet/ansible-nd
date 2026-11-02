@@ -148,7 +148,7 @@ class NetworkAttachmentManager:
             self._trace("network_attachment_phase_noop", phase=phase, desired_count=len(desired or {}), current_count=len(current or {}))
             return {"current": current} if phase == "pre" else {}
 
-        deploy_enabled = deploy_enabled_by_network(config)
+        deploy_enabled = deploy_enabled_by_network(config, getattr(self.coordinator, "config_actions", None))
         deploy_targets: dict[str, set[str]] = {}
         for payload in payloads:
             network_name = payload.get("networkName")
@@ -643,9 +643,10 @@ class NetworkAttachmentManager:
     def build_deploy_payloads(
         config: list[dict],
         *deploy_target_maps: dict[str, set[str]],
+        actions: Any | None = None,
     ) -> list[dict[str, Any]]:
-        deploy_enabled = deploy_enabled_by_network(config)
-        deploy_types = deploy_type_by_network(config)
+        deploy_enabled = deploy_enabled_by_network(config, actions)
+        deploy_types = deploy_type_by_network(config, actions)
         grouped: dict[tuple[str, ...], set[str]] = {}
         network_level: set[str] = set()
         for target_map in deploy_target_maps:
@@ -667,6 +668,7 @@ class NetworkAttachmentManager:
     def build_delete_deploy_payloads(
         config: list[dict],
         *deploy_target_maps: dict[str, set[str]],
+        actions: Any | None = None,
     ) -> list[dict[str, Any]]:
         """
         Build deploy requests for delete cleanup.
@@ -675,7 +677,7 @@ class NetworkAttachmentManager:
         attempted, so this intentionally ignores per-Network ``deploy: false``.
         The configured deploy type is still honored as the deploy scope.
         """
-        deploy_types = deploy_type_by_network(config)
+        deploy_types = deploy_type_by_network(config, actions)
         grouped: dict[tuple[str, ...], set[str]] = {}
         network_level: set[str] = set()
         for target_map in deploy_target_maps:
@@ -699,7 +701,7 @@ class NetworkAttachmentManager:
         strategy: BaseNetworkStrategy,
     ) -> list[dict[str, Any]]:
         configured = set(configured_network_names(config))
-        deploy_enabled = deploy_enabled_by_network(config)
+        deploy_enabled = deploy_enabled_by_network(config, getattr(self.coordinator, "config_actions", None))
         pending_statuses = {"pending", "outofsync", "failed", "inprogress", "deploymentinprogress"}
         deploy_targets: dict[str, set[str]] = {}
         after_names: set[str] = set()
@@ -730,7 +732,7 @@ class NetworkAttachmentManager:
 
         if not deploy_targets:
             return []
-        return self.build_deploy_payloads(config, deploy_targets)
+        return self.build_deploy_payloads(config, deploy_targets, actions=getattr(self.coordinator, "config_actions", None))
 
     def deploy_network_attachments(self, module_args: dict, strategy: BaseNetworkStrategy, deploy_payload: dict[str, Any]) -> dict[str, Any]:
         self._trace("network_attachment_deploy_start", deploy_payload=deploy_payload)
@@ -786,7 +788,9 @@ class NetworkAttachmentManager:
                             retry_targets[network_name].add(switch_id)
                         retried_targets[retry_key] = retried_targets.get(retry_key, 0) + 1
             if retry_targets:
-                for deploy_payload in self.build_delete_deploy_payloads(module_args.get("config") or [], retry_targets):
+                for deploy_payload in self.build_delete_deploy_payloads(
+                    module_args.get("config") or [], retry_targets, actions=getattr(self.coordinator, "config_actions", None)
+                ):
                     self.deploy_network_attachments(module_args, strategy, deploy_payload)
             ready = {name for name, values in blockers.items() if not values}
             pending.difference_update(ready)
@@ -820,7 +824,9 @@ class NetworkAttachmentManager:
                 if (name in pending and retried_networks.get(name, 0) < self.undeploy_retry_attempts and str(status).strip().lower() in retry_statuses)
             }
             if retry_targets:
-                for deploy_payload in self.build_delete_deploy_payloads(module_args.get("config") or [], retry_targets):
+                for deploy_payload in self.build_delete_deploy_payloads(
+                    module_args.get("config") or [], retry_targets, actions=getattr(self.coordinator, "config_actions", None)
+                ):
                     self.deploy_network_attachments(module_args, strategy, deploy_payload)
                 for network_name in retry_targets:
                     retried_networks[network_name] = retried_networks.get(network_name, 0) + 1
