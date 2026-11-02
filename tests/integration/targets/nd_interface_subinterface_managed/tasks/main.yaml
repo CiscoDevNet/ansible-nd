@@ -68,13 +68,13 @@
         - name: Remove the IOS-XE test subinterfaces and reset the parent port
           ansible.builtin.include_tasks: xe_teardown.yaml
 
-    # Harness scenarios are opt-in. Their task tags do not select or alter the legacy suite above.
+    # NX-OS harness scenarios run on supported ND 4.x targets; IOS-XE cases retain their explicit opt-in gates.
+    # Skip the harness with --skip-tags nd4x_demo.
     - name: Run ND 4.x harness preflight discovery
       ansible.builtin.include_tasks:
         file: nd4x_demo_preflight.yaml
         apply:
           tags:
-            - never
             - nd4x_demo
             - nd4x_demo_preflight
             - nd4x_demo_merged
@@ -86,7 +86,6 @@
             - nd4x_demo_xe
             - nd4x_demo_xe_overridden
       tags:
-        - never
         - nd4x_demo
         - nd4x_demo_preflight
         - nd4x_demo_merged
@@ -103,11 +102,9 @@
         file: nd4x_demo_merged.yaml
         apply:
           tags:
-            - never
             - nd4x_demo
             - nd4x_demo_merged
       tags:
-        - never
         - nd4x_demo
         - nd4x_demo_merged
       when: nd4x_supported | default(false) | bool
@@ -117,11 +114,9 @@
         file: nd4x_demo_replaced.yaml
         apply:
           tags:
-            - never
             - nd4x_demo
             - nd4x_demo_replaced
       tags:
-        - never
         - nd4x_demo
         - nd4x_demo_replaced
       when: nd4x_supported | default(false) | bool
@@ -131,11 +126,9 @@
         file: nd4x_demo_deleted.yaml
         apply:
           tags:
-            - never
             - nd4x_demo
             - nd4x_demo_deleted
       tags:
-        - never
         - nd4x_demo
         - nd4x_demo_deleted
       when: nd4x_supported | default(false) | bool
@@ -145,12 +138,10 @@
         file: nd4x_demo_overridden.yaml
         apply:
           tags:
-            - never
             - nd4x_demo
             - nd4x_demo_overridden
             - nd4x_demo_override_scope
       tags:
-        - never
         - nd4x_demo
         - nd4x_demo_overridden
         - nd4x_demo_override_scope
@@ -161,11 +152,9 @@
         file: nd4x_demo_negative.yaml
         apply:
           tags:
-            - never
             - nd4x_demo
             - nd4x_demo_negative
       tags:
-        - never
         - nd4x_demo
         - nd4x_demo_negative
       when: nd4x_supported | default(false) | bool
@@ -182,11 +171,9 @@
             file: nd4x_demo_xe.yaml
             apply:
               tags:
-                - never
                 - nd4x_demo
                 - nd4x_demo_xe
           tags:
-            - never
             - nd4x_demo
             - nd4x_demo_xe
       always:
@@ -195,11 +182,9 @@
             file: nd4x_demo_xe_teardown.yaml
             apply:
               tags:
-                - never
                 - nd4x_demo
                 - nd4x_demo_xe
           tags:
-            - never
             - nd4x_demo
             - nd4x_demo_xe
           when: nd4x_xe_setup_started | default(false) | bool
@@ -217,11 +202,9 @@
             file: nd4x_demo_xe_overridden.yaml
             apply:
               tags:
-                - never
                 - nd4x_demo
                 - nd4x_demo_xe_overridden
           tags:
-            - never
             - nd4x_demo
             - nd4x_demo_xe_overridden
       always:
@@ -230,11 +213,9 @@
             file: nd4x_demo_xe_teardown.yaml
             apply:
               tags:
-                - never
                 - nd4x_demo
                 - nd4x_demo_xe_overridden
           tags:
-            - never
             - nd4x_demo
             - nd4x_demo_xe_overridden
           when: nd4x_xe_override_setup_started | default(false) | bool

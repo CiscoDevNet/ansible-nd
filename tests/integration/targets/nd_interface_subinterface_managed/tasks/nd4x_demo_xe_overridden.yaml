@@ -78,6 +78,21 @@
           deploy: true
         state: merged
 
+    - name: "XE OVERRIDDEN HARNESS SETUP: Wait for ND to discover .200, .201, and .202"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+        method: get
+      register: nd4x_xe_override_subinterface_discovery
+      until: >-
+        nd4x_xe_override_subinterface_discovery.current.interfaces
+        | default(nd4x_xe_override_subinterface_discovery.jsondata.interfaces | default([]))
+        | selectattr('interfaceName', 'in', [xe_parent ~ '.200', xe_parent ~ '.201', xe_parent ~ '.202'])
+        | selectattr('operData.operationalStatus', 'defined')
+        | rejectattr('operData.operationalStatus', 'equalto', 'unknown')
+        | list | length == 3
+      retries: 60
+      delay: 10
+
     - name: "XE OVERRIDDEN HARNESS: Apply fabric-wide override retaining .200 and .201"
       cisco.nd.nd4x_module_test:
         module: cisco.nd.nd_interface_subinterface_managed
@@ -108,15 +123,15 @@
             method: get
             expected_status: 200
             expect:
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.policyType"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.200')].configData.networkOS.policy.policyType"
                 equals: iosXeSubinterface
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ip"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.200')].configData.networkOS.policy.ip"
                 equals: 10.99.200.1
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.201')].configData.networkOS.policy.policyType"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.201')].configData.networkOS.policy.policyType"
                 equals: iosXeSubinterfaceShutNoshut
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.201')].configData.networkOS.policy.adminState"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.201')].configData.networkOS.policy.adminState"
                 equals: false
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.202')]"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.202')]"
                 exists: false
       register: nd4x_xe_overridden
 
@@ -143,12 +158,3 @@
           - nd4x_xe_overridden.first_run_result.after | selectattr('interface_name', 'equalto', xe_parent ~ '.202') | list | length == 0
           - nd4x_xe_overridden.second_run_result.changed == false
           - nd4x_xe_overridden.nd_query_results | length == 1
-  always:
-    - name: "XE OVERRIDDEN HARNESS CLEANUP: Remove reserved harness subinterfaces"
-      cisco.nd.nd_interface_subinterface_managed:
-        output_level: "{{ nd4x_output_level }}"
-        fabric_name: "{{ test_xe_fabric_name }}"
-        config: "{{ nd4x_subif_xe_cleanup }}"
-        config_actions:
-          deploy: true
-        state: deleted
