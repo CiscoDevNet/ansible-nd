@@ -235,7 +235,7 @@
           deploy: true
         state: deleted
 
-    - name: "XE HARNESS TEARDOWN: Wait until ND rediscovers the parent as a trunk"
+    - name: "XE HARNESS TEARDOWN: Wait until ND reports the default trunk-host policy"
       cisco.nd.nd_rest:
         path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_teardown_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
         method: get
@@ -244,8 +244,8 @@
         nd4x_xe_parent_rediscovery.current.interfaces
         | default(nd4x_xe_parent_rediscovery.jsondata.interfaces | default([]))
         | selectattr('interfaceName', 'match', '(?i)^' ~ (xe_parent | regex_escape) ~ '$')
-        | selectattr('operData.mode', 'defined')
-        | selectattr('operData.mode', 'equalto', 'trunk')
+        | selectattr('configData.networkOS.policy.policyType', 'defined')
+        | selectattr('configData.networkOS.policy.policyType', 'equalto', 'iosXeTrunkHost')
         | list | length == 1
       retries: 60
       delay: 10

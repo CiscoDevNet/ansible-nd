@@ -390,18 +390,6 @@
         changed: false
         failed: false
     check_mode_queries: "{{ nd4x_xe_fabric_check_mode_queries }}"
-    nd_queries:
-      - name: Verify IOS-XE harness subinterfaces were removed
-        path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
-        method: get
-        expected_status: 200
-        expect:
-          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.200')]"
-            exists: false
-          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.201')]"
-            exists: false
-          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.204')]"
-            exists: false
   register: nd4x_xe_deleted
 
 - name: "XE DELETED HARNESS: Verify returned resource absence"
@@ -409,3 +397,24 @@
     that:
       - nd4x_xe_deleted.first_run_result.after | selectattr('interface_name', 'in', [xe_parent ~ '.200', xe_parent ~ '.201', xe_parent ~ '.204']) | list | length == 0
       - nd4x_xe_deleted.second_run_result.changed == false
+
+- name: "XE DELETED HARNESS: Wait until subinterfaces leave the Catalyst running config"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ nd4x_xe_switch_id }}/diff"
+    method: get
+  register: nd4x_xe_deleted_diff
+  vars:
+    running: >-
+      {{
+        nd4x_xe_deleted_diff.current.diffConfigs
+        | default(nd4x_xe_deleted_diff.jsondata.diffConfigs | default([]))
+        | map(attribute='runningConfig')
+        | select('defined')
+        | join('\n')
+      }}
+  until: >-
+    running is not search('(?im)^\\s*interface\\s+' ~ ((xe_parent ~ '.200') | regex_escape) ~ '\\s*$')
+    and running is not search('(?im)^\\s*interface\\s+' ~ ((xe_parent ~ '.201') | regex_escape) ~ '\\s*$')
+    and running is not search('(?im)^\\s*interface\\s+' ~ ((xe_parent ~ '.204') | regex_escape) ~ '\\s*$')
+  retries: 12
+  delay: 10
