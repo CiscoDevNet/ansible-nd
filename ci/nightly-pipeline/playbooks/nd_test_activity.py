@@ -866,7 +866,7 @@ def _event_task_metadata(record, catalog, position_index):
 
 
 def summarize_events(log, module, run_id, build, fabric, collection_root, test_type="integration", catalog_path=None,
-                     catalog_snapshot=None):
+                     catalog_snapshot=None, event_observer=None):
     """Reduce a closed, validated event journal through the same case rules.
 
     Invalid or incomplete structured evidence raises ``ValueError`` so the
@@ -875,6 +875,8 @@ def summarize_events(log, module, run_id, build, fabric, collection_root, test_t
 
     A coordinator that already decoded its immutable snapshot may supply it as
     ``catalog_snapshot``; identity/digest checks still apply to that object.
+    ``event_observer`` consumes records during the same traversal; the caller
+    must discard its observations if final journal validation fails.
     """
     metadata = _read_json(str(log) + ".event-summary.json", 256 * 1024)
     if (metadata.get("schema_version") != SCHEMA_VERSION or metadata.get("module") != module or
@@ -981,6 +983,8 @@ def summarize_events(log, module, run_id, build, fabric, collection_root, test_t
                     group["item_reasons"].update(reasons)
             if len(starts) > MAX_EVENT_TASKS or len(groups) > MAX_EVENT_RECORDS:
                 raise ValueError("structured execution exceeds safe task limits")
+            if event_observer is not None:
+                event_observer(event)
     if sequence != count or digest.hexdigest() != expected_digest:
         raise ValueError("structured journal count or digest mismatch")
     if "event_bytes" in metadata and metadata["event_bytes"] != total_bytes:

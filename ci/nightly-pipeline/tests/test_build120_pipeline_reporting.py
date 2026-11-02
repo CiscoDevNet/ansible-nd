@@ -199,9 +199,10 @@ def table = script.formatResultsTable(
     'OK|' + name + '|fixture-fabric|4.3|7|0|2|01m||iBGP\n' +
     'FAIL|' + name + '|fixture-ebgp|4.3|6|1|3|02m||eBGP', 'module test cases')
 assert table.contains(name)
-assert table.readLines().count { it.startsWith('OK ') } == 1
-assert table.readLines().count { it.startsWith('FAIL ') } == 1
-assert !table.readLines().any { it.startsWith('NOT_RUN ') }
+def rows = table.readLines().findAll { it.startsWith(name + ' ') }
+assert rows.size() == 1
+assert rows[0].trim().split(/\s{2,}/).toList() == [name, 'OK', '7', '0', '2', '01m', 'FAIL', '6', '1', '3', '02m']
+assert !rows[0].contains('fixture-fabric')
 def activity = script.formatModuleActivityTable([], '121')
 assert activity.contains('MAIN TOTAL')
 assert activity.contains('Fabric type')

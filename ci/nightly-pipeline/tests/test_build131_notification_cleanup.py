@@ -45,6 +45,9 @@ def raw = 'FAIL|fixture_module|home|4.3|2|1|0|1m|Unsupported module parameter: t
 ['module test cases', 'Ansible tasks'].each { unit ->
     def table = script.formatResultsTable(raw, unit)
     assert table.count('```') == 2
+    def header = table.readLines().find { it.startsWith('Module ') }.trim().split(/\s{2,}/).toList()
+    assert header == ['Module', 'iBGP', 'Passed', 'Failed', 'Skipped', 'Time',
+                      'eBGP', 'Passed', 'Failed', 'Skipped', 'Time']
     assert table.contains('fixture_module')
     assert !table.contains('RESULT DETAILS:')
     assert !table.contains('unsupported parameter timeout')

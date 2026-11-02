@@ -79,19 +79,23 @@ def test_actual_publisher_never_loses_interruptions_to_ack_or_failure_receipts(g
     groovy_runner(specification({'archive': archive, 'ack': ack, 'receipt': receipt, 'next': next_failure, 'expected': expected}) + r'''
 def errors = scenario.collectEntries { key, value -> [(key): makeFailure(value, key.toString())] }
 int nextCalls = 0
+context.ND_REPORTING_RELATIVE_ROOT = 'fixture-reports'
 script.metaClass.timeout = { Map options, Closure work -> work.call() }
 script.metaClass.retry = { Integer count, Closure work -> work.call() }
+script.metaClass.writeFile = { Map options -> calls.add('record-receipt') }
 script.metaClass.archiveArtifacts = { Map options ->
     calls.add('archive'); if (errors.archive != null) { throw errors.archive }
 }
 script.metaClass.sh = { Object options ->
     def text = (options instanceof Map ? options.script : options).toString()
-    if (text.contains(' next ')) {
+    if (text.contains(' prepare ')) {
+        assert !text.contains('--wait')
         calls.add('next'); nextCalls++
         if (errors.next != null) { throw errors.next }
-        return nextCalls == 1 ? '{"done":false,"execution":{"id":"job","files":["test_output_fabric_ND43_IBGP_nd_fixture.txt"],"attempt":1}}' : '{"done":true}'
+        return script.writeReportingJson([build: script.binding.getVariable('BUILD_NUMBER').toString(), run_id:'fixture-run', archive_attempts:2,
+            executions:[[id:'job', files:['test_output_fabric_ND43_IBGP_nd_fixture.txt'], attempt:1]]])
     }
-    if (text.contains(' ack ')) { calls.add('ack'); if (errors.ack != null) { throw errors.ack }; return '' }
+    if (text.contains(' ack-batch ')) { calls.add('ack'); if (errors.ack != null) { throw errors.ack }; return '' }
     if (text.contains('reporter-failed')) { calls.add('receipt'); if (errors.receipt != null) { throw errors.receipt }; return '' }
     throw new AssertionError('Unexpected offline step')
 }
@@ -101,6 +105,40 @@ assert caught != null && caught.is(errors[scenario.expected])
 assert calls.contains('receipt')
 if (scenario.next == 'none') { assert calls.contains('archive') && calls.contains('ack') }
 assert !logs.any { it.startsWith('NDP_REPORTER_FAILED:') }
+''')
+
+
+
+@pytest.mark.parametrize('failing_first', [False, True])
+def test_publisher_prepares_once_and_keeps_later_modules_after_upload_failure(groovy_runner, failing_first):
+    groovy_runner('def failingFirst = ' + str(failing_first).lower() + '\n' + r'''
+def recorded = []
+context.ND_REPORTING_RELATIVE_ROOT = 'fixture-reports'
+script.metaClass.timeout = { Map options, Closure work -> work.call() }
+script.metaClass.retry = { Integer count, Closure work -> work.call() }
+script.metaClass.writeFile = { Map options -> recorded.add(script.parseReportingJson(options.text)) }
+script.metaClass.archiveArtifacts = { Map options ->
+    calls.add('archive:' + options.artifacts)
+    if (failingFirst && options.artifacts.contains('first')) { throw new IllegalStateException('upload failed') }
+}
+script.metaClass.sh = { Object options ->
+    def text = (options instanceof Map ? options.script : options).toString()
+    if (text.contains(' prepare ')) {
+        calls.add('prepare')
+        return script.writeReportingJson([build: script.binding.getVariable('BUILD_NUMBER').toString(), run_id:'fixture-run', archive_attempts:2,
+            executions:['first','second'].collect { name ->
+                [id:name, files:["test_output_${name}.txt".toString()], attempt:1]
+            }])
+    }
+    if (text.contains(' ack-batch ')) { calls.add('ack-batch'); return '' }
+    throw new AssertionError('No per-module parser process is allowed')
+}
+script.publishStructuredArtifacts()
+assert calls.count('prepare') == 1
+assert calls.count('ack-batch') == 1
+assert recorded.findAll { it.id == 'second' }*.status == ['success']
+assert recorded.findAll { it.id == 'first' }*.status == (failingFirst ? ['failed','failed'] : ['success'])
+assert recorded.every { it.build_run_id == 'fixture-run' && it.seconds >= 0 && it.archived_at > 0 }
 ''')
 
 

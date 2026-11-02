@@ -96,23 +96,29 @@ def queue_fixture(tmp_path, structured, stale_marker=False, skip_fields=None, ex
             "event_bytes": len(journal), "event_sha256": hashlib.sha256(journal).hexdigest(),
             "host_count": 1, "counts": counts})
     closed = cli("close", *execution_args, "--exit-code", "2", "--duration-seconds", "10")
-    assert closed["summary_ready"] is (structured and not stale_marker)
+    assert closed["summary_ready"] is False
     return workspace, queue, job, cli
 
 
 @pytest.mark.parametrize("structured", [True, False])
 def test_closed_execution_reaches_artifact_receipt_and_ordered_aggregate(tmp_path, structured):
     workspace, queue, job, cli = queue_fixture(tmp_path, structured)
-    available = cli("next")
+    assert not list((queue / "results").iterdir())
+    cli("finish", "--status", "failed")
+    producer_path = queue / "producer.json"
+    producer = json.loads(producer_path.read_text())
+    producer["finished_at"] = 1
+    write_json(producer_path, producer)
+    available = cli("next", "--after-execution", "--drain-timeout", "1")
     execution = available["execution"]
     assert available["done"] is False
     assert execution["summary_source"] == ("structured_events" if structured else "raw_log_recovery")
-    assert execution["files"] == cli("next")["execution"]["files"]
+    assert execution["files"] == cli("next", "--after-execution", "--drain-timeout", "1")["execution"]["files"]
     assert all(not Path(path).is_absolute() and (workspace / path).is_file() for path in execution["files"])
     receipt = cli("ack", "--id", job["id"], "--status", "success", "--seconds", "2.5", "--attempt", "1")
     assert receipt == cli("ack", "--id", job["id"], "--status", "success", "--seconds", "2.5", "--attempt", "1")
     cli("finish", "--status", "failed")
-    assert cli("next")["done"] is True
+    assert cli("next", "--after-execution", "--drain-timeout", "1")["done"] is True
     aggregate = cli("aggregate")
     assert aggregate["selected_executions"] == 1
     assert aggregate["failed"] is True
@@ -125,6 +131,17 @@ def test_closed_execution_reaches_artifact_receipt_and_ordered_aggregate(tmp_pat
     assert row["reporting_metrics"]["archive_attempts"] == 1
     assert row["base"] != "Not observed" and row["cleanup"] != "Not observed"
     assert row["summary_source"] == execution["summary_source"]
+
+
+def test_end_of_run_parser_refuses_to_parse_while_execution_is_active(tmp_path):
+    _, queue, _, _ = queue_fixture(tmp_path, structured=True)
+    completed = subprocess.run(
+        [sys.executable, str(HELPER), "next", "--root", str(queue), "--after-execution"],
+        text=True, capture_output=True, timeout=20)
+    assert completed.returncode != 0
+    assert "execution has not finished" in json.loads(completed.stdout)["error"]
+    assert not list((queue / "results").iterdir())
+    assert not list((queue / "archives").iterdir())
 
 
 def test_stale_log_marker_cannot_become_a_passing_summary(tmp_path):

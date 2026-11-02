@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Durable agent-side module summaries and artifact handoff for the ND pipeline.
 
-Only the execution branch registers/closes executions.  A separate Jenkins
-branch calls ``next`` and archives the explicit, workspace-relative file list,
-then records an ``ack``.  The process that mutates the fabric never waits for an
-archive acknowledgement.  All shared state is atomic JSON on local agent disk;
+Executions register/close while tests run. After tests and recovery finish,
+one process prepares the backlog sequentially. Jenkins archives the explicit,
+workspace-relative files and records small receipts; a batch acknowledgement
+preserves their original upload timestamps. State is atomic JSON on agent disk;
 the final ordered aggregation is the only writer of Jenkins result totals.
 """
 
@@ -443,11 +443,11 @@ def attach_execution(summary, job, execution, markers, event_stats=None):
     return summary
 
 
-def structured_summary(job, closed, catalog_snapshot=None):
+def structured_summary(job, closed, catalog_snapshot=None, event_observer=None):
     execution, markers = boundary_evidence(job, closed)
     activity = case_parser.summarize_events(job["log"], job["module"], job["run_id"], job["build"],
         job["scope"], job["collection_root"], job["test_type"], catalog_path=job["catalog"],
-        catalog_snapshot=catalog_snapshot)
+        catalog_snapshot=catalog_snapshot, event_observer=event_observer)
     if not activity.get("validated"):
         raise ValueError("structured module activity was not validated")
     stats = read_json(job["log"] + ".event-summary.json")
@@ -465,7 +465,7 @@ def structured_summary(job, closed, catalog_snapshot=None):
     return attach_execution(summary, job, execution, markers, stats), activity
 
 
-def fallback_summary(job, closed):
+def fallback_summary(job, closed, event_observer=None):
     execution, markers = boundary_evidence(job, closed)
     compact, size = [], 0
     truncated = False
@@ -481,12 +481,30 @@ def fallback_summary(job, closed):
 
     def lines():
         nonlocal size, truncated
+        current_task = None
         with Path(job["log"]).open("r", encoding="utf-8", errors="replace") as stream:
             for value in invocation_parser.bounded_lines(stream):
                 # Retain only structural events for the same authored-case
                 # reducer.  Full API/exception bodies never enter this buffer.
                 line = invocation_parser.ANSI.sub("", value).rstrip("\r\n")
                 stripped = line.strip()
+                if event_observer is not None:
+                    task_match = case_parser.TASK_HEADER.match(line)
+                    if task_match:
+                        current_task = {"name": task_match[1], "path": ""}
+                    source_match = case_parser.SOURCE_PATH.match(line)
+                    if current_task and source_match:
+                        current_task.update(path=source_match[1], line=int(source_match[2]))
+                    if current_task and line.lstrip().startswith("skipping: ["):
+                        event = dict(current_task, kind="outcome", outcome="skipped",
+                                     host=line.split("[", 1)[1].split("]", 1)[0])
+                        try:
+                            payload = json.loads(line.partition("=>")[2].strip())
+                        except ValueError:
+                            payload = {}
+                        if isinstance(payload, dict):
+                            event.update({key: payload[key] for key in ("skip_reason", "false_condition", "_ansible_no_log") if key in payload})
+                        event_observer(event)
                 keep = stripped.startswith(("TASK [", "task path:", "PLAY RECAP", "[MODULE:", "[PLAYBOOK:",
                     "[RUN_MARKER:", "[ANSIBLE_EXIT_STATUS:", "[EXIT_CODE:", "ok: [", "changed: [", "skipping: [",
                     "fatal: [", "failed: [", "included: [", "...ignoring")) or bool(invocation_parser.ROW.match(stripped))
@@ -581,16 +599,6 @@ def close_execution(root, job, args):
     closed = {"schema_version": SCHEMA_VERSION, "id": job["id"], "module": job["module"],
               "run_id": job["run_id"], "exit_code": args.exit_code, "closed_at": time.time(),
               "duration_seconds": args.duration_seconds, "log_stamp": file_stamp(log), "complete": True}
-    # Fast structured finalization is bounded.  Any raw-log recovery is deferred
-    # to the artifact branch so the next module can start immediately.
-    start = time.monotonic()
-    try:
-        with deadline(args.parse_timeout):
-            catalog_snapshot = validate_catalog(root, job)
-            summary, activity = structured_summary(job, closed, catalog_snapshot=catalog_snapshot)
-            persist_result(root, job, summary, activity, "structured_events", time.monotonic() - start, closed)
-    except Exception as error:
-        closed["structured_error"] = clean_error(type(error).__name__ + ": " + str(error))
     atomic_json(path, closed)
     return {"id": job["id"], "closed": True, "summary_ready": (root / "results" / (job["id"] + ".json")).exists()}
 
@@ -661,10 +669,29 @@ def ensure_summary(root, job, closed, timeout):
         if not closed.get("complete"):
             raise ValueError(closed.get("reason", "execution closure was incomplete"))
         with deadline(timeout):
-            validate_catalog(root, job)
-            summary, activity = fallback_summary(job, closed)
-            result = persist_result(root, job, summary, activity, "raw_log_recovery", time.monotonic() - start, closed)
-            result["structured_error"] = closed.get("structured_error", "structured evidence unavailable")
+            catalog_snapshot = validate_catalog(root, job)
+            if not isinstance(catalog_snapshot, dict):
+                raise ValueError("frozen catalog must be an object")
+            summary_source = "structured_events"
+            structured_error = None
+            observations_path = within(root, job["log"] + ".skip-observations.txt")
+            with readable_file(observations_path) as observations:
+                event_observer = skip_observer(job, catalog_snapshot["catalog"], observations)
+                try:
+                    summary, activity = structured_summary(job, closed, catalog_snapshot=catalog_snapshot,
+                                                          event_observer=event_observer)
+                except TimeoutError:
+                    raise
+                except Exception as structured_failure:
+                    structured_error = clean_error(type(structured_failure).__name__ + ": " + str(structured_failure))
+                    observations.seek(0)
+                    observations.truncate()
+                    summary, activity = fallback_summary(job, closed, event_observer=event_observer)
+                    summary_source = "raw_log_recovery"
+            result = persist_result(root, job, summary, activity, summary_source, time.monotonic() - start, closed)
+            result["skip_observations_stamp"] = file_stamp(observations_path)
+            if structured_error is not None:
+                result["structured_error"] = structured_error
             atomic_json(path, result)
             return result
     except Exception as error:
@@ -800,6 +827,31 @@ def skipped_tasks(job, result, catalog):
                         yield owned, event
 
 
+def skip_observation_line(owned, event):
+    phase, label = owned
+    censored = event.get("no_log") or event.get("_ansible_no_log")
+    reason = "Reason withheld (no_log)" if censored else skip_detail(event.get("skip_reason")) or "Reason not recorded"
+    condition = "" if censored else skip_detail(event.get("false_condition"), condition=True)
+    return "- %s | %s | host=%s%s | %s%s\n" % (
+        phase, "Censored task" if censored else label, case_parser.safe_label(event.get("host", "unknown"), 100),
+        " | loop item" if event.get("item") else "", reason, " | condition: " + condition if condition else "")
+
+
+def skip_observer(job, catalog, output):
+    positions = {}
+    for records in catalog["tasks"].values():
+        for record in records:
+            positions.setdefault((record["path"], record.get("line")), []).append(record)
+
+    def observe(event):
+        if event.get("kind") == "outcome" and event.get("outcome") == "skipped":
+            owned = owned_skip_task(event, catalog, positions)
+            if owned:
+                output.write(skip_observation_line(owned, event))
+
+    return observe
+
+
 def module_skip_report(root, job, result):
     """Internal text projection; case outcomes and task observations stay distinct."""
     destination = within(root, job["log"] + ".skips.txt")
@@ -851,14 +903,18 @@ def module_skip_report(root, job, result):
             output.write("Case labels are bounded; full case totals above are retained. Task skips below use the complete evidence stream.\n")
         output.write("\nAUTHORED TASK SKIP OBSERVATIONS (not unique case counts; pipeline tasks excluded)\n")
         count = 0
-        for (phase, label), event in skipped_tasks(job, result, catalog):
-            count += 1
-            censored = event.get("no_log") or event.get("_ansible_no_log")
-            reason = "Reason withheld (no_log)" if censored else skip_detail(event.get("skip_reason")) or "Reason not recorded"
-            condition = "" if censored else skip_detail(event.get("false_condition"), condition=True)
-            output.write("- %s | %s | host=%s%s | %s%s\n" % (phase, "Censored task" if censored else label,
-                case_parser.safe_label(event.get("host", "unknown"), 100), " | loop item" if event.get("item") else "", reason,
-                " | condition: " + condition if condition else ""))
+        if result.get("skip_observations_stamp") is not None:
+            observations = within(root, job["log"] + ".skip-observations.txt")
+            if file_stamp(observations) != result["skip_observations_stamp"]:
+                raise ValueError("skip observations changed after summary generation")
+            with observations.open("r", encoding="utf-8") as source:
+                for line in invocation_parser.bounded_lines(source):
+                    output.write(line)
+                    count += 1
+        else:
+            for owned, event in skipped_tasks(job, result, catalog):
+                output.write(skip_observation_line(owned, event))
+                count += 1
         if not count:
             output.write("No module-owned task skips recorded.\n")
         if result.get("summary_source") != "structured_events":
@@ -899,10 +955,59 @@ def artifact_files(root, config, job):
     return [destination.relative_to(Path(config["workspace"])).as_posix()]
 
 
+def prepare_execution(root, config, job, closed, receipt, parse_timeout):
+    result = ensure_summary(root, job, closed, parse_timeout)
+    try:
+        files = artifact_files(root, config, job)
+    except Exception as error:
+        reason = clean_error("artifact preparation failed: " + type(error).__name__ + ": " + str(error))
+        result["reporting_status"] = "ERROR"
+        result["reporting_error"] = "; ".join(filter(None, [result.get("reporting_error"), reason]))
+        atomic_json(root / "results" / (job["id"] + ".json"), result)
+        atomic_json(root / "archives" / (job["id"] + ".json"), {
+            "schema_version": SCHEMA_VERSION, "id": job["id"], "status": "unavailable",
+            "terminal": True, "attempts": 0, "seconds": None, "reason": reason,
+            "terminal_at": time.time()})
+        return None
+    return {"id": job["id"], "sequence": job["sequence"], "module": job["module"],
+            "scope": job["scope"], "round_label": job["round_label"],
+            "attempt": (receipt or {}).get("attempts", 0) + 1,
+            "reporting_status": result["reporting_status"], "summary_source": result["summary_source"],
+            "files": files}
+
+
+def prepare_backlog(root, config, args):
+    producer = read_json(root / "producer.json", missing=True)
+    if producer is None or producer.get("run_id") != config["run_id"]:
+        raise ValueError("execution has not finished; report parsing is deferred")
+    selected = jobs(root)
+    settle_unclosed(root, selected)
+    executions = []
+    started = time.monotonic()
+    for job in selected:
+        receipt = read_json(root / "archives" / (job["id"] + ".json"), missing=True)
+        if receipt and (receipt.get("terminal") or receipt.get("status") == "success"
+                        or receipt.get("attempts", 0) >= args.archive_attempts):
+            continue
+        closed = read_json(root / "closed" / (job["id"] + ".json"), missing=True)
+        if closed is None:
+            continue
+        execution = prepare_execution(root, config, job, closed, receipt, args.parse_timeout)
+        if execution is not None:
+            executions.append(execution)
+    value = {"schema_version": SCHEMA_VERSION, "run_id": config["run_id"], "build": config["build"],
+             "selected_executions": len(selected), "executions": executions,
+             "archive_attempts": args.archive_attempts,
+             "preparation_seconds": round(time.monotonic() - started, 6)}
+    atomic_json(root / "backlog.json", value)
+    return value
+
+
 def next_execution(root, config, args):
     started = time.monotonic()
     selected, job_generation, last_state, settled_generation = [], None, None, None
     delay = 0.5
+    after_execution = getattr(args, "after_execution", False)
 
     def generation(directory):
         info = directory.stat()
@@ -910,6 +1015,8 @@ def next_execution(root, config, args):
 
     while True:
         producer = read_json(root / "producer.json", missing=True)
+        if after_execution and producer is None:
+            raise ValueError("execution has not finished; report parsing is deferred")
         current_generation = generation(root / "jobs")
         if current_generation != job_generation:
             selected = jobs(root)
@@ -918,7 +1025,7 @@ def next_execution(root, config, args):
             if settled_generation != job_generation:
                 settle_unclosed(root, selected)
                 settled_generation = job_generation
-            if time.time() - producer["finished_at"] > args.drain_timeout:
+            if not after_execution and time.time() - producer["finished_at"] > args.drain_timeout:
                 error = {"error": "reporting drain deadline exceeded", "at": time.time()}
                 atomic_json(root / "reporter.error.json", error)
                 return {"done": True, "reporting_error": error["error"], "producer_status": producer["status"]}
@@ -933,24 +1040,9 @@ def next_execution(root, config, args):
             closed = read_json(root / "closed" / (job["id"] + ".json"), missing=True)
             if closed is None:
                 continue
-            result = ensure_summary(root, job, closed, args.parse_timeout)
-            try:
-                files = artifact_files(root, config, job)
-            except Exception as error:
-                reason = clean_error("artifact preparation failed: " + type(error).__name__ + ": " + str(error))
-                result["reporting_status"] = "ERROR"
-                result["reporting_error"] = "; ".join(filter(None, [result.get("reporting_error"), reason]))
-                atomic_json(root / "results" / (job["id"] + ".json"), result)
-                atomic_json(root / "archives" / (job["id"] + ".json"),
-                            {"schema_version": SCHEMA_VERSION, "id": job["id"], "status": "unavailable",
-                             "terminal": True, "attempts": 0, "seconds": None, "reason": reason,
-                             "terminal_at": time.time()})
-                continue
-            return {"done": False, "execution": {"id": job["id"], "sequence": job["sequence"],
-                "module": job["module"], "scope": job["scope"], "round_label": job["round_label"],
-                "attempt": (receipt or {}).get("attempts", 0) + 1,
-                "reporting_status": result["reporting_status"], "summary_source": result["summary_source"],
-                "files": files}}
+            execution = prepare_execution(root, config, job, closed, receipt, args.parse_timeout)
+            if execution is not None:
+                return {"done": False, "execution": execution}
         if producer:
             atomic_json(root / "reporter.json", {"schema_version": SCHEMA_VERSION, "finished_at": time.time(), "status": "drained"})
             return {"done": True, "producer_status": producer["status"]}
@@ -977,7 +1069,12 @@ def acknowledge(root, args):
         receipt_path = root / "receipts" / (execution_id + ".%04d.json" % attempt)
         receipt = read_json(receipt_path, missing=True)
         if receipt is None:
-            completed = time.time()
+            completed = getattr(args, "archived_at", None)
+            if completed is None:
+                completed = time.time()
+            if (not isinstance(completed, (int, float)) or isinstance(completed, bool)
+                    or not math.isfinite(completed) or completed < args.seconds):
+                raise ValueError("archive completion time is invalid")
             result = read_json(root / "results" / (execution_id + ".json"), missing=True)
             ready_at = (result or {}).get("reporting_metrics", {}).get("summary_ready_at")
             receipt = {"schema_version": SCHEMA_VERSION, "id": execution_id, "status": args.status,
@@ -988,6 +1085,39 @@ def acknowledge(root, args):
         if not previous or receipt["attempts"] >= previous.get("attempts", 0):
             atomic_json(pointer, receipt)
         return receipt
+
+
+def acknowledge_batch(root, config):
+    directory = within(root, root / "archive-inputs")
+    applied, errors = 0, []
+    paths = sorted(directory.glob("*.json")) if directory.exists() else []
+    if len(paths) > MAX_JOBS * 2:
+        raise ValueError("archive receipt batch exceeds safe limits")
+    for path in paths:
+        try:
+            value = read_json(within(root, path), limit=65536)
+            if not isinstance(value, dict):
+                raise ValueError("archive receipt must be an object")
+            execution_id = token(value.get("id", ""), "execution ID")
+            attempt = value.get("attempt")
+            seconds, completed = value.get("seconds"), value.get("archived_at")
+            if (value.get("build") != config["build"] or value.get("build_run_id") != config["run_id"]
+                    or value.get("status") not in {"success", "failed"}
+                    or not isinstance(attempt, int) or isinstance(attempt, bool) or not 1 <= attempt <= 2
+                    or path.name != execution_id + ".%04d.json" % attempt
+                    or not isinstance(seconds, (int, float)) or isinstance(seconds, bool)
+                    or not math.isfinite(seconds) or seconds < 0
+                    or not isinstance(completed, (int, float)) or isinstance(completed, bool)
+                    or not math.isfinite(completed) or completed < seconds):
+                raise ValueError("archive receipt batch identity or timing is invalid")
+            acknowledge(root, argparse.Namespace(id=execution_id, status=value["status"],
+                        seconds=seconds, attempt=attempt, archived_at=completed))
+            applied += 1
+        except Exception as error:
+            errors.append(clean_error(type(error).__name__ + ": " + str(error)))
+    if errors:
+        raise ValueError("invalid archive receipts: " + "; ".join(errors[:MAX_FAILURES]))
+    return {"acknowledged": applied}
 
 
 def duration(value):
@@ -1182,7 +1312,7 @@ def aggregate(root, config, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("init", "register", "begin", "log-path", "close", "next", "ack", "finish", "aggregate", "check-space", "reporter-failed"))
+    parser.add_argument("command", choices=("init", "register", "begin", "log-path", "close", "prepare", "next", "ack", "ack-batch", "finish", "aggregate", "check-space", "reporter-failed"))
     parser.add_argument("--root", required=True)
     parser.add_argument("--workspace")
     parser.add_argument("--build")
@@ -1202,6 +1332,7 @@ def main():
     parser.add_argument("--reason", default="artifact publisher failed")
     parser.add_argument("--include-executions", action="store_true", help="include full registered job descriptors in CLI output")
     parser.add_argument("--wait", action="store_true")
+    parser.add_argument("--after-execution", action="store_true")
     parser.add_argument("--timeout", type=int, default=36000)
     parser.add_argument("--parse-timeout", type=int)
     parser.add_argument("--drain-timeout", type=int, default=1800)
@@ -1234,11 +1365,13 @@ def main():
                     value = close_execution(root, job, args)
                 else:
                     value = begin(root, config, job) if args.command == "begin" else {"id": job["id"], "log": job["log"], "catalog": job["catalog"]}
-            elif args.command == "next":
+            elif args.command in {"next", "prepare"}:
                 args.parse_timeout = args.parse_timeout or 600
                 if min(args.timeout, args.parse_timeout, args.drain_timeout, args.archive_attempts) < 1:
                     parser.error("worker time and attempt limits must be positive")
-                value = next_execution(root, config, args)
+                value = prepare_backlog(root, config, args) if args.command == "prepare" else next_execution(root, config, args)
+            elif args.command == "ack-batch":
+                value = acknowledge_batch(root, config)
             elif args.command == "ack":
                 if not args.id or args.status == "interrupted" or (args.attempt is not None and args.attempt < 1):
                     parser.error("ack requires execution id and success/failed status")

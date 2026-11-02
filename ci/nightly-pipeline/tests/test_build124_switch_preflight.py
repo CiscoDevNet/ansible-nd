@@ -174,7 +174,7 @@ assert source.contains('restoreHomeFabric(roundConfigs, activeRound)')
     groovy_runner(body)
 
 PRODUCER = r'''
-// Run the real producer branch while skipping clone/setup, publisher and post DSLs.
+// Run the real lifecycle while skipping clone/setup and post DSLs.
 script.metaClass.pipeline = { Closure work -> work.call() }
 for (def name : ['agent', 'parameters', 'environment', 'options', 'post']) {
     script.metaClass."${name}" = { Closure ignored -> null }
@@ -188,7 +188,7 @@ script.metaClass.steps = { Closure work -> work.call() }
 script.metaClass.script = { Closure work -> work.call() }
 script.metaClass.runLintCheck = { -> null }
 script.metaClass.prepareStructuredReporting = { -> calls.add('prepare-reporting') }
-script.metaClass.parallel = { Map branches -> branches['Sequential tests and recovery'].call() }
+script.metaClass.parallel = { Map branches -> throw new AssertionError('Parallel report parsing is disabled') }
 script.metaClass.runNDFCVersionTests = { Object round ->
     calls.add('round:' + round.round_label)
     if (failureMode == 'infrastructure') { throw failure }
@@ -198,6 +198,7 @@ script.metaClass.resetFabricBetweenVersions = { Object label -> calls.add('reset
 script.metaClass.restoreHomeFabric = { Object rounds, Object active -> calls.add('home:' + active.round_label) }
 script.metaClass.recordUnstartedRound = { Object round, Object reason -> calls.add('record:' + round.round_label) }
 script.metaClass.finishStructuredExecution = { Object status -> calls.add('finish:' + status) }
+script.metaClass.publishStructuredArtifacts = { -> calls.add('parse-and-publish') }
 script.metaClass.foldStructuredResults = { -> calls.add('fold') }
 script.metaClass.publishModuleActivityReport = { -> calls.add('activity') }
 script.metaClass.bundleAllLogs = { -> calls.add('bundle') }
@@ -212,6 +213,13 @@ def caught = null
 try { script.run() } catch (Exception e) { caught = e }
 assert calls.contains('round:iBGP')
 assert calls.any { it.startsWith('home:') }
+def recoveryIndex = calls.findIndexOf { it.startsWith('home:') }
+def terminalIndex = calls.findIndexOf { it.startsWith('finish:') }
+def publisherIndex = calls.indexOf('parse-and-publish')
+assert recoveryIndex < terminalIndex && terminalIndex < publisherIndex
+assert publisherIndex < calls.indexOf('fold')
+assert calls.indexOf('fold') < calls.indexOf('activity')
+assert calls.indexOf('activity') < calls.indexOf('bundle')
 if (failureMode == 'infrastructure') {
     assert caught != null && caught.is(failure)
     assert !calls.contains('round:eBGP') && !calls.contains('reset')

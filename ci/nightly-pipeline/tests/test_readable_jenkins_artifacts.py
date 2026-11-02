@@ -41,11 +41,14 @@ def pipeline(request, tmp_path_factory):
 PUBLISHER = r'''
 def archived = []
 int nextCalls = 0
+script.binding.env.ND_REPORTING_RELATIVE_ROOT = 'fixture-reports'
+script.metaClass.writeFile = { Map options -> null }
 script.metaClass.sh = { Object options ->
     if (options instanceof Map && options.returnStdout) {
         nextCalls++
-        return nextCalls == 1 ? script.writeReportingJson([done: false,
-            execution: [id: 'fixture-job', files: selectedFiles, attempt: 1]]) : '{"done":true}'
+        return script.writeReportingJson([build: script.binding.getVariable('BUILD_NUMBER').toString(),
+            run_id:'fixture-run', archive_attempts:2,
+            executions:[[id:'fixture-job', files:selectedFiles, attempt:1]]])
     }
     return ''
 }
@@ -60,7 +63,7 @@ script.publishStructuredArtifacts()
 def test_publisher_archives_only_the_flat_round_labelled_module_log(pipeline):
     pipeline("def selectedFiles = ['test_output_fabric_ND43_IBGP_nd_example.txt']\n" + PUBLISHER + r'''
 assert archived == selectedFiles
-assert nextCalls == 2
+assert nextCalls == 1
 assert !logs.any { it.startsWith('NDP_REPORTER_FAILED:') }
 ''')
 
