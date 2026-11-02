@@ -317,7 +317,7 @@ class SwitchConfigModel(NDBaseModel):
     preserve_config: bool | None = Field(
         default=None,
         alias="preserveConfig",
-        description="Set to false for greenfield, true for brownfield deployment. Omit to derive from fabric type.",
+        description="Set to false for greenfield, true for brownfield deployment. Defaults to false unless the fabric requires true.",
     )
     platform_type: PlatformType | None = Field(
         default=None,

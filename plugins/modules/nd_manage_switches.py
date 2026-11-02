@@ -123,8 +123,10 @@ options:
             preserve_config:
                 description:
                 - Set to C(false) for greenfield deployment, C(true) for brownfield.
-                - When omitted, the module derives the value from the target fabric
-                  type after querying the fabric.
+                - When omitted, defaults to C(false), except for External and
+                  Inter-Fabric Connectivity fabrics, which require C(true).
+                - With C(false), ND removes existing switch configuration except
+                  management configuration immediately after import.
                 - Supported explicit values depend on the target fabric type. See
                   C(notes).
                 type: bool
@@ -296,9 +298,9 @@ notes:
   fabrics.
 - C(preserve_config) can be C(true) or C(false) for Data Center VXLAN iBGP
   fabrics.
-- When C(preserve_config) is omitted, the module derives C(false) for Campus
-  VXLAN and Data Center VXLAN eBGP fabrics. It derives C(true) for Data Center
-  VXLAN iBGP and External and Inter-Fabric Connectivity fabrics.
+- When C(preserve_config) is omitted, it defaults to C(false) wherever allowed.
+  External and Inter-Fabric Connectivity fabrics require C(true), so omitted
+  values resolve to C(true) there. Explicit values are validated, not overridden.
 - Campus VXLAN supports C(leaf), C(spine), and C(border) roles for IOS-XE switches
   on ND 4.2.1 and 4.3.1. ND 4.3.1 also supports C(border_spine) for IOS-XE.
 - Catalyst 9000 switches added through in-band PnP cannot use C(border_spine).

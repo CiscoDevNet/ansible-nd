@@ -29,7 +29,6 @@ class FabricSwitchCapability:
     platform_types: frozenset[PlatformType]
     roles: frozenset[SwitchRole]
     preserve_config_values: frozenset[bool]
-    default_preserve_config: bool
     roles_by_platform: dict[PlatformType, frozenset[SwitchRole]] | None = None
 
 
@@ -99,7 +98,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=ROUTED_ROLES,
         preserve_config_values=frozenset({False}),
-        default_preserve_config=False,
     ),
     FabricSwitchCapability(
         family="External",
@@ -107,7 +105,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS, PlatformType.IOS_XE, PlatformType.IOS_XR, PlatformType.OTHER}),
         roles=BROAD_FABRIC_ROLES,
         preserve_config_values=frozenset({True}),
-        default_preserve_config=True,
     ),
     FabricSwitchCapability(
         family="Data Center VXLAN iBGP",
@@ -115,7 +112,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=BROAD_FABRIC_ROLES,
         preserve_config_values=frozenset({False, True}),
-        default_preserve_config=True,
     ),
     FabricSwitchCapability(
         family="Data Center VXLAN eBGP",
@@ -123,7 +119,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=BROAD_FABRIC_ROLES,
         preserve_config_values=frozenset({False}),
-        default_preserve_config=False,
     ),
     FabricSwitchCapability(
         family="Campus VXLAN",
@@ -131,7 +126,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS, PlatformType.IOS_XE}),
         roles=CAMPUS_VXLAN_ROLES,
         preserve_config_values=frozenset({False}),
-        default_preserve_config=False,
         roles_by_platform={
             PlatformType.IOS_XE: CAMPUS_VXLAN_IOS_XE_ROLES,
             PlatformType.NX_OS: CAMPUS_VXLAN_NX_OS_ROLES,
@@ -143,7 +137,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=ENHANCED_CLASSIC_LAN_ROLES,
         preserve_config_values=frozenset({False, True}),
-        default_preserve_config=True,
     ),
     FabricSwitchCapability(
         family="AI VXLAN iBGP",
@@ -151,7 +144,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=AI_VXLAN_ROLES,
         preserve_config_values=frozenset({False, True}),
-        default_preserve_config=True,
     ),
     FabricSwitchCapability(
         family="AI VXLAN eBGP",
@@ -159,7 +151,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=AI_VXLAN_ROLES,
         preserve_config_values=frozenset({False}),
-        default_preserve_config=False,
     ),
     FabricSwitchCapability(
         family="AI Routed",
@@ -167,7 +158,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=ROUTED_ROLES,
         preserve_config_values=frozenset({False}),
-        default_preserve_config=False,
     ),
     FabricSwitchCapability(
         family="IPFM",
@@ -175,7 +165,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=IPFM_ROLES,
         preserve_config_values=frozenset({False}),
-        default_preserve_config=False,
     ),
 )
 
@@ -228,8 +217,8 @@ def _supported_roles_for_platform(capability: FabricSwitchCapability, platform_t
 
 
 def _resolve_preserve_config(capability: FabricSwitchCapability, preserve_config: bool | None) -> bool:
-    """Return explicit preserve_config or the fabric-derived default."""
-    return capability.default_preserve_config if preserve_config is None else preserve_config
+    """Default to false unless the fabric requires preservation; retain explicit input."""
+    return False not in capability.preserve_config_values if preserve_config is None else preserve_config
 
 
 def _resolve_platform_type(platform_type: PlatformType | None) -> PlatformType:

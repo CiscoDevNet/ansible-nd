@@ -803,13 +803,13 @@ def test_switch_config_rejects_explicit_null_role():
     ("fabric_type", "expected"),
     [
         ("vxlanCampus", False),
-        ("vxlanIbgp", True),
+        ("vxlanIbgp", False),
         ("vxlanEbgp", False),
         ("externalConnectivity", True),
     ],
 )
-def test_fabric_capability_validation_derives_omitted_preserve_config(fabric_type, expected):
-    """Omitted preserve_config is derived from the resolved fabric type."""
+def test_fabric_capability_validation_defaults_preserve_config_to_false_when_allowed(fabric_type, expected):
+    """Only a fabric that requires preservation defaults preserve_config to true."""
     cfg = _cfg_without_role()
 
     validate_switch_configs_for_fabric_type("FAB1", fabric_type, [cfg])
@@ -1292,8 +1292,8 @@ def test_post_add_processing_forces_poap_and_swap_nxos_reload_observation():
     assert [serial for serial, _cfg in wait_sets.nxos_preserve] == ["NORMAL1"]
 
 
-def test_derived_ibgp_preserve_config_does_not_bypass_poap_reload_observation():
-    """Fabric-derived iBGP preserve_config=true still uses reload wait policy for POAP."""
+def test_default_ibgp_preserve_config_keeps_poap_reload_observation():
+    """The default iBGP greenfield import still uses reload wait policy for POAP."""
     cfg = _cfg(
         "192.0.2.20",
         platform_type="nx-os",
@@ -1303,7 +1303,7 @@ def test_derived_ibgp_preserve_config_does_not_bypass_poap_reload_observation():
     validate_switch_configs_for_fabric_type("FABRIC_IBGP", "vxlanIbgp", [cfg])
     wait_sets = SwitchFabricOps._split_post_add_wait_sets([("POAP1", cfg)])
 
-    assert cfg.preserve_config is True
+    assert cfg.preserve_config is False
     assert [serial for serial, _cfg in wait_sets.nxos_reload] == ["POAP1"]
     assert not wait_sets.nxos_preserve
 
