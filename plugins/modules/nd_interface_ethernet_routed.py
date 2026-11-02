@@ -117,14 +117,15 @@ options:
                     type: str
                   ip:
                     description:
-                    - The IPv4 address of the interface.
-                    - Accepts bare (C(10.1.1.1)) or CIDR (C(10.1.1.1/30)) input. CIDR input is normalized to the bare address, which is
-                      what is sent to the controller and returned in module output, because ND rejects CIDR notation for this field.
+                    - The IPv4 address of the interface (e.g. C(10.1.1.1)). Required together with
+                      O(config[].config_data.network_os.policy.prefix).
+                    - CIDR input such as C(10.1.1.1/30) is accepted. Its mask length fills
+                      O(config[].config_data.network_os.policy.prefix) when that option is omitted and must agree with it when it is set.
                     - Applies to all policy_type values.
                     type: str
                   prefix:
                     description:
-                    - The netmask length for the interface IP address (1-31).
+                    - The mask length (1-31) used with O(config[].config_data.network_os.policy.ip).
                     - Applies to all policy_type values.
                     type: int
                   mtu:
