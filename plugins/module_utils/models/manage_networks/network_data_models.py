@@ -645,6 +645,7 @@ class VxlanNetworkModel(NetworkBaseModel):
         ND omits cleared DHCP and secondary gateway collections from GET responses. Full comparison
         exports represent them as empty lists; sparse proposed exports retain only supplied fields.
         Parent VXLAN full comparisons also normalize omitted L2 data to its empty defaults.
+        Parent Layer-3 comparisons exclude fabric data owned by child fabrics.
 
         ## Raises
 
@@ -671,6 +672,10 @@ class VxlanNetworkModel(NetworkBaseModel):
             l3_data.setdefault("secondaryGatewayIpv4Collection", [])
             l3_data.setdefault("secondaryGatewayIpv6Collection", [])
             l3_data.setdefault("fabricData", {}).setdefault("dhcpServers", [])
+        if self.network_type == NetworkType.VXLAN.value:
+            l3_data = data.get("l3Data")
+            if isinstance(l3_data, dict):
+                l3_data.pop("fabricData", None)
         return data
 
 

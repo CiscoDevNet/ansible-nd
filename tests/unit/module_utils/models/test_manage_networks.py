@@ -708,6 +708,79 @@ def test_vxlan_collection_equivalence_handles_absent_nested_blocks_only_in_compa
     assert "l3Data" not in existing.to_payload()
 
 
+@pytest.mark.parametrize("layer", ["layer3", "layer2WithVrf"])
+@pytest.mark.parametrize("exclude_unset", [False, True])
+@pytest.mark.parametrize("role", ["normal", "privatePrimary"])
+@pytest.mark.parametrize("fabric_data", ["missing", None, {}, {"netflow": False}, {"netflow": True, "ipv4Trm": True, "igmpVersion": 3}])
+def test_parent_l3_comparison_excludes_child_owned_values_without_changing_readback(layer, exclude_unset, role, fabric_data):
+    current_l3 = {"gatewayIpv4Address": "192.0.2.1/24", "mtu": 9216, "arpSuppression": False}
+    if fabric_data != "missing":
+        current_l3["fabricData"] = fabric_data
+    current = NetworkBaseModel.from_response(
+        {"networkName": "N", "networkType": "vxlan", "networkMode": layer, "vlanNetworkType": role, "vrfName": "BLUE", "l3Data": current_l3}
+    )
+    proposed = NetworkBaseModel.from_config(
+        {
+            "networkName": "N",
+            "networkType": "vxlan",
+            "networkMode": layer,
+            "vlanNetworkType": role,
+            "vrfName": "BLUE",
+            "l3Data": {"gatewayIpv4Address": "192.0.2.1/24", "fabricData": {}},
+        }
+    )
+    before = current.to_payload()
+    gathered = current.to_gathered_config()
+    intent = proposed.to_payload(exclude_unset=True)
+    assert current.get_diff(proposed, exclude_unset=exclude_unset)
+    assert "fabricData" not in current.to_diff_dict()["l3Data"]
+    assert "fabricData" not in proposed.to_diff_dict(exclude_unset=exclude_unset)["l3Data"]
+    assert current.to_payload() == before
+    assert current.to_gathered_config() == gathered
+    assert proposed.to_payload(exclude_unset=True) == intent
+
+
+@pytest.mark.parametrize("layer", ["layer3", "layer2WithVrf"])
+@pytest.mark.parametrize("exclude_unset", [False, True])
+@pytest.mark.parametrize(
+    "field,old,new",
+    [
+        ("gatewayIpv4Address", "192.0.2.1/24", "192.0.2.9/24"),
+        ("gatewayIpv6Address", "2001:db8::1/64", "2001:db8::9/64"),
+        ("mtu", 9000, 9216),
+        ("arpSuppression", True, False),
+        ("routingTag", 12345, 0),
+        ("vlanInterfaceDescription", "OLD", ""),
+        ("secondaryGatewayIpv4Collection", ["192.0.2.2/24"], []),
+        ("secondaryGatewayIpv6Collection", ["2001:db8::2/64"], []),
+    ],
+)
+def test_parent_l3_comparison_retains_owned_updates_and_explicit_clears(layer, exclude_unset, field, old, new):
+    common = {"networkName": "N", "networkType": "vxlan", "networkMode": layer, "vrfName": "BLUE"}
+    defaults = {"mtu": 9216, "arpSuppression": False}
+    current = NetworkBaseModel.from_response({**common, "l3Data": {**defaults, field: old, "fabricData": {"netflow": True}}})
+    proposed = NetworkBaseModel.from_config({**common, "l3Data": {**defaults, field: new, "fabricData": {}}})
+    before = current.to_payload()
+    intent = proposed.to_payload(exclude_unset=True)
+    assert current.get_diff(proposed, exclude_unset=exclude_unset) is False
+    assert proposed.to_diff_dict(exclude_unset=exclude_unset)["l3Data"][field] == new
+    assert current.to_payload() == before
+    assert proposed.to_payload(exclude_unset=True) == intent
+
+
+@pytest.mark.parametrize("network_type", ["vxlanIbgp", "vxlanEbgp", "vxlanCampus", "aimlVxlanIbgp", "aimlVxlanEbgp", "userDefined"])
+@pytest.mark.parametrize("exclude_unset", [False, True])
+@pytest.mark.parametrize(
+    "field,current_value,desired_value", [("netflow", True, False), ("ipv4Trm", False, True), ("dhcpServers", [{"serverAddress": "192.0.2.10"}], [])]
+)
+def test_nonparent_l3_comparison_still_manages_fabric_data(network_type, exclude_unset, field, current_value, desired_value):
+    common = {"networkName": "N", "networkType": network_type, "networkMode": "layer3"}
+    current = NetworkBaseModel.from_response({**common, "l3Data": {"fabricData": {field: current_value}}})
+    proposed = NetworkBaseModel.from_config({**common, "l3Data": {"fabricData": {field: desired_value}}})
+    assert current.get_diff(proposed, exclude_unset=exclude_unset) is False
+    assert proposed.to_diff_dict(exclude_unset=exclude_unset)["l3Data"]["fabricData"][field] == desired_value
+
+
 @pytest.mark.parametrize("existing_l2", [None, {}, {"xConnect": False}, {"vlanName": ""}, {"fabricData": {}}])
 @pytest.mark.parametrize("proposed_l2", [None, {}, {"xConnect": False}, {"vlanName": ""}, {"fabricData": {}}])
 @pytest.mark.parametrize("exclude_unset", [False, True])

@@ -2525,6 +2525,51 @@ def _secondary_pvlan_readback(role, *, multicast=False):
 
 
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("strategy_cls", [MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("controller_version", ["4.2.1.10", "4.3.1.175"])
+@pytest.mark.parametrize("readback_fabric_data", [None, {}, {"netflow": False}, {"netflow": True, "ipv4Trm": True}])
+def test_parent_l3_absent_or_child_fabric_data_converges_without_hiding_gateway_updates(
+    state, strategy_cls, check_mode, controller_version, readback_fabric_data
+):
+    state = crud_module_args({"state": state})["state"]
+    entry = {"network_name": "N", "layer": "layer3", "vrf_name": "BLUE", "gateway_ipv4_address": "192.0.2.1/24", "deploy": False}
+    inventory = [
+        {
+            "fabricName": "fab1",
+            "networkName": "N",
+            "networkType": "vxlan",
+            "networkMode": "layer3",
+            "vrfName": "BLUE",
+            "l3Data": {"gatewayIpv4Address": "192.0.2.1/24", "mtu": 9216, "arpSuppression": False},
+        }
+    ]
+    if readback_fabric_data is not None:
+        inventory[0]["l3Data"]["fabricData"] = readback_fabric_data
+    for change in (False, True):
+        if change:
+            entry["gateway_ipv4_address"] = "192.0.2.9/24"
+        for repeat in (False, True):
+            coordinator, sm, parsed, orchestrator = _layer_validation_state_machine([entry], inventory, check_mode, strategy_cls, "vxlan", state)
+            orchestrator.rest_send.controller_version = controller_version
+            original_intent = deepcopy(parsed)
+            original_before = sm.before.get("N").to_payload()
+            coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
+            sm.manage_state()
+            changed = change and not repeat
+            assert sm.output.format()["changed"] is changed
+            assert parsed == original_intent
+            assert sm.before.get("N").to_payload() == original_before
+            assert orchestrator.query_count == 1
+            assert len(orchestrator.written_payloads) == (1 if changed and not check_mode else 0)
+            if changed:
+                payload = orchestrator._create_or_update_payload(sm.sent.get("N"))
+                assert payload["l3Data"]["gatewayIpv4Address"] == "192.0.2.9/24"
+                assert "fabricData" not in payload["l3Data"]
+                inventory[0]["l3Data"]["gatewayIpv4Address"] = "192.0.2.9/24"
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
 @pytest.mark.parametrize("strategy_cls,network_type", [(StandaloneNetworkStrategy, "vxlanIbgp"), (MultisiteParentNetworkStrategy, "vxlan")])
 @pytest.mark.parametrize(
     "role,mode",
@@ -2648,6 +2693,14 @@ def test_pvlan_omitted_primary_role_retains_explicit_l3_definition(state, strate
     assert payload["l3Data"]["gatewayIpv4Address"] == "192.0.2.9/24"
     assert orchestrator.query_count == 1
     assert len(orchestrator.written_payloads) == (0 if check_mode else 1)
+    coordinator, repeat, parsed, orchestrator = _layer_validation_state_machine(
+        [entry], [orchestrator._normalize_query_network_item(payload)], check_mode, strategy_cls, network_type, state
+    )
+    coordinator._resolve_proposed_networks(repeat, parsed, state, orchestrator.strategy)
+    repeat.manage_state()
+    assert repeat.output.format()["changed"] is False
+    assert orchestrator.written_payloads == []
+    assert orchestrator.query_count == 1
 
 
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
