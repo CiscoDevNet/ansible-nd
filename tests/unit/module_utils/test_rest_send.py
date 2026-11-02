@@ -40,7 +40,7 @@ def responses_rest_send(key: str):
 
 @pytest.mark.parametrize("version", [None, "unknown", "4.2.1.10", "4.3.1.175"])
 @pytest.mark.parametrize("fails", [False, True])
-def test_controller_version_caches_success_and_unknown(version, fails):
+def test_controller_version_caches_lookup_results_and_none_override(version, fails):
     """Connection failures and missing releases must not cause per-resource retries."""
     calls = []
 
