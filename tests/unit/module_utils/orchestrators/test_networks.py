@@ -146,6 +146,7 @@ class _MergedNetworkCoordinatorStub:
         coordinator = self
 
         class StateMachine:
+            existing = [_ExistingNetwork("BLUE_NET")]
             before = {"BLUE_NET": object()}
 
             def manage_state(self):
@@ -281,7 +282,7 @@ class _ReplacedNetworkCoordinator:
         return []
 
     @staticmethod
-    def _build_pending_network_deploy_payloads(_result, _config, _module_args, _strategy):
+    def _build_pending_network_deploy_payloads(_result, _config, _module_args, _strategy, _existing_names=None):
         return []
 
     def _restore_state_machine_params(self, original_config, original_state):
@@ -392,7 +393,7 @@ class _StagedNetworkCoordinator:
         raise AssertionError("staged must not build deploy payloads")
 
     @staticmethod
-    def _build_pending_network_deploy_payloads(_result, _config, _module_args, _strategy):
+    def _build_pending_network_deploy_payloads(_result, _config, _module_args, _strategy, _existing_names=None):
         raise AssertionError("staged must not build pending deploy payloads")
 
     def _query_current_networks_with_trace(self, *_args):
@@ -5769,7 +5770,7 @@ def test_network_deploy_fallback_queries_current_pending_networks():
         def _build_deploy_payloads(self, config, *target_maps):
             return []
 
-        def _build_pending_network_deploy_payloads(self, result, config, module_args, strategy):
+        def _build_pending_network_deploy_payloads(self, result, config, module_args, strategy, _existing_names=None):
             self.pending_calls += 1
             if self.pending_calls == 1:
                 assert result["after"] == []
@@ -5857,7 +5858,7 @@ def test_network_state_machine_idempotent_run_deploys_pending_attach():
         def _build_deploy_payloads(self, *_args):
             return []
 
-        def _build_pending_network_deploy_payloads(self, result, config, module_args, strategy):
+        def _build_pending_network_deploy_payloads(self, result, config, module_args, strategy, _existing_names=None):
             assert result["after"][0]["network_status"] == "pending"
             return [{"networkNames": ["BLUE_NET"], "switchIds": ["SERIAL1"]}]
 

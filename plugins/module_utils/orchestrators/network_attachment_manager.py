@@ -247,7 +247,11 @@ class NetworkAttachmentManager:
         orchestrator, _results = self.coordinator._new_network_orchestrator(module_args, strategy)
         endpoint = orchestrator._make_endpoint(EpManageSwitchesListGet)
         data = orchestrator._request(path=endpoint.path, verb=endpoint.verb, not_found_ok=True, operation_type=OperationType.QUERY)
-        switches = data.get("switches") or data.get("items") or data if isinstance(data, dict) else data
+        switches = []
+        if isinstance(data, dict):
+            switches = data.get("switches") or data.get("items") or []
+        elif isinstance(data, list):
+            switches = data
         resolved: dict[str, str] = {}
         for switch in switches or []:
             ip_address = switch.get("ipAddress") or switch.get("ip_address") or switch.get("managementIpAddress") or switch.get("fabricManagementIp")
@@ -775,6 +779,7 @@ class NetworkAttachmentManager:
         config: list[dict],
         module_args: dict,
         strategy: BaseNetworkStrategy,
+        existing_names: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         configured = set(configured_network_names(config))
         deploy_enabled = deploy_enabled_by_network(config)
@@ -790,7 +795,9 @@ class NetworkAttachmentManager:
             if name in configured and deploy_enabled.get(name, True) and status.lower() in pending_statuses:
                 pending_network_names.add(name)
 
-        deploy_enabled_names = sorted(name for name in after_names if deploy_enabled.get(name, True))
+        # Simulated creations have no controller attachment metadata yet.
+        queryable_names = after_names if existing_names is None else after_names.intersection(existing_names)
+        deploy_enabled_names = sorted(name for name in queryable_names if deploy_enabled.get(name, True))
         if deploy_enabled_names:
             attachment_details = self.current_attachment_details_ignore_missing(module_args, strategy, deploy_enabled_names)
             for attachment in attachment_details:

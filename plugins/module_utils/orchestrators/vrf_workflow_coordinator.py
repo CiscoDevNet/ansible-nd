@@ -1215,9 +1215,10 @@ class VrfWorkflowCoordinator:
         config: list[dict],
         module_args: dict,
         strategy: BaseVrfStrategy,
+        existing_names: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Build a deploy request for configured VRFs already pending in ND."""
-        return self.attachments.build_pending_vrf_deploy_payloads(result, config, module_args, strategy)
+        return self.attachments.build_pending_vrf_deploy_payloads(result, config, module_args, strategy, existing_names=existing_names)
 
     def _query_current_vrfs(
         self,

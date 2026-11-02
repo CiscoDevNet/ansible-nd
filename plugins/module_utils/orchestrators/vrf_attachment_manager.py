@@ -757,6 +757,7 @@ class VrfAttachmentManager:
         config: list[dict],
         module_args: dict,
         strategy: BaseVrfStrategy,
+        existing_names: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Build a deploy request for configured VRFs already pending in ND."""
         deploy_enabled = deploy_enabled_by_vrf(config)
@@ -784,6 +785,9 @@ class VrfAttachmentManager:
 
         deploy_enabled_names = {vrf_name for vrf_name in after_vrfs if deploy_enabled.get(vrf_name, True)}
         attachment_query_names = sorted((deploy_enabled_names.difference(vrf_level_names)).union(switch_level_names))
+        # Simulated creations have no controller attachment metadata yet.
+        if existing_names is not None:
+            attachment_query_names = [name for name in attachment_query_names if name in existing_names]
         attachment_details = self.coordinator._current_attachment_details(module_args, strategy, attachment_query_names) if attachment_query_names else []
 
         if switch_level_names:

@@ -1183,9 +1183,10 @@ class NetworkWorkflowCoordinator:
         config: list[dict],
         module_args: dict,
         strategy: BaseNetworkStrategy,
+        existing_names: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Build a deploy request for configured Networks already pending in ND."""
-        return self.attachments.build_pending_network_deploy_payloads(result, config, module_args, strategy)
+        return self.attachments.build_pending_network_deploy_payloads(result, config, module_args, strategy, existing_names=existing_names)
 
     def _query_current_networks(
         self,

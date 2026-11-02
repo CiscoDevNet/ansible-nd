@@ -981,7 +981,7 @@ class _ReplacedVrfCoordinator:
         return []
 
     @staticmethod
-    def _build_pending_vrf_deploy_payloads(_result, _config, _module_args, _strategy):
+    def _build_pending_vrf_deploy_payloads(_result, _config, _module_args, _strategy, _existing_names=None):
         return []
 
     def _restore_state_machine_params(self, original_config, original_state):
@@ -1070,7 +1070,7 @@ class _StagedVrfCoordinator:
         raise AssertionError("staged must not build deploy payloads")
 
     @staticmethod
-    def _build_pending_vrf_deploy_payloads(_result, _config, _module_args, _strategy):
+    def _build_pending_vrf_deploy_payloads(_result, _config, _module_args, _strategy, _existing_names=None):
         raise AssertionError("staged must not build pending deploy payloads")
 
     def _restore_state_machine_params(self, original_config, original_state):
