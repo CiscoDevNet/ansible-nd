@@ -100,7 +100,7 @@ assert sent.every { it.contains('ND 4.3 (iBGP + eBGP) NIGHTLY NOTIFICATION') }
 assert sent.every { it.contains('ansible-nd branch: fixture-owner:feature/example') }
 220.times { index -> assert combined.contains('fixture_module_' + index) }
 assert combined.contains('/artifact/all-logs.zip') && combined.contains('/artifact/activity.txt')
-assert combined.contains('Test cases passed: 220')
+assert combined.contains('Passed: 220')
 assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_FAILED:') }
 ''')
 
@@ -151,6 +151,5 @@ script.metaClass.withEnv = { List ignored, Closure work -> null }
 script.metaClass.timeout = { Map ignored, Closure work -> work.call() }
 script.metaClass.archiveArtifacts = { Map ignored -> null }
 script.bundleAllLogs()
-assert summaries.size() == 1
-assert summaries[0].contains('Branch: ' + expected + '\nCommit: unavailable\n')
+assert summaries.any { it.contains('Branch: ' + expected + '\nCommit: unavailable\n') }
 ''')

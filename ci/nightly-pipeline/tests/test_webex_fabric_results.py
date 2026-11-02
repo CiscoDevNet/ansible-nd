@@ -126,11 +126,13 @@ def table = formatResultsTable(summary)
 def rows = resultRows(table)
 assert rows.size() == 2
 assert rows.find { it[0] == 'nd_manage_policy' } ==
-    ['nd_manage_policy', 'VXLAN', 'OK', '357', '0', '237', '23m 29s', 'NOT_RUN', '-', '-', '-', 'not scheduled']
+    ['nd_manage_policy', 'OK', '357', '0', '237', '23m 29s', 'NOT_RUN', '-', '-', '-', 'not scheduled']
 assert rows.find { it[0] == 'nd_manage_networks' } ==
-    ['nd_manage_networks', 'VXLAN', 'NOT_RUN', '-', '-', '-', 'not scheduled', 'FAIL', '271', '1', '266', '8m 0s']
-assert rows[0][3].toInteger() + rows[1][8].toInteger() == 628
-assert rows[0][4].toInteger() + rows[1][9].toInteger() == 1
+    ['nd_manage_networks', 'NOT_RUN', '-', '-', '-', 'not scheduled', 'FAIL', '271', '1', '266', '8m 0s']
+assert rows[0][2].toInteger() + rows[1][7].toInteger() == 628
+assert rows[0][3].toInteger() + rows[1][8].toInteger() == 1
+assert !table.contains('VXLAN_EVPN_Fabric')
+assert !table.readLines().any { it.startsWith('Module') && it.contains('Fabric') }
 assert summary == original
 assert !table.contains('Passed/Failed/Skipped =')
 assert !table.contains('Mixed/shared rows')
@@ -143,7 +145,8 @@ def test_both_actual_fabrics_render_once_without_synthetic_rows(groovy_runner):
 def table = formatResultsTable('OK|nd_manage_policy|VXLAN_EVPN_Fabric|4.3|101|0|5|1m 0s||iBGP\\n' +
     'FAIL|nd_manage_policy|VXLAN_EVPN_Fabric_eBGP|4.3|202|1|6|2m 0s||eBGP')
 def rows = resultRows(table)
-assert rows == [['nd_manage_policy', 'VXLAN', 'OK', '101', '0', '5', '1m 0s', 'FAIL', '202', '1', '6', '2m 0s']]
+assert rows == [['nd_manage_policy', 'OK', '101', '0', '5', '1m 0s', 'FAIL', '202', '1', '6', '2m 0s']]
+assert !table.contains('VXLAN_EVPN_Fabric')
 assert !table.contains('not scheduled')
 """)
 
@@ -156,17 +159,18 @@ def raw = scopes.withIndex().collect { scope, i ->
 }.join('\\n')
 def rows = resultRows(formatResultsTable(raw))
 assert rows.size() == scopes.size()
-assert rows.collect { it[1] } == ['VXLAN+External', 'VXLAN+External', 'External', 'Mixed', 'Logical', 'Controller', 'Unknown']
-assert rows[0][3] == '101' && rows[1][8] == '102'
-assert rows.drop(2).collect { it[13] as int }.sum() == (103..107).sum()
-assert rows.drop(2).every { it[2] == 'NOT_RUN' && it[7] == 'NOT_RUN' && it[12] == 'OK' }
+assert rows[0][2] == '101' && rows[1][7] == '102'
+assert rows.drop(2).collect { it[12] as int }.sum() == (103..107).sum()
+assert rows.drop(2).every { it[1] == 'NOT_RUN' && it[6] == 'NOT_RUN' && it[11] == 'OK' }
+assert !rows.flatten().any { it in ['VXLAN+External', 'External', 'Mixed', 'Logical', 'Controller', 'Unknown'] }
 """)
 
 
 def test_legacy_nine_field_records_and_empty_summary(groovy_runner):
     groovy_runner(ROW_PARSER + """
 def rows = resultRows(formatResultsTable('OK|legacy|VXLAN_EVPN_Fabric|4.3|14|0|2|1m 2s|'))
-assert rows == [['legacy', 'VXLAN', 'OK', '14', '0', '2', '1m 2s', 'NOT_RUN', '-', '-', '-', 'not scheduled']]
+assert rows == [['legacy', 'OK', '14', '0', '2', '1m 2s', 'NOT_RUN', '-', '-', '-', 'not scheduled']]
+assert !rows.flatten().contains('VXLAN_EVPN_Fabric')
 assert formatResultsTable(null) == '(no per-module results captured)'
 assert formatResultsTable('  \\n  ') == '(no per-module results captured)'
 """)
@@ -177,10 +181,11 @@ def test_multiple_nd_versions_keep_separate_fabric_pairs(groovy_runner):
 def table = formatResultsTable('OK|module|VXLAN_EVPN_Fabric|4.2|42|0|2|1m 0s||iBGP\\n' +
     'OK|module|VXLAN_EVPN_Fabric_eBGP|4.3|43|0|3|2m 0s||eBGP')
 def rows = resultRows(table)
-assert table.readLines().any { it.contains('Fabric') && it.contains('ND') }
+assert table.readLines().any { it.startsWith('Module') && it.contains('ND') && !it.contains('Fabric') }
 assert rows.size() == 2
-assert rows.find { it[2] == '4.2' }[3..8] == ['OK', '42', '0', '2', '1m 0s', 'NOT_RUN']
-assert rows.find { it[2] == '4.3' }[8..12] == ['OK', '43', '0', '3', '2m 0s']
+assert rows.find { it[1] == '4.2' }[2..7] == ['OK', '42', '0', '2', '1m 0s', 'NOT_RUN']
+assert rows.find { it[1] == '4.3' }[7..11] == ['OK', '43', '0', '3', '2m 0s']
+assert !table.contains('VXLAN_EVPN_Fabric')
 """)
 
 
@@ -191,12 +196,12 @@ def table = formatResultsTable('SKIP|skip_module|VXLAN_EVPN_Fabric|4.3|-|-|-|1m 
     'ERR|error_module|External_Connectivity_Fabric|4.3|-|-|-|-|no recap|External')
 def rows = resultRows(table)
 assert rows.size() == 3
-assert rows.find { it[0] == 'skip_module' }[2] == 'SKIP'
+assert rows.find { it[0] == 'skip_module' }[1] == 'SKIP'
 assert table.contains('skip_module (iBGP): cable unavailable')
-assert rows.find { it[0] == 'missing_module' }[7..11] == ['NOT_RUN', '-', '-', '-', 'not reached']
-assert rows.find { it[0] == 'error_module' }[1] == 'External'
-assert rows.find { it[0] == 'error_module' }[12] == 'ERR'
-assert rows.every { !(it[2] in ['OK', 'FAIL']) && !(it[7] in ['OK', 'FAIL']) }
+assert rows.find { it[0] == 'missing_module' }[6..10] == ['NOT_RUN', '-', '-', '-', 'not reached']
+assert rows.find { it[0] == 'error_module' }[11] == 'ERR'
+assert rows.every { !(it[1] in ['OK', 'FAIL']) && !(it[6] in ['OK', 'FAIL']) }
+assert !table.contains('VXLAN_EVPN_Fabric') && !table.contains('External_Connectivity_Fabric')
 """)
 
 
@@ -214,11 +219,11 @@ def message = header + 'Total Passed: 61830\\nTotal Failed: 0\\n\\n' +
     formatResultsTable(raw) + '\\n[All logs](https://jenkins.example/artifact/logs.zip)'
 def original = message
 def parts = splitWebexMessage(message, header, {limit})
-assert parts.size() > 1
+assert message.length() > {limit} ? parts.size() > 1 : parts == [message]
 assert parts.every {{ it.length() <= {limit} }}
 assert parts.every {{ it.readLines().count {{ line -> line.trim().startsWith('```') }} % 2 == 0 }}
 assert parts.every {{ part -> !resultRows(part) || part.readLines().any {{ line ->
-    line.startsWith('Module') && line.contains('Fabric') && line.contains('iBGP') && line.contains('eBGP')
+    line.startsWith('Module') && !line.contains('Fabric') && line.contains('iBGP') && line.contains('eBGP')
 }} }}
 assert parts.every {{ it.contains('ND 4.3 NIGHTLY NOTIFICATION - Build 119') }}
 assert parts.every {{ it.contains('ansible-nd branch: develop') && it.contains('ansible-nd commit: ' + sha) }}
@@ -229,19 +234,19 @@ assert joined.count('Total Failed: 0') == 1
 assert joined.count('[All logs]') == 1
 def rows = parts.collectMany {{ resultRows(it) }}
 assert rows.size() == 60
-assert rows.count {{ it[2] == 'OK' }} == 30
-assert rows.count {{ it[7] == 'OK' }} == 30
+assert rows.count {{ it[1] == 'OK' }} == 30
+assert rows.count {{ it[6] == 'OK' }} == 30
 (1..60).each {{ i ->
     def name = "nd_interface_regression_module_${{i.toString().padLeft(2, '0')}}".toString()
     def matching = rows.findAll {{ it[0] == name }}
     assert matching.size() == 1
-    def actual = i % 2 ? 2 : 7
-    def missing = i % 2 ? 7 : 2
+    def actual = i % 2 ? 1 : 6
+    def missing = i % 2 ? 6 : 1
     assert matching[0][actual] == 'OK'
     assert matching[0][actual + 1] == (1000+i).toString()
     assert matching[0][missing..missing + 4] == ['NOT_RUN', '-', '-', '-', 'not scheduled']
 }}
-assert rows.collect {{ (it[2] == 'OK' ? it[3] : it[8]) as int }}.sum() == 61830
+assert rows.collect {{ (it[1] == 'OK' ? it[2] : it[7]) as int }}.sum() == 61830
 assert message == original
 """)
 
@@ -252,7 +257,7 @@ def raw = 'FAIL|shared_module|external|4.3|3|1|0|1m||External|eBGP\\n' +
     'OK|shared_module|external|4.3|7|0|2|2m||External|iBGP'
 def original = raw
 assert resultRows(formatResultsTable(raw)) == [
-    ['shared_module', 'External', 'OK', '7', '0', '2', '2m', 'FAIL', '3', '1', '0', '1m']]
+    ['shared_module', 'OK', '7', '0', '2', '2m', 'FAIL', '3', '1', '0', '1m']]
 assert raw == original
 """)
 

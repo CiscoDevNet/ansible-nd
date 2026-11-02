@@ -17,9 +17,9 @@ import groovy.transform.Field
 // the matching WEBEX_ROOM_ID line (PUBLIC vs PRIVATE).
 // ============================================================================
 @Field
-def WEBEX_ROOM_ID_PUBLIC  = "f73a5ae0-ab77-11f0-826f-25e86366ec8e"  // Public space
+def WEBEX_ROOM_ID_PUBLIC  = "00000000-0000-4000-8000-000000000001"  // Public space
 @Field
-def WEBEX_ROOM_ID_PRIVATE = "61f7d4c0-9566-11f0-b070-451eba08616c"  // Private space
+def WEBEX_ROOM_ID_PRIVATE = "00000000-0000-4000-8000-000000000002"  // Private space
 
 // ============================================================================
 // CONSTANTS - Configuration values used throughout the pipeline
@@ -155,7 +155,7 @@ def VPC_PAIR_EXECUTIONS = [
 //                                      leaf pairs around the target (the target's own virtual-peer-link pair is rejected by
 //                                      ND 4.3 on this fabric) and unpairs them afterwards. The targets' multi-pair scenario
 //                                      asserts the leaf_3/leaf_4 pair as its SECOND reciprocal vPC pair
-//                                      (nd_test_vpc_pair2_peer*_ip = 10.122.84.85/.86) and Eth1/10 (Eth1/9 for trunk-host)
+//                                      (nd_test_vpc_pair2_peer*_ip = 192.0.2.85/.86) and Eth1/10 (Eth1/9 for trunk-host)
 //                                      free on all four leaves.
 @Field
 def INTERFACE_INTEGRATION_MODULES = [
@@ -220,7 +220,7 @@ def SWITCH_CREDENTIALS_ID = 'SWITCH_CREDENTIALS'
 @Field
 def CONSUL_PREFLIGHT_FILES = ['nd_ensure_switches.yaml', 'action_plugins/nd_switch_discovery.py']
 @Field
-def SWITCH_LIFECYCLE_CONSUL_PREFIX = 'releases/predelete-anomaly-retry-20261101'
+def SWITCH_LIFECYCLE_CONSUL_PREFIX = 'releases/predelete-startup-save-20261102'
 
 @Field
 def CONSUL_PREREQUISITE_FILES = [
@@ -280,10 +280,10 @@ pipeline {
         WEBEX_ROOM_ID = "${WEBEX_ROOM_ID_PUBLIC}"   // Public space
         // WEBEX_ROOM_ID = "${WEBEX_ROOM_ID_PRIVATE}"     // Private space
         NDFC_USER = credentials('ANSIBLE_NDFC_USERNAME')
-        NDFC_PASSWORD = credentials('ANSIBLE_NDFC_41_117_PASSWORD') //NDFC_32_PASSWORD
+        NDFC_PASSWORD = credentials('ANSIBLE_NDFC_PASSWORD') //NDFC_PASSWORD
         // Switch credentials are bound only around pre-flight/test lifecycle calls below.
-        ANSIBLE_HOST = "10.122.84.117"
-        CONSUL_URL = "http://10.78.210.155:8500"
+        ANSIBLE_HOST = "192.0.2.117"
+        CONSUL_URL = "http://198.51.100.155:8500"
         BASE_DIRECTORY = "$HOME/ansible"
         COLLECTIONS_DIRECTORY = "$HOME/ansible/collections/ansible_collections/cisco/nd"
         COLL_DIR = "$HOME/ansible/collections/ansible_collections/cisco"
@@ -783,8 +783,8 @@ git -C "${COLLECTIONS_DIRECTORY}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null
                         //     version: '3.2',
                         //     versionId: 'NDFC32',
                         //     host: 'NDFC_HOST_32',
-                        //     server: '10.78.210.187',
-                        //     credentials: 'NDFC_CREDENTIALS_32',
+                        //     server: '198.51.100.187',
+                        //     credentials: 'NDFC_CREDENTIALS',
                         //     fabric_name: '${FABRIC_NAME}',
                         // ],
                         [
@@ -792,18 +792,18 @@ git -C "${COLLECTIONS_DIRECTORY}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null
                             versionId: 'ND43',
                             host: 'ND_HOST_43',
                             server: 'ANSIBLE_HOST',
-                            credentials: 'ND_CREDENTIALS_112',
+                            credentials: 'ND_CREDENTIALS',
                             fabric_name: 'VXLAN_EVPN_Fabric',
                             fabric_name_2: 'External_Connectivity_Fabric',   // maps to nd_test_fabric2_name (l3out)
                             switches: [
-                                [name: 'vxlan_leaf_1', ip: '10.122.84.195', serial: '9XPI7PQEPQZ', fabric: 'VXLAN_EVPN_Fabric', role: 'leaf'],
-                                [name: 'vxlan_leaf_2', ip: '10.122.84.196', serial: '9C2CW5ST0AB', fabric: 'VXLAN_EVPN_Fabric', role: 'leaf'],
-                                [name: 'vxlan_spine_1', ip: '10.122.84.194', serial: '9D8R58RSZOI', fabric: 'VXLAN_EVPN_Fabric', role: 'spine'],
-                                [name: 'vxlan_border_1', ip: '10.122.84.88', serial: '9RFMGRDOKTS', fabric: 'VXLAN_EVPN_Fabric', role: 'border'],
-                                [name: 'vxlan_leaf_3', ip: '10.122.84.85', serial: '9ZAPQITB0L6', fabric: 'VXLAN_EVPN_Fabric', role: 'leaf'],
-                                [name: 'vxlan_leaf_4', ip: '10.122.84.86', serial: '91Q6XVE9L73', fabric: 'VXLAN_EVPN_Fabric', role: 'leaf'],
-                                [name: 'external_edge_1', ip: '10.122.84.89', serial: '905J4MUZQDL', fabric: 'External_Connectivity_Fabric', role: 'edge_router'],
-                                [name: 'external_edge_2', ip: '10.122.84.90', serial: '9PPYIMXXOGN', fabric: 'External_Connectivity_Fabric', role: 'edge_router'],
+                                [name: 'vxlan_leaf_1', ip: '192.0.2.195', serial: '9XPI7PQEPQZ', fabric: 'VXLAN_EVPN_Fabric', role: 'leaf'],
+                                [name: 'vxlan_leaf_2', ip: '192.0.2.196', serial: '9C2CW5ST0AB', fabric: 'VXLAN_EVPN_Fabric', role: 'leaf'],
+                                [name: 'vxlan_spine_1', ip: '192.0.2.194', serial: '9D8R58RSZOI', fabric: 'VXLAN_EVPN_Fabric', role: 'spine'],
+                                [name: 'vxlan_border_1', ip: '192.0.2.88', serial: '9RFMGRDOKTS', fabric: 'VXLAN_EVPN_Fabric', role: 'border'],
+                                [name: 'vxlan_leaf_3', ip: '192.0.2.85', serial: '9ZAPQITB0L6', fabric: 'VXLAN_EVPN_Fabric', role: 'leaf'],
+                                [name: 'vxlan_leaf_4', ip: '192.0.2.86', serial: '91Q6XVE9L73', fabric: 'VXLAN_EVPN_Fabric', role: 'leaf'],
+                                [name: 'external_edge_1', ip: '192.0.2.89', serial: '905J4MUZQDL', fabric: 'External_Connectivity_Fabric', role: 'edge_router'],
+                                [name: 'external_edge_2', ip: '192.0.2.90', serial: '9PPYIMXXOGN', fabric: 'External_Connectivity_Fabric', role: 'edge_router'],
                             ],
                             vpc_pair_switch1_serial: '9XPI7PQEPQZ',   // vxlan_leaf_1
                             vpc_pair_switch2_serial: '9C2CW5ST0AB',   // vxlan_leaf_2
@@ -1008,9 +1008,11 @@ git -C "${COLLECTIONS_DIRECTORY}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null
                     def customWebexMessage = (params.WEBEX_CUSTOM_MESSAGE ?: '').toString().trim().take(1200).replaceAll('[\\uD800-\\uDBFF]$', '')
                     def selectedBranch = (env.ND_GIT_SELECTION ?: env.ND_GIT_BRANCH ?: params.ND_GIT_BRANCH ?: 'develop').trim() ?: 'develop'
                     def selectedCommit = (env.ND_GIT_COMMIT ?: '').trim() ?: 'unavailable'
-                    def caseTotals = moduleCaseTotals(MODULE_ACTIVITY_RESULTS.values().toList())
-                    def totalPassed = caseTotals.passed == '?' ? 'N/A' : caseTotals.passed.toString().replace('?', 'unknown')
-                    def totalFailed = caseTotals.failed == '?' ? 'N/A' : caseTotals.failed.toString().replace('?', 'unknown')
+                    def caseTotals = webexModuleTotals(MODULE_ACTIVITY_RESULTS.values().toList())
+                    def displayCount = { value -> value == '?' ? 'N/A' : value.toString().replace('?', 'unknown') }
+                    def totalPassed = displayCount(caseTotals.passed)
+                    def totalFailed = displayCount(caseTotals.failed)
+                    def totalSkipped = displayCount(caseTotals.skipped)
                     def resultTable = formatResultsTable(moduleCaseSummaryRows(), 'module test cases')
                     def artifactLinks = formatArtifactLinks(TEST_RESULT_ARTIFACTS_BUF)
                     def skippedTestLinks = formatSkippedTestLinks(SKIPLIST_FILES_BUF)
@@ -1026,8 +1028,10 @@ git -C "${COLLECTIONS_DIRECTORY}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null
                     message += "🌿 ansible-nd branch: ${selectedBranch}\n"
                     message += "🔖 ansible-nd commit: ${selectedCommit}\n"
                     message += "\n"
-                    message += "Test cases passed: ${totalPassed}\n"
-                    message += "Test cases failed: ${totalFailed}\n"
+                    message += "Passed: ${totalPassed}\n"
+                    message += "Failed: ${totalFailed}\n"
+                    message += "Skipped: ${totalSkipped}\n"
+                    message += "Counts use the closed-log task recap when recorded; otherwise authored case counts.\n"
                     message += "Build result: ${currentBuild.currentResult}\n"
                     message += "\n📝 DETAILED TEST RESULTS:\n\n"
                     message += "${resultTable}\n"
@@ -2148,8 +2152,8 @@ def formatResultsTable(rawSummary, countUnit = 'Ansible tasks') {
         groups[key].add(record)
     }
     def showNd = records.collect { it.nd }.unique().size() > 1
-    def leading = showNd ? 3 : 2
-    def headers = ['Module', 'Fabric']
+    def leading = showNd ? 2 : 1
+    def headers = ['Module']
     if (showNd) { headers.add('ND') }
     rounds.each { headers.addAll([it, 'P', 'F', 'S', 'Time']) }
     def countCell = { value ->
@@ -2164,7 +2168,7 @@ def formatResultsTable(rawSummary, countUnit = 'Ansible tasks') {
             if (recordsForRound.size() > rowCount) { rowCount = recordsForRound.size() }
         }
         for (int line = 0; line < rowCount; line++) {
-            def row = [group[0].module, group[0].kind]
+            def row = [group[0].module]
             if (showNd) { row.add(group[0].nd) }
             rounds.each { roundName ->
                 def record = line < perRound[roundName].size() ? perRound[roundName][line] : null
@@ -2193,30 +2197,7 @@ def formatResultsTable(rawSummary, countUnit = 'Ansible tasks') {
     def skipNotes = records.findAll { it.status == 'SKIP' && it.note }
         .collect { "  ${it.module} (${it.label}): ${it.note}" }
     def skipBlock = skipNotes ? "\n\nSKIPPED - lab substrate unavailable:\n${skipNotes.join('\n')}" : ''
-    def caseNotes = records.findAll { it.status != 'SKIP' && it.note }.collect { record ->
-        def note = record.note
-        if (countUnit == 'module test cases') {
-            if (record.status == 'NOT_RUN') {
-                def preparationFailed = note.toLowerCase().contains('preflight') || note.toLowerCase().contains('pre-flight') || note.contains('Switch membership')
-                note = preparationFailed ? 'Not run: switch preparation failed' : 'Not run: earlier execution stopped'
-            } else if (note.contains('Unsupported module parameter: timeout')) {
-                def phase = note.contains('Setup/Base failed') ? 'Setup failed: ' : note.contains('Cleanup failed') ? 'Cleanup failed: ' : ''
-                note = phase + 'unsupported parameter timeout'
-            } else {
-                note = note.split('; ').findAll { !it.startsWith('case coverage ') &&
-                    !(it in ['case outcomes are separate', 'earlier case results are retained']) }.collect {
-                    it.replace('Setup/Base failed', 'Setup failed')
-                      .replace('Failure / reason: ', '')
-                }.join('; ')
-            }
-            if (note && record.status in ['FAIL', 'NOT_RUN', 'ERR', 'UNKNOWN']) {
-                note += " — [Console](${JOB_URL}${BUILD_NUMBER}/console)"
-            }
-        }
-        note ? "  ${record.module} (${record.label}): ${note}" : ''
-    }.findAll { it }
-    def caseBlock = caseNotes ? "\n\nRESULT DETAILS:\n${caseNotes.join('\n')}" : ''
-    "```\n${renderRow(headers)}\n${renderRow(separator)}\n${rows.collect { renderRow(it) }.join('\n')}\n```${skipBlock}${caseBlock}"
+    "```\n${renderRow(headers)}\n${renderRow(separator)}\n${rows.collect { renderRow(it) }.join('\n')}\n```${skipBlock}"
 }
 
 def splitWebexMessage(message, continuationHeader = '', maxLength = 7000) {
@@ -2383,23 +2364,87 @@ def activityCountSum(rows, getter) {
 def caseOutcomeCount(rows, name) {
     long known = 0
     boolean unknown = rows.isEmpty()
-    rows.findAll { it.result != 'NOT_RUN' }.each { row ->
+    boolean measured = false
+    def executed = rows.findAll { it?.result != 'NOT_RUN' }
+    // A round that never started is a measured zero. N/A is reserved for an
+    // executed module whose authored count was not recorded.
+    if (rows && executed.isEmpty()) { return '0' }
+    executed.each { row ->
         def value = row.case_totals?.get(name)
         if (!(value instanceof Number) || value < 0) {
             value = row.identified_testcase_totals?.get(name)
             unknown = true
         }
-        if (value instanceof Number && value >= 0) { known += value.longValue() }
-        else { unknown = true }
+        if (value instanceof Number && value >= 0) {
+            known += value.longValue()
+            measured = true
+        } else { unknown = true }
         if ((row.case_totals?.incomplete instanceof Number && row.case_totals.incomplete > 0) ||
             row.coverage in ['PARTIAL', 'INCOMPLETE', 'UNKNOWN']) { unknown = true }
     }
-    unknown ? (known ? "${known} + ?" : '?') : known.toString()
+    // A measured zero is a result. N/A is reserved for a count that was never recorded.
+    if (!measured) { return '?' }
+    unknown ? "${known} + ?" : known.toString()
 }
 
 def moduleCaseTotals(rows) {
     ['passed', 'failed', 'skipped'].collectEntries { name ->
         [(name): caseOutcomeCount(rows, name)]
+    }
+}
+
+def countableReportValue(value) {
+    value instanceof Number && value >= 0
+}
+
+def recordedRecapCount(row, name) {
+    def invocation = row?.invocation
+    def counts = invocation instanceof Map ? invocation.counts : null
+    if (!(counts instanceof Map)) { return null }
+    def value = counts[name == 'passed' ? 'ok' : name]
+    countableReportValue(value) ? value : null
+}
+
+def recordedCaseCount(row, name) {
+    def totals = row?.case_totals
+    def value = totals instanceof Map ? totals[name] : null
+    if (!countableReportValue(value)) {
+        def identified = row?.identified_testcase_totals
+        value = identified instanceof Map ? identified[name] : null
+    }
+    countableReportValue(value) ? value : null
+}
+
+// Webex numbers prefer the closed-log task recap. Authored case totals remain
+// in the activity artifact and are used only when that recap was not recorded.
+def webexOutcomeCount(rows, name) {
+    long known = 0
+    boolean unknown = rows.isEmpty()
+    boolean measured = false
+    def executed = rows.findAll { it?.result != 'NOT_RUN' }
+    if (rows && executed.isEmpty()) { return '0' }
+    executed.each { row ->
+        def recap = recordedRecapCount(row, name)
+        if (recap != null) {
+            known += recap.longValue()
+            measured = true
+        } else {
+            def value = recordedCaseCount(row, name)
+            if (value != null) {
+                known += value.longValue()
+                measured = true
+            } else { unknown = true }
+            if ((row.case_totals?.incomplete instanceof Number && row.case_totals.incomplete > 0) ||
+                row.coverage in ['PARTIAL', 'INCOMPLETE', 'UNKNOWN']) { unknown = true }
+        }
+    }
+    if (!measured) { return '?' }
+    unknown ? "${known} + ?" : known.toString()
+}
+
+def webexModuleTotals(rows) {
+    ['passed', 'failed', 'skipped'].collectEntries { name ->
+        [(name): webexOutcomeCount(rows, name)]
     }
 }
 
@@ -2431,8 +2476,8 @@ def moduleCaseSummaryRows() {
             notes.add('Failure / reason: ' + row.failure.toString())
         }
         def note = notes.join('; ')
-        [status, row.module, row.fabric, row.nd, noExecution ? '-' : caseOutcomeCount([row], 'passed'),
-         noExecution ? '-' : caseOutcomeCount([row], 'failed'), noExecution ? '-' : caseOutcomeCount([row], 'skipped'),
+        [status, row.module, row.fabric, row.nd, noExecution ? '-' : webexOutcomeCount([row], 'passed'),
+         noExecution ? '-' : webexOutcomeCount([row], 'failed'), noExecution ? '-' : webexOutcomeCount([row], 'skipped'),
          row.duration ?: '-', note, row.scope, row.round_label ?: ''].collect {
              (it ?: '').toString().replace('|', '/').replace('\n', ' ').replace('\r', ' ')
          }.join('|')
@@ -2526,7 +2571,7 @@ def formatModuleActivityTable(results, buildNumber) {
             else { notes.add('Raw log artifact unavailable or not archived.') }
         }
         int reference = details.size() + 1
-        details.add(wrap("[${reference}] ${record.module}; ND ${record.nd ?: '?'}; ${fabricLabel(record)}; fabric ${record.fabric ?: 'unknown'}") + '\n' +
+        details.add(wrap("[${reference}] ${record.module}; ND ${record.nd ?: '?'}; ${fabricLabel(record)}") + '\n' +
                     notes.collect { wrap(it) }.join('\n'))
         def status = record.result ?: 'UNKNOWN'
         def warning = !noExecution && (record.coverage != 'COMPLETE' ||
@@ -2695,8 +2740,9 @@ Console: ${JOB_URL}${BUILD_NUMBER}/console
 Branch: ${(env.ND_GIT_SELECTION ?: env.ND_GIT_BRANCH ?: params.ND_GIT_BRANCH ?: 'develop').toString().trim() ?: 'develop'}
 Commit: ${env.ND_GIT_COMMIT ?: 'unavailable'}
 
-Test cases passed: ${moduleCaseTotals(MODULE_ACTIVITY_RESULTS.values().toList()).passed}
-Test cases failed: ${moduleCaseTotals(MODULE_ACTIVITY_RESULTS.values().toList()).failed}
+Passed: ${webexModuleTotals(MODULE_ACTIVITY_RESULTS.values().toList()).passed}
+Failed: ${webexModuleTotals(MODULE_ACTIVITY_RESULTS.values().toList()).failed}
+Skipped: ${webexModuleTotals(MODULE_ACTIVITY_RESULTS.values().toList()).skipped}
 
 DETAILED TEST RESULTS:
 ${formatResultsTable(moduleCaseSummaryRows(), 'module test cases')}
@@ -2922,7 +2968,7 @@ def parseTestResults(ndfcConfig, failureFlagName, pb, testType = 'smoke', expect
     def reportingScope = reportContext.scope ?: fabricScopeLabel(ndfcConfig.fabric_name)
     echo "⏱ Function 'parseTestResults' started at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
 
-    // DEBUG: Used for sample test. def testOutputFileResponse = httpRequest(url: "http://10.78.210.155:8500/v1/kv/ansible-nd/sample_output.txt?raw")
+    // DEBUG: Used for sample test. def testOutputFileResponse = httpRequest(url: "http://198.51.100.155:8500/v1/kv/ansible-nd/sample_output.txt?raw")
     // def testOutputFileName = "sample_output.txt"
     def testOutputFileName = "${env.COLLECTIONS_DIRECTORY}/test_output_${ndfcConfig.fabric_name}_${ndfcConfig.versionId}_${pb}.txt"
     def totalFailedCount = 0
@@ -3584,7 +3630,7 @@ def runSwitchPreflight(ndfcConfig) {
  * target is destructive against the real VXLAN_EVPN_Fabric — its base "Clean Up
  * Existing Devices" deletes every switch and the overridden/deleted test cases
  * remove the rest — and it ships no cleanup.yaml, so the suite leaves the fabric
- * emptied (most visibly 10.122.84.196 / vxlan_leaf_2). Re-run the same
+ * emptied (most visibly 192.0.2.196 / vxlan_leaf_2). Re-run the same
  * self-healing onboard AFTER the suite so the canonical switches are restored at
  * the end of the run instead of staying missing until the next night's
  * pre-flight. An incomplete restore marks the build failed and blocks the next
@@ -4201,7 +4247,7 @@ PEERLINK_PROBE_EOF
                                         MODULE_TOPOLOGY_VARS=""
                                         if [ "${m}" = "nd_manage_switches" ]; then
                                             # The upstream switch target rebuilds exactly leaf/spine/border.
-                                            MODULE_TOPOLOGY_VARS="-e ansible_switch1=10.122.84.195 -e ansible_switch1_serial=9XPI7PQEPQZ -e ansible_switch2=10.122.84.194 -e ansible_switch2_serial=9D8R58RSZOI -e ansible_switch3=10.122.84.88 -e ansible_switch3_serial=9RFMGRDOKTS"
+                                            MODULE_TOPOLOGY_VARS="-e ansible_switch1=192.0.2.195 -e ansible_switch1_serial=9XPI7PQEPQZ -e ansible_switch2=192.0.2.194 -e ansible_switch2_serial=9D8R58RSZOI -e ansible_switch3=192.0.2.88 -e ansible_switch3_serial=9RFMGRDOKTS"
                                         elif [ "${m}" = "nd_manage_l3out" ]; then
                                             # L3Out switch1 = vxlan_border_1 (9RFMGRDOKTS / .88, role border): now cabled
                                             # to external_edge_1 (border_1 Eth1/1 routed <-> edge_1 Eth1/3, probe-confirmed
@@ -4209,7 +4255,7 @@ PEERLINK_PROBE_EOF
                                             # verify-only l3out needs no role change. switch2 stays external_edge_1 (.89) on
                                             # Eth1/3. (Was leaf_1 while border_1 was uncabled; build #26 proved a leaf is
                                             # rejected "not a supported role for BGP L3Out".)
-                                            MODULE_TOPOLOGY_VARS="-e nd_test_switch1_id=9RFMGRDOKTS -e nd_test_switch1_mgmt_ip=10.122.84.88 -e nd_test_switch2_id=905J4MUZQDL -e nd_test_switch2_mgmt_ip=10.122.84.89 -e nd_test_switch2_interface=Ethernet1/3"
+                                            MODULE_TOPOLOGY_VARS="-e nd_test_switch1_id=9RFMGRDOKTS -e nd_test_switch1_mgmt_ip=192.0.2.88 -e nd_test_switch2_id=905J4MUZQDL -e nd_test_switch2_mgmt_ip=192.0.2.89 -e nd_test_switch2_interface=Ethernet1/3"
                                         fi
                                         # ND 4.2 interface targets use their own nd_test_* vars (not the nd_manage_*
                                         # fabric/serial vars), so point them at THIS run's fabric + a real switch and
@@ -4219,7 +4265,7 @@ PEERLINK_PROBE_EOF
                                         case "${m}" in
                                             nd_interface_*)
                                                 # Interface tests use the declared default switch for this fabric round.
-                                                INTERFACE_TEST_VARS="-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=10.122.84.195"
+                                                INTERFACE_TEST_VARS="-e nd_test_fabric_name=${FABRIC_NAME} -e nd_test_switch_ip=192.0.2.195"
                                                 ;;
                                         esac
                                         case "${m}" in

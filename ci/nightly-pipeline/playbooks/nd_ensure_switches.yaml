@@ -274,6 +274,147 @@
         {%- if ns.ids | length != _predelete_requested_ids | length -%}{%- set ns.ok = false -%}{%- endif -%}
       {%- endif -%}
       {{- ns.ok -}}
+    _nd_predelete_idle_report: >-
+      {%- set reply = _predelete_inventory_reply -%}
+      {%- set body = reply.current | default(none) -%}
+      {%- set rows = body.get('switches') if body is mapping else none -%}
+      {%- set ns = namespace(valid=reply.status | default(0) | int == 200 and not reply.failed | default(false),
+            busy=false, normal=true, ids=[], requested=[], maintenance=[]) -%}
+      {%- if _nd_predelete_inventory_error | bool or rows is not sequence or rows is string or rows is mapping
+            or rows | length == 0 or rows | length >= 200 -%}
+        {%- set ns.valid = false -%}
+      {%- else -%}
+        {%- for row in rows -%}
+          {%- if row is not mapping or row.get('switchId') is not string or not row.get('switchId')
+                or row.get('switchId') in ns.ids or row.get('additionalData') is not mapping -%}
+            {%- set ns.valid = false -%}
+          {%- else -%}
+            {%- set ns.ids = ns.ids + [row.switchId] -%}
+            {%- set data = row.additionalData -%}
+            {%- set status = data.get('configSyncStatus') -%}
+            {%- if status not in ['deployed', 'deploymentInProgress', 'failed', 'inProgress', 'inSync',
+                  'notApplicable', 'outOfSync', 'pending', 'previewInProgress', 'success'] -%}
+              {%- set ns.valid = false -%}
+            {%- endif -%}
+            {%- if status in ['deploymentInProgress', 'inProgress', 'previewInProgress'] -%}
+              {%- set ns.busy = true -%}
+            {%- endif -%}
+            {%- if row.switchId in _predelete_requested_ids -%}
+              {%- set ns.requested = ns.requested + [row.switchId] -%}
+              {%- set mode = data.get('systemMode', '') -%}
+              {%- set modes = [mode, data.get('intendedSystemMode', mode), data.get('discoveredSystemMode', mode)] -%}
+              {%- if modes | select('string') | list | length != 3 -%}
+                {%- set ns.valid = false -%}
+              {%- else -%}
+                {%- set modes = modes | map('lower') | list -%}
+                {%- if modes | difference(['normal', 'maintenance', 'inconsistent', 'waiting']) | length > 0 -%}
+                  {%- set ns.valid = false -%}
+                {%- endif -%}
+                {%- if modes | reject('equalto', 'normal') | list | length > 0 -%}
+                  {%- set ns.normal = false -%}
+                {%- endif -%}
+                {%- if 'maintenance' in modes -%}
+                  {%- set ns.maintenance = ns.maintenance + [row.switchId] -%}
+                {%- elif modes | reject('equalto', 'normal') | list | length > 0 -%}
+                  {%- set ns.busy = true -%}
+                {%- endif -%}
+              {%- endif -%}
+            {%- endif -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- if ns.requested | length != _predelete_requested_ids | length -%}{%- set ns.valid = false -%}{%- endif -%}
+      {%- endif -%}
+      {{- {'valid': ns.valid, 'ready': ns.valid and not ns.busy, 'normal': ns.valid and ns.normal,
+           'maintenance_ids': ns.maintenance if ns.valid and not ns.busy else []} -}}
+    _nd_predelete_update_idle: >-
+      {%- set reply = _predelete_update_reply -%}
+      {%- set body = reply.current | default(none) -%}
+      {%- set groups = body.get('updateGroups') if body is mapping else none -%}
+      {%- set summary = body.get('softwareUpdateSummary') if body is mapping else none -%}
+      {%- set ns = namespace(ok=reply.status | default(0) | int == 200 and not reply.failed | default(false)) -%}
+      {%- if body is not mapping or body.get('error') or body.get('errors') or 'code' in body
+            or summary is not mapping or summary.get('fabricName') != reply._rf
+            or groups is not sequence or groups is string or groups is mapping or groups | length > 256 -%}
+        {%- set ns.ok = false -%}
+      {%- else -%}
+        {%- set plan = summary.get('updatePlanStatus', '') -%}
+        {%- if plan is not string or plan is search('(?i)in.?progress|running|installing|upgrading|paused') -%}
+          {%- set ns.ok = false -%}
+        {%- endif -%}
+        {%- for group in groups -%}
+          {%- if group is not mapping or group.get('installStatus') not in
+                ['ready', 'none', 'success', 'failed', 'validateFailed', 'stageFailed', 'skipped'] -%}
+            {%- set ns.ok = false -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endif -%}
+      {{- ns.ok -}}
+    _nd_predelete_switch_action_ready: >-
+      {%- set reply = _predelete_action_reply -%}
+      {%- set body = reply.jsondata if reply.jsondata is defined else reply.current | default(none) -%}
+      {%- set results = body.get(_predelete_action_results) if body is mapping else none -%}
+      {%- set ns = namespace(ok=reply.status | default(0) | int in [200, 207] and not reply.failed | default(false), ids=[]) -%}
+      {%- set walk = namespace(nodes=0) -%}
+      {%- set ignored_walk -%}
+      {%- for node in [body] recursive -%}
+        {%- set walk.nodes = walk.nodes + 1 -%}
+        {%- if loop.depth > 8 or walk.nodes > 256 or (node is mapping or (node is sequence and node is not string)) and node | length > 256 -%}
+          {%- set ns.ok = false -%}
+        {%- elif node is mapping -%}
+          {%- if 'code' in node or node.get('error') or node.get('errors')
+                or node.get('errorCode', node.get('error_code', '0')) | string not in ['', '0'] -%}
+            {%- set ns.ok = false -%}
+          {%- endif -%}
+          {%- set ignored = loop(node.values()) -%}
+        {%- elif node is sequence and node is not string -%}{%- set ignored = loop(node) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- endset -%}
+      {%- if body is not mapping or body.get('error') or body.get('errors') or 'code' in body
+            or results is not sequence or results is string or results is mapping
+            or results | length != _predelete_requested_ids | length or results | length == 0 -%}
+        {%- set ns.ok = false -%}
+      {%- else -%}
+        {%- for result in results -%}
+          {%- if result is not mapping or result.get('switchId') not in _predelete_requested_ids
+                or result.get('switchId') in ns.ids or result.get('status') != 'success'
+                or result.get('error') or result.get('errors')
+                or result.get('errorCode', result.get('code', '0')) | string not in ['', '0'] -%}
+            {%- set ns.ok = false -%}
+          {%- else -%}
+            {%- set text = result.get('description', result.get('message', '')) -%}
+            {%- if text is not string or text is search('(?i)skipp|fail|denied|reject|cannot|unable|not permitted|in.?progress') -%}
+              {%- set ns.ok = false -%}
+            {%- endif -%}
+            {%- set ns.ids = ns.ids + [result.switchId] -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endif -%}
+      {{- ns.ok and ns.ids | length == _predelete_requested_ids | length -}}
+    _nd_predelete_copy_anomalies_clear: >-
+      {%- set reply = _predelete_anomaly_reply -%}
+      {%- set body = reply.current | default(none) -%}
+      {%- set anomalies = body.get('anomalies') if body is mapping else none -%}
+      {%- set ns = namespace(ok=reply.status | default(0) | int == 200 and not reply.failed | default(false)) -%}
+      {%- if body is not mapping or body.get('error') or body.get('errors') or 'code' in body
+            or anomalies is not sequence or anomalies is string or anomalies is mapping or anomalies | length >= 200 -%}
+        {%- set ns.ok = false -%}
+      {%- else -%}
+        {%- for anomaly in anomalies -%}
+          {%- if anomaly is not mapping -%}{%- set ns.ok = false -%}
+          {%- else -%}
+            {%- set text = anomaly.get('anomalyString', '') | string | lower -%}
+            {%- if anomaly.get('fabricName') == _predelete_anomaly_fabric and 'periodic' in text
+                  and 'copy run start' in text and 'skipped' in text and anomaly.get('cleared') is not sameas true -%}
+              {%- for identity in _predelete_requested_ids -%}
+                {%- if '[' ~ (identity | lower) ~ ']' in text or '/' ~ (identity | lower) ~ ']' in text -%}
+                  {%- set ns.ok = false -%}
+                {%- endif -%}
+              {%- endfor -%}
+            {%- endif -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endif -%}
+      {{- ns.ok -}}
     # Bounded wait-and-retry for the ONBOARD (add) step. A switch that is still
     # (re)booting, or that ND has not finished rediscovering after a reset/rehome
     # (iBGP -> eBGP), makes ND return a discovery response with NO serial, which the
@@ -292,7 +433,7 @@
     nd_switch_onboard_initial_wait: "{{ lookup('env', 'ND_SWITCH_ONBOARD_INITIAL_WAIT') | default(480, true) }}"
     # PRE-ONBOARD DISCOVERY RECOVERY. A switch the destructive suite just deleted is still
     # rebooting, so ND returns a discovery response with NO serial for its seed IP and the add
-    # loop below would fail identically on every retry (build #96: leaf 10.122.84.195 could not
+    # loop below would fail identically on every retry (build #96: leaf 192.0.2.195 could not
     # be restored -> NDP_SWITCH_RESTORE_FAILED blocked the eBGP round). Before the add, actively
     # RE-TRIGGER ND shallow discovery for each missing seed and wait until it presents its serial,
     # so the add finds an identity instead of hammering an empty discovery. A missing,
@@ -608,35 +749,6 @@
               - nd_switch_predelete_poll_seconds | int >= 0
             fail_msg: "NDP_SWITCH_PREDELETE_DEPLOY_BLOCKED: an enabled bounded Recalculate & Deploy gate is required; no switch was removed."
 
-        # ND refuses to remove a switch that is still half of a vPC pair, so unpair first (the same
-        # gather-then-delete idiom reset_fabric.yaml uses). Non-fatal: the removal below fails loudly
-        # with ND's own message if a pair could not be torn down.
-        - name: Gather the vPC pairs of every fabric the switches are leaving
-          cisco.nd.nd_manage_vpc_pair:
-            fabric_name: "{{ _src }}"
-            state: gathered
-          loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
-          loop_control:
-            loop_var: _src
-            label: "{{ _src }}"
-          register: nd_rehome_pairs
-          failed_when: false
-
-        - name: Unpair every vPC pair that holds a switch being moved
-          cisco.nd.nd_manage_vpc_pair:
-            fabric_name: "{{ item.0._src }}"
-            state: deleted
-            config:
-              - peer1_switch_id: "{{ item.1.switch_id }}"
-                peer2_switch_id: "{{ item.1.peer_switch_id }}"
-          loop: "{{ nd_rehome_pairs.results | default([]) | subelements('gathered.vpc_pairs', skip_missing=true) }}"
-          loop_control:
-            label: "{{ item.0._src }} / {{ item.1.switch_id }}-{{ item.1.peer_switch_id }}"
-          when: >-
-            (item.1.switch_id in (nd_rehome_moves | map(attribute='serial') | list))
-            or (item.1.peer_switch_id in (nd_rehome_moves | map(attribute='serial') | list))
-          failed_when: false
-
         - name: Group the switches to remove by the fabric they are leaving
           ansible.builtin.set_fact:
             nd_rehome_removals: >-
@@ -661,6 +773,7 @@
                 _nd_phase_deploy_settle_status: failed
                 _nd_predelete_save_checks: []
                 _nd_predelete_deploy_checks: []
+                _nd_predelete_mode_plans: []
                 # Ansible can freeze timeout/delay before its retry loop. Reserve
                 # one final call and gap so our diagnostic precedes the outer kill.
                 _nd_phase_deploy_settle_budget: >-
@@ -696,6 +809,276 @@
               vars:
                 ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
               no_log: true
+
+            - &nd_predelete_environment
+              name: Require deployable source fabrics without an active software update
+              block:
+                - name: Read source fabric deployment freeze before saving switch configuration
+                  cisco.nd.nd_rest:
+                    method: get
+                    path: "/api/v1/manage/fabrics/{{ _rf }}/deploymentFreeze"
+                  loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
+                  loop_control:
+                    loop_var: _rf
+                    label: "{{ _rf }}"
+                  register: nd_predelete_freeze
+                  failed_when: nd_predelete_freeze.failed | default(false)
+                  timeout: "{{ _nd_predelete_call_limit }}"
+                  vars:
+                    ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
+                  no_log: true
+
+                - name: Refuse to override an intentional source fabric deployment freeze
+                  ansible.builtin.assert:
+                    that:
+                      - _freeze.status | default(0) | int == 200
+                      - _freeze.current | default(none) is mapping
+                      - _freeze.current.deploymentFreeze | default(none) is sameas false
+                      - not _freeze.current.get('error') and not _freeze.current.get('errors') and 'code' not in _freeze.current
+                    fail_msg: "NDP_SWITCH_PREDELETE_FROZEN: source deployment freeze is enabled or unverifiable; no mode change, startup save, or removal is allowed. The pipeline does not override an operator's deployment lock."
+                  loop: "{{ nd_predelete_freeze.results }}"
+                  loop_control:
+                    loop_var: _freeze
+                    label: "{{ _freeze._rf }}"
+                  no_log: true
+
+                - name: Read source software update state before saving switch configuration
+                  cisco.nd.nd_rest:
+                    method: get
+                    path: "/api/v1/manage/fabrics/{{ _rf }}/softwareUpdatePlan/summary"
+                  loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
+                  loop_control:
+                    loop_var: _rf
+                    label: "{{ _rf }}"
+                  register: nd_predelete_updates
+                  failed_when: nd_predelete_updates.failed | default(false)
+                  timeout: "{{ _nd_predelete_call_limit }}"
+                  vars:
+                    ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
+                  no_log: true
+
+                - name: Require confirmed inactive software updates on source fabrics
+                  ansible.builtin.assert:
+                    that: _nd_predelete_update_idle | bool
+                    fail_msg: "NDP_SWITCH_PREDELETE_UPGRADE_BLOCKED: software update state is active or unverifiable; no mode change, startup save, or removal is allowed."
+                  vars:
+                    _predelete_update_reply: "{{ _update }}"
+                  loop: "{{ nd_predelete_updates.results }}"
+                  loop_control:
+                    loop_var: _update
+                    label: "{{ _update._rf }}"
+                  no_log: true
+
+            - &nd_predelete_idle_inventory
+              name: Wait for active source deployments to finish before the startup save
+              cisco.nd.nd_rest:
+                method: get
+                path: "/api/v1/manage/fabrics/{{ _rf }}/switches"
+              register: nd_predelete_readiness
+              failed_when: nd_predelete_readiness.failed | default(false)
+              until: >-
+                ((_nd_predelete_idle_report.ready | bool)
+                 and (not (_predelete_require_normal | default(false) | bool) or (_nd_predelete_idle_report.normal | bool))
+                 and (not (_predelete_require_insync | default(false) | bool) or (_nd_predelete_inventory_ready | bool)))
+                or (not (_nd_predelete_idle_report.valid | bool) and nd_predelete_readiness.status | default(0) | int == 200)
+                or (nd_predelete_readiness.status | default(0) | int not in [0, 200, 408, 429]
+                    and nd_predelete_readiness.status | default(0) | int < 500)
+                or (_nd_predelete_remaining | float) <= 0
+              retries: "{{ nd_switch_predelete_timeout_seconds | int + 1 }}"
+              delay: "{{ [nd_switch_predelete_poll_seconds | int, [0, _nd_predelete_remaining | float] | max] | min | int }}"
+              timeout: "{{ _nd_predelete_call_limit }}"
+              vars:
+                _predelete_inventory_reply: "{{ nd_predelete_readiness }}"
+                _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _rf) | map(attribute='serial') | list }}"
+                ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
+              loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
+              loop_control:
+                loop_var: _rf
+                label: "{{ _rf }}"
+              no_log: true
+
+            - &nd_predelete_require_idle
+              name: Require fresh idle source inventory before the startup save
+              ansible.builtin.assert:
+                that:
+                  - _nd_predelete_remaining | float > 0
+                  - _nd_predelete_idle_report.ready | bool
+                  - not (_predelete_require_normal | default(false) | bool) or (_nd_predelete_idle_report.normal | bool)
+                  - not (_predelete_require_insync | default(false) | bool) or (_nd_predelete_inventory_ready | bool)
+                fail_msg: "NDP_SWITCH_PREDELETE_NOT_READY: source inventory is active, incomplete, or not in the required system mode; no startup save or removal is allowed."
+              vars:
+                _predelete_inventory_reply: "{{ _ready }}"
+                _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _ready._rf) | map(attribute='serial') | list }}"
+              loop: "{{ nd_predelete_readiness.results }}"
+              loop_control:
+                loop_var: _ready
+                label: "{{ _ready._rf }}"
+              no_log: true
+
+            - name: Plan source Maintenance recovery using fresh requested-switch identities
+              ansible.builtin.set_fact:
+                _nd_predelete_mode_plans: "{{ _nd_predelete_mode_plans + [{'fabric': _ready._rf, 'switch_ids': _nd_predelete_idle_report.maintenance_ids}] }}"
+              vars:
+                _predelete_inventory_reply: "{{ _ready }}"
+                _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _ready._rf) | map(attribute='serial') | list }}"
+              loop: "{{ nd_predelete_readiness.results }}"
+              loop_control:
+                loop_var: _ready
+                label: "{{ _ready._rf }}"
+              no_log: true
+
+            - name: Restore only leaving Maintenance switches to Normal before saving configuration
+              cisco.nd.nd_rest:
+                method: post
+                path: "/api/v1/manage/fabrics/{{ _mode_plan.fabric }}/switchActions/changeSystemMode?deploy=true&blocking=false"
+                content:
+                  mode: normal
+                  switchIds: "{{ _mode_plan.switch_ids }}"
+              vars:
+                ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
+              loop: "{{ _nd_predelete_mode_plans }}"
+              loop_control:
+                loop_var: _mode_plan
+                label: "{{ _mode_plan.fabric }}"
+              register: nd_predelete_normal
+              failed_when: nd_predelete_normal.failed | default(false)
+              timeout: "{{ _nd_predelete_call_limit }}"
+              no_log: true
+              when: _mode_plan.switch_ids | length > 0
+
+            - name: Require success for every requested Normal mode change
+              ansible.builtin.assert:
+                that: _nd_predelete_switch_action_ready | bool
+                fail_msg: "NDP_SWITCH_PREDELETE_MODE_BLOCKED: Normal mode change was rejected or incomplete; no startup save or removal is allowed."
+              vars:
+                _predelete_action_reply: "{{ _mode }}"
+                _predelete_action_results: items
+                _predelete_requested_ids: "{{ _mode._mode_plan.switch_ids }}"
+              loop: "{{ nd_predelete_normal.results }}"
+              loop_control:
+                loop_var: _mode
+                label: "{{ _mode._mode_plan.fabric }}"
+              when: not (_mode.skipped | default(false))
+              no_log: true
+
+            - &nd_predelete_require_normal
+              name: Verify idle Normal switches before saving running configuration
+              vars:
+                _predelete_require_normal: true
+              block:
+                - *nd_predelete_idle_inventory
+                - *nd_predelete_require_idle
+
+            - &nd_predelete_copy_startup
+              name: Persist leaving switch configuration and verify the skipped-save anomaly clears
+              block:
+                - name: Explicitly copy running configuration to startup on every leaving switch
+                  cisco.nd.nd_rest:
+                    method: post
+                    path: "/api/v1/manage/fabrics/{{ _rf }}/actions/copyRunStart"
+                    content:
+                      switchIds: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _rf) | map(attribute='serial') | list }}"
+                  loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
+                  loop_control:
+                    loop_var: _rf
+                    label: "{{ _rf }}"
+                  register: nd_predelete_copy
+                  failed_when: nd_predelete_copy.failed | default(false)
+                  timeout: "{{ _nd_predelete_call_limit }}"
+                  vars:
+                    ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
+                  no_log: true
+
+                - name: Require a successful startup save for every leaving switch
+                  ansible.builtin.assert:
+                    that: _nd_predelete_switch_action_ready | bool
+                    fail_msg: "NDP_SWITCH_PREDELETE_COPY_BLOCKED: Copy Run Start failed, was skipped, or did not confirm every requested switch; no removal is allowed."
+                  vars:
+                    _predelete_action_reply: "{{ _copy }}"
+                    _predelete_action_results: results
+                    _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _copy._rf) | map(attribute='serial') | list }}"
+                  loop: "{{ nd_predelete_copy.results }}"
+                  loop_control:
+                    loop_var: _copy
+                    label: "{{ _copy._rf }}"
+                  no_log: true
+
+                - name: Wait for skipped periodic startup-save anomalies to clear after the explicit copy
+                  cisco.nd.nd_rest:
+                    method: get
+                    path: "/api/v1/analyze/anomalies/details?fabricName={{ _rf | urlencode }}&max=200"
+                  loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
+                  loop_control:
+                    loop_var: _rf
+                    label: "{{ _rf }}"
+                  register: nd_remove_anomalies
+                  failed_when: >-
+                    nd_remove_anomalies.failed | default(false)
+                    or nd_remove_anomalies.status | default(0) | int != 200
+                    or nd_remove_anomalies.current | default(none) is not mapping
+                    or nd_remove_anomalies.current.anomalies | default(none) is not sequence
+                    or nd_remove_anomalies.current.anomalies is string
+                    or nd_remove_anomalies.current.anomalies is mapping
+                  timeout: "{{ _nd_predelete_call_limit }}"
+                  no_log: true
+                  until: >-
+                    (_nd_predelete_copy_anomalies_clear | bool)
+                    or (nd_remove_anomalies.status | default(0) | int not in [0, 200, 408, 429]
+                        and nd_remove_anomalies.status | default(0) | int < 500)
+                    or (_nd_predelete_remaining | float) <= 0
+                  retries: "{{ nd_switch_predelete_timeout_seconds | int + 1 }}"
+                  delay: "{{ [nd_switch_predelete_poll_seconds | int, [0, _nd_predelete_remaining | float] | max] | min | int }}"
+                  vars:
+                    _predelete_anomaly_reply: "{{ nd_remove_anomalies }}"
+                    _predelete_anomaly_fabric: "{{ _rf }}"
+                    _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _rf) | map(attribute='serial') | list }}"
+                    ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
+
+                - name: Require fresh evidence that skipped startup-save anomalies are cleared
+                  ansible.builtin.assert:
+                    that:
+                      - _nd_predelete_remaining | float > 0
+                      - _nd_predelete_copy_anomalies_clear | bool
+                    fail_msg: "NDP_SWITCH_PREDELETE_COPY_BLOCKED: the targeted startup-save anomaly is still active or its state is unverifiable; no removal is allowed."
+                  vars:
+                    _predelete_anomaly_reply: "{{ _anomaly }}"
+                    _predelete_anomaly_fabric: "{{ _anomaly._rf }}"
+                    _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _anomaly._rf) | map(attribute='serial') | list }}"
+                  loop: "{{ nd_remove_anomalies.results }}"
+                  loop_control:
+                    loop_var: _anomaly
+                    label: "{{ _anomaly._rf }}"
+                  no_log: true
+
+                - name: Report confirmed startup configuration persistence
+                  ansible.builtin.debug:
+                    msg: "NDP_SWITCH_PREDELETE_STARTUP_SAVED: Copy Run Start succeeded for all {{ nd_rehome_moves | length }} leaving switches; fresh anomaly evidence is clear."
+
+            - name: Gather the vPC pairs of every fabric the switches are leaving
+              cisco.nd.nd_manage_vpc_pair:
+                fabric_name: "{{ _src }}"
+                state: gathered
+              loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
+              loop_control:
+                loop_var: _src
+                label: "{{ _src }}"
+              register: nd_rehome_pairs
+              failed_when: false
+
+            - name: Unpair every vPC pair that holds a switch being moved
+              cisco.nd.nd_manage_vpc_pair:
+                fabric_name: "{{ item.0._src }}"
+                state: deleted
+                config:
+                  - peer1_switch_id: "{{ item.1.switch_id }}"
+                    peer2_switch_id: "{{ item.1.peer_switch_id }}"
+              loop: "{{ nd_rehome_pairs.results | default([]) | subelements('gathered.vpc_pairs', skip_missing=true) }}"
+              loop_control:
+                label: "{{ item.0._src }} / {{ item.1.switch_id }}-{{ item.1.peer_switch_id }}"
+              when: >-
+                (item.1.switch_id in (nd_rehome_moves | map(attribute='serial') | list))
+                or (item.1.peer_switch_id in (nd_rehome_moves | map(attribute='serial') | list))
+              failed_when: false
 
             - name: Recalculate each source fabric before removing any switches
               cisco.nd.nd_rest:
@@ -832,6 +1215,16 @@
                 loop_var: _predelete_final
                 label: "{{ _predelete_final._rf }}"
               no_log: true
+
+            - *nd_predelete_environment
+            - name: Verify idle Normal and still inSync switches after deployment
+              vars:
+                _predelete_require_normal: true
+                _predelete_require_insync: true
+              block:
+                - *nd_predelete_idle_inventory
+                - *nd_predelete_require_idle
+            - *nd_predelete_copy_startup
 
             - name: Report the pre-delete Recalculate & Deploy
               ansible.builtin.debug:
@@ -1554,21 +1947,20 @@
             - ((nd_test_fabric_switches[_rf] | default([])) | selectattr('role', 'equalto', 'leaf') | list | length) >= 4
 
         - name: Change each Maintenance-mode switch back to Normal (and deploy the mode change)
-          cisco.nd.nd_maintenance_mode:
-            fabric_name: "{{ _sw.fabric }}"
-            state: merged
-            config:
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ _sw.fabric }}/switchActions/changeSystemMode?deploy=true&blocking=false"
+            content:
               mode: normal
-              deploy: true
-              blocking: false
-              switches:
-                - switch_ip: "{{ _sw.seed_ip }}"
+              switchIds:
+                - "{{ _sw.serial }}"
           loop: "{{ nd_maint_switches | default([]) }}"
           loop_control:
             loop_var: _sw
             label: "{{ _sw.serial }} ({{ _sw.fabric }})"
           register: nd_maint_heal
           failed_when: false
+          no_log: true
           when:
             - nd_switch_heal_readonly | bool
             - (nd_maint_switches | default([])) | length > 0

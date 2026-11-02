@@ -147,7 +147,7 @@ complete.coverage = 'INCOMPLETE'
 complete.case_totals = [started: 6, passed: 1, failed: 0, skipped: 0, incomplete: 5]
 def text = formatModuleActivityTable([complete], '128')
 assert actualRows(text)[0][7].startsWith('PASS !')
-assert totals(text)[7] == 'P1+? F?'
+assert totals(text)[7] == 'P1+? F0+?'
 assert text.contains('WARNING: 5 incomplete case(s); required verification was not fully observed.')
 assert text.contains('case coverage INCOMPLETE')
 ''')

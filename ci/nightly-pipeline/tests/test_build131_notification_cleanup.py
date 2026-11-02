@@ -1,4 +1,4 @@
-"""Exercise concise Webex rendering in the public Jenkinsfile offline."""
+"""Exercise concise Webex rendering in all three local Jenkinsfiles offline."""
 from test_restored_webex_options import POST, groovy_runner
 
 
@@ -26,9 +26,10 @@ def message = sent[0]
  'Passed/Failed/Skipped =', 'Mixed/shared rows contain', '? = case count'].each {
     assert !message.contains(it)
 }
-assert message.contains('unsupported parameter timeout')
+assert !message.contains('RESULT DETAILS:')
+assert !message.contains('unsupported parameter timeout')
 assert message.contains('fixture_module') && message.contains('iBGP') && message.contains('eBGP')
-assert message.contains('Test cases passed: 2') && message.contains('Test cases failed: 1')
+assert message.contains('Passed: 2') && message.contains('Failed: 1') && message.contains('Skipped: 0')
 assert message.contains('ansible-nd branch: fixture-owner:feature/example')
 assert message.contains('ansible-nd commit: ' + ('a' * 40))
 assert message.contains('/artifact/module_IBGP.txt')
@@ -45,7 +46,9 @@ def raw = 'FAIL|fixture_module|home|4.3|2|1|0|1m|Unsupported module parameter: t
     def table = script.formatResultsTable(raw, unit)
     assert table.count('```') == 2
     assert table.contains('fixture_module')
-    assert table.contains(unit == 'module test cases' ? 'unsupported parameter timeout' : 'Unsupported module parameter: timeout')
+    assert !table.contains('RESULT DETAILS:')
+    assert !table.contains('unsupported parameter timeout')
+    assert !table.contains('Unsupported module parameter: timeout')
     assert table.contains('NOT_RUN') && table.contains('eBGP')
     assert !table.contains('Passed/Failed/Skipped =')
     assert !table.contains('Mixed/shared rows contain')
@@ -69,17 +72,46 @@ assert script.moduleCaseTotals(script.MODULE_ACTIVITY_RESULTS.values().toList())
 script.run()
 assert sent.size() == 1 : logs
 def message = sent[0]
-assert message.contains('Test cases passed: N/A') && message.contains('Test cases failed: N/A')
-assert message.contains('Setup failed: unsupported parameter timeout')
-assert message.contains('fixture_module (eBGP): Not run: switch preparation failed')
-assert message.contains('[Console](https://jenkins.example/job/nd/122/console)')
-assert message.contains('RESULT DETAILS:')
+assert message.contains('Passed: N/A') && message.contains('Failed: N/A') && message.contains('Skipped: N/A')
+assert !message.contains('RESULT DETAILS:')
+assert !message.contains('Setup failed: unsupported parameter timeout')
+assert !message.contains('fixture_module (eBGP): Not run: switch preparation failed')
+assert !message.contains('[Console](https://jenkins.example/job/nd/122/console)')
+assert message.contains('**Artifact links:**')
 assert !message.contains('UNKNOWN') && !message.contains('case coverage')
 assert !message.contains('classification=') && !message.contains('phase=pre')
-def tableRows = message.readLines().findAll { it ==~ /^(FAIL|NOT_RUN)\s+.*/ }
-assert tableRows.find { it.startsWith('FAIL') }.trim().split(/\s{2,}/)[3..5] == ['N/A','N/A','N/A']
-assert tableRows.find { it.startsWith('NOT_RUN') }.trim().split(/\s{2,}/)[3..5] == ['-','-','-']
+def tableRows = message.readLines().findAll { it.startsWith('fixture_module ') }
+assert tableRows.size() == 1
+def cells = tableRows[0].trim().split(/\s{2,}/)
+assert cells[1..4] == ['FAIL','N/A','N/A','N/A']
+assert cells[6..9] == ['NOT_RUN','-','-','-']
+assert !message.contains('home') && !message.contains('destination')
 assert script.writeReportingJson(script.MODULE_ACTIVITY_RESULTS) == original
+assert script.moduleCaseTotals(script.MODULE_ACTIVITY_RESULTS.values().toList()).passed == '?'
+''')
+
+
+def test_closed_log_recap_replaces_unavailable_case_counts(groovy_runner):
+    groovy_runner(POST + r'''
+script.MODULE_ACTIVITY_RESULTS.putAll([
+    ibgp: [module:'fixture_module', nd:'4.3', scope:'iBGP', round_label:'iBGP', fabric:'home',
+        result:'FAIL', coverage:'UNKNOWN', case_totals:[:], duration:'1m',
+        invocation:[counts:[ok:11, failed:2, skipped:4, unreachable:0]],
+        failure:'unlabelled module task'],
+    ebgp: [module:'fixture_module', nd:'4.3', scope:'eBGP', round_label:'eBGP', fabric:'destination',
+        result:'NOT_RUN', coverage:'UNKNOWN', case_totals:[:],
+        failure:'Switch membership pre-flight failed']
+])
+script.run()
+assert sent.size() == 1 : logs
+def message = sent[0]
+assert message.contains('Passed: 11') && message.contains('Failed: 2') && message.contains('Skipped: 4')
+assert !message.contains('N/A  N/A  N/A') && !message.contains('N/A N/A N/A')
+def tableRows = message.readLines().findAll { it.startsWith('fixture_module ') }
+assert tableRows.size() == 1
+def cells = tableRows[0].trim().split(/\s{2,}/)
+assert cells[1..4] == ['FAIL','11','2','4']
+assert cells[6..9] == ['NOT_RUN','-','-','-']
 assert script.moduleCaseTotals(script.MODULE_ACTIVITY_RESULTS.values().toList()).passed == '?'
 ''')
 
@@ -89,7 +121,8 @@ def test_partial_case_counts_remain_explicit_in_the_readable_table(groovy_runner
 def raw = 'FAIL|fixture_module|home|4.3|3 + ?|?|0|1m|case coverage INCOMPLETE; 1 incomplete case(s)|iBGP'
 def table = script.formatResultsTable(raw, 'module test cases')
 assert table.contains('3 + unknown') && table.contains('N/A')
-assert table.contains('1 incomplete case(s)')
+assert !table.contains('RESULT DETAILS:')
+assert !table.contains('1 incomplete case(s)')
 assert !table.contains('case coverage INCOMPLETE')
 assert !table.contains('?')
 assert raw.contains('3 + ?')

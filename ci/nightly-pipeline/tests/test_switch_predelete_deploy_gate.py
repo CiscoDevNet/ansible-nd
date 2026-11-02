@@ -1,9 +1,19 @@
 """Run production pre-delete tasks against fake ND modules, without network access."""
 import json
+from pathlib import Path
 
 import pytest
 
 from test_switch_rehome_preflight import execute, expression_environment, guard, named, move_tasks
+
+
+@pytest.mark.parametrize('filename', [
+    'Jenkinsfile_nd_jenkins_script', 'Jenkinsfile_nd_jenkins_script_temp_switches',
+    'Jenkinsfile_nd_jenkins_script_comm_list',
+])
+def test_active_pipelines_select_fabric_deployment_release(filename):
+    source = (Path(__file__).resolve().parents[1] / filename).read_text()
+    assert "def SWITCH_LIFECYCLE_CONSUL_PREFIX = 'releases/predelete-startup-save-20261102'" in source
 
 
 @pytest.mark.parametrize('scenario', [

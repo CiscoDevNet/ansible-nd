@@ -377,8 +377,10 @@ if (scenario == 'null_message') {
     assert collected.result == (scenario == 'success' ? 'PASS' : 'FAIL')
     def raw = script.moduleCaseSummaryRows().readLines().find { it.contains('|example|') && !it.contains('awaiting final result') }
     assert raw.startsWith((scenario == 'success' ? 'OK' : 'FAIL') + '|example|')
-    assert raw.split('\\|', -1)[4..6] == (scenario == 'success' ? ['1', '0', '0'] : ['0', '1', '0'])
-    assert !raw.contains('|43|') : 'Task recap totals must not replace authored case totals'
+    assert raw.split('\\|', -1)[4..6] == ['43', '0', '2']
+    assert collected.case_totals == row.case_totals
+    def cases = script.moduleCaseTotals([collected])
+    assert [cases.passed, cases.failed, cases.skipped] == (scenario == 'success' ? ['1', '0', '0'] : ['0', '1', '0'])
     if (scenario == 'nonzero_exit') { assert script.binding.env.PIPELINE_FAILED == 'true' }
 }
 ''')
