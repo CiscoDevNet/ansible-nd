@@ -22,6 +22,17 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
     NDModuleError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.controller import (
+    ConfigActionsController,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import (
+    SWITCH_CONFIG_ACTIONS,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import (
+    ConfigActions,
+    ConfigActionsContext,
+    ConfigActionsResult,
+)
 
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType, PlatformType
@@ -71,6 +82,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import (
 )
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_details_cache import (
     FabricDetailsCache,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.config_actions_backend import (
+    SwitchConfigActionsBackend,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils import (
     ApiDataChecker,
@@ -247,6 +261,23 @@ class SwitchServiceContext:
     save_config: bool = True
     deploy_config: bool = True
     deploy_type: str = "switch"
+    config_actions: ConfigActions | None = None
+
+    def __post_init__(self) -> None:
+        """
+        # Summary
+
+        Keep legacy context flags aligned with normalized config action intent.
+
+        ## Raises
+
+        None
+        """
+        if self.config_actions is None:
+            return
+        self.save_config = self.config_actions.save
+        self.deploy_config = self.config_actions.deploy
+        self.deploy_type = self.config_actions.type or "switch"
 
     def api_call(
         self,
@@ -1438,54 +1469,87 @@ class SwitchFabricOps:
     def finalize(self, serial_numbers: list[str] | None = None) -> None:
         """Run optional save and deploy actions for the fabric.
 
-        Uses service context flags to decide whether save and deploy should be
-        executed. No-op in check mode.
+        Uses the common config action controller to execute the normalized
+        switch save/deploy intent.
 
         ## Parameters
 
         - `serial_numbers`: Switch serial numbers to deploy when
-                            ``deploy_type`` is ``switch``. Falls back to
-                            global deploy if empty or ``None``.
+                            ``deploy_type`` is ``switch``.
 
         ## Returns
 
         - None.
         """
-        if self.ctx.nd.module.check_mode:
+        actions = self._config_actions()
+        if not actions.save and not actions.deploy:
             return
-
-        if self.ctx.save_config:
-            self.ctx.log.info("Saving fabric configuration")
-            response = self.fabric_utils.save_config()
-            self._register_fabric_operation(
-                endpoint=self.fabric_utils.ep_config_save,
-                payload=None,
-                response=response,
-                action="config_save",
+        serials = tuple(serial_numbers or ())
+        if actions.deploy and actions.type == "switch" and not serials:
+            raise SwitchOperationError(
+                "Switch-level deploy requested but no serial numbers were resolved. "
+                "Pending configuration was not deployed. Use config_actions.type=global only when deploying all pending fabric changes is intended, "
+                "or ensure the target switches have resolved switch IDs."
             )
 
-        if self.ctx.deploy_config:
-            if self.ctx.deploy_type == "switch" and serial_numbers:
-                self.ctx.log.info("Switch-level deploy for: %s", serial_numbers)
-                payload = {"switchIds": serial_numbers}
-                response = self.fabric_utils.deploy_switches(serial_numbers)
-                self._register_fabric_operation(
-                    endpoint=self.fabric_utils.ep_switch_deploy,
-                    payload=payload,
-                    response=response,
-                    action="deploy_switches",
-                )
-            else:
-                if self.ctx.deploy_type == "switch" and not serial_numbers:
-                    self.ctx.log.warning("Switch-level deploy requested but no serial numbers provided — falling back to global deploy")
-                self.ctx.log.info("Deploying fabric configuration (global)")
-                response = self.fabric_utils.deploy_config()
-                self._register_fabric_operation(
-                    endpoint=self.fabric_utils.ep_config_deploy,
-                    payload=None,
-                    response=response,
-                    action="deploy_config",
-                )
+        context = ConfigActionsContext(
+            fabric_names=(self.ctx.fabric,),
+            state=None,
+            check_mode=self.ctx.nd.module.check_mode,
+            switch_ids=serials,
+        )
+        controller = ConfigActionsController(SWITCH_CONFIG_ACTIONS, SwitchConfigActionsBackend(self.fabric_utils))
+        result = controller.execute(actions, context)
+        self._register_config_actions_result(result)
+
+        if result.status == "failed":
+            failed = next((step for step in result.actions if step.status == "failed"), None)
+            error = failed.error if failed and failed.error else "unknown error"
+            raise SwitchOperationError(f"Config actions failed for fabric {self.ctx.fabric}: {error}")
+
+    def _config_actions(self) -> ConfigActions:
+        """
+        # Summary
+
+        Return normalized config actions, preserving legacy context flags for direct service use.
+
+        ## Raises
+
+        None
+        """
+        if self.ctx.config_actions is not None:
+            return self.ctx.config_actions
+        return ConfigActions(
+            save=self.ctx.save_config,
+            deploy=self.ctx.deploy_config,
+            type=self.ctx.deploy_type,
+            provided=False,
+        )
+
+    def _register_config_actions_result(self, result: ConfigActionsResult) -> None:
+        """
+        # Summary
+
+        Register the common config action controller result in module output.
+
+        ## Raises
+
+        None
+        """
+        result_data = result.to_result()
+        self.ctx.results.action = "config_actions"
+        self.ctx.results.operation_type = OperationType.UPDATE
+        self.ctx.results.response_current = {
+            "MESSAGE": result.reason,
+            "RETURN_CODE": 200 if result.status != "failed" else -1,
+            "DATA": result_data,
+        }
+        self.ctx.results.result_current = {
+            "success": result.status != "failed",
+            "changed": any(step.status in {"completed", "planned"} for step in result.actions),
+        }
+        self.ctx.results.diff_current = result_data
+        self.ctx.results.register_api_call()
 
     def post_add_processing(
         self,
@@ -2667,6 +2731,7 @@ class NDSwitchResourceModule:
         nd: NDModule,
         results: Results,
         logger: logging.Logger | None = None,
+        config_actions: ConfigActions | None = None,
     ):
         """Initialize module state, services, and inventory snapshots.
 
@@ -2691,9 +2756,6 @@ class NDSwitchResourceModule:
         self.fabric = self.module.params.get("fabric")
         self.state = self.module.params.get("state")
 
-        # Shared context for service classes
-        config_actions = self.module.params.get("config_actions") or {}
-
         # Keep switch lifecycle API failures fast. RestSend models retries as
         # timeout / send_interval, so these values are applied per request by
         # _request_with_retry_policy() and restored immediately afterward.
@@ -2703,9 +2765,7 @@ class NDSwitchResourceModule:
             results=results,
             fabric=self.fabric,
             log=log,
-            save_config=config_actions.get("save", True),
-            deploy_config=config_actions.get("deploy", True),
-            deploy_type=config_actions.get("type", "switch"),
+            config_actions=config_actions,
         )
 
         # Switch collections
@@ -2717,6 +2777,7 @@ class NDSwitchResourceModule:
             self.sent: NDConfigCollection = NDConfigCollection(model_class=SwitchDataModel)
             self.sent_adds: list[SwitchConfigModel] = []
             self.proposed_cfgs: list[SwitchConfigModel] = []
+            self._check_mode_config_actions: list[dict[str, Any]] = []
             # Plan stored here after compute_changes so check-mode output can use it
             self._plan: SwitchPlan | None = None
         except _FABRIC_OPERATION_ERRORS as e:
@@ -3033,6 +3094,8 @@ class NDSwitchResourceModule:
                     entry["platform_type"] = getattr(platform_type, "value", str(platform_type))
                 diff_list.append(entry)
 
+        diff_list.extend(getattr(self, "_check_mode_config_actions", []))
+
         changed = bool(diff_list)
         output_level = self.module.params.get("output_level", "normal")
         result: dict[str, Any] = {
@@ -3245,16 +3308,16 @@ class NDSwitchResourceModule:
     # State Handlers (orchestration only — delegate to services)
     # =====================================================================
 
-    def _check_idempotent_sync(
+    def _idempotent_sync_serials(
         self,
         plan: "SwitchPlan",
         existing_by_ip: dict[str, "SwitchDataModel"],
-    ) -> bool:
-        """Return True if any non-preprovision idempotent switch is out of config-sync.
+    ) -> list[str]:
+        """Return target serials for non-preprovision idempotent switches that need deploy.
 
         Pre-provisioned switches are placeholder entries that are never
         in-sync by design and are excluded from this check.  Only relevant
-        when deploy is enabled; returns False immediately otherwise.
+        when deploy is enabled; returns an empty list immediately otherwise.
 
         ## Parameters
 
@@ -3263,28 +3326,57 @@ class NDSwitchResourceModule:
 
         ## Returns
 
-        - True if finalize should run for idempotent switches, False otherwise.
+        - Switch serial numbers that should be passed to switch-level deploy.
         """
         if not self.ctx.deploy_config:
-            return False
+            return []
+
+        serials: list[str] = []
+        missing_targets: list[str] = []
+        seen: set[str] = set()
         for cfg in plan.idempotent:
             if cfg.operation_type == "preprovision":
                 continue
             sw = existing_by_ip.get(cfg.seed_ip)
             status = sw.additional_data.config_sync_status if sw and sw.additional_data else None
-            if status != ConfigSyncStatus.IN_SYNC:
-                self.log.info(
-                    "Switch %s is idempotent but configSyncStatus='%s' — will finalize",
+            if status == ConfigSyncStatus.IN_SYNC:
+                continue
+            status_value = getattr(status, "value", status) if status else "unknown"
+            if not sw or not sw.switch_id:
+                missing_targets.append(cfg.seed_ip)
+                self.log.error(
+                    "Switch %s is idempotent but configSyncStatus='%s' and no switch serial was resolved",
                     cfg.seed_ip,
-                    getattr(status, "value", status) if status else "unknown",
+                    status_value,
                 )
-                return True
-        return False
+                continue
+            if sw.switch_id in seen:
+                continue
+            seen.add(sw.switch_id)
+            serials.append(sw.switch_id)
+            self.log.info(
+                "Switch %s is idempotent but configSyncStatus='%s' — will finalize serial %s",
+                cfg.seed_ip,
+                status_value,
+                sw.switch_id,
+            )
+
+        if missing_targets:
+            self.nd.module.fail_json(
+                msg=(
+                    "Switch-level deploy is required for idempotent out-of-sync switch(es), "
+                    "but switch serial numbers could not be resolved for: "
+                    f"{missing_targets}"
+                )
+            )
+
+        return serials
 
     def _register_check_mode_result(
         self,
         action: str,
         diff_current: dict[str, Any],
+        save_deploy_serials: list[str] | None = None,
     ) -> None:
         """Register a check-mode result with standard metadata.
 
@@ -3292,11 +3384,26 @@ class NDSwitchResourceModule:
 
         - `action`: Action label (e.g. ``"merge"``, ``"override"``).
         - `diff_current`: Diff payload describing what would change.
+        - `save_deploy_serials`: Existing switch serials that would be saved
+                                 and deployed without an inventory change.
 
         ## Returns
 
         - None.
         """
+        if save_deploy_serials:
+            diff_current["save_deploy_serial_numbers"] = list(save_deploy_serials)
+            self._check_mode_config_actions = [
+                {
+                    "_action": "config_actions",
+                    "save": self.ctx.save_config,
+                    "deploy": self.ctx.deploy_config,
+                    "deploy_type": self.ctx.deploy_type,
+                    "serial_numbers": list(save_deploy_serials),
+                }
+            ]
+        else:
+            self._check_mode_config_actions = []
         self.results.action = action
         self.results.state = self.state
         self.results.operation_type = OperationType.CREATE
@@ -3436,7 +3543,8 @@ class NDSwitchResourceModule:
         # Pre-provisioned switches are placeholder entries that are never
         # in-sync by design, so they are excluded from this check. Only relevant when deploy is enabled.
         existing_by_ip = self.inventory.by_ip()
-        idempotent_save_req = self._check_idempotent_sync(plan, existing_by_ip)
+        sync_serials = self._idempotent_sync_serials(plan, existing_by_ip)
+        idempotent_save_req = bool(sync_serials)
 
         has_work = bool(
             plan.to_add
@@ -3478,6 +3586,7 @@ class NDSwitchResourceModule:
                     "rma": [c.seed_ip for c in plan.to_rma],
                     "save_deploy_required": idempotent_save_req,
                 },
+                save_deploy_serials=sync_serials,
             )
             return
 
@@ -3495,9 +3604,6 @@ class NDSwitchResourceModule:
 
         if not switch_actions and idempotent_save_req:
             self.log.info("No adds/migrations but config-sync required — running finalize")
-            sync_serials = [
-                existing_by_ip[cfg.seed_ip].switch_id for cfg in plan.idempotent if cfg.seed_ip in existing_by_ip and existing_by_ip[cfg.seed_ip].switch_id
-            ]
             self.fabric_ops.finalize(serial_numbers=sync_serials)
 
         # --- POAP / preprovision / swap / RMA -----------------------------------
@@ -3539,7 +3645,8 @@ class NDSwitchResourceModule:
         self.log.info("Handling overridden state")
 
         existing_by_ip = self.inventory.by_ip()
-        idempotent_save_req = self._check_idempotent_sync(plan, existing_by_ip)
+        sync_serials = self._idempotent_sync_serials(plan, existing_by_ip)
+        idempotent_save_req = bool(sync_serials)
 
         has_work = bool(
             plan.to_add
@@ -3584,6 +3691,7 @@ class NDSwitchResourceModule:
                     "swap": len(plan.to_swap),
                     "save_deploy_required": idempotent_save_req,
                 },
+                save_deploy_serials=sync_serials,
             )
             return
 
@@ -3646,9 +3754,6 @@ class NDSwitchResourceModule:
 
         if not switch_actions and idempotent_save_req:
             self.log.info("No adds/migrations but config-sync required — running finalize")
-            sync_serials = [
-                existing_by_ip[cfg.seed_ip].switch_id for cfg in plan.idempotent if cfg.seed_ip in existing_by_ip and existing_by_ip[cfg.seed_ip].switch_id
-            ]
             self.fabric_ops.finalize(serial_numbers=sync_serials)
 
         # --- Phase 4: POAP workflows (bootstrap / preprovision / swap) ----------
@@ -3685,7 +3790,8 @@ class NDSwitchResourceModule:
         self.log.info("Handling replaced state")
 
         existing_by_ip = self.inventory.by_ip()
-        idempotent_save_req = self._check_idempotent_sync(plan, existing_by_ip)
+        sync_serials = self._idempotent_sync_serials(plan, existing_by_ip)
+        idempotent_save_req = bool(sync_serials)
 
         has_work = bool(
             plan.to_add
@@ -3730,6 +3836,7 @@ class NDSwitchResourceModule:
                     "swap": len(plan.to_swap),
                     "save_deploy_required": idempotent_save_req,
                 },
+                save_deploy_serials=sync_serials,
             )
             return
 
@@ -3787,9 +3894,6 @@ class NDSwitchResourceModule:
 
         if not switch_actions and idempotent_save_req:
             self.log.info("No adds/migrations but config-sync required — running finalize")
-            sync_serials = [
-                existing_by_ip[cfg.seed_ip].switch_id for cfg in plan.idempotent if cfg.seed_ip in existing_by_ip and existing_by_ip[cfg.seed_ip].switch_id
-            ]
             self.fabric_ops.finalize(serial_numbers=sync_serials)
 
         # --- Phase 4: POAP workflows (bootstrap / preprovision / swap) ----------
