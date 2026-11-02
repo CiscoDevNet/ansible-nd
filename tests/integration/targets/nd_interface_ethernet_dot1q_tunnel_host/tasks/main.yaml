@@ -1,0 +1,54 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe)
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Configure dot1q test defaults and run the state suite
+  vars:
+    ansible_command_timeout: 300
+  module_defaults:
+    cisco.nd.nd_rest:
+      host: "{{ ansible_host }}"
+    cisco.nd.nd_interface_ethernet_dot1q_tunnel_host:
+      host: "{{ ansible_host }}"
+      output_level: "{{ test_output_level }}"
+      config_actions:
+        deploy: "{{ test_deploy }}"
+  environment:
+    ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"
+  block:
+    - name: Validate the release, identities, and exclusive reserved test scope
+      ansible.builtin.import_tasks: setup.yaml
+
+    # Cleanup is armed only after all read-only scope checks succeed. It runs
+    # after a partially successful first write as well as a successful suite.
+    - name: Exercise the owned ports and always reset them
+      block:
+        - name: Arm cleanup for the three verified reserved ports
+          ansible.builtin.set_fact:
+            dot1q_cleanup_armed: true
+
+        - name: Test merged creation, grouping, updates, and replay
+          ansible.builtin.import_tasks: merged.yaml
+
+        - name: Test empty-description clearing on the selected ND release
+          ansible.builtin.import_tasks: description.yaml
+
+        - name: Test replacement and omitted-field defaults
+          ansible.builtin.import_tasks: replaced.yaml
+
+        - name: Test authoritative override and intentional empty override
+          ansible.builtin.import_tasks: overridden.yaml
+
+        - name: Test identifier-only deletion and grouped reset
+          ansible.builtin.import_tasks: deleted.yaml
+
+        - name: Test rejected inputs without changing controller intent
+          ansible.builtin.import_tasks: negative.yaml
+
+        - name: Test the known merged storm-transition regression when requested
+          ansible.builtin.import_tasks: storm_transition.yaml
+          when: test_storm_transition
+      always:
+        - name: Reset only the verified test ports
+          ansible.builtin.include_tasks: cleanup.yaml
+          when: dot1q_cleanup_armed | default(false) | bool
