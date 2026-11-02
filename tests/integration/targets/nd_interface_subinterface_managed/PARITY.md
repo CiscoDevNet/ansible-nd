@@ -135,11 +135,17 @@ flows.
 ## Running harness scenarios
 
 ```text
-ansible-test network-integration nd_interface_subinterface_managed --tags nd4x_demo
+ansible-test network-integration nd_interface_subinterface_managed --tags nd4x_demo_merged,nd4x_demo_replaced,nd4x_demo_deleted,nd4x_demo_negative
 ansible-test network-integration nd_interface_subinterface_managed --tags nd4x_demo_merged
 ansible-test network-integration nd_interface_subinterface_managed --tags nd4x_demo_xe
 ansible-test network-integration nd_interface_subinterface_managed --tags nd4x_demo_xe_overridden
 ```
+
+The first command runs the non-destructive NX-OS scenarios. It lists their
+state tags explicitly so the destructive `nd4x_demo_overridden` scenario does
+not run unless its opt-in is enabled. Each state tag also selects the shared
+preflight. Run overridden separately only on a dedicated test fabric after
+enabling the destructive-test opt-in.
 
 IOS-XE harness scenarios additionally require
 `nd_subinterface_managed_xe_tests_enabled=true` and the configured test switch

@@ -53,7 +53,11 @@
                 ~ test_fabric_name
                 ~ '/switches/'
                 ~ item.switchId
-                ~ '/interfaces?max=500&offset=0&sort=interfaceName:asc',
+                ~ '/interfaces?sort=interfaceName:asc',
+              'pagination': {
+                'page_size': 500,
+                'collection_key': 'interfaces'
+              },
               'expected_status': 200,
               'unordered_paths': ['/interfaces'],
               'ignore_keys': ['operData']

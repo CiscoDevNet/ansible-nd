@@ -89,6 +89,10 @@
           {{ policy | dict2items
              | rejectattr('key', 'equalto', 'description')
              | list | items2dict }}
+        normalized_routed_policy: >-
+          {{ routed_policy | dict2items
+             | rejectattr('key', 'equalto', 'description')
+             | list | items2dict }}
         default_policy:
           policyType: iosXeTrunkHost
           adminState: true
@@ -120,12 +124,11 @@
           - parent.operData.portChannelId | int < 1
           - parent_links | length == 0
           - >-
-            (parent.operData.mode | default('') == 'trunk'
-             and normalized_policy == default_policy
+            (normalized_policy == default_policy
              and policy.description | default('') == '')
             or
-            (parent.operData.mode | default('') == 'routed'
-             and normalized_policy == routed_policy)
+            (normalized_policy == normalized_routed_policy
+             and policy.description | default('') == routed_policy.description)
         fail_msg: >-
           Refusing IOS-XE harness teardown for {{ xe_parent }}: the port is neither in the verified
           fabric-default trunk-host state nor the routed-host state created by this harness, or it has
@@ -140,8 +143,9 @@
           {{ interfaces
              | selectattr('interfaceName', 'match', '(?i)^' ~ (xe_parent | regex_escape) ~ '$')
              | first }}
+        policy: "{{ parent.configData.networkOS.policy | default({}) }}"
       ansible.builtin.set_fact:
-        nd4x_xe_teardown_parent_is_routed: "{{ parent.operData.mode == 'routed' }}"
+        nd4x_xe_teardown_parent_is_routed: "{{ policy.policyType == 'iosXeRoutedHost' }}"
 
     - name: "XE HARNESS TEARDOWN: Wait until any remaining test subinterfaces are discovered"
       cisco.nd.nd_rest:
