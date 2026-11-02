@@ -48,18 +48,9 @@ options:
       against the union of all affected switches. With O(deploy=false), the
       switch-level deploy step is skipped and running config remains on the switches
       until a later deploy.
-    - If a later C(delete) run uses O(deploy=true) for a policy group already pending
-      deletion from a previous O(deploy=false) run, the normal active policy-group
-      view will not return C(markDeleted=true) rows or generated child rows with
-      non-empty C(source). The module reads C(policySummary) with
-      C(filter=policyId:*POLICY-GROUP-*) and matches hidden C(markDeleted=true) rows
-      by requested ID as C(policyId), requested ID as generated-child C(source), or
-      exact description with a proven original template. Only matched pending-delete rows contribute switches to the
-      consolidated switch-level deploy target, so a mistyped or already-clean target
-      does not deploy unless C(policySummary) contains a matching pending row.
-    - A generated pending row whose original template cannot be established is
-      skipped for template-based cleanup and reported under C(pending_deleted_cleanup.skipped).
-      Use the original group ID or generated row ID to target that cleanup explicitly.
+    - If a policy group deletion was previously staged with O(deploy=false),
+      running C(state=deleted) again with O(deploy=true) deploys the staged
+      removal to the affected switches.
     - For user-mentioned policy groups listed in O(config) whose desired state
       already matches the controller with no diff, switch-level deploy is still
       issued against the existing member switches so the user-expressed deploy
@@ -251,35 +242,15 @@ notes:
 - The module is validation-first but B(not) a rollback transaction. Input validation
   and duplicate checks run before write operations. After controller writes begin,
   later API or deploy failures can leave earlier successful operations in place.
-- B(Additional-creation results.) C(force_created) is a list of dictionaries
-  returned for additional creations processed or previewed with
-  O(config[].create_additional_policy=true) in O(state=merged). It lists each
-  creation separately, including groups that share a description and template.
-- Each C(force_created) entry contains C(template_name), C(switch_ids), the
-  effective C(priority) (500 when omitted), and C(create_additional_policy).
-  C(description) and C(template_inputs) are included when available. In normal
-  execution, C(policy_id) is included when returned by the controller; it is
-  omitted from creation previews in check mode.
-- B(ID-targeted operation results.) C(direct_actions) is a dictionary containing
-  C(updated) and C(deleted) lists of group dictionaries. It reports operations on
-  groups without descriptions and description-changing updates by ID. Other
-  ID-targeted operations can use the normal C(before) and C(after) results.
-- C(direct_actions.updated) contains effective configurations for changed groups,
-  including C(policy_id). Already-matching groups are omitted, including when
-  O(deploy=true) requests deployment without an update. C(direct_actions.deleted)
-  contains resolved deletion targets, including C(policy_id). Either list can be empty.
-- These result entries use snake-case group fields such as C(policy_id),
-  C(template_name), C(description), C(switch_ids), C(priority), and
-  C(template_inputs). Optional fields can be omitted; deletion entries contain
-  the resolved deletion configuration rather than a complete gathered record.
-- C(force_created) and C(direct_actions) supplement C(before) and C(after).
-  Normal snapshots can collapse groups with the same description and template,
-  and can omit groups without descriptions. Targets with descriptions can also
-  appear in the applicable snapshots.
-- In check mode, these lists describe planned changes without sending mutation
-  or deployment requests. C(direct_actions) entries retain the existing target
-  IDs. During normal execution, known accepted changes remain reportable if a
-  later operation fails.
+- C(force_created) lists additional policy groups created with
+  O(config[].create_additional_policy=true), including their configurations and
+  controller-assigned IDs when available.
+- C(direct_actions) contains C(updated) and C(deleted) lists for ID-based
+  operations on groups without descriptions and for description-changing updates.
+  Unchanged groups are omitted from C(updated).
+- These fields supplement C(before) and C(after). In check mode, they show planned
+  changes, and creation previews omit C(policy_id).
+- Results retain known accepted changes if a later operation fails.
 - "B(Ghost-record cleanup for PYTHON content-type templates:)"
 - After a direct C(DELETE) of a PYTHON content-type policy group,
   the controller internally creates a transient C(switch_freeform_config) artifact
