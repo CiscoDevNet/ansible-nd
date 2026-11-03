@@ -1031,7 +1031,7 @@ git -C "${COLLECTIONS_DIRECTORY}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null
                     message += "Passed: ${totalPassed}\n"
                     message += "Failed: ${totalFailed}\n"
                     message += "Skipped: ${totalSkipped}\n"
-                    message += "Counts use the closed-log task recap when recorded; otherwise authored case counts.\n"
+                    message += "Counts are authored integration test cases only; setup, cleanup and pipeline checks are excluded.\n"
                     message += "Build result: ${currentBuild.currentResult}\n"
                     message += "\n📝 DETAILED TEST RESULTS:\n\n"
                     message += "${resultTable}\n"
@@ -1725,6 +1725,28 @@ def finishStructuredExecution(status) {
     }
 }
 
+def writeStructuredArchiveReceipt(relativePath, receipt) {
+    withEnv(["ND_ARCHIVE_RECEIPT_PATH=${relativePath}", "ND_ARCHIVE_RECEIPT_JSON=${writeReportingJson(receipt)}"]) {
+        sh '''#!/bin/bash
+            set -euo pipefail
+            set +x
+            umask 077
+            case "$ND_ARCHIVE_RECEIPT_PATH" in
+                ""|/*|../*|*/../*|*/..|./*|*/./*|*/.) exit 2 ;;
+            esac
+            receipt_parent="${ND_ARCHIVE_RECEIPT_PATH%/*}"
+            [ "${receipt_parent##*/}" = archive-inputs ] || exit 2
+            [ -d "$receipt_parent" ] && [ ! -L "$receipt_parent" ] || exit 2
+            [ ! -L "$ND_ARCHIVE_RECEIPT_PATH" ] || exit 2
+            [ ! -e "$ND_ARCHIVE_RECEIPT_PATH" ] || [ -f "$ND_ARCHIVE_RECEIPT_PATH" ] || exit 2
+            receipt_tmp=$(mktemp "${ND_ARCHIVE_RECEIPT_PATH}.tmp.XXXXXX")
+            trap 'rm -f -- "$receipt_tmp"' EXIT
+            printf '%s' "$ND_ARCHIVE_RECEIPT_JSON" > "$receipt_tmp"
+            mv -f -- "$receipt_tmp" "$ND_ARCHIVE_RECEIPT_PATH"
+        '''
+    }
+}
+
 def publishStructuredArtifacts() {
     try {
         def backlogJson = sh(script: '''#!/bin/bash
@@ -1773,8 +1795,8 @@ def publishStructuredArtifacts() {
                             status: status, attempt: attempt, seconds: completed - started / 1000.0,
                             archived_at: completed]
                         def suffix = attempt.toString().padLeft(4, '0')
-                        writeFile file: "${env.ND_REPORTING_RELATIVE_ROOT}/archive-inputs/${execution.id}.${suffix}.json".toString(),
-                            text: writeReportingJson(receipt)
+                        writeStructuredArchiveReceipt(
+                            "${env.ND_REPORTING_RELATIVE_ROOT}/archive-inputs/${execution.id}.${suffix}.json".toString(), receipt)
                     })
                     if (status == 'success') { break }
                     attempt++
@@ -2421,31 +2443,13 @@ def recordedCaseCount(row, name) {
     countableReportValue(value) ? value : null
 }
 
-// Webex numbers prefer the closed-log task recap. Authored case totals remain
-// in the activity artifact and are used only when that recap was not recorded.
+// Whole-invocation recaps include harness work; Webex uses integration cases only.
 def webexOutcomeCount(rows, name) {
-    long known = 0
-    boolean unknown = rows.isEmpty()
-    boolean measured = false
-    def executed = rows.findAll { it?.result != 'NOT_RUN' }
-    if (rows && executed.isEmpty()) { return '0' }
-    executed.each { row ->
-        def recap = recordedRecapCount(row, name)
-        if (recap != null) {
-            known += recap.longValue()
-            measured = true
-        } else {
-            def value = recordedCaseCount(row, name)
-            if (value != null) {
-                known += value.longValue()
-                measured = true
-            } else { unknown = true }
-            if ((row.case_totals?.incomplete instanceof Number && row.case_totals.incomplete > 0) ||
-                row.coverage in ['PARTIAL', 'INCOMPLETE', 'UNKNOWN']) { unknown = true }
-        }
-    }
-    if (!measured) { return '?' }
-    unknown ? "${known} + ?" : known.toString()
+    def integrationRows = rows.findAll { it.test_type == 'integration' }
+    def untypedExecution = rows.any { !it.test_type && it?.result != 'NOT_RUN' }
+    if (integrationRows.isEmpty()) { return untypedExecution ? '?' : '0' }
+    def value = caseOutcomeCount(integrationRows, name)
+    untypedExecution && !value.contains('?') ? "${value} + ?" : value
 }
 
 def webexModuleTotals(rows) {
@@ -2459,11 +2463,13 @@ def moduleCaseSummaryRows() {
         def status = row.result == 'PASS' ? 'OK' : row.result
         def notes = []
         def noExecution = row.result == 'NOT_RUN'
+        def integrationCaseCounts = row.test_type == 'integration'
         if (noExecution) {
             def reason = (row.failure ?: '').toString().toLowerCase()
             def blocked = (reason.contains('preflight') || reason.contains('pre-flight')) ? 'preflight blocked' : 'earlier execution stopped'
             notes.add('Not executed—' + blocked + '. Case coverage: N/A')
         } else {
+            if (!integrationCaseCounts) { notes.add('Not included in integration test-case totals') }
             if (row.coverage != 'COMPLETE') { notes.add('case coverage ' + (row.coverage ?: 'UNKNOWN')) }
             if (activityStageLabel(row.base).toLowerCase().contains('failed')) { notes.add('Setup/Base failed; case outcomes are separate') }
             if (activityStageLabel(row.cleanup).toLowerCase().contains('failed')) { notes.add('Cleanup failed; earlier case results are retained') }
@@ -2482,8 +2488,8 @@ def moduleCaseSummaryRows() {
             notes.add('Failure / reason: ' + row.failure.toString())
         }
         def note = notes.join('; ')
-        [status, row.module, row.fabric, row.nd, noExecution ? '-' : webexOutcomeCount([row], 'passed'),
-         noExecution ? '-' : webexOutcomeCount([row], 'failed'), noExecution ? '-' : webexOutcomeCount([row], 'skipped'),
+        [status, row.module, row.fabric, row.nd, noExecution || !integrationCaseCounts ? '-' : webexOutcomeCount([row], 'passed'),
+         noExecution || !integrationCaseCounts ? '-' : webexOutcomeCount([row], 'failed'), noExecution || !integrationCaseCounts ? '-' : webexOutcomeCount([row], 'skipped'),
          row.duration ?: '-', note, row.scope, row.round_label ?: ''].collect {
              (it ?: '').toString().replace('|', '/').replace('\n', ' ').replace('\r', ' ')
          }.join('|')
@@ -3421,7 +3427,7 @@ def recordUnstartedRound(ndfcConfig, reason) {
         def prefix = "${ndfcConfig.versionId}|${module}|".toString()
         if (!MODULE_ACTIVITY_RESULTS.keySet().any { it.startsWith(prefix) }) {
             def context = resultContextForTarget(ndfcConfig, module, ndfcConfig.fabric_name, pairRows)
-            MODULE_ACTIVITY_RESULTS[prefix + 'not-run'] = [module: module, nd: ndfcConfig.version,
+            MODULE_ACTIVITY_RESULTS[prefix + 'not-run'] = [module: module, test_type: PLAYBOOK_FILES.contains(module) ? 'smoke' : 'integration', nd: ndfcConfig.version,
                 round_label: ndfcConfig.round_label, fabric: context.fabric, scope: context.scope,
                 result: 'NOT_RUN', coverage: 'UNKNOWN', counts: [:], case_totals: [:],
                 failure: (reason ?: 'round not reached').toString().replace('|', '/').replace('\n', ' ').take(170)]
@@ -3836,7 +3842,7 @@ def runFabricTest(ndfcConfig) {
             def reportContextsForShell = plannedResultTargets.collect { target ->
                 def context = resultContextForTarget(ndfcConfig, target[0], networkFabricName, vpcPairRows)
                 def key = activityResultKey(ndfcConfig, target[0], testRunMarker)
-                MODULE_ACTIVITY_RESULTS[key] = [module: target[0], nd: ndfcConfig.version,
+                MODULE_ACTIVITY_RESULTS[key] = [module: target[0], test_type: target[1], nd: ndfcConfig.version,
                     round_label: ndfcConfig.round_label, run_id: testRunMarker, fabric: context.fabric, scope: context.scope,
                     result: 'UNKNOWN', coverage: 'UNKNOWN', counts: [:], case_totals: [:],
                     failure: 'result not collected; execution may be interrupted or not reached']
@@ -3950,6 +3956,23 @@ def runFabricTest(ndfcConfig) {
                                         --started "${result_start}" --ended "${result_end}" --exit-code "${result_status}" \\
                                         --prerequisite-seconds "$((result_start - PREREQUISITE_START))" || return 125
                                     return "${result_status}"
+                                }
+
+                                run_logged_playbook() {
+                                    local result_log="$1"
+                                    shift
+                                    local -a pipeline_status
+                                    if run_reported_playbook "$@" 2>&1 | tee -a "${result_log}"; then
+                                        pipeline_status=("${PIPESTATUS[@]}")
+                                    else
+                                        pipeline_status=("${PIPESTATUS[@]}")
+                                    fi
+                                    ANSIBLE_STATUS="${pipeline_status[0]}"
+                                    if [ "${pipeline_status[1]}" -ne 0 ]; then
+                                        echo 'NDP_MODULE_LOG_WRITE_FAILED' >&2
+                                        return 125
+                                    fi
+                                    return 0
                                 }
 
                                 begin_reported_module() {
@@ -4201,14 +4224,12 @@ PEERLINK_PROBE_EOF
                                         sleep "${VPC_PEERLINK_WAIT_SECONDS:-20}"
                                     done
                                     rm -f -- "${PEERLINK_PROBE}"
-                                    run_reported_playbook "$m" "${OUTPUT_FILE}" execution ${TIMEOUT_CMD} ansible-playbook -i "${INVENTORY_FILE}" "${TARGET_PLAYBOOK}" \
+                                    run_logged_playbook "${OUTPUT_FILE}" "$m" "${OUTPUT_FILE}" execution ${TIMEOUT_CMD} ansible-playbook -i "${INVENTORY_FILE}" "${TARGET_PLAYBOOK}" \
                                         -e "@${INVENTORY_VARS_FILE}" \
                                         -e "fabric_name=${VPC_FABRIC}" \
                                         -e "switch1_serial=${VPC_SW1}" \
                                         -e "switch2_serial=${VPC_SW2}" \
-                                        -e "fabric_type=${VPC_TYPE}" \
-                                        2>&1 | tee -a "${OUTPUT_FILE}"
-                                    ANSIBLE_STATUS=${PIPESTATUS[0]}
+                                        -e "fabric_type=${VPC_TYPE}"
                                     echo "[ANSIBLE_EXIT_STATUS: ${ANSIBLE_STATUS}]" | tee -a "${OUTPUT_FILE}"
                                     if [ "${ANSIBLE_STATUS}" -ne 0 ]; then
                                         RUN_FAILURE=1
@@ -4307,7 +4328,7 @@ PEERLINK_PROBE_EOF
                                             MOD_TIMEOUT="${MODULE_TIMEOUT}"
                                         fi
                                         MOD_TIMEOUT_CMD="$(command -v timeout >/dev/null 2>&1 && echo "timeout -k 60 ${MOD_TIMEOUT}" || true)"
-                                        run_reported_playbook "$m" "${ND_REPORT_LOG_DIR}/test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt" prerequisites ${MOD_TIMEOUT_CMD} ansible-playbook -i "${INVENTORY_FILE}" "${COLLECTIONS_DIRECTORY}/run_integration_module.yaml" \
+                                        run_logged_playbook "${ND_REPORT_LOG_DIR}/test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt" "$m" "${ND_REPORT_LOG_DIR}/test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt" prerequisites ${MOD_TIMEOUT_CMD} ansible-playbook -i "${INVENTORY_FILE}" "${COLLECTIONS_DIRECTORY}/run_integration_module.yaml" \
                                             -e "@${INVENTORY_VARS_FILE}" \
                                             -e "test_module=$m" \
                                             -e "fabric_name=${FABRIC_NAME}" \
@@ -4318,8 +4339,7 @@ PEERLINK_PROBE_EOF
                                             -e "nd_prerequisite_only=${ND_PREREQUISITE_ONLY_EFFECTIVE}" \
                                             -e "nd_prerequisite_mode=live" \
                                             -e "nd_prerequisite_run_id=${TEST_RUN_MARKER}_${m}" \
-                                            ${NETWORK_EXTRA_VARS} ${MODULE_TOPOLOGY_VARS} ${INTERFACE_TEST_VARS} 2>&1 | tee -a "${ND_REPORT_LOG_DIR}/test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt"
-                                        ANSIBLE_STATUS=${PIPESTATUS[0]}
+                                            ${NETWORK_EXTRA_VARS} ${MODULE_TOPOLOGY_VARS} ${INTERFACE_TEST_VARS}
                                         echo "[ANSIBLE_EXIT_STATUS: ${ANSIBLE_STATUS}]" | tee -a "${ND_REPORT_LOG_DIR}/test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt"
                                         if [ "${ANSIBLE_STATUS}" -ne 0 ]; then
                                             RUN_FAILURE=1
@@ -4359,10 +4379,8 @@ PEERLINK_PROBE_EOF
                                         echo "=============="
                                         echo "\$pb: ${pb}"
                                         echo "INVENTORY_FILE: ${INVENTORY_FILE}"
-                                        run_reported_playbook "$pb" "${ND_REPORT_LOG_DIR}/test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt" execution ${TIMEOUT_CMD} ansible-playbook -i "${INVENTORY_FILE}" "${COLLECTIONS_DIRECTORY}/${pb}" \
-                                            -e "@${INVENTORY_VARS_FILE}" \
-                                            2>&1 | tee -a "${ND_REPORT_LOG_DIR}/test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt"
-                                        ANSIBLE_STATUS=${PIPESTATUS[0]}
+                                        run_logged_playbook "${ND_REPORT_LOG_DIR}/test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt" "$pb" "${ND_REPORT_LOG_DIR}/test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt" execution ${TIMEOUT_CMD} ansible-playbook -i "${INVENTORY_FILE}" "${COLLECTIONS_DIRECTORY}/${pb}" \
+                                            -e "@${INVENTORY_VARS_FILE}"
                                         echo "[ANSIBLE_EXIT_STATUS: ${ANSIBLE_STATUS}]" | tee -a "${ND_REPORT_LOG_DIR}/test_output_${FABRIC_NAME}_${VERSION_ID}_${pb}.txt"
                                         if [ "${ANSIBLE_STATUS}" -ne 0 ]; then
                                             RUN_FAILURE=1

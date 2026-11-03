@@ -201,7 +201,8 @@ def test_jenkins_reporting_wiring_and_shell_syntax(tmp_path):
         without_declaration = re.sub(r"(?m)^def " + legacy + r"\([^\n]*\)\s*\{", "", uncommented)
         assert not re.search(r"\b" + legacy + r"\s*\(", without_declaration)
     assert 'e.getMessage().contains(' not in source
-    assert source.count("run_reported_playbook ") == 3
+    assert source.count("run_logged_playbook ") == 3
+    assert source.count('if run_reported_playbook "$@" 2>&1 | tee') == 1
     for index, block in enumerate(source.split("'''#!/bin/bash")[1:]):
         block = block.split("'''", 1)[0]
         if "run_reported_playbook()" not in block and "--log \"$ND_REPORT_LOG\"" not in block:
@@ -346,7 +347,7 @@ assert script.binding.env.PIPELINE_FAILED != 'true'
 def test_active_structured_results_preserve_failures_and_case_counts(active_pipeline, scenario):
     active_pipeline("def scenario = " + repr(scenario) + "\n" + r'''
 def failure = new RuntimeException()
-def row = [version_id: 'ND43', module: 'example', run_id: 'current', nd: '4.3',
+def row = [version_id: 'ND43', module: 'example', test_type: 'integration', run_id: 'current', nd: '4.3',
     fabric: 'fixture', scope: 'iBGP', round_label: 'iBGP', validated: true,
     result: scenario == 'success' ? 'PASS' : 'FAIL', coverage: 'COMPLETE',
     case_totals: [started: 1, passed: scenario == 'success' ? 1 : 0,
@@ -355,7 +356,7 @@ def row = [version_id: 'ND43', module: 'example', run_id: 'current', nd: '4.3',
     archive_status: 'success', artifact: 'fixture-output.txt', failure: scenario == 'success' ? '' : 'Ansible execution failed',
     invocation: [status: scenario == 'success' ? 'OK' : 'FAIL', exit_code: scenario == 'success' ? 0 : 2,
                  counts: [ok: 43, failed: 0, skipped: 2]]]
-script.MODULE_ACTIVITY_RESULTS['planned'] = [module: 'example', result: 'UNKNOWN',
+script.MODULE_ACTIVITY_RESULTS['planned'] = [module: 'example', test_type: 'integration', result: 'UNKNOWN',
     coverage: 'UNKNOWN', counts: [:], case_totals: [:], failure: 'awaiting final result']
 script.metaClass.sh = { Object options -> if (scenario == 'null_message') { throw failure }; return '' }
 script.metaClass.readFile = { Map options -> script.writeReportingJson(
@@ -377,7 +378,7 @@ if (scenario == 'null_message') {
     assert collected.result == (scenario == 'success' ? 'PASS' : 'FAIL')
     def raw = script.moduleCaseSummaryRows().readLines().find { it.contains('|example|') && !it.contains('awaiting final result') }
     assert raw.startsWith((scenario == 'success' ? 'OK' : 'FAIL') + '|example|')
-    assert raw.split('\\|', -1)[4..6] == ['43', '0', '2']
+    assert raw.split('\\|', -1)[4..6] == (scenario == 'success' ? ['1', '0', '0'] : ['0', '1', '0'])
     assert collected.case_totals == row.case_totals
     def cases = script.moduleCaseTotals([collected])
     assert [cases.passed, cases.failed, cases.skipped] == (scenario == 'success' ? ['1', '0', '0'] : ['0', '1', '0'])

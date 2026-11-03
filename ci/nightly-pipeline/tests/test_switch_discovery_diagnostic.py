@@ -157,6 +157,94 @@ def test_invalid_configuration_stops_before_any_http(capsys, args, env):
     assert code == 1 and not client.calls
 
 
+@pytest.mark.parametrize("status,serial,category,exit_code", [
+    ("notAuthorized", None, "AUTHENTICATION_UNCONFIRMED", 1),
+    ("notReacheable", "", "REACHABILITY_UNCONFIRMED", 1),
+    ("manageable", None, "SERIAL_UNCONFIRMED", 1),
+    ("manageable", "SERIAL00002", "IDENTITY_MISMATCH", 1),
+    ("alreadyManaged", "SERIAL00001", "ALREADY_MANAGED_IDENTITY_ONLY", 0),
+    ("manageable", "SERIAL00001", "IDENTITY_CONFIRMED_IN_SAVED_RESPONSE", 0),
+])
+def test_offline_replay_classifies_saved_evidence_without_credentials_or_http(
+        tmp_path, monkeypatch, capsys, status, serial, category, exit_code):
+    saved = tmp_path / "saved-discovery.json"
+    saved.write_text(json.dumps({"switches": [{"ip": "192.0.2.10", "status": status,
+        "serialNumber": serial, "statusReason": "saved-private-reason"}],
+        "warning": "saved-private-warning", "password": "saved-private-password"}))
+
+    def reject_http(*args, **kwargs):
+        pytest.fail("Offline replay must not construct an HTTP client")
+
+    monkeypatch.setattr(DIAGNOSTIC.requests, "Session", reject_http)
+    code = DIAGNOSTIC.main(["--replay", str(saved), "--seed", "192.0.2.10=SERIAL00001"], environ={})
+    raw = capsys.readouterr().out
+    report = json.loads(raw)
+    assert code == exit_code
+    assert report["stage"] == "replay" and report["offline"] is True
+    assert report["network_requests"] == 0 and report["live_readiness_verified"] is False
+    assert report["results"][0]["category"] == category
+    assert report["results"][0]["actual_serial"] == serial
+    assert all(value not in raw for value in (
+        "saved-private-reason", "saved-private-warning", "saved-private-password"))
+
+
+def test_offline_replay_requires_explicit_expected_identity(tmp_path, monkeypatch, capsys):
+    saved = tmp_path / "saved-discovery.json"
+    saved.write_text(json.dumps({"switches": []}))
+    monkeypatch.setattr(DIAGNOSTIC.requests, "Session", lambda: pytest.fail("No HTTP in offline mode"))
+    assert DIAGNOSTIC.main(["--replay", str(saved)], environ={}) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["error"] == "Offline replay requires at least one explicit --seed IP=EXPECTED_SERIAL"
+    assert report["network_requests"] == 0
+
+
+@pytest.mark.parametrize("wrapper", [None, "DATA", "body"])
+def test_offline_replay_reuses_controller_response_shapes(tmp_path, monkeypatch, capsys, wrapper):
+    body = {"switches": [{"ip": "192.0.2.10", "status": "manageable", "serialNumber": "SERIAL00001"}]}
+    saved = tmp_path / "saved-discovery.json"
+    saved.write_text(json.dumps({wrapper: body} if wrapper else body))
+    monkeypatch.setattr(DIAGNOSTIC.requests, "Session", lambda: pytest.fail("No HTTP in offline mode"))
+    assert DIAGNOSTIC.main(["--replay", str(saved), "--seed", "192.0.2.10=SERIAL00001"], environ={}) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["results"][0]["category"] == "IDENTITY_CONFIRMED_IN_SAVED_RESPONSE"
+    assert report["live_readiness_verified"] is False
+
+
+@pytest.mark.parametrize("body", [[], {}, {"switches": None}, {"switches": []},
+    {"switches": [{"ip": "192.0.2.11", "status": "manageable", "serialNumber": "SERIAL00001"}]},
+    {"code": 500, "switches": []}, {"switches": [], "warning": {}}])
+def test_offline_replay_rejects_unusable_saved_responses(tmp_path, monkeypatch, capsys, body):
+    saved = tmp_path / "saved-discovery.json"
+    saved.write_text(json.dumps(body))
+    monkeypatch.setattr(DIAGNOSTIC.requests, "Session", lambda: pytest.fail("No HTTP in offline mode"))
+    assert DIAGNOSTIC.main(["--replay", str(saved), "--seed", "192.0.2.10=SERIAL00001"], environ={}) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["ok"] is False and report["network_requests"] == 0
+
+
+@pytest.mark.parametrize("extra_args", [["--inventory"], ["--seed", "192.0.2.10=SERIAL00002"],
+    ["--seed", "192.0.2.11=SERIAL00001"]])
+def test_offline_replay_rejects_live_inventory_or_ambiguous_expectations(tmp_path, monkeypatch, capsys, extra_args):
+    saved = tmp_path / "saved-discovery.json"
+    saved.write_text(json.dumps({"switches": []}))
+    monkeypatch.setattr(DIAGNOSTIC.requests, "Session", lambda: pytest.fail("No HTTP in offline mode"))
+    args = ["--replay", str(saved), "--seed", "192.0.2.10=SERIAL00001", *extra_args]
+    assert DIAGNOSTIC.main(args, environ={}) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["error"] and report["network_requests"] == 0
+
+
+def test_offline_replay_bounds_input_and_does_not_echo_invalid_saved_text(tmp_path, monkeypatch, capsys):
+    saved = tmp_path / "saved-discovery.json"
+    monkeypatch.setattr(DIAGNOSTIC.requests, "Session", lambda: pytest.fail("No HTTP in offline mode"))
+    for text in ["saved-invalid-secret", " " * 1048577]:
+        saved.write_text(text)
+        assert DIAGNOSTIC.main(["--replay", str(saved), "--seed", "192.0.2.10=SERIAL00001"], environ={}) == 1
+        raw = capsys.readouterr().out
+        assert "saved-invalid-secret" not in raw
+        assert json.loads(raw)["network_requests"] == 0
+
+
 @pytest.fixture
 def jenkins_probe(monkeypatch):
     path = Path(__file__).resolve().parents[1] / "Jenkinsfile_leaf1_discovery_diagnostic"

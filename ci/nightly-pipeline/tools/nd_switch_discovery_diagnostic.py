@@ -6,11 +6,15 @@ ANSIBLE_NXOS_SWITCH_PASSWORD environment bindings. --seed replaces the default;
 repeat it to compare switches, for example --seed 192.0.2.195=SERIAL00001
 --seed 192.0.2.196=SERIAL00002. TLS verification defaults to true; a CA bundle
 is preferred. Existing lab runtime ND_VERIFY_CERTS=false is explicitly honored.
+
+Use --replay SAVED_JSON with explicit --seed entries to inspect a saved raw
+discovery response offline. Replay never requires credentials or creates a client.
 """
 import argparse
 import ipaddress
 import json
 import os
+from pathlib import Path
 import re
 from urllib.parse import quote, urlsplit
 
@@ -48,6 +52,18 @@ def redact(value, secrets):
     return value
 
 
+def discovery_body(body):
+    if not isinstance(body, dict):
+        raise DiagnosticError("Controller returned a malformed JSON object")
+    for key in ("DATA", "body"):
+        if isinstance(body.get(key), dict):
+            body = body[key]
+            break
+    if "code" in body or isinstance(body.get("error"), dict) and "code" in body["error"]:
+        raise DiagnosticError("Controller returned an embedded error")
+    return body
+
+
 def discovery_rows(body, seeds):
     records = body.get("switches")
     if not isinstance(records, list) or any(not isinstance(row, dict) for row in records):
@@ -83,6 +99,56 @@ def discovery_rows(body, seeds):
     return rows
 
 
+def replay_discovery(args, secrets):
+    report = {"stage": "replay", "offline": True, "network_requests": 0,
+              "live_readiness_verified": False, "ok": False}
+    try:
+        if not args.seed:
+            raise DiagnosticError("Offline replay requires at least one explicit --seed IP=EXPECTED_SERIAL")
+        if args.inventory:
+            raise DiagnosticError("Offline replay cannot request live inventory")
+        if len({address for address, _ in args.seed}) != len(args.seed) or len({serial for _, serial in args.seed}) != len(args.seed):
+            raise DiagnosticError("Seed IPs and expected serials must each be unique")
+        if not args.replay.is_file():
+            raise DiagnosticError("Offline replay requires a regular saved JSON file")
+        with args.replay.open(encoding="utf-8") as saved:
+            text = saved.read(1048577)
+        if len(text) > 1048576:
+            raise DiagnosticError("Saved discovery response exceeds the offline replay size limit")
+        body = discovery_body(json.loads(text))
+        warning = body.get("warning", "")
+        if not isinstance(warning, str):
+            raise DiagnosticError("Discovery returned a malformed warning")
+        rows = discovery_rows(body, args.seed)
+        categories = {
+            "notauthorized": "AUTHENTICATION_UNCONFIRMED", "unauthorized": "AUTHENTICATION_UNCONFIRMED",
+            "authenticationfailed": "AUTHENTICATION_UNCONFIRMED", "unknownuserpassword": "AUTHENTICATION_UNCONFIRMED",
+            "notreachable": "REACHABILITY_UNCONFIRMED", "notreacheable": "REACHABILITY_UNCONFIRMED",
+            "unreachable": "REACHABILITY_UNCONFIRMED", "notmanageable": "NOT_MANAGEABLE",
+        }
+        for row in rows:
+            status = row.get("status") or ""
+            status = "".join(char for char in status.lower() if char.isalnum())
+            row["status_reason_present"] = bool(row.pop("status_reason", None))
+            row["status"] = status if status in ACCEPTED or status in categories else None
+            if row["ok"]:
+                category = "ALREADY_MANAGED_IDENTITY_ONLY" if status == "alreadymanaged" else "IDENTITY_CONFIRMED_IN_SAVED_RESPONSE"
+            elif "Returned serial does not match expected serial" in row["errors"]:
+                category = "IDENTITY_MISMATCH"
+            elif status in categories:
+                category = categories[status]
+            elif status in ACCEPTED and "Discovery returned no valid serial number" in row["errors"]:
+                category = "SERIAL_UNCONFIRMED"
+            else:
+                category = "DISCOVERY_RECORD_UNCONFIRMED"
+            row["category"] = category
+        report.update(warning_present=bool(warning), results=rows, ok=all(row["ok"] for row in rows))
+    except (DiagnosticError, ValueError, OSError) as exc:
+        report["error"] = str(exc) if isinstance(exc, DiagnosticError) else "Saved discovery response could not be read as valid JSON"
+    print(json.dumps(redact(report, secrets), indent=2, sort_keys=True))
+    return 0 if report["ok"] else 1
+
+
 def main(argv=None, *, environ=None, session=None):
     env = os.environ if environ is None else environ
     parser = argparse.ArgumentParser(description=__doc__)
@@ -93,8 +159,11 @@ def main(argv=None, *, environ=None, session=None):
     parser.add_argument("--ca-bundle")
     parser.add_argument("--inventory", action="store_true", help="Also GET the controller switch inventory")
     parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--replay", type=Path, help="Inspect saved raw discovery JSON without credentials or network access")
     args = parser.parse_args(argv)
     secrets = [env.get(name, "") for name in CREDENTIALS]
+    if args.replay is not None:
+        return replay_discovery(args, secrets)
     report = {"controller": args.host, "fabric": args.fabric, "ok": False}
     try:
         if any(not value.strip() for value in secrets):
@@ -130,16 +199,7 @@ def main(argv=None, *, environ=None, session=None):
                                       headers=headers, timeout=args.timeout, verify=verify, allow_redirects=False)
             if not 200 <= response.status_code < 300:
                 raise DiagnosticError("Controller request failed (HTTP %s)" % response.status_code)
-            body = response.json()
-            if not isinstance(body, dict):
-                raise DiagnosticError("Controller returned a malformed JSON object")
-            for key in ("DATA", "body"):
-                if isinstance(body.get(key), dict):
-                    body = body[key]
-                    break
-            if "code" in body or isinstance(body.get("error"), dict) and "code" in body["error"]:
-                raise DiagnosticError("Controller returned an embedded error")
-            return body
+            return discovery_body(response.json())
 
         report["stage"] = "login"
         login = call("POST", "/login", {"userName": secrets[0], "userPasswd": secrets[1], "domain": "local"})

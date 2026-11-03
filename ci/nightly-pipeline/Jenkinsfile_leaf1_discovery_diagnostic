@@ -25,7 +25,7 @@ fi
 '''
                         withCredentials([
                             string(credentialsId: 'ANSIBLE_NDFC_USERNAME', variable: 'NDFC_USER'),
-                            string(credentialsId: 'ANSIBLE_NDFC_41_117_PASSWORD', variable: 'NDFC_PASSWORD'),
+                            string(credentialsId: 'ANSIBLE_NDFC_PASSWORD', variable: 'NDFC_PASSWORD'),
                             usernamePassword(credentialsId: 'SWITCH_CREDENTIALS',
                                 usernameVariable: 'ANSIBLE_NXOS_SWITCH_USERNAME',
                                 passwordVariable: 'ANSIBLE_NXOS_SWITCH_PASSWORD')

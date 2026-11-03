@@ -9,7 +9,7 @@ import pytest
 from test_build124_switch_preflight import PRELUDE, PRODUCER
 
 ROOT = Path(__file__).resolve().parents[1]
-VARIANTS = ('Jenkinsfile_nd_jenkins_script',)
+VARIANTS = ('Jenkinsfile_nd_jenkins_script', 'Jenkinsfile_nd_jenkins_script_temp_switches')
 
 @pytest.fixture(scope='module', params=VARIANTS)
 def groovy_runner(request, tmp_path_factory):
@@ -41,6 +41,73 @@ def makeFailure = { String kind, String label ->
 
 def specification(value):
     return 'def scenario = script.parseReportingJson(' + json.dumps(json.dumps(value)) + ')\n'
+
+
+@pytest.mark.parametrize('variant', (*VARIANTS, 'Jenkinsfile_nd_jenkins_script_comm_list'))
+@pytest.mark.parametrize('mode', ['normal', 'parent_symlink', 'target_symlink', 'absolute_path'])
+def test_archive_receipt_uses_container_shell_and_rejects_unsafe_paths(tmp_path, variant, mode):
+    source = (ROOT / variant).read_text()
+    writer = source.split('def writeStructuredArchiveReceipt(', 1)[1].split('\ndef publishStructuredArtifacts', 1)[0]
+    shell = writer.split("sh '''", 1)[1].split("'''", 1)[0]
+    parent = tmp_path / 'fixture-reports' / 'archive-inputs'
+    parent.mkdir(parents=True)
+    target = parent / 'execution.0001.json'
+    outside = tmp_path / 'outside.json'
+    outside.write_text('unchanged')
+    if mode == 'parent_symlink':
+        parent.rmdir()
+        parent.symlink_to(tmp_path, target_is_directory=True)
+    elif mode == 'target_symlink':
+        target.symlink_to(outside)
+    relative = str(target) if mode == 'absolute_path' else str(target.relative_to(tmp_path))
+    receipt = {'id': 'execution', 'build': '137', 'build_run_id': 'fixture-run',
+               'status': 'success', 'attempt': 1, 'seconds': 1.5, 'archived_at': 1000}
+    environment = dict(os.environ, ND_ARCHIVE_RECEIPT_PATH=relative,
+                       ND_ARCHIVE_RECEIPT_JSON=json.dumps(receipt))
+    result = subprocess.run(['/bin/bash'], input=shell, cwd=tmp_path, env=environment,
+                            text=True, capture_output=True, timeout=5)
+    assert outside.read_text() == 'unchanged'
+    assert 'fixture-run' not in result.stdout + result.stderr
+    if mode == 'normal':
+        assert result.returncode == 0, result.stderr
+        assert json.loads(target.read_text()) == receipt
+        assert target.stat().st_mode & 0o777 == 0o600
+        assert not list(parent.glob('*.tmp.*'))
+    else:
+        assert result.returncode != 0
+    publisher = source.split('def publishStructuredArtifacts()', 1)[1].split('\ndef foldStructuredResults', 1)[0]
+    assert 'writeStructuredArchiveReceipt(' in publisher
+    assert 'writeFile file:' not in publisher
+
+
+@pytest.mark.parametrize('variant', (*VARIANTS, 'Jenkinsfile_nd_jenkins_script_comm_list'))
+@pytest.mark.parametrize('module_status,pipefail,archive_status', [
+    (0, False, 0), (2, False, 0), (2, True, 0), (124, True, 0), (0, True, 74),
+])
+def test_module_logging_collects_failure_without_losing_later_modules(
+        tmp_path, variant, module_status, pipefail, archive_status):
+    source = (ROOT / variant).read_text()
+    anchor = '                                run_logged_playbook() {'
+    assert source.count(anchor) == 1
+    helper = anchor + source.split(anchor, 1)[1].split('\n                                }\n', 1)[0] + '\n}'
+    log = tmp_path / 'module.txt'
+    shell = 'set -e\n' + ('set -o pipefail\n' if pipefail else 'set +o pipefail\n')
+    shell += f'run_reported_playbook() {{ printf "offline module result\\n"; return {module_status}; }}\n'
+    if archive_status:
+        shell += f'tee() {{ cat >/dev/null; return {archive_status}; }}\n'
+    shell += helper + '\nrun_logged_playbook "$1" nd_fixture "$1" execution\n'
+    shell += 'printf "COLLECTED_STATUS=%s\\n" "$ANSIBLE_STATUS"\nprintf "NEXT_MODULE_REACHED\\n"\n'
+    result = subprocess.run(['/bin/bash', '-s', '--', str(log)], input=shell,
+                            text=True, capture_output=True, timeout=5)
+    if archive_status:
+        assert result.returncode == 125
+        assert 'NEXT_MODULE_REACHED' not in result.stdout
+        assert 'NDP_MODULE_LOG_WRITE_FAILED' in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
+        assert f'COLLECTED_STATUS={module_status}' in result.stdout
+        assert 'NEXT_MODULE_REACHED' in result.stdout
+        assert log.read_text() == 'offline module result\n'
 
 
 @pytest.mark.parametrize('primary, secondary, expected', [
@@ -82,7 +149,7 @@ int nextCalls = 0
 context.ND_REPORTING_RELATIVE_ROOT = 'fixture-reports'
 script.metaClass.timeout = { Map options, Closure work -> work.call() }
 script.metaClass.retry = { Integer count, Closure work -> work.call() }
-script.metaClass.writeFile = { Map options -> calls.add('record-receipt') }
+script.metaClass.writeStructuredArchiveReceipt = { String relativePath, Map receipt -> calls.add('record-receipt') }
 script.metaClass.archiveArtifacts = { Map options ->
     calls.add('archive'); if (errors.archive != null) { throw errors.archive }
 }
@@ -108,7 +175,6 @@ assert !logs.any { it.startsWith('NDP_REPORTER_FAILED:') }
 ''')
 
 
-
 @pytest.mark.parametrize('failing_first', [False, True])
 def test_publisher_prepares_once_and_keeps_later_modules_after_upload_failure(groovy_runner, failing_first):
     groovy_runner('def failingFirst = ' + str(failing_first).lower() + '\n' + r'''
@@ -116,7 +182,7 @@ def recorded = []
 context.ND_REPORTING_RELATIVE_ROOT = 'fixture-reports'
 script.metaClass.timeout = { Map options, Closure work -> work.call() }
 script.metaClass.retry = { Integer count, Closure work -> work.call() }
-script.metaClass.writeFile = { Map options -> recorded.add(script.parseReportingJson(options.text)) }
+script.metaClass.writeStructuredArchiveReceipt = { String relativePath, Map receipt -> recorded.add(receipt) }
 script.metaClass.archiveArtifacts = { Map options ->
     calls.add('archive:' + options.artifacts)
     if (failingFirst && options.artifacts.contains('first')) { throw new IllegalStateException('upload failed') }

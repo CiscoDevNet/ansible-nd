@@ -3,7 +3,6 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import shutil
 import sys
 import zipfile
 
@@ -12,13 +11,14 @@ import pytest
 from test_five_issue_pipeline_fixes import PRELUDE
 
 ROOT = Path(__file__).resolve().parents[1]
-VARIANTS = ("Jenkinsfile_nd_jenkins_script",)
+VARIANTS = ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches",
+            "Jenkinsfile_nd_jenkins_script_comm_list")
 
 
 @pytest.fixture(scope="module", params=VARIANTS)
 def pipeline(request, tmp_path_factory):
-    java = Path(os.environ.get("ND_WEBEX_TEST_JAVA") or shutil.which("java") or "")
-    jar = Path(os.environ.get("ND_WEBEX_TEST_GROOVY", ""))
+    java = Path(os.environ.get("ND_WEBEX_TEST_JAVA", "/private/tmp/nd-local-groovy-runtime/jdk-21.0.13+9-jre/Contents/Home/bin/java"))
+    jar = Path(os.environ.get("ND_WEBEX_TEST_GROOVY", "/private/tmp/nd-groovy-all-2.4.21.jar"))
     if not java.is_file() or not jar.is_file():
         pytest.skip("A local JVM and Groovy jar are required")
     directory = tmp_path_factory.mktemp("readable-artifacts")
@@ -42,7 +42,7 @@ PUBLISHER = r'''
 def archived = []
 int nextCalls = 0
 script.binding.env.ND_REPORTING_RELATIVE_ROOT = 'fixture-reports'
-script.metaClass.writeFile = { Map options -> null }
+script.metaClass.writeStructuredArchiveReceipt = { String relativePath, Map receipt -> null }
 script.metaClass.sh = { Object options ->
     if (options instanceof Map && options.returnStdout) {
         nextCalls++
