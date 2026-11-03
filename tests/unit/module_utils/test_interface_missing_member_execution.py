@@ -213,7 +213,9 @@ def test_ordinary_workflow_uses_existing_planner_arguments_without_preparation_o
 
     assert coordinator._build_plan() is sentinel
     assert len(captured) == 1
-    assert set(captured[0]) == {"snapshot", "rest_send_factory", "vpc_pair_by_switch_ip", "run_capability_preflight"}
+    # `vpc_discovered_pairs` is the pair-readiness input added for issue #648; it is None here because no vPC resource is requested.
+    assert set(captured[0]) == {"snapshot", "rest_send_factory", "vpc_pair_by_switch_ip", "vpc_discovered_pairs", "run_capability_preflight"}
+    assert captured[0]["vpc_discovered_pairs"] is None
 
 
 def test_existing_host_conversion_still_requires_preparation_parent_and_final_update():
