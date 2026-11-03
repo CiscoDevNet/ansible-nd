@@ -176,8 +176,14 @@ options:
                         type: str
                     software_image:
                         description:
-                        - Software image file to use during POAP import.
-                        - When omitted, no software image override is requested.
+                        - Software image filename to use during POAP import.
+                        - The image must already exist in ND and be compatible with the target switch.
+                        - Selecting a different image can install it and reload the switch.
+                          Selecting an older image can downgrade the switch software.
+                        - When omitted, no C(softwareImage) override is sent.
+                        - An omitted, unavailable, or invalid image might leave the imported switch
+                          at the loader after reload. Recovery requires console access
+                          to manually boot an existing image from bootflash.
                         type: str
             preprovision:
                 description:
@@ -361,6 +367,10 @@ EXAMPLES = """
             gateway: 192.168.10.1/24
     state: merged
 
+# Upload a compatible image to ND before running this task.
+# Selecting a different image can install it and reload the switch; an older image can downgrade the switch software.
+# An omitted, unavailable, or invalid image might leave the switch at the loader after reload.
+# Have console access to manually boot an existing bootflash image if recovery is needed.
 - name: Bootstrap a switch via POAP
   cisco.nd.nd_manage_switches:
     fabric: my-fabric
