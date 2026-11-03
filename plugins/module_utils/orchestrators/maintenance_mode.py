@@ -109,7 +109,7 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
     _snapshot_switch_ids: dict[str, str] | None = None
 
     # ------------------------------------------------------------------ #
-    # Preflight override (issue #653)
+    # Shared-interface hook overrides (issue #653)
     # ------------------------------------------------------------------ #
 
     def preflight_safety(self, model_instances: Sequence[MaintenanceModeModel]) -> None:
@@ -139,6 +139,24 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
         unresolved = sorted({switch.switch_ip for model_instance in model_instances for switch in model_instance.switches if switch.switch_ip not in known})
         if unresolved:
             raise RuntimeError(f"Cannot resolve switch_ip to switchId in fabric '{self.fabric_name}' for: {', '.join(unresolved)}.")
+
+    def prepare_bulk_description_update(  # pylint: disable=unused-argument
+        self, model_instance: MaintenanceModeModel, previous_model: MaintenanceModeModel | None = None
+    ) -> dict[str, Any] | None:
+        """
+        # Summary
+
+        Decline the shared ND 4.3.1 `interfaceActions/modify` bulk-update path. On a 4.3.1 controller `NDStateMachine` offers
+        every update to `NDBaseInterfaceOrchestrator.prepare_bulk_description_update` before falling back to the orchestrator's
+        own `update()`; the shared hook reads `switch_ip` and `interface_name`, which this model does not carry (issue #653). A
+        maintenance-mode change is a `switchActions/changeSystemMode` POST, not an interface modify, so always return `None`
+        and let the state machine run `update()`.
+
+        ## Raises
+
+        None
+        """
+        return None
 
     # ------------------------------------------------------------------ #
     # CRUD method overrides (action-shaped semantics)
