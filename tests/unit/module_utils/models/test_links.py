@@ -1054,3 +1054,45 @@ def test_link_type_still_read_from_response():
     assert link.link_type == "lan_planned_link"
     # ...but it is never sent back to the controller.
     assert "linkType" not in link.to_payload()
+
+
+def _user_defined_response(template_inputs: dict) -> dict:
+    """Wire-shaped controller read of a userDefined link carrying the given free-form templateInputs."""
+    return {
+        "srcFabricName": "f1",
+        "dstFabricName": "f1",
+        "srcSwitchName": "a",
+        "dstSwitchName": "b",
+        "srcInterfaceName": "Ethernet1/1",
+        "dstInterfaceName": "Ethernet1/1",
+        "configData": {"policyType": "userDefined", "templateName": "custom_tmpl", "templateInputs": template_inputs},
+    }
+
+
+def _user_defined_proposed(template_inputs: dict) -> NDLinkModel:
+    """A merged-state userDefined declaration with the given free-form template_inputs."""
+    config = _user_defined_config(template_name="custom_tmpl")
+    config["config_data"]["template_inputs"] = template_inputs
+    return NDLinkModel.from_config(config, context={"state": "merged"})
+
+
+def test_user_defined_unchanged_custom_input_is_idempotent():
+    """A userDefined link whose free-form template input is restated identically classifies as no diff."""
+    existing = NDLinkModel.from_response(_user_defined_response({"custom_setting": "x"}))
+    proposed = _user_defined_proposed({"custom_setting": "x"})
+    assert existing.get_diff(proposed, exclude_unset=True) is True
+
+
+def test_user_defined_changed_custom_input_is_detected():
+    """Changing the value of a free-form userDefined template input is a real change (the extras are user intent,
+    not controller metadata, so the #531 extras strip must not erase them)."""
+    existing = NDLinkModel.from_response(_user_defined_response({"custom_setting": "x"}))
+    proposed = _user_defined_proposed({"custom_setting": "y"})
+    assert existing.get_diff(proposed, exclude_unset=True) is False
+
+
+def test_user_defined_added_custom_input_is_detected():
+    """Adding a new free-form userDefined template input is a real change."""
+    existing = NDLinkModel.from_response(_user_defined_response({"custom_setting": "x"}))
+    proposed = _user_defined_proposed({"custom_setting": "x", "other_setting": "z"})
+    assert existing.get_diff(proposed, exclude_unset=True) is False
