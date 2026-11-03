@@ -739,12 +739,14 @@ def test_maintenance_mode_00400(body, should_raise: bool) -> None:
 # whole merged path exactly as `nd_maintenance_mode` does.
 
 
-def _state_machine(config: list, gen_responses: ResponseGenerator, check_mode: bool = False) -> NDStateMachine:
+def _state_machine(config: list, gen_responses: ResponseGenerator, check_mode: bool = False, controller_version: str | None = None) -> NDStateMachine:
     """Build an `NDStateMachine` over a `MaintenanceModeOrchestrator` wired to the file-based `Sender`."""
     rest_send = _build_rest_send(gen_responses, config=config)
     rest_send.params["state"] = "merged"
     rest_send.params["check_mode"] = check_mode
     rest_send.check_mode = check_mode
+    if controller_version is not None:
+        rest_send.controller_version = controller_version
     orchestrator = MaintenanceModeOrchestrator(rest_send=rest_send)
     params = {"state": "merged", "fabric_name": "SITE1", "config": config, "output_level": "normal"}
     return NDStateMachine(module=SimpleNamespace(params=params, check_mode=check_mode), model_orchestrator=orchestrator)
@@ -885,3 +887,43 @@ def test_maintenance_mode_00530() -> None:
 
     with pytest.raises(RuntimeError, match=r"Cannot resolve switch_ip to switchId in fabric 'SITE1' for: 10\.99\.99\.99\."):
         instance.preflight([model])
+
+
+def test_maintenance_mode_00540() -> None:
+    """
+    # Summary
+
+    Verify a merged run through `NDStateMachine` against an ND 4.3.1 controller still POSTs changeSystemMode for a switch that
+    needs a mode change.
+
+    ## Test
+
+    - `controller_version` is 4.3.1, which enables the shared interface bulk-modify update path in `NDStateMachine`
+    - Switch A reports normal; config requests maintenance
+    - `manage_state` does not raise (issue #653: the bulk-modify prepare hook must not read interface fields on this model)
+    - POST changeSystemMode carries switch A's switchId and the run reports `changed: true`
+
+    ## Classes and Methods
+
+    - NDStateMachine.manage_state
+    - MaintenanceModeOrchestrator.prepare_bulk_description_update
+    - MaintenanceModeOrchestrator.update
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_maintenance_mode(f"{method_name}a")  # summary
+        yield responses_maintenance_mode(f"{method_name}b")  # bulk switches GET (switch A normal)
+        yield responses_maintenance_mode(f"{method_name}c")  # POST 207 success
+
+    config = [{"mode": "maintenance", "switches": [{"switch_ip": "192.168.12.131"}]}]
+    state_machine = _state_machine(config, ResponseGenerator(responses()), controller_version="4.3.1.175")
+
+    with does_not_raise():
+        state_machine.manage_state()
+
+    rest_send = state_machine.model_orchestrator.rest_send
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert "switchActions/changeSystemMode" in rest_send.path
+    assert rest_send.committed_payload == {"mode": "maintenance", "switchIds": ["9UOJ3E8A6O9"]}
+    assert state_machine.output.format()["changed"] is True
