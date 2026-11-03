@@ -169,6 +169,11 @@ class NDBaseModel(BaseModel, ABC):
     # or the default never matches and the field silently reopens issue #410 for that model.
     reverse_diff_defaults: ClassVar[Dict[str, Any]] = {}
 
+    # Set True on a model whose `extra="allow"` keys ARE the user's configuration (an open-shape payload such as a userDefined link
+    # template's inputs) rather than controller-populated metadata. `get_diff` strips `model_extra` keys from both sides before
+    # comparing (issue #531); a model that opts in keeps its extras in the comparison so a changed or added key is still a real diff.
+    extras_are_user_intent: ClassVar[bool] = False
+
     # Keys (field ALIASES / wire keys) stripped from this model's level of the reverse-pass dump regardless of
     # value. For server-populated fields the proposed config can never express (e.g. the orchestrator-injected
     # `peerSwitchId` on vPC policy models): their presence on the existing side is not a pending reset, and
@@ -681,9 +686,10 @@ class NDBaseModel(BaseModel, ABC):
 
         Strip, in place, every key `data` (an aliased dump of `self`) carries only because the model retained it via `extra="allow"`,
         at every nesting level: this model, nested `NDBaseModel` fields, and models held inside list, tuple, or dict-valued fields
-        (issue #531). ND echoes server-populated keys such as `controllerGeneratedId` on child objects; the forward `issubset` pass
+        (issue #531). A model that declares `extras_are_user_intent` keeps its own extras (they are configuration, not controller noise).
+        ND echoes server-populated keys such as `controllerGeneratedId` on child objects; the forward `issubset` pass
         matches list elements bidirectionally, so an existing-side extra on a list-contained model would otherwise fail the element
-        match and classify an identical resource as changed on every run. `get_diff` applies this to both sides, since the extras are
+        match and classify an identical resource as changed on every run. `get_diff` applies this to both sides, since controller extras are
         never user intent on either. Container shape and order are preserved; a container whose dump no longer lines up with the
         model value (length mismatch) is left untouched.
 
@@ -693,9 +699,11 @@ class NDBaseModel(BaseModel, ABC):
         """
         if not isinstance(data, dict):
             return
-        # `model_extra` keys are stored under their wire spelling, matching the aliased dump.
-        for extra_key in getattr(self, "model_extra", None) or {}:
-            data.pop(extra_key, None)
+        # `model_extra` keys are stored under their wire spelling, matching the aliased dump. A model whose extras are the
+        # user's own configuration (`extras_are_user_intent`) keeps them in the comparison.
+        if not self.extras_are_user_intent:
+            for extra_key in getattr(self, "model_extra", None) or {}:
+                data.pop(extra_key, None)
         for field_name, field_info in type(self).model_fields.items():
             alias = field_info.alias or field_name
             if alias in data:

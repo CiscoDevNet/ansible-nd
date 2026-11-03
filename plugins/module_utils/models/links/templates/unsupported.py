@@ -17,7 +17,7 @@ user input stays strictly validated against the supported policy types.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ConfigDict, Field
 
@@ -29,6 +29,9 @@ UNSUPPORTED_POLICY_MARKER = "__unsupported__"
 
 class UnsupportedTemplateInputs(LinkTemplateBase):
     """Opaque, read-only preservation of an unsupported policy's templateInputs."""
+
+    # Free-form template inputs are the user's configuration, not controller metadata: keep them in `get_diff` (issue #531).
+    extras_are_user_intent: ClassVar[bool] = True
 
     model_config = ConfigDict(
         extra="allow",
