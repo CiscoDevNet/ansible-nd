@@ -11,7 +11,8 @@ Verifies that the orchestrator drives `RestSend` correctly for the changeSystemM
 per-switch GET fan-out and snapshot construction in `query_all`, migration hard-fail, idempotency
 filtering in `update`, and per-switch 207-failure parsing.
 
-Scope: methods defined in `maintenance_mode.py` only. Inherited `FabricContext` plumbing is
+Scope: methods defined in `maintenance_mode.py`, plus the merged path through `NDStateMachine` (tests 00500+,
+issue #653) because that is where the shared interface preflight runs. Inherited `FabricContext` plumbing is
 exercised through `query_all` but tested in detail by `test_fabric_context.py`.
 """
 
@@ -23,10 +24,12 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import inspect
+from types import SimpleNamespace
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.maintenance_mode.maintenance_mode import MaintenanceModeModel
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.maintenance_mode import MaintenanceModeOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -724,3 +727,161 @@ def test_maintenance_mode_00400(body, should_raise: bool) -> None:
     else:
         with does_not_raise():
             instance._raise_on_207_failures(body, ["1.1.1.1"], ["X"])
+
+
+# =============================================================================
+# Tests: NDStateMachine end to end (issue #653)
+# =============================================================================
+#
+# The orchestrator-only tests above never reach `NDStateMachine.manage_state`, which runs the
+# shared interface preflight before every merged mutation. That preflight is where issue #653
+# surfaced (`'MaintenanceModeModel' object has no attribute 'switch_ip'`), so these tests drive the
+# whole merged path exactly as `nd_maintenance_mode` does.
+
+
+def _state_machine(config: list, gen_responses: ResponseGenerator, check_mode: bool = False) -> NDStateMachine:
+    """Build an `NDStateMachine` over a `MaintenanceModeOrchestrator` wired to the file-based `Sender`."""
+    rest_send = _build_rest_send(gen_responses, config=config)
+    rest_send.params["state"] = "merged"
+    rest_send.params["check_mode"] = check_mode
+    rest_send.check_mode = check_mode
+    orchestrator = MaintenanceModeOrchestrator(rest_send=rest_send)
+    params = {"state": "merged", "fabric_name": "SITE1", "config": config, "output_level": "normal"}
+    return NDStateMachine(module=SimpleNamespace(params=params, check_mode=check_mode), model_orchestrator=orchestrator)
+
+
+def test_maintenance_mode_00500() -> None:
+    """
+    # Summary
+
+    Verify a merged run through `NDStateMachine` with two switches already in the requested mode completes as a no-op.
+
+    ## Test
+
+    - Both switches report intendedSystemMode normal; config requests normal for both
+    - `manage_state` does not raise (issue #653 regression: the shared preflight must not read `switch_ip`)
+    - No POST is issued and the run reports `changed: false`
+
+    ## Classes and Methods
+
+    - NDStateMachine.manage_state
+    - MaintenanceModeOrchestrator.preflight
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_maintenance_mode(f"{method_name}a")  # summary
+        yield responses_maintenance_mode(f"{method_name}b")  # bulk switches GET (both normal)
+
+    config = [{"mode": "normal", "switches": [{"switch_ip": "192.168.12.131"}, {"switch_ip": "192.168.12.151"}]}]
+    state_machine = _state_machine(config, ResponseGenerator(responses()))
+
+    with does_not_raise():
+        state_machine.manage_state()
+
+    assert state_machine.output.format()["changed"] is False
+    assert state_machine.model_orchestrator.rest_send.verb == HttpVerbEnum.GET.value
+
+
+def test_maintenance_mode_00510() -> None:
+    """
+    # Summary
+
+    Verify a merged run through `NDStateMachine` with one switch that needs a mode change POSTs for that switch.
+
+    ## Test
+
+    - Switch A reports normal; config requests maintenance
+    - `manage_state` does not raise (issue #653 regression)
+    - POST changeSystemMode carries only switch A's switchId and the run reports `changed: true`
+
+    ## Classes and Methods
+
+    - NDStateMachine.manage_state
+    - MaintenanceModeOrchestrator.preflight
+    - MaintenanceModeOrchestrator.update
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_maintenance_mode(f"{method_name}a")  # summary
+        yield responses_maintenance_mode(f"{method_name}b")  # bulk switches GET (switch A normal)
+        yield responses_maintenance_mode(f"{method_name}c")  # POST 207 success
+
+    config = [{"mode": "maintenance", "switches": [{"switch_ip": "192.168.12.131"}]}]
+    state_machine = _state_machine(config, ResponseGenerator(responses()))
+
+    with does_not_raise():
+        state_machine.manage_state()
+
+    rest_send = state_machine.model_orchestrator.rest_send
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert "switchActions/changeSystemMode" in rest_send.path
+    assert rest_send.committed_payload == {"mode": "maintenance", "switchIds": ["9UOJ3E8A6O9"]}
+    assert state_machine.output.format()["changed"] is True
+
+
+def test_maintenance_mode_00520() -> None:
+    """
+    # Summary
+
+    Verify a merged check-mode run through `NDStateMachine` passes preflight and issues no POST.
+
+    ## Test
+
+    - Switch A normal, switch B maintenance; config requests normal for both
+    - `manage_state` in check mode does not raise (issue #653: preflight also runs in check mode)
+    - Only the two snapshot GETs are consumed; no POST is issued
+
+    ## Classes and Methods
+
+    - NDStateMachine.manage_state
+    - MaintenanceModeOrchestrator.preflight
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_maintenance_mode(f"{method_name}a")  # summary
+        yield responses_maintenance_mode(f"{method_name}b")  # bulk switches GET (A normal, B maintenance)
+
+    config = [{"mode": "normal", "switches": [{"switch_ip": "192.168.12.131"}, {"switch_ip": "192.168.12.151"}]}]
+    state_machine = _state_machine(config, ResponseGenerator(responses()), check_mode=True)
+
+    with does_not_raise():
+        state_machine.manage_state()
+
+    assert state_machine.model_orchestrator.rest_send.verb == HttpVerbEnum.GET.value
+
+
+def test_maintenance_mode_00530() -> None:
+    """
+    # Summary
+
+    Verify `preflight` rejects a switch that is absent from the snapshot `query_all` built, naming the IP.
+
+    ## Test
+
+    - `query_all` snapshots a fabric that contains only switch A
+    - `preflight` is handed a model naming switch A and an unknown IP
+    - `RuntimeError` names the unknown IP and the fabric; no additional request is issued
+
+    ## Classes and Methods
+
+    - MaintenanceModeOrchestrator.preflight
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_maintenance_mode(f"{method_name}a")  # summary
+        yield responses_maintenance_mode(f"{method_name}b")  # bulk switches GET (switch A only)
+
+    gen_responses = ResponseGenerator(responses())
+    config = [{"mode": "normal", "switches": [{"switch_ip": "192.168.12.131"}]}]
+    rest_send = _build_rest_send(gen_responses, config=config)
+    instance = MaintenanceModeOrchestrator(rest_send=rest_send)
+    instance.query_all()
+
+    model = MaintenanceModeModel.from_config({"mode": "normal", "switches": [{"switch_ip": "192.168.12.131"}, {"switch_ip": "10.99.99.99"}]})
+
+    with pytest.raises(RuntimeError, match=r"Cannot resolve switch_ip to switchId in fabric 'SITE1' for: 10\.99\.99\.99\."):
+        instance.preflight([model])
