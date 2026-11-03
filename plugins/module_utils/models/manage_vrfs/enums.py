@@ -39,6 +39,9 @@ class VrfType(str, Enum):
         return [e.value for e in cls]
 
 
+VXLAN_VRF_TYPES = frozenset({VrfType.VXLAN.value, VrfType.VXLAN_IBGP.value, VrfType.VXLAN_EBGP.value, VrfType.VXLAN_CAMPUS.value})
+
+
 class ConfigurationStatus(str, Enum):
     """
     Configuration deployment status enumeration.

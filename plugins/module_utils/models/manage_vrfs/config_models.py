@@ -23,7 +23,9 @@ from __future__ import annotations
 from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    ConfigDict,
     Field,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -46,6 +48,32 @@ _CUSTOM_VRF_TEMPLATE_FIELDS = (
     "vrf_template_config",
 )
 
+_USER_DEFINED_VRF_FIELDS = frozenset(
+    {
+        "vrf_name",
+        "vrf_id",
+        "vrf_type",
+        "vlan_id",
+        "default_security_action",
+        "default_security_group_tag",
+        "deploy",
+        "deploy_type",
+        "attach",
+        *_CUSTOM_VRF_TEMPLATE_FIELDS,
+    }
+)
+
+
+def _infer_user_defined_vrf_type(data):
+    """Set the internal VRF discriminator when custom template fields are supplied."""
+    if not isinstance(data, dict):
+        return data
+    normalized = dict(data)
+    has_custom_template_fields = any(normalized.get(field) is not None for field in _CUSTOM_VRF_TEMPLATE_FIELDS)
+    if has_custom_template_fields and not normalized.get("vrf_type"):
+        normalized["vrf_type"] = VrfType.USER_DEFINED.value
+    return normalized
+
 
 # =============================================================================
 # VrfAttachmentOptionsConfigModel — playbook-facing instance values
@@ -61,53 +89,46 @@ class VrfAttachmentOptionsConfigModel(NDNestedModel):
     field name directly.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     identifiers: ClassVar[list[str]] = []
 
     dpu_secure: bool | None = Field(
         default=None,
-        alias="dpuSecure",
         description="Enable DPU secure mode for this attachment",
     )
     dpu_affinity: DpuAffinity | None = Field(
         default=None,
-        alias="dpuAffinity",
         description="DPU affinity for this attachment",
     )
     loopback_id: int | None = Field(
         default=None,
-        alias="loopbackId",
         ge=0,
         le=1023,
         description="Attachment loopback interface identifier (0-1023)",
     )
     loopback_ipv4_address: str | None = Field(
         default=None,
-        alias="loopbackIpv4Address",
         description="Attachment loopback IPv4 address",
     )
     loopback_ipv6_address: str | None = Field(
         default=None,
-        alias="loopbackIpv6Address",
         description="Attachment loopback IPv6 address",
     )
     import_vpn_rt: list[str] | None = Field(
         default=None,
-        alias="importVpnRt",
         description="Attachment-level VPN import route targets",
     )
     export_vpn_rt: list[str] | None = Field(
         default=None,
-        alias="exportVpnRt",
         description="Attachment-level VPN export route targets",
     )
     import_evpn_rt: list[str] | None = Field(
         default=None,
-        alias="importEvpnRt",
         description="Attachment-level EVPN import route targets",
     )
     export_evpn_rt: list[str] | None = Field(
         default=None,
-        alias="exportEvpnRt",
         description="Attachment-level EVPN export route targets",
     )
 
@@ -148,20 +169,19 @@ class VrfAttachmentConfigModel(NDNestedModel):
     are translated to API ``instanceValues`` internally.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     identifiers: ClassVar[list[str]] = []
 
     ip_address: str = Field(
-        alias="ipAddress",
         description="Management IP address of the switch to attach this VRF to",
     )
     freeform_config: str | None = Field(
         default=None,
-        alias="freeformConfig",
         description="Additional free-form CLI configuration mapped to API extraConfig",
     )
     attachment_options: VrfAttachmentOptionsConfigModel | None = Field(
         default=None,
-        alias="attachmentOptions",
         description="Attachment-specific options mapped to API instanceValues",
     )
 
@@ -184,8 +204,8 @@ class VrfChildConfigModel(NDNestedModel):
     overrides for fabric-instance settings such as TRM, advertising,
     BGP authentication, netflow, and MVPN route-target settings.
 
-    All fields except ``fabric_name`` are optional; absent fields mean "inherit
-    the parent setting".
+    All fields except ``fabric_name`` are optional; absent fields retain the
+    existing child setting on a sparse update.
 
     Based on: nd_manage_vrfs.py config.child_fabric_config suboptions
     """
@@ -205,6 +225,9 @@ class VrfChildConfigModel(NDNestedModel):
         alias="l3vniWoVlan",
         description="Enable L3VNI without VLAN on this child fabric",
     )
+    bgp_best_path_relax: bool | None = Field(default=None, alias="bgpBestPathRelax")
+    enable_vrf_vpn_route_leaking: bool | None = Field(default=None, alias="enableVrfVpnRouteLeaking")
+    bgp_log_neighbor_change: bool | None = Field(default=None, alias="bgpLogNeighborChange")
 
     # --- TRM overrides ---
 
@@ -213,6 +236,7 @@ class VrfChildConfigModel(NDNestedModel):
         alias="trmEnable",
         description="Enable Tenant Routed Multicast for this child fabric",
     )
+    ipv6_trm: bool | None = Field(default=None, alias="ipv6Trm", description="Enable IPv6 TRM on this child fabric")
     no_rp: bool | None = Field(
         default=None,
         alias="noRp",
@@ -223,42 +247,47 @@ class VrfChildConfigModel(NDNestedModel):
         alias="rpExternal",
         description="RP is external to the fabric; requires trm_enable=True",
     )
+    v6_no_rp: bool | None = Field(default=None, alias="v6RpAbsent", description="Use IPv6 SSM without an RP")
+    v6_rp_external: bool | None = Field(default=None, alias="v6RpExternal", description="IPv6 RP is external to the fabric")
     rp_address: str | None = Field(
         default=None,
         alias="rpAddress",
         description="IPv4 RP address; requires trm_enable=True",
     )
+    v6_rp_address: str | None = Field(default=None, alias="v6RpAddress", description="IPv6 RP address")
     rp_loopback_id: int | None = Field(
         default=None,
         alias="rpLoopbackId",
         ge=0,
         le=1023,
-        description="Loopback interface ID for RP (0–1023); requires trm_enable=True",
+        description="Loopback interface ID for an internal IPv4 or IPv6 RP (0-1023)",
     )
     underlay_mcast_ip: str | None = Field(
         default=None,
         alias="underlayMcastIp",
-        description="Underlay IPv4 multicast address; requires trm_enable=True",
+        description="Underlay IPv4 multicast address; required for IPv4 or IPv6 TRM",
     )
     overlay_mcast_group: str | None = Field(
         default=None,
         alias="overlayMcastGroup",
         description=("Overlay multicast group IPv4 address (224.0.0.0/4 range); " "requires trm_enable=True"),
     )
+    v6_overlay_mcast_group: str | None = Field(default=None, alias="v6MulticastGroup", description="IPv6 overlay multicast group")
+    mvpn_inter_as: bool | None = Field(default=None, alias="mvpnInterAs", description="Enable MVPN inter-AS on IOS XE")
     trm_bgw_msite: bool | None = Field(
         default=None,
         alias="trmBgwMsite",
-        description=("Enable TRM on border gateway multisite; requires trm_enable=True"),
+        description="Enable IPv4/IPv6 TRM on border gateway multisite",
     )
     import_mvpn_rt: list[str] | None = Field(
         default=None,
         alias="importMvpnRt",
-        description=("MVPN import route targets (comma-separated string or list); " "requires trm_enable=True"),
+        description="MVPN import route targets (comma-separated string or list); requires IPv4 or IPv6 TRM",
     )
     export_mvpn_rt: list[str] | None = Field(
         default=None,
         alias="exportMvpnRt",
-        description=("MVPN export route targets (comma-separated string or list); " "requires trm_enable=True"),
+        description="MVPN export route targets (comma-separated string or list); requires IPv4 or IPv6 TRM",
     )
 
     # --- Routing / advertising overrides ---
@@ -286,13 +315,19 @@ class VrfChildConfigModel(NDNestedModel):
         alias="bgpPassword",
         min_length=4,
         max_length=32,
-        description="BGP neighbour password (4–32 characters)",
+        pattern=r"^[a-fA-F0-9]+$",
+        description="Hexadecimal BGP neighbour password (4-32 characters)",
     )
-    bgp_passwd_encrypt: int | None = Field(
+    bgp_passwd_encrypt: str | None = Field(
         default=None,
         alias="bgpPasswdEncrypt",
-        description=("BGP password encryption type: 3 (3DES) or 7 (Cisco Type-7); " "required when bgp_password is set"),
+        description="BGP password key type: 3des, type6, or type7; required with bgp_password",
     )
+    bgp_allow_as_in: bool | None = Field(default=None, alias="bgpAllowAsIn")
+    bgp_allow_as_in_num: int | None = Field(default=None, alias="bgpAllowAsInNum", ge=1, le=10)
+    bgp_as_override: bool | None = Field(default=None, alias="bgpAsOverride")
+    bgp_disable_peer_as_check: bool | None = Field(default=None, alias="bgpDisablePeerAsCheck")
+    bgp_soft_reconfig_always: bool | None = Field(default=None, alias="bgpSoftReconfigAlways")
 
     # --- Netflow overrides ---
 
@@ -316,6 +351,16 @@ class VrfChildConfigModel(NDNestedModel):
     def _validate_ipv4(cls, v: str | None) -> str | None:
         return VrfValidators.validate_ipv4_address(v)
 
+    @field_validator("v6_rp_address", mode="before")
+    @classmethod
+    def _validate_ipv6(cls, v: str | None) -> str | None:
+        return VrfValidators.validate_ipv6_address(v)
+
+    @field_validator("v6_overlay_mcast_group", mode="before")
+    @classmethod
+    def _validate_v6_mcast_group(cls, v: str | None) -> str | None:
+        return VrfValidators.validate_cidrv6(v)
+
     @field_validator("overlay_mcast_group", mode="before")
     @classmethod
     def _validate_mcast_group(cls, v: str | None) -> str | None:
@@ -323,7 +368,7 @@ class VrfChildConfigModel(NDNestedModel):
 
     @field_validator("bgp_passwd_encrypt", mode="before")
     @classmethod
-    def _validate_bgp_encrypt(cls, v: int | None) -> int | None:
+    def _validate_bgp_encrypt(cls, v: str | None) -> str | None:
         return VrfValidators.validate_bgp_passwd_encrypt(v)
 
     @field_validator(
@@ -340,50 +385,103 @@ class VrfChildConfigModel(NDNestedModel):
     # ------------------------------------------------------------------
 
     @model_validator(mode="after")
-    def _check_trm_fields(self):
-        """Forbid TRM-dependent fields when trm_enable is explicitly False."""
-        if self.trm_enable is False:
-            trm_fields = {
-                "no_rp": self.no_rp,
-                "rp_external": self.rp_external,
-                "rp_address": self.rp_address,
-                "rp_loopback_id": self.rp_loopback_id,
-                "underlay_mcast_ip": self.underlay_mcast_ip,
-                "overlay_mcast_group": self.overlay_mcast_group,
-                "trm_bgw_msite": self.trm_bgw_msite,
-                "import_mvpn_rt": self.import_mvpn_rt,
-                "export_mvpn_rt": self.export_mvpn_rt,
-            }
-            set_fields = [k for k, v in trm_fields.items() if v is not None]
-            if set_fields:
-                raise ValueError(f"The following fields require trm_enable=True: " f"{', '.join(set_fields)}")
+    def _check_trm_fields(self, info: ValidationInfo):
+        """Validate the effective child TRM configuration after sparse merge."""
+        context = info.context or {}
+        supplied = set(context.get("supplied_fields", ()))
+        trm_fields = {
+            "trm_enable",
+            "ipv6_trm",
+            "no_rp",
+            "rp_external",
+            "rp_address",
+            "v6_no_rp",
+            "v6_rp_external",
+            "v6_rp_address",
+            "rp_loopback_id",
+            "underlay_mcast_ip",
+            "overlay_mcast_group",
+            "v6_overlay_mcast_group",
+            "trm_bgw_msite",
+            "mvpn_inter_as",
+            "import_mvpn_rt",
+            "export_mvpn_rt",
+        }
+        if not context.get("validate_effective") or not supplied.intersection(trm_fields):
+            return self
+        for enabled, fields in (
+            (self.trm_enable, ("no_rp", "rp_external", "rp_address", "overlay_mcast_group")),
+            (self.ipv6_trm, ("v6_no_rp", "v6_rp_external", "v6_rp_address", "v6_overlay_mcast_group")),
+        ):
+            if enabled:
+                continue
+            active = [name for name in fields if getattr(self, name) not in (None, False, "", [])]
+            if active:
+                toggle = "trm_enable" if fields[0] == "no_rp" else "ipv6_trm"
+                raise ValueError(f"{', '.join(active)} requires {toggle}=True on the child")
+        if not (self.trm_enable or self.ipv6_trm):
+            common = ("rp_loopback_id", "underlay_mcast_ip", "trm_bgw_msite", "mvpn_inter_as", "import_mvpn_rt", "export_mvpn_rt")
+            active = [name for name in common if getattr(self, name) not in (None, False, "", [])]
+            if active:
+                raise ValueError(f"{', '.join(active)} requires trm_enable=True or ipv6_trm=True on the child")
+            return self
+        if not self.underlay_mcast_ip:
+            raise ValueError("underlay_mcast_ip is required when TRM is enabled")
+        for enabled, no_rp, external, address, family in (
+            (self.trm_enable, self.no_rp, self.rp_external, self.rp_address, "IPv4"),
+            (self.ipv6_trm, self.v6_no_rp, self.v6_rp_external, self.v6_rp_address, "IPv6"),
+        ):
+            if not enabled or no_rp:
+                continue
+            if not address:
+                raise ValueError(f"{family} RP address is required when {family} TRM is enabled without SSM")
+            if not external and self.rp_loopback_id is None:
+                raise ValueError("rp_loopback_id is required for an internal TRM RP")
         return self
 
     @model_validator(mode="after")
-    def _check_no_rp_fields(self):
-        """Forbid rp_external and rp_address when no_rp=True."""
-        if self.no_rp is True:
-            bad = {}
-            if self.rp_external is True:
-                bad["rp_external"] = self.rp_external
-            if self.rp_address is not None:
-                bad["rp_address"] = self.rp_address
-            if bad:
-                raise ValueError(f"The following fields are not applicable when no_rp=True: " f"{', '.join(bad.keys())}")
+    def _check_no_rp_fields(self, info: ValidationInfo):
+        """Reject RP details for an SSM-only family."""
+        context = info.context or {}
+        supplied = set(context.get("supplied_fields", ()))
+        if not context.get("validate_effective") or not supplied.intersection(
+            {"trm_enable", "ipv6_trm", "no_rp", "v6_no_rp", "rp_external", "v6_rp_external", "rp_address", "v6_rp_address"}
+        ):
+            return self
+        for absent, external, address, field in (
+            (self.no_rp, self.rp_external, self.rp_address, "no_rp"),
+            (self.v6_no_rp, self.v6_rp_external, self.v6_rp_address, "v6_no_rp"),
+        ):
+            if absent and (external or address):
+                raise ValueError(f"RP settings are not applicable when {field}=True")
         return self
 
     @model_validator(mode="after")
-    def _check_netflow_monitor(self):
-        """Require nf_monitor when netflow_enable=True."""
+    def _check_netflow_monitor(self, info: ValidationInfo):
+        """Require a monitor on an enabled child VRF Lite sub-interface."""
+        context = info.context or {}
+        if not context.get("validate_effective") or not set(context.get("supplied_fields", ())).intersection({"netflow_enable", "nf_monitor"}):
+            return self
         if self.netflow_enable is True and not self.nf_monitor:
             raise ValueError("nf_monitor is required when netflow_enable=True")
+        if self.netflow_enable is False and self.nf_monitor:
+            raise ValueError("nf_monitor requires netflow_enable=True")
         return self
 
     @model_validator(mode="after")
-    def _check_bgp_password(self):
-        """Require bgp_passwd_encrypt when bgp_password is set."""
-        if self.bgp_password is not None and self.bgp_passwd_encrypt is None:
-            raise ValueError("bgp_passwd_encrypt (3 or 7) is required when bgp_password is set")
+    def _check_bgp_password(self, info: ValidationInfo):
+        """Keep the VRF Lite password and key type together."""
+        context = info.context or {}
+        supplied = set(context.get("supplied_fields", ()))
+        if not context.get("validate_effective"):
+            return self
+        if supplied.intersection({"bgp_password", "bgp_passwd_encrypt"}):
+            if self.bgp_password is not None and self.bgp_passwd_encrypt is None:
+                raise ValueError("bgp_passwd_encrypt is required when bgp_password is set")
+            if self.bgp_passwd_encrypt is not None and self.bgp_password is None:
+                raise ValueError("bgp_password is required when bgp_passwd_encrypt is set")
+        if "bgp_allow_as_in_num" in supplied and not self.bgp_allow_as_in:
+            raise ValueError("bgp_allow_as_in_num requires bgp_allow_as_in=True")
         return self
 
 
@@ -492,8 +590,8 @@ class VrfConfigModel(NDBaseModel):
 
     # --- L3VNI without VLAN ---
 
-    l3vni_wo_vlan: bool = Field(
-        default=False,
+    l3vni_wo_vlan: bool | None = Field(
+        default=None,
         alias="l3vniWoVlan",
         description=("Configure L3VNI without VLAN/SVI. When True, vlan_id, " "vrf_vlan_name, and vrf_intf_desc must not be set"),
     )
@@ -521,10 +619,10 @@ class VrfConfigModel(NDBaseModel):
         alias="redistDirectRmap",
         description="Route map name for redistribute direct (IPv4)",
     )
-    v6_redist_direct_rmap: str = Field(
-        default="FABRIC-RMAP-REDIST-SUBNET",
+    v6_redist_direct_rmap: str | None = Field(
+        default=None,
         alias="v6RedistDirectRmap",
-        description="Route map name for redistribute direct (IPv6)",
+        description="Route map name for redistribute direct (IPv6); defaults to the IPv4 route map",
     )
     max_bgp_paths: int = Field(
         default=1,
@@ -544,6 +642,28 @@ class VrfConfigModel(NDBaseModel):
         default=True,
         alias="ipv6LinkLocalEnable",
         description=("Enable IPv6 link-local on VRF SVI; " "not applicable when l3vni_wo_vlan=True"),
+    )
+    bgp_best_path_relax: bool = Field(
+        default=False,
+        alias="bgpBestPathRelax",
+        description="Allow BGP multipath with different remote ASNs",
+    )
+    bgp_log_neighbor_change: bool = Field(
+        default=False,
+        alias="bgpLogNeighborChange",
+        description="Log BGP neighbor up/down events",
+    )
+    route_distinguisher_id: int | None = Field(
+        default=None,
+        alias="routeDistinguisherId",
+        ge=0,
+        le=65535,
+        description="VRF route distinguisher ID on IOS XE",
+    )
+    enable_vrf_vpn_route_leaking: bool = Field(
+        default=False,
+        alias="enableVrfVpnRouteLeaking",
+        description="Enable bidirectional VRF-to-VPN route leaking on NX-OS border switches",
     )
 
     # --- Route targets ---
@@ -581,6 +701,11 @@ class VrfConfigModel(NDBaseModel):
         alias="trmEnable",
         description="Enable Tenant Routed Multicast",
     )
+    ipv6_trm: bool = Field(
+        default=False,
+        alias="ipv6Trm",
+        description="Enable IPv6 Tenant Routed Multicast",
+    )
     no_rp: bool = Field(
         default=False,
         alias="noRp",
@@ -595,6 +720,21 @@ class VrfConfigModel(NDBaseModel):
         default=None,
         alias="rpAddress",
         description="IPv4 RP address; requires trm_enable=True",
+    )
+    v6_no_rp: bool = Field(
+        default=False,
+        alias="v6NoRp",
+        description="Use IPv6 SSM without an RP; requires ipv6_trm=True",
+    )
+    v6_rp_external: bool = Field(
+        default=False,
+        alias="v6RpExternal",
+        description="IPv6 RP is external to the fabric; requires ipv6_trm=True",
+    )
+    v6_rp_address: str | None = Field(
+        default=None,
+        alias="v6RpAddress",
+        description="IPv6 RP address; requires ipv6_trm=True",
     )
     rp_loopback_id: int | None = Field(
         default=None,
@@ -612,6 +752,16 @@ class VrfConfigModel(NDBaseModel):
         default=None,
         alias="overlayMcastGroup",
         description=("Overlay multicast group IPv4 address (224.0.0.0/4 range); " "requires trm_enable=True"),
+    )
+    v6_overlay_mcast_group: str | None = Field(
+        default=None,
+        alias="v6OverlayMcastGroup",
+        description="Overlay IPv6 multicast group/prefix; requires ipv6_trm=True",
+    )
+    mvpn_inter_as: bool = Field(
+        default=False,
+        alias="mvpnInterAs",
+        description="Use inter-AS MVPN routes when TRM is enabled (IOS XE)",
     )
     trm_bgw_msite: bool = Field(
         default=False,
@@ -646,6 +796,33 @@ class VrfConfigModel(NDBaseModel):
         alias="staticDefaultRoute",
         description="Configure static default route",
     )
+    bgp_allow_as_in: bool = Field(
+        default=False,
+        alias="bgpAllowAsIn",
+        description="Allow the local AS in received VRF Lite paths",
+    )
+    bgp_allow_as_in_num: int = Field(
+        default=3,
+        alias="bgpAllowAsInNum",
+        ge=1,
+        le=10,
+        description="Allowed local-AS occurrences",
+    )
+    bgp_as_override: bool = Field(
+        default=False,
+        alias="bgpAsOverride",
+        description="Override matching AS on outbound VRF Lite routes",
+    )
+    bgp_disable_peer_as_check: bool = Field(
+        default=False,
+        alias="bgpDisablePeerAsCheck",
+        description="Disable peer-AS check on outbound VRF Lite routes",
+    )
+    bgp_soft_reconfig_always: bool = Field(
+        default=False,
+        alias="bgpSoftReconfigAlways",
+        description="Always permit inbound BGP soft reconfiguration",
+    )
 
     # --- BGP authentication ---
 
@@ -654,12 +831,13 @@ class VrfConfigModel(NDBaseModel):
         alias="bgpPassword",
         min_length=4,
         max_length=32,
-        description="BGP neighbour password (4–32 characters)",
+        pattern=r"^[a-fA-F0-9]+$",
+        description="Hexadecimal BGP neighbour password (4-32 characters)",
     )
-    bgp_passwd_encrypt: int | None = Field(
+    bgp_passwd_encrypt: str | None = Field(
         default=None,
         alias="bgpPasswdEncrypt",
-        description=("BGP password encryption type: 3 (3DES) or 7 (Cisco Type-7); " "required when bgp_password is set"),
+        description="BGP password key type: 3des, type6, or type7; required with bgp_password",
     )
 
     # --- Netflow ---
@@ -698,6 +876,12 @@ class VrfConfigModel(NDBaseModel):
     # ------------------------------------------------------------------
     # Field validators
     # ------------------------------------------------------------------
+
+    @model_validator(mode="before")
+    @classmethod
+    def _infer_user_defined_type(cls, data):
+        """Infer the internal user-defined discriminator for template configs."""
+        return _infer_user_defined_vrf_type(data)
 
     @field_validator("vrf_name", mode="before")
     @classmethod
@@ -751,9 +935,19 @@ class VrfConfigModel(NDBaseModel):
     def _validate_mcast_group(cls, v: str | None) -> str | None:
         return VrfValidators.validate_overlay_mcast_group(v)
 
+    @field_validator("v6_rp_address", mode="before")
+    @classmethod
+    def _validate_v6_rp_address(cls, v: str | None) -> str | None:
+        return VrfValidators.validate_ipv6_address(v)
+
+    @field_validator("v6_overlay_mcast_group", mode="before")
+    @classmethod
+    def _validate_v6_mcast_group(cls, v: str | None) -> str | None:
+        return VrfValidators.validate_cidrv6(v)
+
     @field_validator("bgp_passwd_encrypt", mode="before")
     @classmethod
-    def _validate_bgp_encrypt(cls, v: int | None) -> int | None:
+    def _validate_bgp_encrypt(cls, v: str | None) -> str | None:
         return VrfValidators.validate_bgp_passwd_encrypt(v)
 
     @field_validator(
@@ -774,8 +968,10 @@ class VrfConfigModel(NDBaseModel):
     # ------------------------------------------------------------------
 
     @model_validator(mode="after")
-    def _check_l3vni_wo_vlan(self):
+    def _check_l3vni_wo_vlan(self, info: ValidationInfo):
         """When l3vni_wo_vlan=True, VLAN/SVI fields must not be set."""
+        if (info.context or {}).get("defer_dependencies"):
+            return self
         if self.l3vni_wo_vlan:
             vlan_fields = {
                 "vlan_id": self.vlan_id,
@@ -783,41 +979,70 @@ class VrfConfigModel(NDBaseModel):
                 "vrf_intf_desc": self.vrf_intf_desc,
             }
             set_fields = [k for k, v in vlan_fields.items() if v is not None]
+            if "vrf_int_mtu" in self.model_fields_set:
+                set_fields.append("vrf_int_mtu")
+            if "ipv6_linklocal_enable" in self.model_fields_set:
+                set_fields.append("ipv6_linklocal_enable")
             if set_fields:
                 raise ValueError(f"The following fields must not be set when " f"l3vni_wo_vlan=True: {', '.join(set_fields)}")
         return self
 
     @model_validator(mode="after")
-    def _check_custom_vrf_template_fields(self):
+    def _check_custom_vrf_template_fields(self, info: ValidationInfo):
         """Custom template fields are valid only for vrf_type=userDefined."""
         set_fields = [field for field in _CUSTOM_VRF_TEMPLATE_FIELDS if getattr(self, field) is not None]
         if set_fields and self.vrf_type != VrfType.USER_DEFINED.value:
             raise ValueError("The following fields require vrf_type=userDefined: " f"{', '.join(set_fields)}")
+        if self.vrf_type == VrfType.USER_DEFINED.value and (info.context or {}).get("state") not in ("gathered", "deleted"):
+            unsupported = sorted(self.model_fields_set - _USER_DEFINED_VRF_FIELDS)
+            if unsupported:
+                raise ValueError(f"The following fields are not supported for userDefined VRFs: {', '.join(unsupported)}")
         return self
 
     @model_validator(mode="after")
-    def _check_trm_fields(self):
-        """Forbid TRM-dependent fields when trm_enable=False."""
+    def _check_trm_fields(self, info: ValidationInfo):
+        """Forbid family-specific TRM fields without their enablement."""
+        if (info.context or {}).get("defer_dependencies"):
+            return self
         if not self.trm_enable:
             trm_fields = {
                 "no_rp": self.no_rp or None,
                 "rp_external": self.rp_external or None,
                 "rp_address": self.rp_address,
-                "rp_loopback_id": self.rp_loopback_id,
-                "underlay_mcast_ip": self.underlay_mcast_ip,
                 "overlay_mcast_group": self.overlay_mcast_group,
-                "trm_bgw_msite": self.trm_bgw_msite or None,
-                "import_mvpn_rt": self.import_mvpn_rt,
-                "export_mvpn_rt": self.export_mvpn_rt,
             }
             set_fields = [k for k, v in trm_fields.items() if v is not None]
             if set_fields:
                 raise ValueError(f"The following fields require trm_enable=True: " f"{', '.join(set_fields)}")
+        if not self.ipv6_trm:
+            v6_fields = {
+                "v6_no_rp": self.v6_no_rp or None,
+                "v6_rp_external": self.v6_rp_external or None,
+                "v6_rp_address": self.v6_rp_address,
+                "v6_overlay_mcast_group": self.v6_overlay_mcast_group,
+            }
+            set_fields = [key for key, value in v6_fields.items() if value is not None]
+            if set_fields:
+                raise ValueError(f"The following fields require ipv6_trm=True: {', '.join(set_fields)}")
+        if not (self.trm_enable or self.ipv6_trm):
+            common_fields = {
+                "rp_loopback_id": self.rp_loopback_id,
+                "underlay_mcast_ip": self.underlay_mcast_ip,
+                "trm_bgw_msite": self.trm_bgw_msite or None,
+                "mvpn_inter_as": self.mvpn_inter_as or None,
+                "import_mvpn_rt": self.import_mvpn_rt,
+                "export_mvpn_rt": self.export_mvpn_rt,
+            }
+            set_fields = [key for key, value in common_fields.items() if value is not None]
+            if set_fields:
+                raise ValueError(f"The following fields require trm_enable=True or ipv6_trm=True: {', '.join(set_fields)}")
         return self
 
     @model_validator(mode="after")
-    def _check_no_rp_fields(self):
-        """Forbid rp_external and rp_address when no_rp=True."""
+    def _check_no_rp_fields(self, info: ValidationInfo):
+        """An SSM-only family cannot also configure an RP."""
+        if (info.context or {}).get("defer_dependencies"):
+            return self
         if self.no_rp:
             bad = {}
             if self.rp_external:
@@ -826,26 +1051,78 @@ class VrfConfigModel(NDBaseModel):
                 bad["rp_address"] = self.rp_address
             if bad:
                 raise ValueError(f"The following fields are not applicable when no_rp=True: " f"{', '.join(bad.keys())}")
+        if self.v6_no_rp:
+            bad = [
+                name
+                for name, value in (
+                    ("v6_rp_external", self.v6_rp_external),
+                    ("v6_rp_address", self.v6_rp_address),
+                )
+                if value
+            ]
+            if bad:
+                raise ValueError(f"The following fields are not applicable when v6_no_rp=True: {', '.join(bad)}")
         return self
 
     @model_validator(mode="after")
-    def _check_netflow_monitor(self):
+    def _check_netflow_monitor(self, info: ValidationInfo):
         """Require nf_monitor when netflow_enable=True."""
+        if (info.context or {}).get("defer_dependencies"):
+            return self
         if self.netflow_enable and not self.nf_monitor:
             raise ValueError("nf_monitor is required when netflow_enable=True")
         return self
 
     @model_validator(mode="after")
-    def _check_bgp_password(self):
-        """Require bgp_passwd_encrypt when bgp_password is set."""
+    def _check_bgp_password(self, info: ValidationInfo):
+        """Only allow a key type together with a password."""
+        if (info.context or {}).get("defer_dependencies"):
+            return self
         if self.bgp_password is not None and self.bgp_passwd_encrypt is None:
-            raise ValueError("bgp_passwd_encrypt (3 or 7) is required when bgp_password is set")
+            raise ValueError("bgp_passwd_encrypt is required when bgp_password is set")
+        if self.bgp_passwd_encrypt is not None and self.bgp_password is None:
+            raise ValueError("bgp_password is required when bgp_passwd_encrypt is set")
         return self
 
 
 # =============================================================================
 # VrfParentConfigModel — parent (MSD / MFD) fabric VRF config
 # =============================================================================
+
+PARENT_CHILD_ONLY_VRF_FIELDS = (
+    "l3vni_wo_vlan",
+    "bgp_best_path_relax",
+    "enable_vrf_vpn_route_leaking",
+    "bgp_log_neighbor_change",
+    "trm_enable",
+    "ipv6_trm",
+    "no_rp",
+    "rp_external",
+    "rp_address",
+    "v6_no_rp",
+    "v6_rp_external",
+    "v6_rp_address",
+    "rp_loopback_id",
+    "underlay_mcast_ip",
+    "overlay_mcast_group",
+    "v6_overlay_mcast_group",
+    "mvpn_inter_as",
+    "trm_bgw_msite",
+    "import_mvpn_rt",
+    "export_mvpn_rt",
+    "adv_host_routes",
+    "adv_default_routes",
+    "static_default_route",
+    "bgp_password",
+    "bgp_passwd_encrypt",
+    "bgp_allow_as_in",
+    "bgp_allow_as_in_num",
+    "bgp_as_override",
+    "bgp_disable_peer_as_check",
+    "bgp_soft_reconfig_always",
+    "netflow_enable",
+    "nf_monitor",
+)
 
 
 class VrfParentConfigModel(NDBaseModel):
@@ -856,8 +1133,8 @@ class VrfParentConfigModel(NDBaseModel):
     advertising, BGP-auth, netflow, TRM, and MVPN route-target overrides belong in
     ``child_fabric_config`` entries (``VrfChildConfigModel``).
 
-    Cross-field TRM and bgp_password dependencies are validated identically
-    to ``VrfConfigModel``.
+    Parent input excludes child-owned fabric-instance settings; the nested
+    child model validates those settings separately.
 
     Based on: nd_manage_vrfs.py config suboptions (parent / MSD topology)
     """
@@ -929,30 +1206,30 @@ class VrfParentConfigModel(NDBaseModel):
         alias="vlanId",
         ge=2,
         le=4094,
-        description=("VLAN ID for the VRF SVI (2–4094); " "not used when l3vni_wo_vlan=True"),
+        description="VLAN ID for the VRF SVI (2-4094)",
     )
     vrf_vlan_name: str | None = Field(
         default=None,
         alias="vrfVlanName",
-        description=("VLAN name for the VRF SVI; not used when l3vni_wo_vlan=True"),
+        description="VLAN name for the VRF SVI",
     )
     vrf_intf_desc: str | None = Field(
         default=None,
         alias="vrfIntfDesc",
-        description=("Description for the VRF SVI interface; " "not used when l3vni_wo_vlan=True"),
+        description="Description for the VRF SVI interface",
     )
     vrf_int_mtu: int = Field(
         default=9216,
         alias="vrfIntMtu",
         ge=68,
         le=9216,
-        description=("MTU for the VRF SVI interface (68–9216); " "not used when l3vni_wo_vlan=True"),
+        description="MTU for the VRF SVI interface (68-9216)",
     )
 
     # --- L3VNI without VLAN ---
 
-    l3vni_wo_vlan: bool = Field(
-        default=False,
+    l3vni_wo_vlan: bool | None = Field(
+        default=None,
         alias="l3vniWoVlan",
         description=("Configure L3VNI without VLAN/SVI across all member fabrics"),
     )
@@ -1003,6 +1280,13 @@ class VrfParentConfigModel(NDBaseModel):
         default=True,
         alias="ipv6LinkLocalEnable",
         description="Enable IPv6 link-local on VRF SVI",
+    )
+    route_distinguisher_id: int | None = Field(
+        default=None,
+        alias="routeDistinguisherId",
+        ge=0,
+        le=65535,
+        description="VRF route distinguisher ID on IOS XE; generated when omitted",
     )
 
     # --- Route targets ---
@@ -1115,10 +1399,10 @@ class VrfParentConfigModel(NDBaseModel):
         max_length=32,
         description="BGP neighbour password (4–32 characters)",
     )
-    bgp_passwd_encrypt: int | None = Field(
+    bgp_passwd_encrypt: str | None = Field(
         default=None,
         alias="bgpPasswdEncrypt",
-        description=("BGP password encryption type: 3 (3DES) or 7 (Cisco Type-7); " "required when bgp_password is set"),
+        description="BGP password key type: 3des, type6, or type7; required with bgp_password",
     )
 
     # --- Netflow ---
@@ -1162,6 +1446,36 @@ class VrfParentConfigModel(NDBaseModel):
     # ------------------------------------------------------------------
     # Field validators
     # ------------------------------------------------------------------
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_child_only_top_level_fields(cls, data, info: ValidationInfo):
+        """Reject misplaced child options in writes; ignore them in selectors.
+
+        ## Raises
+
+        ### ValueError
+
+        - A child-only property is supplied at parent scope for a write.
+        """
+        if not isinstance(data, dict):
+            return data
+        filtered = dict(data)
+        misplaced = []
+        for field in PARENT_CHILD_ONLY_VRF_FIELDS:
+            value = filtered.pop(field, None)
+            alias_value = filtered.pop(VrfChildConfigModel.model_fields[field].alias, None)
+            if value is not None or alias_value is not None:
+                misplaced.append(field)
+        if misplaced and (info.context or {}).get("state") not in ("gathered", "deleted"):
+            raise ValueError("Child-only properties must be set under child_fabric_config on parent fabrics: " + ", ".join(misplaced))
+        return filtered
+
+    @model_validator(mode="before")
+    @classmethod
+    def _infer_user_defined_type(cls, data):
+        """Infer the internal user-defined discriminator for template configs."""
+        return _infer_user_defined_vrf_type(data)
 
     @field_validator("vrf_name", mode="before")
     @classmethod
@@ -1217,7 +1531,7 @@ class VrfParentConfigModel(NDBaseModel):
 
     @field_validator("bgp_passwd_encrypt", mode="before")
     @classmethod
-    def _validate_bgp_encrypt(cls, v: int | None) -> int | None:
+    def _validate_bgp_encrypt(cls, v: str | None) -> str | None:
         return VrfValidators.validate_bgp_passwd_encrypt(v)
 
     @field_validator(
@@ -1282,7 +1596,7 @@ class VrfParentConfigModel(NDBaseModel):
     def _check_bgp_password(self):
         """Require bgp_passwd_encrypt when bgp_password is set."""
         if self.bgp_password is not None and self.bgp_passwd_encrypt is None:
-            raise ValueError("bgp_passwd_encrypt (3 or 7) is required when bgp_password is set")
+            raise ValueError("bgp_passwd_encrypt is required when bgp_password is set")
         return self
 
     @model_validator(mode="after")
