@@ -72,7 +72,7 @@ assert script.SWITCH_LIFECYCLE_TIMINGS[0].seconds >= 0
 assert script.SWITCH_LIFECYCLE_TIMINGS[0].exit_code == exitCode
 assert shells[0].contains('-e "nd_switch_preserve_config=false"')
 assert shells[0].contains('-e "nd_switch_rehome_fabrics_csv=${PREFLIGHT_REHOME_FABRICS}"')
-assert shells[0].contains('timeout "${PREFLIGHT_TIMEOUT}" ansible-playbook')
+assert shells[0].contains('timeout -k 30 "${PREFLIGHT_TIMEOUT}" ansible-playbook')
 assert capturedEnvironments[0].PREFLIGHT_REHOME_FABRICS == 'VXLAN_EVPN_Fabric,VXLAN_EVPN_Fabric_eBGP'
 assert capturedEnvironments[0].PREFLIGHT_TIMEOUT == '3600'
 assert logs.any { it.contains('phase=' + phase) && it.contains('exit_code=' + exitCode) && it.contains('classification=' + expectedClass) && it.contains('timeout_limit_seconds=3600') }

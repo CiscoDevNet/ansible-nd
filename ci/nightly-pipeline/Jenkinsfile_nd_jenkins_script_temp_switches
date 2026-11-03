@@ -2919,7 +2919,7 @@ def downloadFromConsul(fileName, localFileName = null) {
         echo "📥 Downloading ${fileName} from Consul..."
         def response = httpRequest(
             url: "${CONSUL_URL}/v1/kv/ansible-nd/${fileName}?raw",
-            validResponseCodes: '200'
+            validResponseCodes: '200', timeout: 60
         )
         if (response.content == null || response.content.isEmpty()) {
             error("Required Consul key returned empty content: ${fileName}")
@@ -3699,6 +3699,10 @@ def runSwitchMembershipSync(ndfcConfig, phase, rosterFile = '') {
                     cd ${COLLECTIONS_DIRECTORY}
                     source $HOME/ansible/venv/bin/activate
                     PLAYBOOK="${COLLECTIONS_DIRECTORY}/nd_ensure_switches.yaml"
+                    [[ "$PREFLIGHT_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || {
+                        echo 'NDP_INVALID_RUNTIME_TIMEOUT: switch guard needs positive seconds' >&2
+                        exit 2
+                    }
                     if [ ! -f "${PREFLIGHT_INVENTORY}" ] || [ -L "${PREFLIGHT_INVENTORY}" ] || [ ! -s "${PREFLIGHT_INVENTORY}" ]; then
                         echo "❌ Pre-flight inventory not found or unsafe: ${PREFLIGHT_INVENTORY}" >&2
                         exit 1
@@ -3718,7 +3722,7 @@ def runSwitchMembershipSync(ndfcConfig, phase, rosterFile = '') {
                     echo "NDP_SWITCH_MEMBERSHIP_SYNC: apply=${PREFLIGHT_APPLY}, roster=${PREFLIGHT_ROSTER}, rehome=${PREFLIGHT_REHOME_FABRICS}"
                     # Bound the complete guard invocation. Only exit 124 means
                     # this wrapper's time limit; preserve every other exit status.
-                    timeout "${PREFLIGHT_TIMEOUT}" ansible-playbook -i "${PREFLIGHT_INVENTORY}" "${PLAYBOOK}" \
+                    timeout -k 30 "${PREFLIGHT_TIMEOUT}" ansible-playbook -i "${PREFLIGHT_INVENTORY}" "${PLAYBOOK}" \
                         -e "nd_switch_roster_file=${PREFLIGHT_ROSTER}" \
                         -e "nd_switch_rehome_fabrics_csv=${PREFLIGHT_REHOME_FABRICS}" \
                         -e "nd_switch_apply=${PREFLIGHT_APPLY}" \
@@ -4008,6 +4012,10 @@ def runFabricTest(ndfcConfig) {
                                     --modules "${NDP_EFFECTIVE_MODULES}"
                                 echo "✅ Jenkins prerequisite-profile coverage gate passed"
 
+                                if ! command -v timeout >/dev/null 2>&1; then
+                                    echo 'NDP_REQUIRED_TIMEOUT_UNAVAILABLE: refusing unbounded module execution' >&2
+                                    exit 1
+                                fi
                                 if ! command -v ansible-playbook &> /dev/null; then
                                     echo 'Error: ansible-playbook is not installed or not in PATH. Exiting.'
                                     exit 1
@@ -4041,7 +4049,7 @@ def runFabricTest(ndfcConfig) {
                                 # GreenField switch bring-up (nd_manage_switches) legitimately needs
                                 # longer than lightweight modules; #16 was killed at 2400s mid switch-prep.
                                 SWITCHES_MODULE_TIMEOUT="${SWITCHES_MODULE_TIMEOUT:-5400}"
-                                TIMEOUT_CMD="$(command -v timeout >/dev/null 2>&1 && echo "timeout -k 60 ${MODULE_TIMEOUT}" || true)"
+                                TIMEOUT_CMD="timeout -k 60 ${MODULE_TIMEOUT}"
 
                                 # --- Per-module switch-availability guard -------------------------
                                 # Confirm the canonical 6+2 switches before physical targets and
@@ -4058,6 +4066,12 @@ def runFabricTest(ndfcConfig) {
                                 SWITCH_GUARD_PLAYBOOK="${COLLECTIONS_DIRECTORY}/nd_ensure_switches.yaml"
                                 SWITCH_GUARD_ROSTER="${COLLECTIONS_DIRECTORY}/integration_config.yml"
                                 SWITCH_GUARD_TIMEOUT="${ND_SWITCH_GUARD_TIMEOUT:-1800}"
+                                for bounded_seconds in "${MODULE_TIMEOUT}" "${SWITCHES_MODULE_TIMEOUT}" "${SWITCH_GUARD_TIMEOUT}" "${VPC_PEERLINK_TIMEOUT:-180}"; do
+                                    [[ "$bounded_seconds" =~ ^[1-9][0-9]*$ ]] || {
+                                        echo 'NDP_INVALID_RUNTIME_TIMEOUT: module and guard limits need positive seconds' >&2
+                                        exit 2
+                                    }
+                                done
                                 SWITCH_GUARD_APPLY="true"
                                 if [ "${ND_PREREQUISITE_ONLY_EFFECTIVE:-false}" = "true" ]; then
                                     SWITCH_GUARD_APPLY="false"
@@ -4091,7 +4105,7 @@ def runFabricTest(ndfcConfig) {
                                         return 1
                                     fi
                                     local _gt
-                                    _gt="$(command -v timeout >/dev/null 2>&1 && echo "timeout -k 30 ${SWITCH_GUARD_TIMEOUT}" || true)"
+                                    _gt="timeout -k 30 ${SWITCH_GUARD_TIMEOUT}"
                                     echo "🔎 [switch-guard] Confirming canonical 6+2 switches before ${_label} (apply=${SWITCH_GUARD_APPLY}, timeout=${SWITCH_GUARD_TIMEOUT}s)"
                                     if ${_gt} ansible-playbook -i "${INVENTORY_FILE}" "${SWITCH_GUARD_PLAYBOOK}" \
                                             -e "nd_switch_roster_file=${SWITCH_GUARD_ROSTER}" \
@@ -4201,7 +4215,7 @@ PEERLINK_PROBE_EOF
                                                                                 PREPARE_PEERLINK=true
                                                                         fi
                                                                         local PROBE_TIMEOUT_CMD
-                                                                        PROBE_TIMEOUT_CMD="$(command -v timeout >/dev/null 2>&1 && echo "timeout -k 30 ${VPC_PEERLINK_TIMEOUT:-180}" || true)"
+                                                                        PROBE_TIMEOUT_CMD="timeout -k 30 ${VPC_PEERLINK_TIMEOUT:-180}"
                                     PEERLINK_TRY=0
                                     while :; do
                                                                                 local PEERLINK_STATUS=0
@@ -4328,7 +4342,7 @@ PEERLINK_PROBE_EOF
                                         else
                                             MOD_TIMEOUT="${MODULE_TIMEOUT}"
                                         fi
-                                        MOD_TIMEOUT_CMD="$(command -v timeout >/dev/null 2>&1 && echo "timeout -k 60 ${MOD_TIMEOUT}" || true)"
+                                        MOD_TIMEOUT_CMD="timeout -k 60 ${MOD_TIMEOUT}"
                                         run_logged_playbook "${ND_REPORT_LOG_DIR}/test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt" "$m" "${ND_REPORT_LOG_DIR}/test_output_${FABRIC_NAME}_${VERSION_ID}_${m}.txt" prerequisites ${MOD_TIMEOUT_CMD} ansible-playbook -i "${INVENTORY_FILE}" "${COLLECTIONS_DIRECTORY}/run_integration_module.yaml" \
                                             -e "@${INVENTORY_VARS_FILE}" \
                                             -e "test_module=$m" \

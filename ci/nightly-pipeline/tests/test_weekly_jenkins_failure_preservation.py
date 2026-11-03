@@ -43,6 +43,53 @@ def specification(value):
     return 'def scenario = script.parseReportingJson(' + json.dumps(json.dumps(value)) + ')\n'
 
 
+def test_required_consul_download_has_finite_request_timeout(groovy_runner):
+    groovy_runner(r'''
+script.binding.setVariable('CONSUL_URL', 'https://consul.example')
+script.metaClass.httpRequest = { Map options ->
+    assert options.timeout == 60
+    assert options.validResponseCodes == '200'
+    return [content: 'offline runtime fixture']
+}
+script.metaClass.writeFile = { Map options -> calls.add('write') }
+script.metaClass.sh = { Object options -> calls.add('install'); return 0 }
+assert script.downloadFromConsul('offline-required.yaml') == true
+assert calls == ['write','install']
+''')
+
+
+@pytest.mark.parametrize('variant', (*VARIANTS, 'Jenkinsfile_nd_jenkins_script_comm_list'))
+def test_missing_timeout_tool_stops_before_module_execution(tmp_path, variant):
+    source = (ROOT / variant).read_text()
+    anchor = '                                if ! command -v timeout'
+    assert source.count(anchor) == 1
+    check = anchor + source.split(anchor, 1)[1].split('\n                                fi', 1)[0] + '\nfi'
+    shell = 'set -e\ncommand() { return 1; }\n' + check + '\nprintf "MODULE_MUST_NOT_START\\n"\n'
+    result = subprocess.run(['/bin/bash'], input=shell, cwd=tmp_path,
+                            text=True, capture_output=True, timeout=5)
+    assert result.returncode != 0
+    assert 'NDP_REQUIRED_TIMEOUT_UNAVAILABLE' in result.stderr
+    assert 'MODULE_MUST_NOT_START' not in result.stdout
+    assert '|| true)' not in source.split('TIMEOUT_CMD=', 1)[1].split('\n', 1)[0]
+
+
+@pytest.mark.parametrize('variant', (*VARIANTS, 'Jenkinsfile_nd_jenkins_script_comm_list'))
+@pytest.mark.parametrize('seconds,allowed', [('2400', True), ('0', False), ('-1', False), ('unlimited', False)])
+def test_module_deadline_cannot_be_disabled_or_invalid(tmp_path, variant, seconds, allowed):
+    source = (ROOT / variant).read_text()
+    anchor = '                                for bounded_seconds in '
+    assert source.count(anchor) == 1
+    check = anchor + source.split(anchor, 1)[1].split('\n                                done', 1)[0] + '\ndone'
+    environment = dict(os.environ, MODULE_TIMEOUT=seconds, SWITCHES_MODULE_TIMEOUT='5400',
+                       SWITCH_GUARD_TIMEOUT='1800', VPC_PEERLINK_TIMEOUT='180')
+    result = subprocess.run(['/bin/bash'], input='set -e\n' + check + '\nprintf "BOUNDS_READY\\n"\n',
+                            cwd=tmp_path, env=environment, text=True, capture_output=True, timeout=5)
+    assert (result.returncode == 0) is allowed
+    assert ('BOUNDS_READY' in result.stdout) is allowed
+    if not allowed:
+        assert 'NDP_INVALID_RUNTIME_TIMEOUT' in result.stderr
+
+
 @pytest.mark.parametrize('variant', (*VARIANTS, 'Jenkinsfile_nd_jenkins_script_comm_list'))
 @pytest.mark.parametrize('mode', ['normal', 'parent_symlink', 'target_symlink', 'absolute_path'])
 def test_archive_receipt_uses_container_shell_and_rejects_unsafe_paths(tmp_path, variant, mode):
