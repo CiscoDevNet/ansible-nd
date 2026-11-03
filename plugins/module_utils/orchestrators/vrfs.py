@@ -1037,6 +1037,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         if model_instance.vrf_type in _EXTERNAL_VRF_TYPES:
             self.validate_external_vrf_write(model_instance, updating=updating)
             payload = model_instance.to_payload()
+            # TODO(4.2.1) external-vrf-create-requires-fabric-name
             return {key: payload[key] for key in ("fabricName", "vrfName", "vrfType", "description") if key in payload}
         if model_instance.write_capabilities is None:
             intent = model_instance.to_payload()
