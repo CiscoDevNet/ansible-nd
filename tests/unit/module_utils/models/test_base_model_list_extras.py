@@ -255,3 +255,54 @@ def test_base_model_list_extras_00210(path: str) -> None:
         config["child"]["value"] = 99
     proposed = _ContainerModel.from_config(config)
     assert existing.get_diff(proposed, exclude_unset=False) is False
+
+
+class _OpenShapeChildModel(NDNestedModel):
+    """Minimal open-shape nested model whose extras are user configuration, like `UserDefinedTemplateInputs`."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    extras_are_user_intent: ClassVar[bool] = True
+
+    name: str = Field(alias="name")
+
+
+class _OpenShapeContainerModel(NDBaseModel):
+    """Minimal model holding an open-shape child; its own extras are still controller noise."""
+
+    identifiers: ClassVar[list[str] | None] = ["name"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    name: str = Field(alias="name")
+    child: _OpenShapeChildModel | None = Field(default=None, alias="child")
+
+
+def test_base_model_list_extras_00300() -> None:
+    """
+    # Summary
+
+    A model that declares `extras_are_user_intent` keeps its extras in the comparison: a changed or added extra on the
+    open-shape child is detected, while the container's own controller extras are still ignored.
+
+    ## Test
+
+    - An existing `_OpenShapeContainerModel` from a response with a container-level `serverId` and a child carrying
+      `custom: x`.
+    - A proposed model restating `custom: x` -> no diff.
+    - A proposed model with `custom: y` -> diff.
+    - A proposed model adding `another: z` on the child -> diff.
+
+    ## Classes and Methods
+
+    - NDBaseModel.get_diff()
+    - NDBaseModel._strip_response_extras()
+    """
+    existing = _OpenShapeContainerModel.from_response({"name": "c1", "serverId": "s-1", "child": {"name": "n", "custom": "x"}})
+    same = _OpenShapeContainerModel.from_config({"name": "c1", "child": {"name": "n", "custom": "x"}})
+    changed = _OpenShapeContainerModel.from_config({"name": "c1", "child": {"name": "n", "custom": "y"}})
+    added = _OpenShapeContainerModel.from_config({"name": "c1", "child": {"name": "n", "custom": "x", "another": "z"}})
+    assert existing.get_diff(same, exclude_unset=True) is True
+    assert existing.get_diff(changed, exclude_unset=True) is False
+    assert existing.get_diff(added, exclude_unset=True) is False
