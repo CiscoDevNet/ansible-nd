@@ -184,6 +184,31 @@ def test_manage_fabric_group_vxlan_00140():
 # =============================================================================
 
 
+@pytest.mark.parametrize("mac", ("2020.0000.00aa", "20:20:00:00:00:aa", "20-20-00-00-00-aa", "2020000000aa"))
+def test_manage_fabric_group_vxlan_anycast_mac_normalization(mac: str) -> None:
+    """Equivalent anycast MAC input formats serialize to lowercase dotted notation."""
+    model = _model({"anycast_gateway_mac": mac})
+    response = FabricGroupVxlanModel.from_response(
+        {
+            "name": "MSD1",
+            "category": "fabricGroup",
+            "management": {"type": "vxlan", "anycastGatewayMac": mac},
+        }
+    )
+
+    assert model.management.anycast_gateway_mac == "2020.0000.00aa"
+    assert model.to_payload()["management"]["anycastGatewayMac"] == "2020.0000.00aa"
+    assert response.management.anycast_gateway_mac == "2020.0000.00aa"
+    assert model.get_diff(response) is True
+
+
+@pytest.mark.parametrize("invalid", ("20:20:00:00:00:zz", "2020.0000.00a", "2020.0000.00aa.0000", "20:20-00:00:00:aa"))
+def test_manage_fabric_group_vxlan_rejects_invalid_anycast_mac(invalid: str) -> None:
+    """Malformed, mixed-separator, and incomplete anycast MACs are rejected."""
+    with pytest.raises(ValidationError, match="MAC address"):
+        _model({"anycast_gateway_mac": invalid})
+
+
 @pytest.mark.parametrize(
     "management",
     [

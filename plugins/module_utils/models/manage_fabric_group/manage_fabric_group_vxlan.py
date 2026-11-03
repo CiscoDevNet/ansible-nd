@@ -42,6 +42,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
     BGP_ASN_RE,
+    normalize_anycast_gateway_mac,
 )
 
 """
@@ -426,9 +427,7 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
     @field_validator("anycast_gateway_mac")
     @classmethod
     def validate_mac(cls, value: str) -> str:
-        if not re.match(r"^[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}$", value):
-            raise ValueError(f"Invalid MAC address format, expected xxxx.xxxx.xxxx, got: {value}")
-        return value.lower()
+        return normalize_anycast_gateway_mac(value)
 
     @field_validator("cloud_sec_key")
     @classmethod

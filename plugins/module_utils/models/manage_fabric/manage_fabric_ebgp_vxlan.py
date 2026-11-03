@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import re
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -18,6 +18,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     ValidationInfo,
     field_serializer,
     field_validator,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
     AimlQosPolicyEnum,
@@ -52,6 +53,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     NetflowSettingsModel,
     ScheduledBackupTime,
     default_site_id_from_bgp_asn,
+    normalize_anycast_gateway_mac,
     validate_bgp_asn_value,
     validate_site_id_value,
 )
@@ -157,6 +159,21 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     empty_string_means_unset: ClassVar[bool] = True
 
+    @model_validator(mode="before")
+    @classmethod
+    def omit_bgp_asn_auto_allocation_for_same_tier_as(cls, data: Any) -> Any:
+        """ND omits this Multi-AS-only setting from Same-Tier-AS reads and writes."""
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        mode = normalized.get("bgpAsMode", normalized.get("bgp_as_mode", BgpAsModeEnum.MULTI_AS))
+        if mode in (BgpAsModeEnum.SAME_TIER_AS, BgpAsModeEnum.SAME_TIER_AS.value):
+            if "bgpAsnAutoAllocation" in normalized:
+                normalized["bgpAsnAutoAllocation"] = None
+            else:
+                normalized["bgp_asn_auto_allocation"] = None
+        return normalized
+
     # Fabric Type (required for discriminated union)
     type: Literal[FabricTypeEnum.VXLAN_EBGP] = Field(description="Type of the fabric", default=FabricTypeEnum.VXLAN_EBGP)
 
@@ -175,9 +192,9 @@ class VxlanEbgpManagementModel(NDNestedModel):
         ),
         default=BgpAsModeEnum.MULTI_AS,
     )
-    bgp_asn_auto_allocation: bool = Field(
+    bgp_asn_auto_allocation: bool | None = Field(
         alias="bgpAsnAutoAllocation",
-        description=("Automatically allocate and track BGP ASN for leafs, borders and border gateways in Multi-AS mode"),
+        description=("Automatically allocate and track BGP ASN for leafs, borders and border gateways. Applies only in Multi-AS mode."),
         default=True,
     )
     bgp_asn_range: str | None = Field(
@@ -888,10 +905,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
         - `ValueError` - If MAC address format is invalid
         """
-        mac_pattern = re.compile(r"^([0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}$")
-        if not mac_pattern.match(value):
-            raise ValueError(f"Invalid MAC address format, expected xxxx.xxxx.xxxx, got: {value}")
-        return value.lower()
+        return normalize_anycast_gateway_mac(value)
 
     @field_serializer(
         "bgp_authentication_key",

@@ -85,6 +85,20 @@ def validate_fabric_ip_address(value: str | None) -> str | None:
     return value
 
 
+def normalize_anycast_gateway_mac(value: str) -> str:
+    """Validate a complete 48-bit MAC address and return lowercase dotted notation."""
+    patterns = (
+        r"(?:[0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}",
+        r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}",
+        r"(?:[0-9a-fA-F]{2}-){5}[0-9a-fA-F]{2}",
+        r"[0-9a-fA-F]{12}",
+    )
+    if not any(re.fullmatch(pattern, value) for pattern in patterns):
+        raise ValueError(f"Invalid MAC address format, expected a 48-bit MAC address, got: {value}")
+    digits = re.sub(r"[.:-]", "", value).lower()
+    return f"{digits[:4]}.{digits[4:8]}.{digits[8:]}"
+
+
 def validate_fabric_ipv4_address(value: str | None) -> str | None:
     """Validate a bare IPv4 address while preserving its spelling."""
     # ND represents an unset optional address as either an omitted property or

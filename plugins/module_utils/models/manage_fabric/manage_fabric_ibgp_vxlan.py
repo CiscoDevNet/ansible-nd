@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-from typing import Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import IPv6CIDR
@@ -17,6 +17,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     Field,
     FieldSerializationInfo,
     SecretStr,
+    StringConstraints,
     ValidationInfo,
     field_serializer,
     field_validator,
@@ -56,6 +57,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     FabricInterfaceName,
     MulticastGroupSubnet,
     NetflowSettingsModel,
+    normalize_anycast_gateway_mac,
     RequiredFabricIPv4Address,
     ScheduledBackupTime,
     default_site_id_from_bgp_asn,
@@ -63,6 +65,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     validate_site_id_value,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import FabricBaseModel, serialize_secret_value
+
+FabricCliText = Annotated[str, StringConstraints(strip_whitespace=False)]
 
 """
 # Comprehensive Pydantic models for iBGP VXLAN fabric management via Nexus Dashboard
@@ -755,7 +759,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
 
     # BGP / Routing Enhancements
     auto_bgp_neighbor_description: bool = Field(alias="autoBgpNeighborDescription", description="Generate BGP EVPN Neighbor Description", default=True)
-    ibgp_peer_template: str = Field(
+    ibgp_peer_template: FabricCliText = Field(
         alias="ibgpPeerTemplate",
         description=(
             "Specifies the iBGP Peer-Template config used for Route Reflectors and spines with border "
@@ -766,7 +770,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
         ),
         default="",
     )
-    leaf_ibgp_peer_template: str = Field(
+    leaf_ibgp_peer_template: FabricCliText = Field(
         alias="leafIbgpPeerTemplate",
         description=(
             "Specifies the config used for leaf, border or border gateway.  If this field is empty, the peer template "
@@ -984,11 +988,11 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
 
     # Extra Config / Pre-Interface Config / AAA / Banner
-    banner: str = Field(
+    banner: FabricCliText = Field(
         description=("Message of the Day (motd) banner. Delimiter char (very first char is delimiter char) followed by message ending with delimiter"),
         default="",
     )
-    extra_config_leaf: str = Field(
+    extra_config_leaf: FabricCliText = Field(
         alias="extraConfigLeaf",
         description=(
             "Additional CLIs as captured from the show running configuration, added after interface configurations for "
@@ -996,22 +1000,22 @@ class VxlanIbgpManagementModel(NDNestedModel):
         ),
         default="",
     )
-    extra_config_spine: str = Field(
+    extra_config_spine: FabricCliText = Field(
         alias="extraConfigSpine",
         description=(
             "Additional CLIs as captured from the show running configuration, added after interface configurations for all switches with some spine role"
         ),
         default="",
     )
-    extra_config_tor: str = Field(
+    extra_config_tor: FabricCliText = Field(
         alias="extraConfigTor",
         description=("Additional CLIs as captured from the show running configuration, added after interface configurations for all ToRs"),
         default="",
     )
-    extra_config_intra_fabric_links: str = Field(alias="extraConfigIntraFabricLinks", description="Additional CLIs for all Intra-Fabric links", default="")
-    extra_config_aaa: str = Field(alias="extraConfigAaa", description="AAA Configurations", default="")
+    extra_config_intra_fabric_links: FabricCliText = Field(alias="extraConfigIntraFabricLinks", description="Additional CLIs for all Intra-Fabric links", default="")
+    extra_config_aaa: FabricCliText = Field(alias="extraConfigAaa", description="AAA Configurations", default="")
     aaa: bool = Field(description="Include AAA configs from Manageability tab during device bootup", default=False)
-    pre_interface_config_leaf: str = Field(
+    pre_interface_config_leaf: FabricCliText = Field(
         alias="preInterfaceConfigLeaf",
         description=(
             "Additional CLIs as captured from the show running configuration, added before interface "
@@ -1019,14 +1023,14 @@ class VxlanIbgpManagementModel(NDNestedModel):
         ),
         default="",
     )
-    pre_interface_config_spine: str = Field(
+    pre_interface_config_spine: FabricCliText = Field(
         alias="preInterfaceConfigSpine",
         description=(
             "Additional CLIs as captured from the show running configuration, added before interface configurations for all switches with some spine role"
         ),
         default="",
     )
-    pre_interface_config_tor: str = Field(
+    pre_interface_config_tor: FabricCliText = Field(
         alias="preInterfaceConfigTor",
         description=("Additional CLIs as captured from the show running configuration, added before interface configurations for all ToRs"),
         default="",
@@ -1198,11 +1202,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
 
         - `ValueError` - If MAC address format is invalid
         """
-        mac_pattern = re.compile(r"^([0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}$")
-        if not mac_pattern.match(value):
-            raise ValueError(f"Invalid MAC address format, expected xxxx.xxxx.xxxx, got: {value}")
-
-        return value.lower()
+        return normalize_anycast_gateway_mac(value)
 
     @field_serializer(
         "bgp_authentication_key",

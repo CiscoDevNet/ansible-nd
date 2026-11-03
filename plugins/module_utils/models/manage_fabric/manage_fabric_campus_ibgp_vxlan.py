@@ -35,9 +35,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     FabricIPv4CIDR,
     FabricInterfaceName,
     MulticastGroupSubnet,
-    NetflowSettingsModel,
     ScheduledBackupTime,
     default_site_id_from_bgp_asn,
+    normalize_anycast_gateway_mac,
     validate_bgp_asn_value,
     validate_site_id_value,
 )
@@ -76,7 +76,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     Comprehensive VXLAN Campus fabric management configuration.
 
     This model contains all settings specific to VXLAN Campus fabric types including
-    VXLAN properties (shared), campus-specific properties, and netflow settings.
+    VXLAN properties (shared) and campus-specific properties.
 
     ## Raises
 
@@ -677,14 +677,6 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         default="",
     )
 
-    # --- netflowProperties ---
-
-    netflow_settings: NetflowSettingsModel | None = Field(
-        alias="netflowSettings",
-        description="Settings associated with netflow",
-        default=None,
-    )
-
     @field_validator("bgp_asn")
     @classmethod
     def validate_bgp_asn(cls, value: str | None) -> str | None:
@@ -709,9 +701,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     @classmethod
     def validate_mac_address(cls, value: str) -> str:
         """Validate and normalize the anycast gateway MAC address."""
-        if not re.fullmatch(r"([0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}", value):
-            raise ValueError(f"Invalid MAC address format, expected xxxx.xxxx.xxxx, got: {value}")
-        return value.lower()
+        return normalize_anycast_gateway_mac(value)
 
 
 class FabricCampusIbgpVxlanModel(FabricBaseModel):
