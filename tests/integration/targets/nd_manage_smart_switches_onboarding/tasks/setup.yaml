@@ -1,0 +1,59 @@
+---
+
+- name: Read complete inventory before any write
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/inventory.yaml"
+
+- name: Require an entirely unassociated fabric
+  ansible.builtin.assert:
+    that:
+      - ss_associations | length == 0
+      - nd_test_smart_switches_switch_ids[0] in ss_inventory
+      - nd_test_smart_switches_switch_ids[1] in ss_inventory
+    fail_msg: Existing associations are not test-owned; no pre-clean or restoration is permitted.
+
+- name: Validate both initially absent Smart fixtures
+  ansible.builtin.assert:
+    that:
+      - ss_inventory[item].smart is sameas true
+      - ss_inventory[item].integration_name == ""
+      - ss_inventory[item].switch_name is string
+      - ss_inventory[item].switch_name | length > 0
+  loop: "{{ nd_test_smart_switches_switch_ids }}"
+
+- name: Prepare exact target-local fixture configurations
+  ansible.builtin.set_fact:
+    ss_a: "{{ nd_test_smart_switches_switch_ids[0] }}"
+    ss_b: "{{ nd_test_smart_switches_switch_ids[1] }}"
+    ss_delete_both:
+      - switch_id: "{{ nd_test_smart_switches_switch_ids[0] }}"
+      - switch_id: "{{ nd_test_smart_switches_switch_ids[1] }}"
+    ss_both:
+      - switch_id: "{{ nd_test_smart_switches_switch_ids[0] }}"
+        integration_name: "{{ nd_test_smart_switches_integration_name }}"
+      - switch_id: "{{ nd_test_smart_switches_switch_ids[1] }}"
+        integration_name: "{{ nd_test_smart_switches_integration_name }}"
+    ss_absent_id: __ansible_smart_switch_absent__
+    ss_fixture_inventory: "{{ ss_inventory }}"
+
+- name: Prove negative inventory selector absent
+  ansible.builtin.assert:
+    that:
+      - ss_absent_id not in ss_inventory
+
+- name: Validate optional non-Smart fixture independently
+  ansible.builtin.assert:
+    that:
+      - nd_test_smart_switches_non_smart_id in ss_inventory
+      - ss_inventory[nd_test_smart_switches_non_smart_id].smart is sameas false
+      - ss_inventory[nd_test_smart_switches_non_smart_id].integration_name == ""
+  when: nd_test_smart_switches_non_smart_id | length > 0
+
+- name: Require an operator-confirmed controller rejection fixture
+  ansible.builtin.assert:
+    that:
+      - nd_test_smart_switches_rejection_fixture_confirmed is sameas true
+      - nd_test_smart_switches_rejection_integration_name is string
+      - nd_test_smart_switches_rejection_integration_name | trim | length > 0
+      - nd_test_smart_switches_rejection_integration_name != nd_test_smart_switches_integration_name
+    fail_msg: Confirm that this integration fixture produces per-resource failureResults with no effect for both selected switches on this controller.
+  when: nd_test_smart_switches_controller_failures | bool
