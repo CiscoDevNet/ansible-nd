@@ -6,8 +6,19 @@ enabled while parity is validated against the same controller and fabric.
 
 ## Live testing status
 
-Live integration testing is in progress. The testing results will be updated
-in this document once testing completes.
+Live testing completed successfully using a temporary inventory derived from
+`inventory.LOCAL.networking`:
+
+| Test run | ok | changed | failed | unreachable | skipped |
+|---|---:|---:|---:|---:|---:|
+| Harness `merged` | 43 | 12 | 0 | 0 | 2 |
+| Harness `replaced` | 43 | 12 | 0 | 0 | 2 |
+| Harness `deleted` | 43 | 12 | 0 | 0 | 2 |
+| Harness `overridden` + preflight | 43 | 12 | 0 | 0 | 2 |
+| Unchanged legacy suite | 37 | 9 | 0 | 0 | 2 |
+
+All state-specific harness runs and the unchanged legacy suite completed
+without failures.
 
 ## Scenario mapping
 
