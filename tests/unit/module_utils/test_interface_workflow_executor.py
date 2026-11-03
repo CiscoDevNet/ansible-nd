@@ -11,7 +11,6 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
-
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import (
     FabricContext,
 )
@@ -2194,6 +2193,7 @@ def test_preflight_failure_reconciles_equal_vpc_names_by_pair_without_false_chan
             "192.0.2.3": "SERIAL4",
             "192.0.2.4": "SERIAL3",
         },
+        vpc_discovered_pairs={frozenset({"SERIAL1", "SERIAL2"}), frozenset({"SERIAL3", "SERIAL4"})},
     )
     workflow_plan = planner.plan(
         [

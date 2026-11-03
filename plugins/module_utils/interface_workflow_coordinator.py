@@ -162,24 +162,22 @@ class InterfaceWorkflowCoordinator:
             return None
         return converted if converted >= 0 else None
 
-    def _vpc_pair_map(
+    def _vpc_pair_records(
         self,
         *,
-        resources: list[dict[str, Any]],
         fabric_context: FabricContext,
         rest_send: RestSend,
-    ) -> dict[str, str]:
-        """Return authoritative primary-IP to peer-ID mappings for requested vPC resources."""
-        if not self._uses_vpc(resources):
-            return {}
-
+        view: str | None,
+    ) -> list[Any]:
+        """Page through one `vpcPairs` view (`intendedPairs`, or the discovered default when `view` is None) and return its records."""
         records: list[Any] = []
         offset = 0
         seen_page_signatures: set[tuple[tuple[str | None, str | None], ...]] = set()
         while True:
             endpoint = EpVpcPairsListGet()
             endpoint.fabric_name = fabric_context.fabric_name
-            endpoint.endpoint_params.view = "intendedPairs"
+            if view is not None:
+                endpoint.endpoint_params.view = view
             endpoint.lucene_params.max = VPC_PAIR_PAGE_SIZE
             endpoint.lucene_params.offset = offset
             endpoint.lucene_params.sort = "switchId:asc"
@@ -237,6 +235,41 @@ class InterfaceWorkflowCoordinator:
             if not page:
                 raise InterfaceWorkflowValidationError(f"The Nexus Dashboard vPC-pair response reports more records after empty offset {offset}.")
             offset = next_offset if next_offset is not None else offset + len(page)
+
+        return records
+
+    def _vpc_discovered_pair_keys(
+        self,
+        *,
+        resources: list[dict[str, Any]],
+        fabric_context: FabricContext,
+        rest_send: RestSend,
+    ) -> set[frozenset[str]] | None:
+        """Return the unordered serial pairs the switches report, for the vPC pair-readiness gate (issue #648); None without vPC resources."""
+        if not self._uses_vpc(resources):
+            return None
+        keys: set[frozenset[str]] = set()
+        for record in self._vpc_pair_records(fabric_context=fabric_context, rest_send=rest_send, view=None):
+            if not isinstance(record, dict):
+                continue
+            first = record.get("switchId")
+            second = record.get("peerSwitchId")
+            if isinstance(first, str) and first and isinstance(second, str) and second:
+                keys.add(frozenset({first, second}))
+        return keys
+
+    def _vpc_pair_map(
+        self,
+        *,
+        resources: list[dict[str, Any]],
+        fabric_context: FabricContext,
+        rest_send: RestSend,
+    ) -> dict[str, str]:
+        """Return authoritative primary-IP to peer-ID mappings for requested vPC resources."""
+        if not self._uses_vpc(resources):
+            return {}
+
+        records = self._vpc_pair_records(fabric_context=fabric_context, rest_send=rest_send, view="intendedPairs")
 
         declared_peer_by_switch_id: dict[str, str] = {}
         for record in records:
@@ -320,10 +353,16 @@ class InterfaceWorkflowCoordinator:
             fabric_context=fabric_context,
             rest_send=rest_send,
         )
+        vpc_discovered_pairs = self._vpc_discovered_pair_keys(
+            resources=resources,
+            fabric_context=fabric_context,
+            rest_send=rest_send,
+        )
         planner = self.planner_factory(
             snapshot=snapshot,
             rest_send_factory=lambda params: self._new_rest_send(params=params, check_mode=True),
             vpc_pair_by_switch_ip=vpc_pair_by_switch_ip,
+            vpc_discovered_pairs=vpc_discovered_pairs,
             run_capability_preflight=True,
         )
         return planner.plan(resources)
