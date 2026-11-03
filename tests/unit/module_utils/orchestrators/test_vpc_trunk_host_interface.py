@@ -70,6 +70,21 @@ def _vpc_pair_response(switch_id: str, peer_switch_id: str) -> dict:
     }
 
 
+def _vpc_pairs_list_response(records: list[tuple[str, str]]) -> dict:
+    """Build one fabric-wide discovered `vpcPairs` page for the pair-readiness gate (issue #648)."""
+
+    return {
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/vpcPairs",
+        "MESSAGE": "OK",
+        "DATA": {
+            "meta": {"counts": {"remaining": 0, "total": len(records)}},
+            "vpcPairs": [{"switchId": first, "peerSwitchId": second, "type": "discoveredPairs"} for first, second in records],
+        },
+    }
+
+
 def _build_rest_send(
     gen_responses: ResponseGenerator,
     fabric_name: str = "fabric_1",
@@ -635,6 +650,7 @@ def test_vpc_trunk_host_orchestrator_00440_overridden_mixed_case_idempotent() ->
             yield responses_vpc_trunk_host(f"test_overridden_mixed_case_00440{suffix}")
         yield _vpc_pair_response("FDOBBBBBBBB", "FDOAAAAAAAA")
         yield _vpc_pair_response("FDOAAAAAAAA", "FDOBBBBBBBB")
+        yield _vpc_pairs_list_response([("FDOAAAAAAAA", "FDOBBBBBBBB")])
 
     config = [{"switch_ip": "192.168.1.2", "interface_name": "VPC500", "config_data": {"network_os": {"policy": _OVERRIDDEN_POLICY}}}]
 
@@ -675,6 +691,7 @@ def test_vpc_trunk_host_orchestrator_00445_overridden_mixed_case_idempotent_chec
             yield responses_vpc_trunk_host(f"test_overridden_mixed_case_00445{suffix}")
         yield _vpc_pair_response("FDOBBBBBBBB", "FDOAAAAAAAA")
         yield _vpc_pair_response("FDOAAAAAAAA", "FDOBBBBBBBB")
+        yield _vpc_pairs_list_response([("FDOAAAAAAAA", "FDOBBBBBBBB")])
 
     config = [{"switch_ip": "192.168.1.2", "interface_name": "VPC500", "config_data": {"network_os": {"policy": _OVERRIDDEN_POLICY}}}]
 
@@ -718,6 +735,7 @@ def test_vpc_trunk_host_orchestrator_00450_overridden_one_peer_missing_peer_swit
         for suffix in ("a", "b", "c", "d", "e"):
             yield responses_vpc_trunk_host(f"test_overridden_one_peer_missing_00450{suffix}")
         yield _vpc_pair_response("FDOAAAAAAAA", "FDOBBBBBBBB")
+        yield _vpc_pairs_list_response([("FDOAAAAAAAA", "FDOBBBBBBBB")])
 
     config = [{"switch_ip": "192.168.1.1", "interface_name": "vpc500", "config_data": {"network_os": {"policy": _OVERRIDDEN_POLICY}}}]
 
@@ -759,6 +777,7 @@ def test_vpc_trunk_host_orchestrator_00455_overridden_both_peers_missing_peer_sw
     def responses():
         for suffix in ("a", "b", "c", "d", "e", "f"):
             yield responses_vpc_trunk_host(f"test_overridden_both_peers_missing_00455{suffix}")
+        yield _vpc_pairs_list_response([("FDOAAAAAAAA", "FDOBBBBBBBB")])
 
     config = [{"switch_ip": "192.168.1.1", "interface_name": "vpc500", "config_data": {"network_os": {"policy": _OVERRIDDEN_POLICY}}}]
 

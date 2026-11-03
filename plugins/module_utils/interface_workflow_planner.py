@@ -338,12 +338,18 @@ class InterfaceWorkflowPlanner:
         snapshot: InterfaceStateSnapshot,
         rest_send_factory: RestSendFactory | None = None,
         vpc_pair_by_switch_ip: Mapping[str, str | Iterable[str]] | None = None,
+        vpc_discovered_pairs: Iterable[Iterable[str]] | None = None,
         run_capability_preflight: bool = False,
     ) -> None:
         self.snapshot = snapshot
         self.fabric_context = snapshot.fabric_context
         self.rest_send_factory = rest_send_factory or RestSend
         self.vpc_pair_by_switch_ip = dict(vpc_pair_by_switch_ip or {})
+        # Pairs the switches report (discovered `vpcPairs` view), shared with every vPC orchestrator's pair-readiness gate
+        # (issue #648). None means the caller made no read, and each orchestrator fetches the view itself.
+        self.vpc_discovered_pairs: set[frozenset[str]] | None = (
+            {frozenset(pair) for pair in vpc_discovered_pairs} if vpc_discovered_pairs is not None else None
+        )
         self.run_capability_preflight = run_capability_preflight
         self._vpc_pair_scope_cache: dict[str, tuple[str, ...]] = {}
         self._vpc_peer_serial_cache: dict[str, str] | None = None
@@ -389,6 +395,8 @@ class InterfaceWorkflowPlanner:
                 orchestrator = adapter.build_orchestrator(rest_send=rest_send, snapshot=self.snapshot, results=results)
                 if isinstance(orchestrator, VpcInterfaceBaseOrchestrator):
                     orchestrator.share_peer_serial_cache(self._shared_vpc_peer_serial_cache())
+                    if self.vpc_discovered_pairs is not None:
+                        orchestrator.share_discovered_pairs(self.vpc_discovered_pairs)
                 if isinstance(orchestrator, EthernetBaseOrchestrator):
                     self._register_ethernet_orchestrator(orchestrator)
                 before = self._existing_collection(adapter, orchestrator, proposed)

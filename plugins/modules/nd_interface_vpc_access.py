@@ -22,7 +22,8 @@ description:
 - Per-peer policy fields use the API-native C(peer1_*) / C(peer2_*) naming, where C(peer1) corresponds to the
   switch supplied in O(config[].switch_ip) and C(peer2) corresponds to the auto-resolved peer.
 - The switch supplied in O(config[].switch_ip) must already be in a vPC pair (created via M(cisco.nd.nd_manage_vpc_pair))
-  before this module can manage interfaces on it.
+  before this module can manage interfaces on it. The pair must also be deployed to the switches; a pair that exists only as
+  Nexus Dashboard intent is rejected before any change is made.
 author:
 - Allen Robel (@allenrobel)
 options:
@@ -344,7 +345,8 @@ notes:
   network_os_type C(nx-os), policy_type C(accessVpcHost)). These values are hardcoded by the module and are
   not user-configurable.
 - The primary switch supplied in O(config[].switch_ip) must already be in a vPC pair (managed by
-  M(cisco.nd.nd_manage_vpc_pair)). The peer serial is auto-resolved from the pair record.
+  M(cisco.nd.nd_manage_vpc_pair)) that is deployed to the switches. The peer serial is auto-resolved from the pair record, and
+  a pair that exists only as Nexus Dashboard intent fails the task before any change is made.
 - C(peer1) refers to the switch supplied in O(config[].switch_ip); C(peer2) refers to the auto-resolved peer.
 - A vPC interface is identified by the combination of O(config[].switch_ip) and O(config[].interface_name). Two different vPC
   pairs in the same fabric may reuse the same vPC id (for example C(vpc100) on two pairs); list each under its own pair's
