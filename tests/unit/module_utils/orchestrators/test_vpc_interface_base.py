@@ -2152,6 +2152,9 @@ def test_vpc_interface_base_01110() -> None:
         yield _vpc_pair_response("FDO22222BBB", "FDO11111AAA")
         yield responses_vpc_base(f"{method_name}c")
         yield _vpc_pair_response("FDO44444DDD", "FDO33333CCC")
+        yield _vpc_pairs_list_response(
+            [_discovered_pair("FDO11111AAA", "FDO22222BBB"), _discovered_pair("FDO33333CCC", "FDO44444DDD")],
+        )
 
     gen_responses = ResponseGenerator(responses())
     instance = _build_orchestrator(gen_responses)
@@ -2175,7 +2178,7 @@ def test_vpc_interface_base_01120() -> None:
     ## Test
 
     - Two proposed items with distinct names on the same primary
-    - One switches-list request and two reciprocal `vpcPair` requests are sufficient for both items
+    - One switches-list request, two reciprocal `vpcPair` requests, and one discovered `vpcPairs` read are sufficient for both items
 
     ## Classes and Methods
 
@@ -2187,6 +2190,7 @@ def test_vpc_interface_base_01120() -> None:
         yield responses_vpc_base("test_vpc_interface_base_01120a")
         yield _vpc_pair_response("FDO11111AAA", "FDO22222BBB")
         yield _vpc_pair_response("FDO22222BBB", "FDO11111AAA")
+        yield _vpc_pairs_list_response([_discovered_pair("FDO11111AAA", "FDO22222BBB")])
 
     gen_responses = ResponseGenerator(responses())
     instance = _build_orchestrator(gen_responses)
@@ -2312,3 +2316,148 @@ def test_vpc_member_public_preflight_rejects_existing_owner_for_each_family(
         instance.preflight([proposed])
 
     assert instance.rest_send.response_count == 0
+
+
+# =============================================================================
+# Test: discovered-pair gate (issue #648)
+# =============================================================================
+
+
+def _vpc_pairs_list_response(records: list[dict], remaining: int = 0) -> dict:
+    """Build one fabric-wide `vpcPairs` (discovered view) page for the pair-readiness gate tests."""
+
+    return {
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/vpcPairs",
+        "MESSAGE": "OK",
+        "DATA": {"meta": {"counts": {"remaining": remaining, "total": len(records) + remaining}}, "vpcPairs": records},
+    }
+
+
+def _discovered_pair(switch_id: str, peer_switch_id: str) -> dict:
+    """Build one discovered vPC-pair record as ND returns it from the default `vpcPairs` view."""
+
+    return {
+        "domainId": 1,
+        "switchId": switch_id,
+        "switchName": f"leaf-{switch_id}",
+        "switchVpcRole": "primary",
+        "peerSwitchId": peer_switch_id,
+        "peerSwitchName": f"leaf-{peer_switch_id}",
+        "peerSwitchVpcRole": "secondary",
+        "type": "discoveredPairs",
+    }
+
+
+def test_vpc_interface_base_00240(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `preflight_safety` rejects a vPC pair that exists in ND intent but is not discovered on the switches (issue #648).
+
+    ## Test
+
+    - The pair resolves reciprocally from the intent records (stubbed)
+    - The fabric-wide discovered `vpcPairs` view returns no records
+    - `RuntimeError` names the pair, says it is not discovered, and points at `nd_manage_vpc_pair` with `config_actions.deploy`
+    - Exactly one `vpcPairs` GET was issued
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.preflight_safety()
+    """
+    _wire_membership_pair(monkeypatch, {_MEMBERSHIP_PRIMARY: {}, _MEMBERSHIP_PEER: {}})
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", lambda self, model_instances: None)
+    instance = _build_orchestrator(ResponseGenerator(iter((_vpc_pairs_list_response([]),))))
+
+    match = r"vPC pair .*FDO11111AAA.*FDO22222BBB.*not discovered on the switches.*nd_manage_vpc_pair.*config_actions\.deploy"
+    with pytest.raises(RuntimeError, match=match):
+        instance.preflight_safety([_build_model()])
+
+    assert instance.rest_send.response_count == 1
+
+
+def test_vpc_interface_base_00250(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `preflight_safety` accepts a pair whose discovered record lists the proposed switch as the peer side.
+
+    ## Test
+
+    - The discovered `vpcPairs` view returns the pair keyed from the other peer (`switchId` = peer, `peerSwitchId` = primary)
+    - `preflight_safety` does not raise
+    - Exactly one `vpcPairs` GET was issued
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.preflight_safety()
+    """
+    _wire_membership_pair(monkeypatch, {_MEMBERSHIP_PRIMARY: {}, _MEMBERSHIP_PEER: {}})
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", lambda self, model_instances: None)
+    response = _vpc_pairs_list_response([_discovered_pair(_MEMBERSHIP_PEER, _MEMBERSHIP_PRIMARY)])
+    instance = _build_orchestrator(ResponseGenerator(iter((response,))))
+
+    with does_not_raise():
+        instance.preflight_safety([_build_model()])
+
+    assert instance.rest_send.response_count == 1
+
+
+def test_vpc_interface_base_00260(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify the discovered-pair gate reads the fabric-wide `vpcPairs` view once per orchestrator, however many items share the pair.
+
+    ## Test
+
+    - Two proposed vPCs on the same pair
+    - Only one `vpcPairs` response is available; a second GET would exhaust the generator
+    - `preflight_safety` does not raise and exactly one response was consumed
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.preflight_safety()
+    """
+    _wire_membership_pair(monkeypatch, {_MEMBERSHIP_PRIMARY: {}, _MEMBERSHIP_PEER: {}})
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", lambda self, model_instances: None)
+    response = _vpc_pairs_list_response([_discovered_pair(_MEMBERSHIP_PRIMARY, _MEMBERSHIP_PEER)])
+    instance = _build_orchestrator(ResponseGenerator(iter((response,))))
+
+    with does_not_raise():
+        instance.preflight_safety([_build_model(interface_name="vpc501"), _build_model(interface_name="vpc502")])
+
+    assert instance.rest_send.response_count == 1
+
+
+def test_vpc_interface_base_00270(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify the discovered-pair gate follows `meta.counts.remaining` across pages before deciding a pair is missing.
+
+    ## Test
+
+    - Page 1 holds an unrelated discovered pair and reports one remaining record
+    - Page 2 holds the proposed pair
+    - `preflight_safety` does not raise and both pages were fetched
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.preflight_safety()
+    """
+    _wire_membership_pair(monkeypatch, {_MEMBERSHIP_PRIMARY: {}, _MEMBERSHIP_PEER: {}})
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", lambda self, model_instances: None)
+
+    def responses():
+        yield _vpc_pairs_list_response([_discovered_pair("FDO33333CCC", "FDO44444DDD")], remaining=1)
+        yield _vpc_pairs_list_response([_discovered_pair(_MEMBERSHIP_PRIMARY, _MEMBERSHIP_PEER)])
+
+    instance = _build_orchestrator(ResponseGenerator(responses()))
+
+    with does_not_raise():
+        instance.preflight_safety([_build_model()])
+
+    assert instance.rest_send.response_count == 2
