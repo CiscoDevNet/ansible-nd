@@ -239,8 +239,10 @@ class ManageTorOrchestrator(ConfigActionsMixin, NDBaseOrchestrator[ManageTorMode
         authoritative membership list: each vPC pairing arrives once as a
         self-contained entry carrying both member switch IDs inline, so no per-leaf
         sweep or client-side de-duplication is needed. ``includeCandidates`` must be
-        sent explicitly -- the ND API returns HTTP 400 when the query string is
-        omitted entirely.
+        sent explicitly -- ND treats an omitted flag as ``true`` and rejects the bare
+        fabric-wide GET with HTTP 400; see the workaround marker
+        ``access-associations-includecandidates-default-true`` on
+        ``EpManageTorAssociationsGet.path``.
 
         Phase 2 backfills the port-channel / VPC IDs, which phase 1 never returns.
         It is skipped for ``deleted``, which matches on identity alone.
