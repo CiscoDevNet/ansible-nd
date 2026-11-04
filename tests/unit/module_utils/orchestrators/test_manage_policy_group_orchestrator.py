@@ -3066,6 +3066,209 @@ def test_broad_summary_reads_remaining_pages_once_and_reuses_complete_cache():
     assert parse_qs(urlsplit(results._tasks[1].path).query).get("offset") == ["1"]
 
 
+@pytest.mark.parametrize(
+    "remaining_counts",
+    [(1, None), (2, None, None), (3, None, None, 0), (2, 1, None)],
+    ids=[
+        "metadata-free-final",
+        "metadata-free-continuations",
+        "metadata-resumes",
+        "metadata-disappears-later",
+    ],
+)
+def test_broad_summary_accounts_for_known_records_without_requiring_every_page_metadata(
+    remaining_counts,
+):
+    """An earlier remaining count bounds reads even when later metadata is absent."""
+    pages = []
+    expected_ids = []
+    for index, remaining in enumerate(remaining_counts):
+        policy_id = f"POLICY-GROUP-{101 + index}"
+        expected_ids.append(policy_id)
+        page = {"policies": [_pending_plan_row(policy_id, [f"A{index}", f"B{index}"])]}
+        if remaining is not None:
+            page["meta"] = {"counts": {"remaining": remaining}}
+        pages.append(page)
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([_resp(page) for page in pages]), results=results)
+    instance._require_complete_summary = True
+
+    assert [row["policyId"] for row in instance._query_policy_summary_groups()] == expected_ids
+    assert [row["policyId"] for row in instance._query_policy_summary_groups()] == expected_ids
+    assert len(results._tasks) == len(pages)
+    assert all(task.verb == "GET" for task in results._tasks)
+    assert [parse_qs(urlsplit(task.path).query).get("offset", ["0"])[0] for task in results._tasks] == [str(index) for index in range(len(pages))]
+
+
+@pytest.mark.parametrize(
+    "initial_remaining,continuations",
+    [
+        (2, [((), None)]),
+        (2, [((102,), None), ((), None)]),
+        (2, [((102,), 0)]),
+        (3, [((102,), 1)]),
+        (1, [((102, 103), None)]),
+        (3, [((102,), None), ((103,), 0)]),
+    ],
+    ids=[
+        "empty-continuation",
+        "truncated-metadata-free-walk",
+        "premature-zero",
+        "unexplained-decrease",
+        "more-than-outstanding",
+        "inconsistent-resumed-metadata",
+    ],
+)
+def test_broad_summary_rejects_records_unaccounted_for_by_continuations(initial_remaining, continuations):
+    pages = [
+        {
+            "policies": [_pending_plan_row("POLICY-GROUP-101", ["A"])],
+            "meta": {"counts": {"remaining": initial_remaining}},
+        }
+    ]
+    for suffixes, remaining in continuations:
+        page = {"policies": [_pending_plan_row(f"POLICY-GROUP-{suffix}", ["B"]) for suffix in suffixes]}
+        if remaining is not None:
+            page["meta"] = {"counts": {"remaining": remaining}}
+        pages.append(page)
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([_resp(page) for page in pages]), results=results)
+    instance._require_complete_summary = True
+
+    with pytest.raises(Exception, match="count|remaining|pagination|progress|summary|Summary"):
+        instance._query_policy_summary_groups()
+
+    assert len(results._tasks) == len(pages)
+    assert all(task.verb == "GET" for task in results._tasks)
+    assert instance._policy_summary_cache is None
+    assert instance._raw_cache is None
+
+
+@pytest.mark.parametrize(
+    "invalid_rows",
+    [
+        [None],
+        [{}],
+        [{"policyId": ""}],
+        [{"policyId": "   "}],
+        [{"policyId": 102}],
+        [{"policyId": ["POLICY-GROUP-102"]}],
+        [{"policyId": "POLICY-GROUP-102"}, {"policyId": "POLICY-GROUP-102"}],
+    ],
+    ids=[
+        "non-record",
+        "missing-id",
+        "empty-id",
+        "blank-id",
+        "non-string-id",
+        "unhashable-id",
+        "duplicate-within-page",
+    ],
+)
+def test_broad_summary_does_not_count_unidentified_or_duplicate_records(invalid_rows):
+    pages = [
+        {
+            "policies": [_pending_plan_row("POLICY-GROUP-101", ["A"])],
+            "meta": {"counts": {"remaining": len(invalid_rows)}},
+        },
+        {"policies": invalid_rows},
+    ]
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([_resp(page) for page in pages]), results=results)
+    instance._require_complete_summary = True
+
+    with pytest.raises(Exception, match="policyId|policy ID|record|pagination|summary|Summary"):
+        instance._query_policy_summary_groups()
+
+    assert len(results._tasks) == 2
+    assert all(task.verb == "GET" for task in results._tasks)
+    assert instance._policy_summary_cache is None
+
+
+def test_broad_summary_accounts_before_group_and_lifecycle_filters():
+    target = _pending_plan_row("POLICY-GROUP-101", ["A", "B"], deleted=False)
+    remaining_rows = [
+        _pending_plan_row("POLICY-GROUP-102", ["C"], template="other_template", deleted=False),
+        _pending_plan_row("POLICY-GROUP-103", ["D"]),
+        _pending_plan_row("POLICY-GROUP-104", ["E"], source="POLICY-GROUP-101"),
+        {"policyId": "POLICY-777", "policyType": "switch"},
+    ]
+    pages = [
+        {"policies": [target], "meta": {"counts": {"remaining": 4}}},
+        {"policies": remaining_rows},
+    ]
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([_resp(page) for page in pages]), results=results)
+    instance._require_complete_summary = True
+
+    selected = instance.query_filtered(template_name="feature_enable", description="same", deduplicate=False)
+
+    assert [row["policyId"] for row in selected] == ["POLICY-GROUP-101"]
+    assert {row["policyId"] for row in instance._query_policy_summary_groups()} == {f"POLICY-GROUP-{suffix}" for suffix in range(101, 105)}
+    assert len(results._tasks) == 2
+    assert all(task.verb == "GET" for task in results._tasks)
+
+
+def test_broad_summary_accepts_full_metadata_free_final_page_with_known_count():
+    final_rows = [_pending_plan_row(f"POLICY-GROUP-{index}", ["A"]) for index in range(1, 10001)]
+    pages = [
+        {
+            "policies": [_pending_plan_row("POLICY-GROUP-0", ["A"])],
+            "meta": {"counts": {"remaining": 10000}},
+        },
+        {"policies": final_rows},
+    ]
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([_resp(page) for page in pages]), results=results)
+    instance._require_complete_summary = True
+
+    rows = instance._query_policy_summary_groups()
+
+    assert [row["policyId"] for row in rows] == [f"POLICY-GROUP-{index}" for index in range(10001)]
+    assert len(results._tasks) == 2
+    assert all(task.verb == "GET" for task in results._tasks)
+    assert parse_qs(urlsplit(results._tasks[1].path).query).get("offset") == ["1"]
+
+
+@pytest.mark.parametrize("rows", [[], [_pending_plan_row("POLICY-GROUP-101", ["A"])]], ids=["empty", "short"])
+def test_broad_summary_preserves_metadata_free_first_page_compatibility(rows):
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([_resp({"policies": rows})]), results=results)
+    instance._require_complete_summary = True
+
+    assert [row["policyId"] for row in instance._query_policy_summary_groups()] == [row["policyId"] for row in rows]
+    assert len(results._tasks) == 1
+    assert results._tasks[0].verb == "GET"
+
+
+def test_broad_summary_retry_after_incomplete_read_starts_with_fresh_inventory():
+    pages = [
+        {
+            "policies": [_pending_plan_row("POLICY-GROUP-101", ["A"])],
+            "meta": {"counts": {"remaining": 2}},
+        },
+        {
+            "policies": [_pending_plan_row("POLICY-GROUP-102", ["B"])],
+            "meta": {"counts": {"remaining": 0}},
+        },
+        {
+            "policies": [_pending_plan_row("POLICY-GROUP-201", ["C"])],
+            "meta": {"counts": {"remaining": 0}},
+        },
+    ]
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send([_resp(page) for page in pages]), results=results)
+    instance._require_complete_summary = True
+
+    with pytest.raises(Exception, match="count|remaining|pagination|summary|Summary"):
+        instance._query_policy_summary_groups()
+    assert instance._policy_summary_cache is None
+    assert [row["policyId"] for row in instance._query_policy_summary_groups()] == ["POLICY-GROUP-201"]
+    assert len(results._tasks) == 3
+    assert all(task.verb == "GET" for task in results._tasks)
+    assert "offset" not in parse_qs(urlsplit(results._tasks[2].path).query)
+
+
 def test_ordinary_summary_preserves_one_get_even_when_metadata_reports_more():
     page = {"policies": [_pending_plan_row("POLICY-GROUP-101", ["A"], deleted=False)], "meta": {"counts": {"remaining": 1}}}
     results = _make_results()
