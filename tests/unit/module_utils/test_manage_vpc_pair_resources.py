@@ -18,6 +18,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exception
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.resources import (
     VpcPairStateMachine,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.runner import run_vpc_module
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.vpc_pair_model import VpcPairModel
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 
 
 def test_vpc_override_deletions_respect_override_exceptions():
@@ -57,6 +61,29 @@ def test_vpc_override_deletions_respect_override_exceptions():
         status="deleted",
         after_data={},
     )
+
+
+def test_gathered_vpc_pairs_use_ndoutput_gathered_items_as_current():
+    """NDOutput's empty after snapshot must not hide pairs from the vPC gathered result."""
+    pair = VpcPairModel.from_response({"switchId": "SER-A", "peerSwitchId": "SER-B"})
+    collection = NDConfigCollection(model_class=VpcPairModel, items=[pair])
+    module = SimpleNamespace(params={"state": "gathered", "config": []}, check_mode=False)
+
+    state_machine = object.__new__(VpcPairStateMachine)
+    state_machine.module = module
+    state_machine.state = "gathered"
+    state_machine.output = NDOutput("normal", state="gathered")
+    state_machine.before = collection
+    state_machine.existing = collection
+    state_machine.proposed = NDConfigCollection(model_class=VpcPairModel)
+    state_machine.logs = []
+    state_machine.result = {}
+
+    result = run_vpc_module(state_machine)
+
+    assert result["after"] == []
+    assert result["current"] == [{"switch_id": "SER-A", "peer_switch_id": "SER-B", "use_virtual_peer_link": False}]
+    assert result["gathered"]["vpc_pairs"] == result["current"]
 
 
 def _make_nrm(logs):

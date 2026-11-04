@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair import actions
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair import validation
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
     VpcFieldNames,
 )
@@ -94,6 +95,36 @@ def test_manage_vpc_pair_actions_00040_preflight_allows_unknown_fabric_type(_bas
         actions.validate_proposed_details_support(nrm, proposed_item)
 
     assert nrm.fabric_type == "futureFabricType"
+
+
+def test_manage_vpc_pair_actions_rejects_explicitly_unsupported_virtual_peer_link(_base_params):
+    """Do not send a pair request when ND explicitly rejects virtual fabric peering."""
+    nrm = _FakeNrm(
+        _base_params,
+        {
+            VpcFieldNames.SWITCH_ID: "SER-A",
+            VpcFieldNames.PEER_SWITCH_ID: "SER-B",
+            VpcFieldNames.USE_VIRTUAL_PEER_LINK: True,
+        },
+    )
+    support_details = {
+        "isVpcFabricPeeringSupported": False,
+        "status": "Unsupported on this platform",
+    }
+
+    with patch.object(validation, "_get_pairing_support_details", return_value=support_details):
+        with pytest.raises(VpcPairResourceError, match="VPC fabric peering is not supported") as exc:
+            validation._validate_fabric_peering_support(
+                nrm=nrm,
+                nd_v2=object(),
+                fabric_name="fab1",
+                switch_id="SER-A",
+                peer_switch_id="SER-B",
+                use_virtual_peer_link=True,
+            )
+
+    assert exc.value.details["unsupported_switch_id"] == "SER-A"
+    assert "physical peer link" in str(exc.value)
 
 
 def test_manage_vpc_pair_actions_00050_get_proposed_vpc_pair_details_normalizes_empty_values():
