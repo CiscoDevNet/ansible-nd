@@ -808,6 +808,153 @@ staged_deletions:
       - Empty for other logical interfaces. Historical member lists and another parent's members do not grant correction authority.
       type: list
       elements: str
+vpc_staged_deletions:
+  description:
+  - Current requested vPC deletions independently proved staged by exact two-peer controller previews.
+  - Describes both generated local port-channels and their member footprints.
+  - Proves staging only, not final interface absence, restored member defaults, or convergence after deployment.
+  - Empty when the plan has no matching two-peer deletion proof. For read-only use, also check C(write_receipt) for zero write attempts.
+  returned: when planning completes, including post-plan execution failures
+  type: list
+  elements: dict
+  contains:
+    resource_index:
+      description: Index of the requested vPC resource group.
+      type: int
+    type:
+      description: Requested V(vpc_access) or V(vpc_trunk_host) family.
+      type: str
+    switch_id:
+      description: Controller switch identity selected by the request.
+      type: str
+    interface_name:
+      description: Canonical requested vPC interface name.
+      type: str
+    peer_switch_ids:
+      description: The two distinct reciprocal peer switch identities, in sorted order.
+      type: list
+      elements: str
+    peer_footprints:
+      description: Exact generated port-channel and member evidence for each peer.
+      type: list
+      elements: dict
+      contains:
+        switch_id:
+          description: Peer switch identity.
+          type: str
+        interface_name:
+          description: Generated local port-channel name on this peer.
+          type: str
+        running_member_ports:
+          description: Physical ports proved to belong to the local port-channel by its running configuration.
+          type: list
+          elements: str
+        reset_member_ports:
+          description: Physical ports whose removal from this local parent is proved by its pending preview.
+          type: list
+          elements: str
+  sample:
+  - resource_index: 0
+    type: vpc_trunk_host
+    switch_id: SERIAL1
+    interface_name: vpc61
+    peer_switch_ids: [SERIAL1, SERIAL2]
+    peer_footprints:
+    - switch_id: SERIAL1
+      interface_name: port-channel61
+      running_member_ports: [Ethernet1/1]
+      reset_member_ports: [Ethernet1/1]
+    - switch_id: SERIAL2
+      interface_name: port-channel61
+      running_member_ports: [Ethernet1/2]
+      reset_member_ports: [Ethernet1/2]
+member_preparations:
+  description:
+  - Auxiliary standalone host-policy preparation needed before a requested physical member update and its parent operation.
+  - Empty when no such preparation is needed. Check-mode entries are V(planned); unexecuted normal-mode entries are V(not_attempted).
+  - C(verified_before_membership=true) means fresh controller host intent was verified before staging the exact parent membership.
+  - Accepted preparation and verified host intent do not prove device deployment, operational LACP convergence, or final member-update success.
+  - Execution entries also report parent/member outcomes and sequence numbers; unavailable sequence numbers are null.
+  returned: when planning completes, including post-plan execution failures
+  type: list
+  elements: dict
+  contains:
+    resource_index:
+      description: Index of the requested physical-interface resource group.
+      type: int
+    type:
+      description: Requested Ethernet interface family.
+      type: str
+    action:
+      description: Always V(prepare_member).
+      type: str
+    source_action:
+      description: Original requested operation that requires the auxiliary preparation.
+      type: str
+    switch_ip:
+      description: Switch reference from the requested physical-interface configuration.
+      type: str
+    switch_id:
+      description: Resolved controller switch identity.
+      type: str
+    interface_name:
+      description: Canonical physical interface being prepared.
+      type: str
+    from_policy_type:
+      description: Observed policy before preparation.
+      type: str
+    to_policy_type:
+      description: Standalone host policy required before membership attachment.
+      type: str
+    parent_resource_index:
+      description: Index of the requested parent resource group.
+      type: int
+    parent_interface_name:
+      description: Exact parent interface that depends on this preparation.
+      type: str
+    parent_policy_type:
+      description: Intended parent policy.
+      type: str
+    status:
+      description: Preparation outcome, such as V(planned), V(not_attempted), V(succeeded), V(failed), or V(uncertain).
+      type: str
+    verified_before_membership:
+      description: Whether fresh standalone host intent was verified before the dependent parent operation.
+      type: bool
+    execution_sequence:
+      description: Preparation write sequence within this execution; null when unavailable. Omitted before execution.
+      type: int
+    verification_sequence:
+      description: Fresh host-intent verification sequence; null when not verified. Omitted before execution.
+      type: int
+    parent_operation:
+      description: Dependent parent operation outcome, including its C(status) and C(execution_sequence). Omitted before execution.
+      type: dict
+    member_refresh_sequence:
+      description: Fresh member-read sequence after parent staging; null when unavailable. Omitted before execution.
+      type: int
+    member_update:
+      description: Final requested member update outcome, including its C(status) and C(execution_sequence). Omitted before execution.
+      type: dict
+    message:
+      description: Preparation error or diagnostic message, when present.
+      type: str
+  sample:
+  - resource_index: 0
+    type: ethernet_access
+    action: prepare_member
+    source_action: update
+    switch_ip: 192.0.2.1
+    switch_id: SERIAL1
+    interface_name: Ethernet1/40
+    from_policy_type: trunkHost
+    to_policy_type: accessHost
+    parent_resource_index: 1
+    parent_interface_name: port-channel645
+    parent_policy_type: accessPoHost
+    status: planned
+    verified_before_membership: false
+
 desired_equality:
   description:
   - Versioned cache-only residual planning over actual observed inventories, bound by C(request_sha256).
