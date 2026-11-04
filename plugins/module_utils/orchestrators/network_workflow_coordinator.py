@@ -213,7 +213,7 @@ class NetworkWorkflowCoordinator:
         """
         # Summary
 
-        Validate actionable Network features against the owning fabric before writes.
+        Validate actionable Network features and replacement ports before writes.
 
         ## Raises
 
@@ -225,6 +225,7 @@ class NetworkWorkflowCoordinator:
             preflight_workflow_features(
                 self, sm, module_args, strategy, "Network", current_attachments=current_attachments, desired_attachments=desired_attachments
             )
+            self.attachments.preflight_replacement_interfaces(module_args, strategy, current_attachments or {}, desired_attachments or {})
         except ValueError as exc:
             raise NDStateMachineError(str(exc)) from exc
 

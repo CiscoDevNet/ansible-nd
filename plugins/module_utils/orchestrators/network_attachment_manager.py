@@ -769,6 +769,40 @@ class NetworkAttachmentManager:
         self._trace("network_attachment_post_end", operation_type=operation_type.value, changed=trace.get("changed"), failed=trace.get("failed"))
         return trace
 
+    def preflight_replacement_interfaces(
+        self,
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        current: dict[tuple[str, str], dict[str, Any]],
+        desired: dict[tuple[str, str], dict[str, Any]],
+    ) -> None:
+        """Validate existing attachment replacements before any workflow write.
+
+        The post phase validates again against the then-current definition.
+        New Networks are deliberately excluded: their ports cannot be validated
+        until the definition exists. Passive synthesized peers do not grant
+        authority to replace their ports.
+        """
+        if module_args.get("state") not in ("staged", "replaced", "overridden"):
+            return
+        replacements = [
+            payload for key, payload in desired.items() if key in current and payload.get("interfaces") and self._has_removed_ports(current[key], payload)
+        ]
+        if not replacements:
+            return
+        orchestrator, _results = self.coordinator._new_network_orchestrator(module_args, strategy)
+        controller_version = getattr(getattr(orchestrator, "rest_send", None), "controller_version", None)
+        replacements = self._payloads_for_controller(self._prepare_attachment_payloads(strategy, replacements), controller_version)
+        # This POST is read-only, so perform the same safety check in check
+        # mode without enabling any of the later attachment mutation requests.
+        rest_send = orchestrator.rest_send
+        rest_send.save_settings()
+        rest_send.check_mode = False
+        try:
+            self.validate_attachment_interfaces(orchestrator, strategy, replacements)
+        finally:
+            rest_send.restore_settings()
+
     def validate_attachment_interfaces(self, orchestrator: Any, strategy: BaseNetworkStrategy, payloads: list[dict[str, Any]]) -> None:
         """Ask ND to validate attachment interfaces before mutation."""
         validation_payloads = [self._validation_payload(payload) for payload in payloads if payload.get("interfaces")]
