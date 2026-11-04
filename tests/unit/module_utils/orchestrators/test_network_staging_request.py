@@ -5,7 +5,7 @@ from copy import deepcopy
 from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
 import pytest
 
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_argument_specs import network_parent_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_argument_specs import network_module_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_staging_request import network_staging_request_digest
 
 
@@ -22,7 +22,7 @@ def _config():
 
 
 def _expanded(config):
-    spec = {"config": {"type": "list", "elements": "dict", "options": network_parent_argument_spec(), "default": []}}
+    spec = {"config": {"type": "list", "elements": "dict", "options": network_module_argument_spec(), "default": []}}
     result = ArgumentSpecValidator(spec).validate({"config": config})
     assert not result.error_messages
     return result.validated_parameters["config"]
@@ -35,7 +35,8 @@ def _digest(config, **kwargs):
 def test_raw_and_native_expanded_nested_defaults_have_identical_digest():
     raw = _config()
     expanded = _expanded(raw)
-    assert expanded[0]["mtu"] == expanded[0]["mtu_l3intf"] == 9216
+    assert expanded[0]["mtu"] is None
+    assert "mtu_l3intf" not in expanded[0]
     assert expanded[0]["deploy"] is True
     assert expanded[0]["attach"][0]["deploy"] is True
     assert expanded[0]["attach"][0]["interfaces"][0]["native_vlan"] is False

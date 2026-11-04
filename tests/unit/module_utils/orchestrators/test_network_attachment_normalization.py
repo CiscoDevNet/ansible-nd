@@ -34,6 +34,22 @@ def test_known_ethernet_spellings_are_equivalent(name):
 
 
 @pytest.mark.parametrize(
+    "api_mode,public_mode",
+    [
+        ("dot1qTunnel", "dot1q_tunnel"),
+        ("trunkPromiscuous", "trunk_promiscuous"),
+        ("host", "pvlan_host"),
+        ("pvlanHost", "pvlan_host"),
+        ("trunkSecondary", "trunk_secondary"),
+    ],
+)
+def test_canonical_public_modes_match_controller_readback_without_port_churn(api_mode, public_mode):
+    current = _attachment([{"interfaceRange": "Port-channel61", "mode": api_mode}])
+    desired = _attachment([{"interfaceRange": "Po61", "mode": public_mode}])
+    assert not NetworkAttachmentManager._attachment_changed(current, desired)
+
+
+@pytest.mark.parametrize(
     "options",
     [
         {"svi_enabled": False},

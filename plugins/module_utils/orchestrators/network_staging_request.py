@@ -17,9 +17,9 @@ from ansible.module_utils.common.validation import check_type_bool, check_type_i
 def _network_spec():
     # Share the native argument contract without importing the module entry point
     # or depending on a second catalog of Network defaults.
-    from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_argument_specs import network_parent_argument_spec
+    from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_argument_specs import network_module_argument_spec
 
-    return network_parent_argument_spec()
+    return network_module_argument_spec()
 
 
 def _normalize_value(value, spec):

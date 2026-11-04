@@ -195,6 +195,12 @@ class NetworkStagingEffects:
         network_type = self._value(row, "network_type", "networkType")
         if network_type not in (None, "vxlanIbgp", "vxlan"):
             risks.add("unsupported_network_type")
+        # Primary/secondary PVLAN relationships may affect another Network.
+        # Preserve their native workflow but decline unqualified sparse scope.
+        vlan_type = self._value(row, "vlan_network_type", "vlanNetworkType")
+        primary = self._value(row, "primary_network_id", "primaryNetworkId")
+        if vlan_type not in (None, "normal") or primary not in (None, "", 0, "0"):
+            risks.add("unqualified_pvlan_effects")
 
         # Read nested model fields without dumping/copying all controller rows.
         def inspect(value: Any) -> None:

@@ -11,7 +11,7 @@ import pytest
 from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
 
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_staging_effects import NetworkStagingEffects, network_staging_request_digest
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_argument_specs import network_parent_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_argument_specs import network_module_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_attachment_manager import NetworkAttachmentManager
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.networks import NDNetworkOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_workflow_coordinator import NetworkWorkflowCoordinator
@@ -60,14 +60,14 @@ def test_real_pydantic_orchestrator_accepts_declared_observer_via_real_coordinat
         coordinator._restore_state_machine_params(config, state)
 
 
-def test_real_coordinator_binds_original_ansible_request_before_model_aliases_and_crud_rewrites():
+def test_real_coordinator_binds_original_ansible_request_before_crud_parameter_rewrites():
     config = [
         {
             "network_name": "EDIT",
             "network_id": 29991,
             "vlan_id": 191,
             "vrf_name": "BLUE",
-            "gw_ip_subnet": "192.0.2.1/24",
+            "gateway_ipv4_address": "192.0.2.1/24",
             "deploy": False,
             "attach": [
                 {
@@ -80,7 +80,7 @@ def test_real_coordinator_binds_original_ansible_request_before_model_aliases_an
         }
     ]
     expected = network_staging_request_digest("fab1", "staged", config)
-    spec = {"config": {"type": "list", "elements": "dict", "options": network_parent_argument_spec()}}
+    spec = {"config": {"type": "list", "elements": "dict", "options": network_module_argument_spec()}}
     validation = ArgumentSpecValidator(spec).validate({"config": config})
     assert not validation.error_messages
     params = {"fabric_name": "fab1", "state": "staged", "config": validation.validated_parameters["config"]}
@@ -89,12 +89,21 @@ def test_real_coordinator_binds_original_ansible_request_before_model_aliases_an
     coordinator = NetworkWorkflowCoordinator(module, strategy=strategy)
     assert coordinator._network_staging_request_sha256 == expected
     parsed = coordinator._parse_config(params["config"], strategy.config_model_cls, "staged")
-    assert network_staging_request_digest("fab1", "staged", parsed) != expected
+    # Canonical sparse parsing preserves public intent. CRUD subsequently
+    # substitutes a nested API-model configuration into module.params.
+    assert network_staging_request_digest("fab1", "staged", parsed) == expected
+    crud_request_digests = []
+
+    def query_current(_orchestrator, *_args, **_kwargs):
+        crud_request_digests.append(network_staging_request_digest("fab1", "staged", module.params["config"]))
+        return []
+
     with (
-        patch.object(NDNetworkOrchestrator, "query_all", return_value=[]),
+        patch.object(NDNetworkOrchestrator, "query_all", query_current),
         patch.object(NetworkAttachmentManager, "resolve_switch_ids", return_value={"192.0.2.10": "S1"}),
     ):
         result = coordinator.run()
+    assert crud_request_digests and all(value != expected for value in crud_request_digests)
     assert result["network_staging_effects"]["request_sha256"] == expected
     assert result["network_staging_effects"]["observed"] is False
 
@@ -109,6 +118,28 @@ def test_native_svi_options_and_explicit_multicast_group_are_bounded_to_attached
     result = observer.finish({"changed": True}, sm, current, {}, [])
     assert result["complete"] is True
     assert result["unknown_effects"] == []
+
+
+@pytest.mark.parametrize("group_name", [None, "GROUP"])
+def test_accepted_interface_group_update_declines_bounded_reconciliation_receipt(group_name):
+    observer = _observer()
+    interface = {"interfaceRange": "Ethernet1/1", "mode": "trunk"}
+    if group_name is not None:
+        interface["interfaceGroupName"] = group_name
+    current = [_row("EDIT", "S1", interfaces=[deepcopy(interface)])]
+    payloads = [{"networkName": "EDIT", "switchId": "S1", "attach": True, "interfaces": [interface]}]
+    before = deepcopy((current, payloads))
+    _snapshot(observer, current)
+    observer.record_payloads(payloads)
+
+    result = observer.finish({"changed": True}, _sm(), current, {}, [])
+
+    assert result["observed"] is True
+    assert result["deployment_attempts"] == 0
+    assert result["affected_switches"] == [{"switch_id": "S1", "management_ip": "192.0.2.1"}]
+    assert result["complete"] is (group_name is None)
+    assert result["unknown_effects"] == ([] if group_name is None else ["dynamic_attachment_interface_group"])
+    assert (current, payloads) == before
 
 
 def test_definition_update_scopes_old_new_attachments_without_unchanged_networks():

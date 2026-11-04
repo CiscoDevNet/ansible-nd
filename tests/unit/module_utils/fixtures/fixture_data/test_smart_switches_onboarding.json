@@ -1,0 +1,23 @@
+{
+    "mixed_onboarding": {
+        "RETURN_CODE": 202,
+        "MESSAGE": "Accepted",
+        "DATA": {
+            "successResults": [{"name": "a", "status": "success", "message": "leaf-a"}],
+            "failureResults": [{"name": "b", "status": "failed", "message": "Onboarding rejected"}]
+        }
+    },
+    "inventory": {
+        "RETURN_CODE": 200,
+        "MESSAGE": "OK",
+        "DATA": {
+            "meta": {"counts": {"total": 2, "remaining": 0}},
+            "switches": [
+                {"switchId": "a", "hostname": "leaf-a", "fabricName": "fabric_1",
+                 "additionalData": {"smartSwitch": true, "hypershieldIntegrationName": ""}},
+                {"switchId": "b", "hostname": "leaf-b", "fabricName": "fabric_1",
+                 "additionalData": {"smartSwitch": true, "hypershieldIntegrationName": "hypershield"}}
+            ]
+        }
+    }
+}

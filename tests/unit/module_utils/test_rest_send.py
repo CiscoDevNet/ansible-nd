@@ -33,11 +33,71 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator imp
 from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
 
 
+@pytest.mark.parametrize("verb", [HttpVerbEnum.POST, HttpVerbEnum.DELETE])
+def test_max_attempts_preserves_first_failed_response_without_replay(verb, monkeypatch):
+    responses = iter(
+        [
+            {"RETURN_CODE": 500, "MESSAGE": "Internal Server Error", "DATA": {"message": "uncertain"}},
+            {"RETURN_CODE": 200, "MESSAGE": "OK", "DATA": {}},
+        ]
+    )
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.gen = ResponseGenerator(responses)
+    instance = RestSend({"check_mode": False})
+    instance.sender = sender
+    instance.response_handler = ResponseHandler()
+    instance.path = "/api/v1/test"
+    instance.verb = verb
+    instance.max_attempts = 1
+    instance.performance_profile = InterfacePerformanceProfile()
+    sleeps = []
+    monkeypatch.setattr("ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send.sleep", sleeps.append)
+    instance.commit()
+    assert instance.return_code == 500
+    assert not instance.success
+    assert len(instance.responses) == 1
+    assert instance.mutation_attempt_count == 1
+    assert instance.result_count == 1
+    assert instance.performance_profile.to_dict()["requests"][f"unscoped:write:{verb.value}"]["count"] == 1
+    assert sleeps == []
+    # Only the first response was consumed; no retry was performed.
+    assert next(responses)["RETURN_CODE"] == 200
+
+
+@pytest.mark.parametrize("value", [0, -1, True, 1.5, "1"])
+def test_max_attempts_rejects_invalid_limits(value):
+    with pytest.raises(ValueError, match="positive integer"):
+        RestSend({}).max_attempts = value
+
+
 def responses_rest_send(key: str):
     """
     Load fixture data for rest_send tests
     """
     return load_fixture("test_rest_send")[key]
+
+
+@pytest.mark.parametrize("version", [None, "unknown", "4.2.1.10", "4.3.1.175"])
+@pytest.mark.parametrize("fails", [False, True])
+def test_controller_version_caches_lookup_results_and_none_override(version, fails):
+    """Connection failures and missing releases must not cause per-resource retries."""
+    calls = []
+
+    def get_version():
+        calls.append(True)
+        if fails:
+            raise ValueError("unavailable")
+        return version
+
+    rest = RestSend({})
+    rest._sender = SimpleNamespace(get_version=get_version)
+    for _index in range(3):
+        assert rest.controller_version == (None if fails else version)
+    assert len(calls) == 1
+    rest.controller_version = None
+    assert rest.controller_version is None
+    assert len(calls) == 1
 
 
 # =============================================================================
