@@ -62,15 +62,15 @@
             method: get
             expected_status: 200
             expect:
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.ip"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.ip"
                 equals: "192.168.60.21"
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.description"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.description"
                 equals: "ND4X harness updated subinterface 20"
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.21')]"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.21')]"
                 exists: false
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.22')]"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.22')]"
                 exists: false
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.24')]"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.24')]"
                 exists: false
       register: nd4x_overridden_eth_20
 

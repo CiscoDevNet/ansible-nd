@@ -123,15 +123,15 @@
             method: get
             expected_status: 200
             expect:
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.200')].configData.networkOS.policy.policyType"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.policyType"
                 equals: iosXeSubinterface
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.200')].configData.networkOS.policy.ip"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ip"
                 equals: 10.99.200.1
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.201')].configData.networkOS.policy.policyType"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.201')].configData.networkOS.policy.policyType"
                 equals: iosXeSubinterfaceShutNoshut
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.201')].configData.networkOS.policy.adminState"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.201')].configData.networkOS.policy.adminState"
                 equals: false
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.202')]"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.202')]"
                 exists: false
       register: nd4x_xe_overridden
 

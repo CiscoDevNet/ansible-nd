@@ -156,21 +156,21 @@
         method: get
         expected_status: 200
         expect:
-          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.200')].configData.networkOS.policy.policyType"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.policyType"
             equals: iosXeSubinterface
-          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.200')].configData.networkOS.policy.ip"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ip"
             equals: 10.99.200.1
-          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.200')].configData.networkOS.policy.ipv6"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ipv6"
             equals: "2001:db8:200::1"
-          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.200')].configData.networkOS.policy.ipv6Prefix"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ipv6Prefix"
             equals: 64
-          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.201')].configData.networkOS.policy.policyType"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.201')].configData.networkOS.policy.policyType"
             equals: iosXeSubinterfaceShutNoshut
-          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.201')].configData.networkOS.policy.adminState"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.201')].configData.networkOS.policy.adminState"
             equals: false
-          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.204')].configData.networkOS.policy.policyType"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.204')].configData.networkOS.policy.policyType"
             equals: iosXeSubinterface
-          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.204')].configData.networkOS.policy.ip"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.204')].configData.networkOS.policy.ip"
             equals: 10.99.204.1
   register: nd4x_xe_merged
 
@@ -270,13 +270,13 @@
         method: get
         expected_status: 200
         expect:
-          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.200')].configData.networkOS.policy.description"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.description"
             equals: "ND4X harness updated IOS-XE subinterface 200"
-          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.200')].configData.networkOS.policy.ip"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ip"
             equals: 10.99.200.2
-          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.200')].configData.networkOS.policy.ipv6"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ipv6"
             equals: "2001:db8:200::1"
-          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.200')].configData.networkOS.policy.ipv6Prefix"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ipv6Prefix"
             equals: 64
   register: nd4x_xe_updated
 
@@ -325,11 +325,11 @@
         method: get
         expected_status: 200
         expect:
-          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.200')].configData.networkOS.policy.ip"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ip"
             equals: 10.99.200.1
-          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.200')].configData.networkOS.policy.ipv6"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ipv6"
             equals: "2001:db8:200::1"
-          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent | lower }}.200')].configData.networkOS.policy.ipv6Prefix"
+          - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ xe_parent }}.200')].configData.networkOS.policy.ipv6Prefix"
             equals: 64
   register: nd4x_xe_replaced
 

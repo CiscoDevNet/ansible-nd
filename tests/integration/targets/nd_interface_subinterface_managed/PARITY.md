@@ -131,6 +131,19 @@ flows.
   Recap: `ok=18 changed=0 unreachable=0 failed=0 skipped=1 rescued=0
   ignored=4`. The four ignored failures are the expected validation errors
   exercised by the negative cases.
+- **2026-11-04 — ND 4.x merged scenario rerun:** Passed with canonical
+  Ethernet subinterface REST selectors. The Port-channel `.23` REST assertion
+  also passed. Recap: `ok=33 changed=4 unreachable=0 failed=0 skipped=1
+  rescued=0 ignored=0`.
+- **2026-11-04 — ND 4.x replaced scenario rerun:** Passed with canonical
+  Ethernet subinterface REST selectors. Recap: `ok=28 changed=3
+  unreachable=0 failed=0 skipped=1 rescued=0 ignored=0`.
+- **2026-11-04 — ND 4.x deleted scenario rerun:** Passed with canonical
+  Ethernet subinterface REST selectors. Recap: `ok=28 changed=2
+  unreachable=0 failed=0 skipped=1 rescued=0 ignored=0`.
+- **2026-11-04 — ND 4.x overridden scenario rerun:** Passed with the
+  fabric-wide safety preflight enabled. Recap: `ok=56 changed=3
+  unreachable=0 failed=0 skipped=4 rescued=0 ignored=0`.
 
 ## Running harness scenarios
 

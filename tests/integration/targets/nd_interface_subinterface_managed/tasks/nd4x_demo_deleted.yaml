@@ -39,7 +39,7 @@
             method: get
             expected_status: 200
             expect:
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.22')]"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.22')]"
                 exists: false
       register: nd4x_deleted_eth_22
 

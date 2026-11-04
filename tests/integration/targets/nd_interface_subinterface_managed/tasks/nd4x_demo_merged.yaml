@@ -32,27 +32,27 @@
             method: get
             expected_status: 200
             expect:
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')]"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')]"
                 exists: true
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.21')]"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.21')]"
                 exists: true
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.21')].configData.networkOS.policy.ip"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.21')].configData.networkOS.policy.ip"
                 equals: "192.168.61.20"
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.ip"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.ip"
                 equals: "192.168.60.20"
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.vlanId"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.vlanId"
                 equals: 20
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.ipv6"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.ipv6"
                 equals: "2001:192:168:60::20"
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.ipv6Prefix"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.ipv6Prefix"
                 equals: 64
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.mtu"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.mtu"
                 equals: 9216
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.pimSparse"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.pimSparse"
                 equals: false
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.pimDrPriority"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.pimDrPriority"
                 equals: 1
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.netflow"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.netflow"
                 equals: false
               - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ port_channel_parent | lower }}.23')]"
                 exists: true
@@ -142,9 +142,9 @@
             method: get
             expected_status: 200
             expect:
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.24')].configData.networkOS.networkOSType"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.24')].configData.networkOS.networkOSType"
                 equals: nx-os
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.24')].configData.networkOS.policy.policyType"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.24')].configData.networkOS.policy.policyType"
                 equals: subinterface
       register: nd4x_merged_eth_24_inferred
 
@@ -188,25 +188,25 @@
             method: get
             expected_status: 200
             expect:
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.ip"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.ip"
                 equals: "192.168.60.21"
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.description"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.description"
                 equals: "ND4X harness updated subinterface 20"
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.ipRedirects"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.ipRedirects"
                 equals: false
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.ipv6"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.ipv6"
                 equals: "2001:192:168:60::21"
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.ipv6Prefix"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.ipv6Prefix"
                 equals: 64
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.mtu"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.mtu"
                 equals: 9000
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.pimSparse"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.pimSparse"
                 equals: true
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.pimDrPriority"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.pimDrPriority"
                 equals: 50
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.netflow"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.netflow"
                 equals: false
-              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent | lower }}.20')].configData.networkOS.policy.routingTag"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.routingTag"
                 equals: 12345
       register: nd4x_merged_eth_20_updated
 
