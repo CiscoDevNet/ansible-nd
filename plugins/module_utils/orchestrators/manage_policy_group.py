@@ -385,22 +385,47 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                 break
             if not isinstance(page, list):
                 raise ValueError("policySummary policies must be a list")
-            policies.extend(page)
-            page_ids = {row.get("policyId") for row in page if isinstance(row, dict) and row.get("policyId")}
-            if page_ids & seen_policy_ids:
-                raise ValueError("Cannot safely delete all template groups: policySummary pagination repeated policy IDs")
-            seen_policy_ids.update(page_ids)
+            # Pagination counts describe all summary records, before filtering
+            # by template, source or active membership. Count each usable ID
+            # once so malformed or repeated rows cannot hide missing records.
+            page_ids: set[str] = set()
+            for row in page:
+                policy_id = row.get("policyId") if isinstance(row, dict) else None
+                if not isinstance(policy_id, str) or not policy_id.strip():
+                    raise ValueError("Cannot safely delete all template groups: policySummary record has no usable policy ID")
+                if policy_id in page_ids or policy_id in seen_policy_ids:
+                    raise ValueError("Cannot safely delete all template groups: policySummary pagination repeated policy IDs")
+                page_ids.add(policy_id)
+
+            expected_remaining = previous_remaining - len(page_ids) if previous_remaining is not None else None
+            if expected_remaining is not None and expected_remaining < 0:
+                raise ValueError("Cannot safely delete all template groups: policySummary pagination returned more records than previously remained")
             meta = (result.get("meta") or {}) if isinstance(result, dict) else {}
             counts = (meta.get("counts") or {}) if isinstance(meta, dict) else {}
             remaining = counts.get("remaining") if isinstance(counts, dict) else None
             if not isinstance(counts, dict) or "remaining" not in counts:
-                if len(page) >= ep.lucene_params.max:
+                if expected_remaining is not None:
+                    # Keep walking when metadata disappears mid-pagination;
+                    # the earlier count still bounds the outstanding records.
+                    remaining = expected_remaining
+                elif len(page) >= ep.lucene_params.max:
                     raise ValueError("Cannot safely delete all template groups: policySummary pagination metadata is missing")
-                break
-            if isinstance(remaining, bool) or not isinstance(remaining, int) or remaining < 0:
-                raise ValueError("Cannot safely delete all template groups: invalid policySummary remaining count")
-            if previous_remaining is not None and remaining >= previous_remaining:
-                raise ValueError("Cannot safely delete all template groups: policySummary remaining count did not decrease")
+                else:
+                    # Preserve short first-page responses from controllers
+                    # that omit pagination metadata altogether.
+                    remaining = 0
+            else:
+                if isinstance(remaining, bool) or not isinstance(remaining, int) or remaining < 0:
+                    raise ValueError("Cannot safely delete all template groups: invalid policySummary remaining count")
+                if previous_remaining is not None and remaining >= previous_remaining:
+                    raise ValueError("Cannot safely delete all template groups: policySummary remaining count did not decrease")
+                if expected_remaining is not None and remaining != expected_remaining:
+                    raise ValueError(
+                        "Cannot safely delete all template groups: policySummary remaining count is inconsistent "
+                        f"at offset {offset} (expected {expected_remaining}, received {remaining})"
+                    )
+            policies.extend(page)
+            seen_policy_ids.update(page_ids)
             previous_remaining = remaining
             if remaining == 0:
                 break
