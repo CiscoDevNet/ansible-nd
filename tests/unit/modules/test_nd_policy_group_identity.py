@@ -12,6 +12,7 @@ and persistent controller state remain active.
 
 import json
 from copy import deepcopy
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from ansible_collections.cisco.nd.tests.unit.modules.test_nd_policy_group_direct_id import (
@@ -1499,3 +1500,173 @@ def test_direct_delete_retains_cached_active_member_order(invoke, check_mode):
         assert controller.writes() == []
     else:
         assert [call[2] for call in controller.deployments()] == [{"switchIds": ["SERIAL_A", "SERIAL_Z"]}]
+
+
+class _PagedSummaryController(Controller):
+    """Return controlled summary pages while retaining real write effects."""
+
+    def __init__(self, groups, pages):
+        super().__init__(groups)
+        self.pages = deepcopy(pages)
+
+    def request(self, verb, path, payload):
+        if verb == "GET" and urlsplit(path).path.endswith("/policySummary") and self.pages:
+            self.calls.append((verb, path, deepcopy(payload)))
+            return {
+                "RETURN_CODE": 200,
+                "METHOD": verb,
+                "REQUEST_PATH": path,
+                "MESSAGE": "OK",
+                "DATA": self.pages.pop(0),
+            }
+        return super().request(verb, path, payload)
+
+
+def _summary_page(groups, remaining=None):
+    page = {"policies": [Controller.summary(item) for item in groups]}
+    if remaining is not None:
+        page["meta"] = {"counts": {"remaining": remaining}}
+    return page
+
+
+def _summary_calls(controller):
+    return [call for call in controller.calls if call[0] == "GET" and urlsplit(call[1]).path.endswith("/policySummary")]
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("deploy", [False, True])
+@pytest.mark.parametrize("continuation", ["short-then-empty", "empty", "premature-zero"])
+def test_template_delete_incomplete_inventory_blocks_entire_batch(invoke, check_mode, deploy, continuation):
+    """Discovery must finish before broad or explicit targets can be mutated."""
+    groups = [
+        *duplicate_groups(),
+        group(ANONYMOUS_ID),
+        group("POLICY-GROUP-900", description="Other", templateName="other_template"),
+    ]
+    pages = [_summary_page(groups[:1], remaining=3)]
+    if continuation == "short-then-empty":
+        pages.extend([_summary_page(groups[1:2]), _summary_page([])])
+    elif continuation == "empty":
+        pages.append(_summary_page([]))
+    else:
+        pages.append(_summary_page(groups[1:2], remaining=0))
+    controller = _PagedSummaryController(groups, pages)
+    original = deepcopy(controller.groups)
+
+    result = invoke(
+        controller,
+        [{"name": TEMPLATE}, {"name": "POLICY-GROUP-900"}],
+        state="deleted",
+        deploy=deploy,
+        check_mode=check_mode,
+    )
+
+    assert result.get("failed") is True
+    assert result["changed"] is False
+    assert "pagination" in result["msg"] or "remaining" in result["msg"]
+    assert controller.writes() == []
+    assert controller.groups == original
+    assert controller.pages == []
+    assert len(_summary_calls(controller)) == (3 if continuation == "short-then-empty" else 2)
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("deploy", [False, True])
+@pytest.mark.parametrize("final_metadata", [False, True], ids=["metadata-free-final", "metadata-resumes"])
+def test_template_delete_continues_known_inventory_without_metadata(invoke, check_mode, deploy, final_metadata):
+    """Known counts survive missing metadata and include every raw record."""
+    selected = [*duplicate_groups(), group(ANONYMOUS_ID, switchIds=["SERIAL_ANON"])]
+    keep = group(
+        "POLICY-GROUP-900",
+        description="Keep",
+        templateName="other_template",
+        switchIds=["SERIAL_KEEP"],
+    )
+    pages = [
+        _summary_page(selected[:1], remaining=3),
+        _summary_page(selected[2:]),
+        _summary_page([selected[1], keep], remaining=0 if final_metadata else None),
+    ]
+    controller = _PagedSummaryController([*selected, keep], pages)
+    original = deepcopy(controller.groups)
+
+    result = invoke(
+        controller,
+        [{"name": TEMPLATE}],
+        state="deleted",
+        deploy=deploy,
+        check_mode=check_mode,
+    )
+
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    assert controller.pages == []
+    initial_offsets = [parse_qs(urlsplit(call[1]).query).get("offset", ["0"]) for call in _summary_calls(controller)[:3]]
+    assert initial_offsets == [["0"], ["1"], ["2"]]
+    if check_mode:
+        assert controller.writes() == []
+        assert controller.groups == original
+        assert len(_summary_calls(controller)) == 3
+    else:
+        requested = [pid for call in mark_delete_calls(controller) for pid in call[2]["policyIds"]]
+        assert set(requested) == {item["policyId"] for item in selected}
+        assert len(requested) == len(selected)
+        assert controller.groups == {keep["policyId"]: keep}
+        assert {sid for call in controller.deployments() for sid in call[2]["switchIds"]} == (
+            {sid for item in selected for sid in item["switchIds"]} if deploy else set()
+        )
+        # Anonymous deletion refreshes the inventory, rather than reusing stale pages.
+        assert len(_summary_calls(controller)) == 4
+
+
+@pytest.mark.parametrize("deploy", [False, True])
+def test_template_delete_refresh_failure_retains_accepted_progress(invoke, deploy):
+    """A later failed read must not erase an already accepted direct deletion."""
+    described = duplicate_groups()
+    anonymous = group(ANONYMOUS_ID, switchIds=["SERIAL_ANON"])
+    controller = _PagedSummaryController(
+        [*described, anonymous],
+        [
+            _summary_page([*described, anonymous], remaining=0),
+            _summary_page(described[:1], remaining=1),
+            _summary_page([]),
+        ],
+    )
+
+    result = invoke(controller, [{"name": TEMPLATE}], state="deleted", deploy=deploy)
+
+    assert result.get("failed") is True
+    assert result["changed"] is True
+    assert "pagination" in result["msg"] or "remaining" in result["msg"]
+    assert [call[2] for call in mark_delete_calls(controller)] == [{"policyIds": [ANONYMOUS_ID]}]
+    assert set(controller.groups) == {GROUP_ID, SECOND_ID}
+    assert set(snapshots_by_id(result, "before")) == {GROUP_ID, SECOND_ID}
+    assert set(snapshots_by_id(result, "after")) == {GROUP_ID, SECOND_ID}
+    assert [item["policy_id"] for item in result["direct_actions"]["deleted"]] == [ANONYMOUS_ID]
+    assert [call[2] for call in controller.deployments()] == ([{"switchIds": ["SERIAL_ANON"]}] if deploy else [])
+
+
+def test_template_delete_refresh_starts_new_pagination_budget(invoke):
+    """A post-delete read accounts for its fresh inventory independently."""
+    described = duplicate_groups()
+    anonymous = group(ANONYMOUS_ID, switchIds=["SERIAL_ANON"])
+    controller = _PagedSummaryController(
+        [*described, anonymous],
+        [
+            _summary_page([*described, anonymous], remaining=0),
+            _summary_page(described[:1], remaining=1),
+            _summary_page(described[1:]),
+        ],
+    )
+
+    result = invoke(controller, [{"name": TEMPLATE}], state="deleted")
+
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    assert controller.groups == {}
+    assert controller.pages == []
+    assert [call[2] for call in mark_delete_calls(controller)] == [
+        {"policyIds": [ANONYMOUS_ID]},
+        {"policyIds": [GROUP_ID, SECOND_ID]},
+    ]
+    assert len(_summary_calls(controller)) == 3
