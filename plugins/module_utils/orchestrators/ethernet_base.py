@@ -277,6 +277,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         self._reset_auto_negotiation_deploy_blocks: set[tuple[str, str]] = set()
         self._reset_negotiation_preview_cache_provider: EthernetBaseOrchestrator | None = None
         self._reset_negotiation_fabric_preview: dict[str, dict] | None = None
+        self._reset_negotiation_fabric_validated: set[str] = set()
         self._bounded_workflow_reset_evidence = False
         self._reset_negotiation_fabric_blocks: dict[tuple[str, str], dict[str, list[str]]] = {}
         self._reset_negotiation_interface_preview: dict[tuple[str, str], dict[str, list[str]]] = {}
@@ -1786,41 +1787,55 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         self._bounded_workflow_reset_evidence = True
 
-    def _fabric_reset_negotiation_rows(self, *, refresh: bool = False) -> dict[str, dict]:
-        """Read the deployed-policy preview that can retain old cleanup entities.
+    def _fabric_reset_negotiation_rows(self, *, switch_ids: Sequence[str] | None = None, refresh: bool = False) -> dict[str, dict]:
+        """Index all switch identities, then require CLI proof only for reset targets.
 
         Interface preview omits some old policy commands that fabric deployment
         will execute. Cache a complete read only during planning; retained reset
         writes and their verification explicitly request a fresh observation.
+        Validate newly selected switches on cache hits, since a previously
+        unrelated switch may become another workflow family's reset target.
         """
         provider = self._reset_negotiation_preview_cache_provider
         if provider is not None:
-            return provider._fabric_reset_negotiation_rows(refresh=refresh)
-        if self._reset_negotiation_fabric_preview is not None and not refresh:
-            return self._reset_negotiation_fabric_preview
-        self._reset_negotiation_fabric_blocks.clear()
-        response_start = self.rest_send.response_count
-        sequence_start = self.results.task_sequence_number if self.results is not None else 0
-        path = f"/api/v1/manage/fabrics/{quote(self.fabric_name, safe='')}/actions/preview"
-        result = self._request(path=path, verb=HttpVerbEnum.GET)
-        items = result.get("items") if isinstance(result, dict) else None
-        if not isinstance(items, list) or not items:
-            raise RuntimeError("Reset negotiation fabric preview lacks a non-empty items list")
-        indexed = {}
-        for row in items:
-            if not isinstance(row, dict):
-                raise RuntimeError("Reset negotiation fabric preview contains a malformed switch row")
-            switch_id = row.get("switchId")
-            if not isinstance(switch_id, str) or not switch_id or switch_id != switch_id.strip() or switch_id in indexed:
-                raise RuntimeError("Reset negotiation fabric preview has missing or duplicate switch identities")
+            return provider._fabric_reset_negotiation_rows(switch_ids=switch_ids, refresh=refresh)
+        targets = set(switch_ids) if switch_ids is not None else {serial for _name, serial, _marker in self._reset_negotiation_preview_scope.values()}
+        if not targets:
+            raise RuntimeError("Reset negotiation fabric preview lacks an exact target scope")
+        fresh = self._reset_negotiation_fabric_preview is None or refresh
+        if fresh:
+            self._reset_negotiation_fabric_preview = None
+            self._reset_negotiation_fabric_validated.clear()
+            self._reset_negotiation_fabric_blocks.clear()
+            response_start = self.rest_send.response_count
+            sequence_start = self.results.task_sequence_number if self.results is not None else 0
+            path = f"/api/v1/manage/fabrics/{quote(self.fabric_name, safe='')}/actions/preview"
+            result = self._request(path=path, verb=HttpVerbEnum.GET)
+            items = result.get("items") if isinstance(result, dict) else None
+            if not isinstance(items, list) or not items:
+                raise RuntimeError("Reset negotiation fabric preview lacks a non-empty items list")
+            indexed = {}
+            for row in items:
+                if not isinstance(row, dict):
+                    raise RuntimeError("Reset negotiation fabric preview contains a malformed switch row")
+                switch_id = row.get("switchId")
+                if not isinstance(switch_id, str) or not switch_id or switch_id != switch_id.strip() or switch_id in indexed:
+                    raise RuntimeError("Reset negotiation fabric preview has missing or duplicate switch identities")
+                indexed[switch_id] = row
+        else:
+            indexed = self._reset_negotiation_fabric_preview
+        for switch_id in sorted(targets - self._reset_negotiation_fabric_validated):
+            row = indexed.get(switch_id)
+            if row is None:
+                raise RuntimeError(f"Reset negotiation fabric preview omits switch {switch_id}")
             if row.get("status") not in {"inSync", "outOfSync"}:
                 raise RuntimeError(f"Reset negotiation fabric preview has unsupported status for {switch_id}")
             for field in ("runningConfigs", "pendingConfigs", "expectedConfigs"):
                 if not isinstance(row.get(field), list) or any(not isinstance(line, str) for line in row[field]):
                     raise RuntimeError(f"Reset negotiation fabric preview lacks valid {field} for {switch_id}")
-            indexed[switch_id] = row
         self._reset_negotiation_fabric_preview = indexed
-        if self._bounded_workflow_reset_evidence:
+        self._reset_negotiation_fabric_validated.update(targets)
+        if fresh and self._bounded_workflow_reset_evidence:
             self.rest_send.compact_successful_read_history(response_start, path=path)
             if self.results is not None:
                 self.results.compact_successful_read_history(sequence_start, path=path)
@@ -1921,6 +1936,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         owner._reset_negotiation_interface_preview.clear()
         owner._reset_negotiation_preview_markers.clear()
         owner._reset_negotiation_fabric_preview = None
+        owner._reset_negotiation_fabric_validated.clear()
         owner._reset_negotiation_fabric_blocks.clear()
         if clear_scope:
             owner._reset_negotiation_preview_scope.clear()
@@ -1994,7 +2010,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         try:
             self._load_reset_negotiation_interface_previews(pairs)
             recorded = owner.rest_send.response_count
-            owner._fabric_reset_negotiation_rows(refresh=True)
+            owner._fabric_reset_negotiation_rows(switch_ids=[serial for _name, serial in pairs], refresh=True)
             if owner.rest_send.response_count <= recorded:
                 raise RuntimeError("Reset negotiation fabric preview returned without a fresh response")
             yield
@@ -2034,7 +2050,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             )
             self._load_reset_negotiation_interface_previews(pairs)
         by_type = deepcopy(owner._reset_negotiation_interface_preview[key])
-        fabric_rows = self._fabric_reset_negotiation_rows()
+        fabric_rows = self._fabric_reset_negotiation_rows(switch_ids=[switch_id])
         expected_header = f"interface {interface_name.casefold()}"
         if switch_id not in fabric_rows:
             raise RuntimeError(f"Reset negotiation fabric preview omits switch {switch_id}")
@@ -2081,7 +2097,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         if is_reset and not refresh:
             # The switch inventory's cached inSync flag can lag staging. Only
             # the fabric deployment preview can rule out old cleanup entities.
-            fabric_row = self._fabric_reset_negotiation_rows(refresh=refresh).get(switch_id)
+            fabric_row = self._fabric_reset_negotiation_rows(switch_ids=[switch_id], refresh=refresh).get(switch_id)
             if fabric_row is None:
                 raise RuntimeError(f"Reset negotiation fabric preview omits switch {switch_id}")
             if fabric_row["status"] == "inSync":
