@@ -206,15 +206,24 @@ class VrfWorkflowCoordinator:
         """
         # Summary
 
-        Validate actionable VRF features against the owning fabric before writes.
+        Validate effective VRF payloads and fabric features before any workflow writes.
 
         ## Raises
 
         ### NDStateMachineError
 
-        - If a requested feature is unavailable on the effective fabric.
+        - If an effective write payload or requested feature is unsupported.
         """
         try:
+            state = module_args.get("state", "merged")
+            if state not in ("gathered", "deleted"):
+                # Use the CRUD planner's effective merged/replacement models, not
+                # raw intent or every existing VRF. Child tasks also reach this
+                # boundary before the parent can detach, deploy, or write CRUD.
+                plan = sm._build_plan(state="replaced" if state == "staged" else state)  # pylint: disable=protected-access
+                for items, updating in ((plan.creates, False), (plan.updates, True)):
+                    for item in items:
+                        sm.model_orchestrator.validate_write_payload(item, updating=updating)
             preflight_workflow_features(
                 self, sm, module_args, strategy, "VRF", current_attachments=current_attachments, desired_attachments=desired_attachments
             )
