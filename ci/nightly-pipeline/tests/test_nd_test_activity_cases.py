@@ -15,25 +15,22 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("case_activity", ROOT / "playbooks/nd_test_activity.py")
 REPORT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(REPORT)
-COLLECTION = ROOT.parents[1]
+COLLECTION = ROOT.parent / "checkouts/ansible-nd-local-fixes"
 MODULE = "nd_manage_switches"
+DEVELOP_COMMIT = "684bd53518362e85cf238bc465c6fd6648e21588"
 
 
 @pytest.fixture(scope="module", autouse=True)
-def pinned_authored_roles(tmp_path_factory):
+def pinned_develop_roles(tmp_path_factory):
     """Read authored fixtures from Git objects, preserving the user's worktree."""
     global COLLECTION
     original = COLLECTION
-    pinned_commit = subprocess.check_output(
-        ["git", "-C", str(original), "rev-parse", "HEAD"], text=True,
-    ).strip()
-    assert len(pinned_commit) == 40
     archive = subprocess.run(
-        ["git", "-C", str(original), "archive", pinned_commit,
+        ["git", "-C", str(original), "archive", DEVELOP_COMMIT,
          "tests/integration/targets/nd_manage_switches", "tests/integration/targets/nd_vpc_pair"],
         check=True, stdout=subprocess.PIPE,
     ).stdout
-    COLLECTION = tmp_path_factory.mktemp("authored-repository-roles")
+    COLLECTION = tmp_path_factory.mktemp("authored-develop-roles")
     with tarfile.open(fileobj=io.BytesIO(archive)) as source:
         for member in source:
             relative = Path(member.name)
@@ -145,6 +142,54 @@ def synthetic_collection(tmp_path, tasks, module="nd_fixture"):
     source.parent.mkdir(parents=True)
     source.write_text(json.dumps(tasks, indent=2))
     return tmp_path / "collection", module
+
+
+@pytest.mark.parametrize("adapter", ["text", "events"])
+@pytest.mark.parametrize("terminal_failure", [False, True])
+def test_rescued_cleanup_is_not_a_terminal_failure(tmp_path, adapter, terminal_failure):
+    collection, module = synthetic_collection(tmp_path, [
+        {"name": "TEARDOWN - expected failure", "ansible.builtin.fail": {"msg": "expected"}},
+    ])
+    rows = records_for(collection, module, "tasks/main.yaml")
+    log, used, _ = emit_log(tmp_path, rows, collection=collection, module=module,
+                           outcomes={rows[0]["key"]: "failed"})
+    code = 2 if terminal_failure else 0
+    text = log.read_text().replace("rescued=0", "rescued=1")
+    if not terminal_failure:
+        text = text.replace("failed=1", "failed=0").replace("[ANSIBLE_EXIT_STATUS: 2]", "[ANSIBLE_EXIT_STATUS: 0]")
+    log.write_text(text)
+    Path(str(log) + ".execution.json").write_text(json.dumps({"module": module, "run_id": "current", "exit_code": code}))
+    if adapter == "events":
+        events_for(log, used, code, collection=collection, module=module)
+        summary_path = Path(str(log) + ".event-summary.json")
+        summary = json.loads(summary_path.read_text())
+        summary["counts"]["rescued"] = 1
+        summary_path.write_text(json.dumps(summary))
+        result = REPORT.summarize_events(log, module, "current", "132", "iBGP", collection)
+    else:
+        result = REPORT.summarize(log, module, "current", "132", "iBGP", collection)
+    assert result["result"] == ("FAIL" if terminal_failure else "PASS")
+    assert result["cleanup"] == ("Failed" if terminal_failure else "Rescued")
+    assert bool(result["failure"]) is terminal_failure
+    if not terminal_failure:
+        assert result["handled_failures"]
+
+
+def test_rescued_authored_assertion_does_not_become_a_pass(tmp_path):
+    collection, module = synthetic_collection(tmp_path, [
+        {"name": "Merged TC1 - create", "nd_fixture": {"state": "merged"}},
+        {"name": "Merged TC1 - verify", "ansible.builtin.assert": {"that": [False]}},
+    ])
+    rows = records_for(collection, module, "tasks/main.yaml")
+    log, _, _ = emit_log(tmp_path, rows, collection=collection, module=module,
+                        outcomes={rows[1]["key"]: "failed"})
+    log.write_text(log.read_text().replace("failed=1", "failed=0").replace("rescued=0", "rescued=1")
+                   .replace("[ANSIBLE_EXIT_STATUS: 2]", "[ANSIBLE_EXIT_STATUS: 0]"))
+    Path(str(log) + ".execution.json").write_text(json.dumps({"module": module, "run_id": "current", "exit_code": 0}))
+    result = REPORT.summarize(log, module, "current", "132", "iBGP", collection)
+    assert result["result"] == "PASS"
+    assert result["testcase_totals"] == {"started": 1, "passed": 0, "failed": 0, "skipped": 0, "incomplete": 1}
+    assert result["coverage"] == "INCOMPLETE"
 
 
 def test_verification_gather_is_not_another_case(tmp_path):
@@ -343,6 +388,78 @@ def test_end_word_without_explicit_owned_delete_cleanup_remains_uncounted(tmp_pa
     assert all(not record["cleanup"] for records in catalog["tasks"].values() for record in records)
 
 
+@pytest.mark.parametrize("adapter", ["text", "events"])
+def test_untagged_authored_module_calls_are_counted_without_pipeline_tasks(tmp_path, adapter):
+    collection, module = synthetic_collection(tmp_path, [
+        {"name": "Base - prepare fixture", "cisco.nd.nd_fixture": {"state": "merged"}},
+        {"name": "MERGED CREATE: authored operation one", "cisco.nd.nd_fixture": {"state": "merged"}},
+        {"name": "DELETE: authored operation two", "cisco.nd.nd_fixture": {"state": "deleted"}},
+        {"name": "Cleanup - restore fixture", "cisco.nd.nd_fixture": {"state": "deleted"}},
+    ])
+    catalog = REPORT.load_catalog(collection, module)
+    assert catalog["cases"] == {}
+    assert catalog["untagged_actions"] == 2
+    rows = records_for(collection, module, "tasks/main.yaml")
+    log, used, exit_code = emit_log(tmp_path, rows, collection=collection, module=module)
+    if adapter == "events":
+        events_for(log, used, exit_code, collection=collection, module=module)
+        result = REPORT.summarize_events(log, module, "current", "140", "iBGP", collection)
+    else:
+        result = REPORT.summarize(log, module, "current", "140", "iBGP", collection)
+    assert result["coverage"] == "COMPLETE"
+    assert result["count_unit"] == "authored module calls (target has no TC identifiers)"
+    assert result["testcase_totals"] == {
+        "started": 2, "passed": 2, "failed": 0, "skipped": 0, "incomplete": 0,
+    }
+    assert result["counts"] == {"merged": 1, "replaced": 0, "overridden": 0, "deleted": 1, "gathered": 0}
+    assert result["base"] == result["cleanup"] == "Ran"
+
+
+@pytest.mark.parametrize("adapter", ["text", "events"])
+def test_mixed_authored_ids_and_independent_module_calls_have_numeric_totals(tmp_path, adapter):
+    collection, module = synthetic_collection(tmp_path, [
+        {"name": "Base - prepare fixture", "cisco.nd.nd_fixture": {"state": "merged"}},
+        {"name": "MERGED TC1 - configure", "cisco.nd.nd_fixture": {"state": "merged"}},
+        {"name": "MERGED TC1 - verify", "ansible.builtin.assert": {"that": [True]}},
+        {"name": "GATHER: independent authored operation", "cisco.nd.nd_fixture": {"state": "gathered"}},
+        {"name": "Cleanup - restore fixture", "cisco.nd.nd_fixture": {"state": "deleted"}},
+    ])
+    rows = records_for(collection, module, "tasks/main.yaml")
+    log, used, exit_code = emit_log(tmp_path, rows, collection=collection, module=module)
+    if adapter == "events":
+        events_for(log, used, exit_code, collection=collection, module=module)
+        result = REPORT.summarize_events(log, module, "current", "140", "iBGP", collection)
+    else:
+        result = REPORT.summarize(log, module, "current", "140", "iBGP", collection)
+    assert result["coverage"] == "COMPLETE"
+    assert result["testcase_totals"] == {
+        "started": 2, "passed": 2, "failed": 0, "skipped": 0, "incomplete": 0}
+    assert result["counts"] == {"merged": 1, "replaced": 0, "overridden": 0, "deleted": 0, "gathered": 1}
+    assert len(result["case_results"]) == 2
+    assert result["base"] == result["cleanup"] == "Ran"
+
+
+@pytest.mark.parametrize("adapter", ["text", "events"])
+def test_failed_untagged_authored_call_is_a_failed_case_not_a_pipeline_task(tmp_path, adapter):
+    collection, module = synthetic_collection(tmp_path, [
+        {"name": "MERGED CREATE: authored operation", "cisco.nd.nd_fixture": {"state": "merged"}},
+    ])
+    row = records_for(collection, module, "tasks/main.yaml")[0]
+    log, used, exit_code = emit_log(tmp_path, [row], collection=collection, module=module,
+                                    outcomes={row["key"]: "failed"})
+    if adapter == "events":
+        events_for(log, used, exit_code, collection=collection, module=module)
+        result = REPORT.summarize_events(log, module, "current", "140", "iBGP", collection)
+    else:
+        result = REPORT.summarize(log, module, "current", "140", "iBGP", collection)
+    assert result["result"] == "FAIL"
+    assert result["testcase_totals"] == {
+        "started": 1, "passed": 0, "failed": 1, "skipped": 0, "incomplete": 0,
+    }
+    assert result["counts"]["merged"] == 1
+    assert "authored operation" in result["failure"][0]
+
+
 def test_catalog_from_previous_classification_version_is_rebuilt(tmp_path):
     module = "nd_vpc_pair.advanced"
     frozen = tmp_path / "catalog.json"
@@ -355,53 +472,3 @@ def test_catalog_from_previous_classification_version_is_rebuilt(tmp_path):
     rebuilt = REPORT.freeze_catalog(COLLECTION, module, frozen)
     assert rebuilt["catalog_version"] == REPORT.CATALOG_VERSION
     assert rebuilt["catalog"]["cases"]["tasks/nd_vpc_pair_merge.yaml::MERGE::TC1"]["state"] == "merged"
-
-
-@pytest.mark.parametrize("adapter", ["text", "events"])
-@pytest.mark.parametrize("terminal_failure", [False, True])
-def test_rescued_cleanup_is_not_a_terminal_failure(tmp_path, adapter, terminal_failure):
-    collection, module = synthetic_collection(tmp_path, [
-        {"name": "TEARDOWN - expected failure", "ansible.builtin.fail": {"msg": "expected"}},
-    ])
-    rows = records_for(collection, module, "tasks/main.yaml")
-    log, used, _ = emit_log(tmp_path, rows, collection=collection, module=module,
-                           outcomes={rows[0]["key"]: "failed"})
-    code = 2 if terminal_failure else 0
-    text = log.read_text().replace("rescued=0", "rescued=1")
-    if not terminal_failure:
-        text = text.replace("failed=1", "failed=0").replace("[ANSIBLE_EXIT_STATUS: 2]", "[ANSIBLE_EXIT_STATUS: 0]")
-    log.write_text(text)
-    Path(str(log) + ".execution.json").write_text(json.dumps({"module": module, "run_id": "current", "exit_code": code}))
-    if adapter == "events":
-        events_for(log, used, code, collection=collection, module=module)
-        summary_path = Path(str(log) + ".event-summary.json")
-        summary = json.loads(summary_path.read_text())
-        summary["counts"]["rescued"] = 1
-        summary_path.write_text(json.dumps(summary))
-        result = REPORT.summarize_events(log, module, "current", "132", "iBGP", collection)
-    else:
-        result = REPORT.summarize(log, module, "current", "132", "iBGP", collection)
-    assert result["result"] == ("FAIL" if terminal_failure else "PASS")
-    assert result["cleanup"] == ("Failed" if terminal_failure else "Rescued")
-    assert bool(result["failure"]) is terminal_failure
-    if not terminal_failure:
-        assert result["handled_failures"]
-
-
-
-def test_rescued_authored_assertion_does_not_become_a_pass(tmp_path):
-    collection, module = synthetic_collection(tmp_path, [
-        {"name": "Merged TC1 - create", "nd_fixture": {"state": "merged"}},
-        {"name": "Merged TC1 - verify", "ansible.builtin.assert": {"that": [False]}},
-    ])
-    rows = records_for(collection, module, "tasks/main.yaml")
-    log, _, _ = emit_log(tmp_path, rows, collection=collection, module=module,
-                        outcomes={rows[1]["key"]: "failed"})
-    log.write_text(log.read_text().replace("failed=1", "failed=0").replace("rescued=0", "rescued=1")
-                   .replace("[ANSIBLE_EXIT_STATUS: 2]", "[ANSIBLE_EXIT_STATUS: 0]"))
-    Path(str(log) + ".execution.json").write_text(json.dumps({"module": module, "run_id": "current", "exit_code": 0}))
-    result = REPORT.summarize(log, module, "current", "132", "iBGP", collection)
-    assert result["result"] == "PASS"
-    assert result["testcase_totals"] == {"started": 1, "passed": 0, "failed": 0, "skipped": 0, "incomplete": 1}
-    assert result["coverage"] == "INCOMPLETE"
-

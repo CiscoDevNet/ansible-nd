@@ -76,6 +76,8 @@
     nd_switch_preserve_config: false
     # Jenkins passes the enclosing shell budget; direct callers use one hour.
     nd_switch_guard_timeout_seconds: 3600
+    nd_interface_baseline_enabled: "{{ lookup('env', 'ND_INTERFACE_BASELINE_ENABLED') | default(false, true) | bool }}"
+    nd_interface_baseline_apply: "{{ lookup('env', 'ND_INTERFACE_BASELINE_APPLY') | default(false, true) | bool }}"
     _nd_switch_clock: >-
       {{ lookup('ansible.builtin.pipe', (ansible_playbook_python | quote) ~ ' -c "import time; print(time.monotonic())"') | float }}
     # expected_serial_number exists only on cisco.nd branches that implement it (GitHub develop does not
@@ -187,11 +189,17 @@
     # Disabling this gate blocks a transfer instead of deleting without the pre-flush.
     nd_switch_predelete_deploy: "{{ lookup('env', 'ND_SWITCH_PREDELETE_DEPLOY') | default(true, true) }}"
     nd_switch_predelete_timeout_seconds: 600
+    nd_switch_predelete_copy_timeout_seconds: 900
     nd_switch_predelete_call_timeout_seconds: 60
     nd_switch_predelete_poll_seconds: 10
     _nd_predelete_remaining: >-
-      {{ (_nd_phase_deploy_settle_budget | float)
-         - ((_nd_switch_clock | float) - (_nd_phase_deploy_settle_started | float)) }}
+      {{ [(_nd_phase_deploy_settle_budget | float)
+         - ((_nd_switch_clock | float) - (_nd_phase_deploy_settle_started | float)
+           - (_nd_predelete_copy_elapsed_total | default(0) | float)),
+         (nd_switch_guard_timeout_seconds | default(3600) | float)
+         - ((_nd_switch_clock | float) - (_nd_switch_guard_started | default(_nd_switch_clock) | float))
+         - (nd_switch_predelete_call_timeout_seconds | float)
+         - (nd_switch_predelete_poll_seconds | float) - 30] | min }}
     _nd_predelete_call_limit: >-
       {{ [nd_switch_predelete_call_timeout_seconds | int,
            [1, _nd_predelete_remaining | float] | max]
@@ -415,6 +423,46 @@
         {%- endfor -%}
       {%- endif -%}
       {{- ns.ok -}}
+    _nd_predelete_copy_anomaly_report: >-
+      {%- set reply = _predelete_anomaly_reply -%}
+      {%- set body = reply.current | default(none) -%}
+      {%- set records = body.get('anomalies') if body is mapping else none -%}
+      {%- set http = reply.status | default(0) | int -%}
+      {%- set ns = namespace(category='CLEAR', matched=0, active=0, unverified=0, malformed=0) -%}
+      {%- if http != 200 -%}{%- set ns.category = 'HTTP_ERROR' -%}
+      {%- elif body is mapping and (body.get('error') or body.get('errors') or 'code' in body) -%}
+        {%- set ns.category = 'API_ERROR_BODY' -%}
+      {%- elif body is not mapping or records is not sequence or records is string or records is mapping -%}
+        {%- set ns.category = 'INVALID_RESPONSE' -%}
+      {%- elif records | length >= 200 -%}{%- set ns.category = 'PAGINATION_REQUIRED' -%}
+      {%- else -%}
+        {%- for record in records -%}
+          {%- if record is not mapping -%}{%- set ns.malformed = ns.malformed + 1 -%}
+          {%- else -%}
+            {%- set text = record.get('anomalyString', '') | string | lower -%}
+            {%- if record.get('fabricName') == _predelete_anomaly_fabric and 'periodic' in text
+                  and 'copy run start' in text and 'skipped' in text -%}
+              {%- for identity in _predelete_requested_ids -%}
+                {%- if '[' ~ (identity | lower) ~ ']' in text or '/' ~ (identity | lower) ~ ']' in text -%}
+                  {%- set ns.matched = ns.matched + 1 -%}
+                  {%- if record.get('cleared') is sameas false -%}{%- set ns.active = ns.active + 1 -%}
+                  {%- elif record.get('cleared') is not sameas true -%}{%- set ns.unverified = ns.unverified + 1 -%}{%- endif -%}
+                {%- endif -%}
+              {%- endfor -%}
+            {%- endif -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- if ns.malformed -%}{%- set ns.category = 'INVALID_RESPONSE' -%}
+        {%- elif ns.active -%}{%- set ns.category = 'WARNING_ACTIVE' -%}
+        {%- elif ns.unverified -%}{%- set ns.category = 'CLEARANCE_UNVERIFIED' -%}
+        {%- elif reply.failed | default(false) -%}{%- set ns.category = 'REQUEST_OR_POLL_FAILED' -%}{%- endif -%}
+      {%- endif -%}
+      {{- {'category': ns.category, 'http_status': http if 0 <= http <= 599 else 0,
+           'module_failed': reply.failed | default(false) | bool,
+           'records': records | length if records is sequence and records is not string and records is not mapping else 0,
+           'requested_switches': _predelete_requested_ids | length, 'matching_records': ns.matched,
+           'active_records': ns.active, 'unverified_clearance_records': ns.unverified,
+           'malformed_records': ns.malformed} -}}
     # Bounded wait-and-retry for the ONBOARD (add) step. A switch that is still
     # (re)booting, or that ND has not finished rediscovering after a reset/rehome
     # (iBGP -> eBGP), makes ND return a discovery response with NO serial, which the
@@ -740,6 +788,10 @@
         - nd_switch_apply | bool
         - (nd_rehome_moves | default([])) | length > 0
       block:
+        - name: Run NDP_INTERFACE_BASELINE_HOOK before source-fabric removal
+          ansible.builtin.include_tasks: "{{ playbook_dir }}/nd_prerequisite/interface_baseline.yaml"
+          when: nd_interface_baseline_enabled | default(false) | bool
+
         - name: Require the pre-delete deployment safety gate for a membership transfer
           ansible.builtin.assert:
             that:
@@ -774,6 +826,7 @@
                 _nd_predelete_save_checks: []
                 _nd_predelete_deploy_checks: []
                 _nd_predelete_mode_plans: []
+                _nd_predelete_copy_elapsed_total: 0
                 # Ansible can freeze timeout/delay before its retry loop. Reserve
                 # one final call and gap so our diagnostic precedes the outer kill.
                 _nd_phase_deploy_settle_budget: >-
@@ -971,7 +1024,36 @@
 
             - &nd_predelete_copy_startup
               name: Persist leaving switch configuration and verify the skipped-save anomaly clears
+              vars:
+                _nd_predelete_remaining: >-
+                  {{ [(nd_switch_predelete_copy_timeout_seconds | float)
+                      - ((_nd_switch_clock | float) - (_nd_predelete_copy_started | float)),
+                      (nd_switch_guard_timeout_seconds | default(3600) | float)
+                      - ((_nd_switch_clock | float) - (_nd_switch_guard_started | default(_nd_switch_clock) | float))
+                      - (nd_switch_predelete_call_timeout_seconds | float)
+                      - (nd_switch_predelete_poll_seconds | float) - 30] | min }}
               block:
+                - name: Start an independent startup-save verification window
+                  ansible.builtin.set_fact:
+                    _nd_predelete_copy_started: "{{ _nd_switch_clock }}"
+                    _nd_predelete_copy_poll_started: false
+
+                - name: Require a full startup-save window inside the outer membership deadline
+                  ansible.builtin.assert:
+                    that:
+                      - nd_switch_predelete_copy_timeout_seconds | int >= 900
+                      - >-
+                        (nd_switch_guard_timeout_seconds | default(3600) | float)
+                        - ((_nd_switch_clock | float) - (_nd_switch_guard_started | default(_nd_switch_clock) | float))
+                        - (nd_switch_predelete_call_timeout_seconds | float)
+                        - (nd_switch_predelete_poll_seconds | float) - 30
+                        >= (nd_switch_predelete_copy_timeout_seconds | float)
+                    fail_msg: "NDP_SWITCH_PREDELETE_COPY_BUDGET_BLOCKED: a complete startup-save window of at least 900 seconds is required inside the outer membership deadline; no switch was removed."
+
+                - name: Report the independent startup-save verification limit
+                  ansible.builtin.debug:
+                    msg: "NDP_SWITCH_STARTUP_SAVE_WINDOW seconds={{ nd_switch_predelete_copy_timeout_seconds | int }}; earlier readiness time does not consume this window."
+
                 - name: Explicitly copy running configuration to startup on every leaving switch
                   cisco.nd.nd_rest:
                     method: post
@@ -1003,6 +1085,10 @@
                     label: "{{ _copy._rf }}"
                   no_log: true
 
+                - name: Record that fresh startup-save anomaly polling is starting
+                  ansible.builtin.set_fact:
+                    _nd_predelete_copy_poll_started: true
+
                 - name: Wait for skipped periodic startup-save anomalies to clear after the explicit copy
                   cisco.nd.nd_rest:
                     method: get
@@ -1026,7 +1112,7 @@
                     or (nd_remove_anomalies.status | default(0) | int not in [0, 200, 408, 429]
                         and nd_remove_anomalies.status | default(0) | int < 500)
                     or (_nd_predelete_remaining | float) <= 0
-                  retries: "{{ nd_switch_predelete_timeout_seconds | int + 1 }}"
+                  retries: "{{ nd_switch_predelete_copy_timeout_seconds | int + 1 }}"
                   delay: "{{ [nd_switch_predelete_poll_seconds | int, [0, _nd_predelete_remaining | float] | max] | min | int }}"
                   vars:
                     _predelete_anomaly_reply: "{{ nd_remove_anomalies }}"
@@ -1053,6 +1139,29 @@
                 - name: Report confirmed startup configuration persistence
                   ansible.builtin.debug:
                     msg: "NDP_SWITCH_PREDELETE_STARTUP_SAVED: Copy Run Start succeeded for all {{ nd_rehome_moves | length }} leaving switches; fresh anomaly evidence is clear."
+              always:
+                - name: Report bounded startup-save clearance evidence even after polling fails
+                  ansible.builtin.debug:
+                    msg: >-
+                      NDP_SWITCH_STARTUP_SAVE_DIAGNOSTIC {{ _nd_predelete_copy_anomaly_report | to_json }}
+                      elapsed_seconds={{ [0, ((_nd_switch_clock | float) - (_nd_predelete_copy_started | float))] | max | round(3) }}
+                      window_seconds={{ nd_switch_predelete_copy_timeout_seconds | int }}
+                      failed_when: false
+                  vars:
+                    _predelete_anomaly_reply: "{{ _anomaly }}"
+                    _predelete_anomaly_fabric: "{{ _anomaly._rf }}"
+                    _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _anomaly._rf) | map(attribute='serial') | list }}"
+                  loop: "{{ (nd_remove_anomalies | default({})).results | default([]) }}"
+                  loop_control:
+                    loop_var: _anomaly
+                    label: startup-save response
+                  when: _nd_predelete_copy_poll_started | default(false) | bool
+
+                - name: Keep startup-save waiting separate from deployment polling time
+                  ansible.builtin.set_fact:
+                    _nd_predelete_copy_elapsed_total: >-
+                      {{ (_nd_predelete_copy_elapsed_total | default(0) | float)
+                         + ((_nd_switch_clock | float) - (_nd_predelete_copy_started | float)) }}
 
             - name: Gather the vPC pairs of every fabric the switches are leaving
               cisco.nd.nd_manage_vpc_pair:
@@ -2466,6 +2575,10 @@
               {{ ((_nd_switch_clock | float) - (_nd_phase_convergence_started | float)) | round(3) if _nd_phase_convergence_started is defined else "unknown" }}
               status={{ _nd_phase_convergence_status | default("failed") }}
           ignore_errors: true
+
+    - name: Run NDP_INTERFACE_BASELINE_HOOK after membership and readiness recovery
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/nd_prerequisite/interface_baseline.yaml"
+      when: nd_interface_baseline_enabled | default(false) | bool
 
     - name: Audit-only notice when switches are missing but apply is off
       ansible.builtin.debug:

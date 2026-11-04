@@ -259,6 +259,8 @@ def test_predelete_resolves_startup_save_preconditions_before_recalculate(tmp_pa
         assert '/switchActions/changeSystemMode?' in state['rest_writes'][0]
         assert state['mode_polls'] == 1
     if scenario == 'startup_warning_clears':
+        assert 'NDP_SWITCH_STARTUP_SAVE_DIAGNOSTIC' in completed.stdout
+        assert 'CLEAR' in completed.stdout
         assert state['anomaly_reads'] >= 4
     assert 'DO_NOT_PRINT_ME' not in completed.stdout and 'RAW_PAYLOAD' not in completed.stdout
 
@@ -284,6 +286,9 @@ def test_unsafe_startup_save_preconditions_never_remove_or_onboard(tmp_path, sce
         assert state.get('copy_requests', []) == []
         assert state.get('vpc_unpairs', []) == []
     if scenario in {'startup_copy_refused', 'startup_warning_persists'}:
+        if scenario == 'startup_warning_persists':
+            assert 'NDP_SWITCH_STARTUP_SAVE_DIAGNOSTIC' in completed.stdout
+            assert 'WARNING_ACTIVE' in completed.stdout
         assert all(path.endswith('/actions/copyRunStart') for path in state['rest_writes'])
         assert state.get('vpc_unpairs', []) == []
     assert not any('force=true' in path for path in state['rest_writes'])
@@ -539,6 +544,12 @@ def execute(tmp_path, scenario, remove_retries=2):
         values['nd_switch_predelete_timeout_seconds'] = 12
     if scenario == 'predelete_disabled': values['nd_switch_predelete_deploy'] = False
     if scenario == 'predelete_outer_budget_expired': values['nd_switch_guard_timeout_seconds'] = 1
+    if scenario == 'startup_warning_persists':
+        clock = tmp_path / 'startup_clock.py'
+        clock.write_text('import json,time\nfrom pathlib import Path\n'
+                         'state=json.loads(Path(' + repr(str(state)) + ').read_text())\n'
+                         'print(time.monotonic() + (901 if state.get("anomaly_reads",0)>=3 else 0))\n')
+        values['_nd_switch_clock'] = "{{ lookup('ansible.builtin.pipe', (ansible_playbook_python | quote) ~ ' ' ~ (" + json.dumps(str(clock)) + " | quote)) | float }}"
     tasks = move_tasks() + [{"name": "Destination add becomes eligible", "ansible.builtin.debug": {"msg": "DESTINATION_ADD_REACHED"}}]
     # Keep production no_log: assertions verify only sanitized diagnostics escape.
     play = tmp_path / "play.yaml"

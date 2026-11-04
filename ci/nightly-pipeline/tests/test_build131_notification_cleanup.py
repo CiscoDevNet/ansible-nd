@@ -49,9 +49,11 @@ assert message.contains('fixture_module') && message.contains('iBGP') && message
 assert message.contains('Passed: 2') && message.contains('Failed: 1') && message.contains('Skipped: 0')
 assert message.contains('ansible-nd branch: fixture-owner:feature/example')
 assert message.contains('ansible-nd commit: ' + ('a' * 40))
-assert message.contains('/artifact/module_IBGP.txt')
-assert message.contains('/artifact/skipped_tests_build_131.txt')
-assert message.contains('/artifact/activity.txt')
+assert message.contains('[Build artifacts](https://jenkins.example/job/nd/122/artifact/)')
+assert message.count('/artifact/') == 1
+assert !message.contains('/artifact/module_IBGP.txt')
+assert !message.contains('/artifact/skipped_tests_build_131.txt')
+assert !message.contains('/artifact/activity.txt')
 assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_FAILED:') }
 ''')
 
@@ -77,7 +79,7 @@ def raw = 'FAIL|fixture_module|home|4.3|2|1|0|1m|Unsupported module parameter: t
 ''')
 
 
-def test_unknown_setup_case_counts_are_unavailable_without_changing_internal_evidence(groovy_runner):
+def test_missing_case_numbers_fail_validation_without_fabricating_counts(groovy_runner):
     groovy_runner(POST + r'''
 script.MODULE_ACTIVITY_RESULTS.putAll([
     ibgp: [module:'fixture_module', test_type:'integration', nd:'4.3', scope:'iBGP', round_label:'iBGP', fabric:'home',
@@ -92,19 +94,18 @@ assert script.moduleCaseTotals(script.MODULE_ACTIVITY_RESULTS.values().toList())
 script.run()
 assert sent.size() == 1 : logs
 def message = sent[0]
-assert message.contains('Passed: N/A') && message.contains('Failed: N/A') && message.contains('Skipped: N/A')
+assert message.contains('CASE COUNTS VALIDATION FAILED')
+assert !message.contains('Passed:') && !message.contains('Failed:') && !message.contains('Skipped:')
+assert !(message =~ /(?i)N\/A|unknown/)
+assert script.binding.env.PIPELINE_FAILED == 'true'
 assert !message.contains('RESULT DETAILS:')
 assert !message.contains('Setup failed: unsupported parameter timeout')
 assert !message.contains('fixture_module (eBGP): Not run: switch preparation failed')
 assert !message.contains('[Console](https://jenkins.example/job/nd/122/console)')
-assert message.contains('**Artifact links:**')
-assert !message.contains('UNKNOWN') && !message.contains('case coverage')
+assert !message.contains('case coverage')
 assert !message.contains('classification=') && !message.contains('phase=pre')
 def tableRows = message.readLines().findAll { it.startsWith('fixture_module ') }
-assert tableRows.size() == 1
-def cells = tableRows[0].trim().split(/\s{2,}/)
-assert cells[1..4] == ['FAIL','N/A','N/A','N/A']
-assert cells[6..9] == ['NOT_RUN','-','-','-']
+assert tableRows.isEmpty()
 assert !message.contains('home') && !message.contains('destination')
 assert script.writeReportingJson(script.MODULE_ACTIVITY_RESULTS) == original
 assert script.moduleCaseTotals(script.MODULE_ACTIVITY_RESULTS.values().toList()).passed == '?'
@@ -125,13 +126,12 @@ script.MODULE_ACTIVITY_RESULTS.putAll([
 script.run()
 assert sent.size() == 1 : logs
 def message = sent[0]
-assert message.contains('Passed: N/A') && message.contains('Failed: N/A') && message.contains('Skipped: N/A')
+assert message.contains('CASE COUNTS VALIDATION FAILED')
+assert !(message =~ /(?i)N\/A|unknown/)
+assert !message.contains('Passed:') && !message.contains('Failed:') && !message.contains('Skipped:')
 assert !message.contains('Passed: 11') && !message.contains('Failed: 2') && !message.contains('Skipped: 4')
 def tableRows = message.readLines().findAll { it.startsWith('fixture_module ') }
-assert tableRows.size() == 1
-def cells = tableRows[0].trim().split(/\s{2,}/)
-assert cells[1..4] == ['FAIL','N/A','N/A','N/A']
-assert cells[6..9] == ['NOT_RUN','-','-','-']
+assert tableRows.isEmpty()
 assert script.moduleCaseTotals(script.MODULE_ACTIVITY_RESULTS.values().toList()).passed == '?'
 ''')
 
@@ -165,21 +165,48 @@ def zero = [test_type:'integration',result:'PASS',coverage:'COMPLETE',case_total
 assert script.webexModuleTotals([zero]) == [passed:'0',failed:'0',skipped:'0']
 assert script.webexModuleTotals([[test_type:'integration',result:'NOT_RUN']]) == [passed:'0',failed:'0',skipped:'0']
 assert script.webexModuleTotals([[test_type:'smoke',result:'PASS',case_totals:[passed:50]]]) == [passed:'0',failed:'0',skipped:'0']
-assert script.webexModuleTotals([[result:'PASS',case_totals:[passed:50,failed:0,skipped:0]]]) == [passed:'?',failed:'?',skipped:'?']
+def untypedFailure = null
+try { script.webexModuleTotals([[result:'PASS',case_totals:[passed:50,failed:0,skipped:0]]]) }
+catch (Exception failure) { untypedFailure = failure }
+assert untypedFailure?.message?.contains('NDP_CASE_COUNTS_UNRECOVERABLE')
 def partial = [test_type:'integration',result:'FAIL',coverage:'PARTIAL',case_totals:[:],
     identified_testcase_totals:[passed:2,failed:1,skipped:0,incomplete:1],invocation:[counts:[ok:800,failed:2,skipped:600]]]
-assert script.webexModuleTotals([partial]) == [passed:'2 + ?',failed:'1 + ?',skipped:'0 + ?']
+def partialFailure = null
+try { script.webexModuleTotals([partial]) } catch (Exception failure) { partialFailure = failure }
+assert partialFailure?.message?.contains('NDP_CASE_COUNTS_UNRECOVERABLE')
 ''')
 
 
-def test_partial_case_counts_remain_explicit_in_the_readable_table(groovy_runner):
+def test_results_table_refuses_missing_case_numbers(groovy_runner):
     groovy_runner(r'''
 def raw = 'FAIL|fixture_module|home|4.3|3 + ?|?|0|1m|case coverage INCOMPLETE; 1 incomplete case(s)|iBGP'
-def table = script.formatResultsTable(raw, 'module test cases')
-assert table.contains('3 + unknown') && table.contains('N/A')
-assert !table.contains('RESULT DETAILS:')
-assert !table.contains('1 incomplete case(s)')
-assert !table.contains('case coverage INCOMPLETE')
-assert !table.contains('?')
+def caught = null
+try { script.formatResultsTable(raw, 'module test cases') } catch (Exception failure) { caught = failure }
+assert caught?.message?.contains('NDP_CASE_COUNTS_UNRECOVERABLE')
 assert raw.contains('3 + ?')
+''')
+
+
+def test_notification_cannot_publish_totals_before_report_preparation_finishes(groovy_runner):
+    groovy_runner(POST + r'''
+reportReadyField.set(script, false)
+script.run()
+assert sent.size() == 1
+def message = sent[0]
+assert message.contains('CASE COUNTS VALIDATION FAILED')
+assert !message.contains('Passed:') && !message.contains('Failed:') && !message.contains('Skipped:')
+assert !message.contains('DETAILED TEST RESULTS')
+assert !(message =~ /(?i)N\/A|unknown/)
+assert script.binding.env.PIPELINE_FAILED == 'true'
+''')
+
+
+def test_activity_artifact_refuses_missing_integration_case_numbers(groovy_runner):
+    groovy_runner(r'''
+def caught = null
+try {
+    script.formatModuleActivityTable([[module:'fixture_module',test_type:'integration',
+        result:'FAIL',coverage:'UNKNOWN',case_totals:[:]]], '140')
+} catch (Exception failure) { caught = failure }
+assert caught?.message?.contains('NDP_CASE_COUNTS_UNRECOVERABLE')
 ''')

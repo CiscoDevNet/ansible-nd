@@ -13,7 +13,7 @@ from test_switch_rehome_preflight import execute, expression_environment, guard,
 ])
 def test_active_pipelines_select_fabric_deployment_release(filename):
     source = (Path(__file__).resolve().parents[1] / filename).read_text()
-    assert "def SWITCH_LIFECYCLE_CONSUL_PREFIX = 'releases/predelete-startup-save-20261102'" in source
+    assert "def SWITCH_LIFECYCLE_CONSUL_PREFIX = 'releases/interface-baseline-startup-save-20261104'" in source
 
 
 @pytest.mark.parametrize('scenario', [
@@ -180,3 +180,60 @@ def test_budget_reserves_a_final_call_and_gap_before_the_outer_timeout():
             nd_switch_predelete_timeout_seconds=600, nd_switch_predelete_call_timeout_seconds=20,
             nd_switch_predelete_poll_seconds=10)
     assert result == 80
+
+
+@pytest.mark.parametrize('elapsed,expected', [(0, 900), (899, 1), (901, -1)])
+def test_startup_save_has_independent_fifteen_minute_window(elapsed, expected):
+    settings = guard()['vars']
+    assert settings['nd_switch_predelete_copy_timeout_seconds'] == 900
+    task = named(move_tasks()[1]['block'], 'Persist leaving switch configuration')
+    remaining = expression_environment().from_string(task['vars']['_nd_predelete_remaining']).render(
+        nd_switch_predelete_copy_timeout_seconds=900, _nd_predelete_copy_started=500,
+        _nd_switch_clock=500 + elapsed, _nd_switch_guard_started=0,
+        nd_switch_guard_timeout_seconds=3600, nd_switch_predelete_call_timeout_seconds=60,
+        nd_switch_predelete_poll_seconds=10,
+        _nd_phase_deploy_settle_started=0, _nd_phase_deploy_settle_budget=600)
+    assert remaining == expected
+
+
+def test_copy_wait_does_not_consume_the_deployment_poll_budget():
+    remaining = expression_environment().from_string(guard()['vars']['_nd_predelete_remaining']).render(
+        _nd_phase_deploy_settle_started=100, _nd_phase_deploy_settle_budget=600,
+        _nd_switch_clock=1400, _nd_predelete_copy_elapsed_total=900,
+        _nd_switch_guard_started=0, nd_switch_guard_timeout_seconds=3600,
+        nd_switch_predelete_call_timeout_seconds=60, nd_switch_predelete_poll_seconds=10)
+    assert remaining == 200
+
+
+@pytest.mark.parametrize('reply,category', [
+    ({'status': 503, 'current': {}}, 'HTTP_ERROR'),
+    ({'status': 200, 'current': {'code': 400}}, 'API_ERROR_BODY'),
+    ({'status': 200, 'current': {'other': []}}, 'INVALID_RESPONSE'),
+    ({'status': 200, 'current': {'anomalies': [{}] * 200}}, 'PAGINATION_REQUIRED'),
+    ({'status': 200, 'current': {'anomalies': ['PRIVATE_CANARY']}}, 'INVALID_RESPONSE'),
+    ({'status': 200, 'current': {'anomalies': []}}, 'CLEAR'),
+])
+def test_startup_warning_diagnostic_classifies_unverifiable_responses(reply, category):
+    report = expression_environment().from_string(guard()['vars']['_nd_predelete_copy_anomaly_report']).render(
+        _predelete_anomaly_reply=reply, _predelete_anomaly_fabric='fixture',
+        _predelete_requested_ids=['FIXTURE0001'])
+    assert report['category'] == category
+    assert 'PRIVATE_CANARY' not in json.dumps(report)
+    assert len(json.dumps(report)) < 600
+
+
+@pytest.mark.parametrize('cleared,failed,category', [
+    (False, False, 'WARNING_ACTIVE'), (False, True, 'WARNING_ACTIVE'),
+    (True, False, 'CLEAR'), ('true', False, 'CLEARANCE_UNVERIFIED'),
+])
+def test_startup_warning_diagnostic_distinguishes_active_warning_from_poll_failure(cleared, failed, category):
+    reply = {'status': 200, 'failed': failed, 'current': {'anomalies': [{
+        'fabricName': 'fixture', 'cleared': cleared,
+        'anomalyString': '[FIXTURE0001] periodic Copy Run Start was skipped PRIVATE_CANARY'}]}}
+    report = expression_environment().from_string(guard()['vars']['_nd_predelete_copy_anomaly_report']).render(
+        _predelete_anomaly_reply=reply, _predelete_anomaly_fabric='fixture',
+        _predelete_requested_ids=['FIXTURE0001'])
+    assert report['category'] == category
+    assert report['matching_records'] == 1
+    assert 'PRIVATE_CANARY' not in json.dumps(report)
+    assert 'FIXTURE0001' not in json.dumps(report)

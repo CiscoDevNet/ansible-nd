@@ -9,7 +9,7 @@ import pytest
 from test_five_issue_pipeline_fixes import PRELUDE as BASE_PRELUDE
 
 ROOT = Path(__file__).resolve().parents[1]
-VARIANTS = ('Jenkinsfile_nd_jenkins_script',)
+VARIANTS = ('Jenkinsfile_nd_jenkins_script', 'Jenkinsfile_nd_jenkins_script_temp_switches')
 
 PRELUDE = BASE_PRELUDE + r'''
 script.binding.setVariable('BUILD_NUMBER', '124')
@@ -79,6 +79,12 @@ assert logs.any { it.contains('phase=' + phase) && it.contains('exit_code=' + ex
 assert !logs.any { it.startsWith('NDP_SWITCH_MEMBERSHIP_COMMAND_EXCEPTION') }
 assert !logs.join('\n').contains('never became manageable')
 assert !logs.join('\n').contains('power/reachability')
+if (exitCode == 2) {
+    def explanation = logs.join('\n') + (caught?.message ?: '') + script.BUILD_FAILURE_REASON_BUF
+    assert explanation.contains('outer membership timer did not expire')
+    assert explanation.contains('An internal wait or readiness assertion may have failed')
+    assert !explanation.contains('this was not a timeout')
+}
 if (exitCode == 0) {
     assert caught == null
     assert logs.any { it.startsWith('NDP_SWITCH_MEMBERSHIP_READY:') }

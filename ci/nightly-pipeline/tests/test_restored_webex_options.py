@@ -10,7 +10,8 @@ from test_five_issue_pipeline_fixes import PRELUDE
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VARIANTS = ("Jenkinsfile_nd_jenkins_script",)
+VARIANTS = ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches",
+            "Jenkinsfile_nd_jenkins_script_comm_list")
 
 
 @pytest.fixture(scope="module", params=VARIANTS)
@@ -42,6 +43,9 @@ def literal(value):
 
 POST = r'''
 def sent = []
+def reportReadyField = script.getClass().getDeclaredField('ND_CASE_REPORT_READY')
+reportReadyField.setAccessible(true)
+reportReadyField.set(script, true)
 script.metaClass.pipeline = { Closure work -> work.call() }
 for (def name : ['agent', 'parameters', 'environment', 'options', 'stages', 'cleanup']) {
     script.metaClass."${name}" = { Closure ignored -> null }
@@ -72,8 +76,9 @@ def note = script.binding.params.WEBEX_CUSTOM_MESSAGE.trim()
 assert sent[0].startsWith(title + '\n' + (note ? note + '\n\n' : '📊'))
 assert sent[0].contains('ansible-nd branch: fixture-owner:feature/example\n')
 assert sent[0].contains('ansible-nd commit: ' + ('a' * 40))
-assert sent[0].contains('All logs (zip)') && sent[0].contains('/artifact/all-logs.zip')
-assert sent[0].contains('Module test activity table') && sent[0].contains('/artifact/activity.txt')
+assert sent[0].contains('[Build artifacts](https://jenkins.example/job/nd/122/artifact/)')
+assert sent[0].count('/artifact/') == 1
+assert !sent[0].contains('All logs (zip)') && !sent[0].contains('/artifact/activity.txt')
 assert sent[0].length() <= 7000
 assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_FAILED:') }
 ''')
@@ -85,7 +90,7 @@ script.binding.env.ACTIVE_FABRIC_ROUNDS = 'iBGP + eBGP'
 script.binding.params.WEBEX_CUSTOM_MESSAGE = 'x' * 5000
 220.times { index ->
     def name = 'fixture_module_' + index
-    script.MODULE_ACTIVITY_RESULTS[name] = [module: name, nd: '4.3', scope: index % 2 ? 'eBGP' : 'iBGP',
+    script.MODULE_ACTIVITY_RESULTS[name] = [module: name, test_type: 'integration', nd: '4.3', scope: index % 2 ? 'eBGP' : 'iBGP',
         fabric: 'fixture-fabric', round_label: index % 2 ? 'eBGP' : 'iBGP', result: 'PASS',
         coverage: 'COMPLETE', validated: true,
         case_totals: [started: 1, passed: 1, failed: 0, skipped: 0, incomplete: 0],
@@ -99,7 +104,8 @@ assert combined.contains('x' * 1200) && !combined.contains('x' * 1201)
 assert sent.every { it.contains('ND 4.3 (iBGP + eBGP) NIGHTLY NOTIFICATION') }
 assert sent.every { it.contains('ansible-nd branch: fixture-owner:feature/example') }
 220.times { index -> assert combined.contains('fixture_module_' + index) }
-assert combined.contains('/artifact/all-logs.zip') && combined.contains('/artifact/activity.txt')
+assert combined.contains('[Build artifacts](https://jenkins.example/job/nd/122/artifact/)')
+assert combined.count('/artifact/') == 1
 assert combined.contains('Passed: 220')
 assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_FAILED:') }
 ''')
@@ -115,7 +121,8 @@ assert fallback.startsWith('ND 4.3 (iBGP + eBGP) NIGHTLY NOTIFICATION - Build 12
 assert !fallback.contains('x' * 1201)
 assert fallback.contains('Branch: fixture-owner:feature/example\nCommit: ' + ('b' * 40))
 assert fallback.length() < 7000
-assert fallback.contains('Test-case counts are unknown')
+assert fallback.contains('CASE COUNTS VALIDATION FAILED')
+assert !(fallback =~ /(?i)N\/A|unknown/)
 ''')
 
 

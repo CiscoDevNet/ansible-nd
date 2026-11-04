@@ -351,3 +351,10 @@
       loop_control:
         label: "{{ item }}"
       ignore_errors: true
+
+    - name: Run NDP_INTERFACE_BASELINE_HOOK after reset and deployment
+      ansible.builtin.include_tasks: >-
+        {{ lookup('ansible.builtin.first_found', {'files': [
+             playbook_dir ~ '/nd_prerequisite/interface_baseline.yaml',
+             playbook_dir ~ '/../playbooks/nd_prerequisite/interface_baseline.yaml'], 'skip': false}) }}
+      when: nd_interface_baseline_enabled | default(lookup('env', 'ND_INTERFACE_BASELINE_ENABLED') | default(false, true)) | bool

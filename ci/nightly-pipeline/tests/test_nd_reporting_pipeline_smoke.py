@@ -133,6 +133,155 @@ def test_closed_execution_reaches_artifact_receipt_and_ordered_aggregate(tmp_pat
     assert row["summary_source"] == execution["summary_source"]
 
 
+@pytest.mark.parametrize("cached", [False, True, "legacy_error"])
+def test_missing_numeric_case_counts_recalculate_from_closed_log(tmp_path, monkeypatch, cached):
+    monkeypatch.syspath_prepend(str(HELPER.parent))
+    import nd_reporting_pipeline as pipeline
+
+    _, queue, job, _ = queue_fixture(tmp_path, structured=True)
+    closed = json.loads((queue / "closed" / (job["id"] + ".json")).read_text())
+    structured = pipeline.structured_summary
+    fallback = pipeline.fallback_summary
+    recoveries = []
+
+    def missing_counts(*args, **kwargs):
+        summary, activity = structured(*args, **kwargs)
+        activity["testcase_totals"] = {key: None for key in activity["testcase_totals"]}
+        activity["coverage"] = "UNKNOWN"
+        return summary, activity
+
+    def recover(*args, **kwargs):
+        recoveries.append(args[0]["id"])
+        return fallback(*args, **kwargs)
+
+    if cached:
+        result = pipeline.ensure_summary(queue, job, closed, 10)
+        result["activity"]["testcase_totals"] = {key: None for key in result["activity"]["testcase_totals"]}
+        result["activity"]["coverage"] = "UNKNOWN"
+        if cached == "legacy_error":
+            result["reporting_status"] = "ERROR"
+            result.pop("count_recalculation_complete", None)
+        write_json(queue / "results" / (job["id"] + ".json"), result)
+    monkeypatch.setattr(pipeline, "structured_summary", missing_counts)
+    monkeypatch.setattr(pipeline, "fallback_summary", recover)
+
+    result = pipeline.ensure_summary(queue, job, closed, 10)
+    assert result["reporting_status"] == "SUCCESS"
+    assert result["summary_source"] == "raw_log_recovery"
+    assert result["activity"]["testcase_totals"] == {
+        "started": 2, "passed": 1, "failed": 1, "skipped": 1, "incomplete": 0}
+    assert recoveries == [job["id"]]
+
+
+@pytest.mark.parametrize("first_failure", ["missing_counts", "read_error"])
+def test_second_sequential_recalculation_recovers_counts(tmp_path, monkeypatch, first_failure):
+    monkeypatch.syspath_prepend(str(HELPER.parent))
+    import nd_reporting_pipeline as pipeline
+
+    _, queue, job, _ = queue_fixture(tmp_path, structured=True)
+    closed = json.loads((queue / "closed" / (job["id"] + ".json")).read_text())
+    structured = pipeline.structured_summary
+    fallback = pipeline.fallback_summary
+    recoveries = []
+
+    def missing_counts(*args, **kwargs):
+        summary, activity = structured(*args, **kwargs)
+        activity["testcase_totals"] = {key: None for key in activity["testcase_totals"]}
+        return summary, activity
+
+    def recover(*args, **kwargs):
+        recoveries.append(args[0]["id"])
+        if len(recoveries) == 1:
+            if first_failure == "read_error":
+                raise OSError("temporary evidence read failed")
+            return missing_counts(*args, **kwargs)
+        return fallback(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "structured_summary", missing_counts)
+    monkeypatch.setattr(pipeline, "fallback_summary", recover)
+    result = pipeline.ensure_summary(queue, job, closed, 10)
+    assert result["reporting_status"] == "SUCCESS"
+    assert result["activity"]["testcase_totals"] == {
+        "started": 2, "passed": 1, "failed": 1, "skipped": 1, "incomplete": 0}
+    assert result["count_recalculation_attempts"] == 2
+    assert recoveries == [job["id"], job["id"]]
+
+
+def test_unrecoverable_case_counts_fail_reporting_after_two_recalculations(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(HELPER.parent))
+    import nd_reporting_pipeline as pipeline
+
+    _, queue, job, _ = queue_fixture(tmp_path, structured=True)
+    closed = json.loads((queue / "closed" / (job["id"] + ".json")).read_text())
+    structured = pipeline.structured_summary
+    fallback = pipeline.fallback_summary
+    recoveries = []
+
+    def incomplete(adapter, *args, **kwargs):
+        summary, activity = adapter(*args, **kwargs)
+        activity["testcase_totals"] = {key: None for key in activity["testcase_totals"]}
+        activity["coverage"] = "UNKNOWN"
+        return summary, activity
+
+    def recover(*args, **kwargs):
+        recoveries.append(args[0]["id"])
+        return incomplete(fallback, *args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "structured_summary", lambda *args, **kwargs: incomplete(structured, *args, **kwargs))
+    monkeypatch.setattr(pipeline, "fallback_summary", recover)
+    result = pipeline.ensure_summary(queue, job, closed, 10)
+    assert result["reporting_status"] == "ERROR"
+    assert "NDP_CASE_COUNTS_UNRECOVERABLE" in result["reporting_error"]
+    assert all(value is None for value in result["activity"]["counts"].values())
+    assert recoveries == [job["id"], job["id"]]
+    assert result["count_recalculation_attempts"] == 2
+    assert pipeline.ensure_summary(queue, job, closed, 10) == result
+    assert recoveries == [job["id"], job["id"]]
+
+
+def test_count_recalculation_does_not_restart_an_exhausted_total_deadline(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(HELPER.parent))
+    import nd_reporting_pipeline as pipeline
+
+    _, queue, job, _ = queue_fixture(tmp_path, structured=True)
+    closed = json.loads((queue / "closed" / (job["id"] + ".json")).read_text())
+    recoveries = []
+
+    def unavailable(*args, **kwargs):
+        raise ValueError("Structured evidence needs recalculation")
+
+    def expired(*args, **kwargs):
+        recoveries.append(args[0]["id"])
+        raise TimeoutError("Total reporting deadline exhausted")
+
+    monkeypatch.setattr(pipeline, "structured_summary", unavailable)
+    monkeypatch.setattr(pipeline, "fallback_summary", expired)
+    result = pipeline.ensure_summary(queue, job, closed, 10)
+    assert result["reporting_status"] == "ERROR"
+    assert result["count_recalculation_attempts"] == 1
+    assert recoveries == [job["id"]]
+    assert "TimeoutError" in result["reporting_error"]
+
+
+def test_prepare_repairs_missing_counts_even_after_artifact_acknowledgement(tmp_path):
+    _, queue, job, cli = queue_fixture(tmp_path, structured=True)
+    cli("next")
+    cli("ack", "--id", job["id"], "--status", "success", "--seconds", "1", "--attempt", "1")
+    cli("finish", "--status", "failed")
+    result_path = queue / "results" / (job["id"] + ".json")
+    result = json.loads(result_path.read_text())
+    result["activity"]["coverage"] = "UNKNOWN"
+    result["activity"]["testcase_totals"] = {key: None for key in result["activity"]["testcase_totals"]}
+    write_json(result_path, result)
+    receipt = (queue / "archives" / (job["id"] + ".json")).read_bytes()
+    assert cli("prepare")["executions"] == []
+    repaired = json.loads(result_path.read_text())
+    assert repaired["activity"]["testcase_totals"] == {
+        "started": 2, "passed": 1, "failed": 1, "skipped": 1, "incomplete": 0}
+    assert repaired["reporting_status"] == "SUCCESS"
+    assert (queue / "archives" / (job["id"] + ".json")).read_bytes() == receipt
+
+
 def test_end_of_run_parser_refuses_to_parse_while_execution_is_active(tmp_path):
     _, queue, _, _ = queue_fixture(tmp_path, structured=True)
     completed = subprocess.run(

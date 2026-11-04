@@ -658,13 +658,27 @@ def settle_unclosed(root, selected):
             atomic_json(root / "results" / (job["id"] + ".json"), result)
 
 
+def numeric_case_counts(activity):
+    totals = activity.get("testcase_totals")
+    return (activity.get("validated") is True and activity.get("coverage") == "COMPLETE"
+        and isinstance(totals, dict)
+        and all(type(totals.get(name)) is int and totals[name] >= 0
+            for name in ("started", "passed", "failed", "skipped", "incomplete"))
+        and totals["incomplete"] == 0
+        and totals["started"] == totals["passed"] + totals["failed"])
+
+
 def ensure_summary(root, job, closed, timeout):
     path = root / "results" / (job["id"] + ".json")
     result = read_json(path, missing=True)
     if result is not None:
         identity(result, job)
+    if result is not None and (job["test_type"] != "integration"
+        or result.get("reporting_status") == "ERROR" and result.get("count_recalculation_complete") is True
+        or numeric_case_counts(result.get("activity", {}))):
         return result
     start = time.monotonic()
+    recalculation_attempts = 0
     try:
         if not closed.get("complete"):
             raise ValueError(closed.get("reason", "execution closure was incomplete"))
@@ -680,15 +694,32 @@ def ensure_summary(root, job, closed, timeout):
                 try:
                     summary, activity = structured_summary(job, closed, catalog_snapshot=catalog_snapshot,
                                                           event_observer=event_observer)
+                    if job["test_type"] == "integration" and not numeric_case_counts(activity):
+                        raise ValueError("NDP_CASE_COUNTS_RECALCULATION_REQUIRED: structured case totals are incomplete")
                 except TimeoutError:
                     raise
                 except Exception as structured_failure:
                     structured_error = clean_error(type(structured_failure).__name__ + ": " + str(structured_failure))
-                    observations.seek(0)
-                    observations.truncate()
-                    summary, activity = fallback_summary(job, closed, event_observer=event_observer)
+                    for attempt in range(2 if job["test_type"] == "integration" else 1):
+                        observations.seek(0)
+                        observations.truncate()
+                        recalculation_attempts = attempt + 1
+                        try:
+                            summary, activity = fallback_summary(job, closed, event_observer=event_observer)
+                            if job["test_type"] == "integration" and not numeric_case_counts(activity):
+                                raise ValueError("NDP_CASE_COUNTS_UNRECOVERABLE: closed-log recalculation did not establish complete numeric authored-case totals")
+                            break
+                        except TimeoutError:
+                            raise
+                        except Exception:
+                            if recalculation_attempts >= (2 if job["test_type"] == "integration" else 1):
+                                raise
                     summary_source = "raw_log_recovery"
+                if job["test_type"] == "integration" and not numeric_case_counts(activity):
+                    raise ValueError("NDP_CASE_COUNTS_UNRECOVERABLE: closed-log recalculation did not establish complete numeric authored-case totals")
             result = persist_result(root, job, summary, activity, summary_source, time.monotonic() - start, closed)
+            result["count_recalculation_attempts"] = recalculation_attempts
+            result["count_recalculation_complete"] = True
             result["skip_observations_stamp"] = file_stamp(observations_path)
             if structured_error is not None:
                 result["structured_error"] = structured_error
@@ -696,6 +727,8 @@ def ensure_summary(root, job, closed, timeout):
             return result
     except Exception as error:
         result = result_error(job, type(error).__name__ + ": " + str(error), closed)
+        result["count_recalculation_attempts"] = recalculation_attempts
+        result["count_recalculation_complete"] = True
         result["invocation"]["phase_seconds"]["parsing"] = round(time.monotonic() - start, 6)
         result["reporting_metrics"]["summary_seconds"] = result["invocation"]["phase_seconds"]["parsing"]
         atomic_json(job["log"] + ".summary.json", result["invocation"])
@@ -988,6 +1021,13 @@ def prepare_backlog(root, config, args):
         receipt = read_json(root / "archives" / (job["id"] + ".json"), missing=True)
         if receipt and (receipt.get("terminal") or receipt.get("status") == "success"
                         or receipt.get("attempts", 0) >= args.archive_attempts):
+            cached = read_json(root / "results" / (job["id"] + ".json"), missing=True)
+            if (job["test_type"] == "integration" and cached is not None
+                    and cached.get("activity", {}).get("result") != "NOT_RUN"
+                    and not numeric_case_counts(cached.get("activity", {}))):
+                closed = read_json(root / "closed" / (job["id"] + ".json"), missing=True)
+                if closed is not None:
+                    ensure_summary(root, job, closed, args.parse_timeout)
             continue
         closed = read_json(root / "closed" / (job["id"] + ".json"), missing=True)
         if closed is None:

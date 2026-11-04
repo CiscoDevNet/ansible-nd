@@ -519,7 +519,7 @@ def _summarize_catalog(log, module, run_id, build, fabric, collection_root, test
     observed = defaultdict(lambda: defaultdict(set))
     phase_outcomes = {"base": set(), "cleanup": set()}
     runner_outcomes = {"base": set(), "cleanup": set()}
-    untagged_seen = set()
+    untagged_seen = {}
     markers, modules = set(), set()
     state = {"current": None, "recap": False, "recap_rows": 0, "recap_failed": 0, "recap_rescued": 0,
              "exit_code": None, "exit_conflict": False,
@@ -609,7 +609,9 @@ def _summarize_catalog(log, module, run_id, build, fabric, collection_root, test
                 label = catalog["cases"][identity]["label"] + ": " + safe_label(record["name"])
                 add_failure(with_reason(label, event))
         elif _target_action(record["action"], catalog["target"]) and not record["base"] and not record["cleanup"]:
-            untagged_seen.add((record["path"], record["name"]))
+            call = untagged_seen.setdefault(record.get("key", record["name"]),
+                                            {"label": record["name"], "state": record["state"], "outcomes": set()})
+            call["outcomes"].update(outcomes)
         if not identity and "failed" in outcomes:
             phase = "module base" if record["base"] else "module cleanup" if record["cleanup"] else "unlabelled module task"
             add_failure(with_reason(phase + ": " + record["name"], event))
@@ -731,17 +733,6 @@ def _summarize_catalog(log, module, run_id, build, fabric, collection_root, test
         result["notes"].append("runner setup/cleanup labels are stage indicators only; runner task counts are excluded")
     result["notes"].extend(catalog["errors"][:4])
 
-    if not catalog["cases"]:
-        result["notes"].append("source has no explicit authored TC identifiers; task totals are excluded")
-        return result
-    # Explicit case evidence is still useful in a partially labelled target,
-    # but totals cannot masquerade as a complete count of the module's cases.
-    partial = bool(catalog["errors"] or catalog["untagged_actions"] or state["unmatched_case"])
-    result["coverage"] = "PARTIAL" if partial else "COMPLETE"
-    result["identified_case_counts"] = {state: 0 for state in STATES}
-    totals = {key: 0 for key in ("started", "passed", "failed", "skipped", "incomplete")}
-    other = 0
-    partly_skipped_not_started = 0
     def record_case(identity, case, outcome, reason=None):
         if len(result["case_results"]) >= MAX_CASE_EVIDENCE:
             result["evidence_truncated"] = True
@@ -753,6 +744,54 @@ def _summarize_catalog(log, module, run_id, build, fabric, collection_root, test
         if reason:
             evidence["reason"] = safe_label(reason)
         result["case_results"].append(evidence)
+
+    if not catalog["cases"]:
+        if not untagged_seen:
+            result["notes"].append("source has no explicit authored TC identifiers and no authored module call was observed")
+            return result
+        # Targets without TC labels: each authored module call is one counted case.
+        result["count_unit"] = "authored module calls (target has no TC identifiers)"
+        result["coverage"] = "PARTIAL" if catalog["errors"] else "COMPLETE"
+        counts = {name: 0 for name in STATES}
+        totals = {key: 0 for key in ("started", "passed", "failed", "skipped", "incomplete")}
+        other = 0
+        for key, call in untagged_seen.items():
+            outcomes = call["outcomes"] or {"unknown"}
+            case = {"label": safe_label(call["label"]), "state": call["state"] if call["state"] in STATES else "other"}
+            if outcomes == {"skipped"}:
+                totals["skipped"] += 1
+                record_case(key, case, "skipped")
+                continue
+            totals["started"] += 1
+            if case["state"] in STATES:
+                counts[case["state"]] += 1
+            else:
+                other += 1
+            outcome = ("failed" if "failed" in outcomes else
+                       "incomplete" if outcomes & {"rescued", "unknown"} else "passed")
+            totals[outcome] += 1
+            record_case(key, case, outcome)
+        result["identified_case_counts"] = dict(counts)
+        result["identified_testcase_totals"] = dict(totals)
+        result["identified_other_cases"] = other
+        if catalog["errors"]:
+            result["notes"].append("partial source catalog: module-call totals retained as an identified subset")
+        else:
+            result["counts"] = counts
+            result["testcase_totals"] = totals
+            result["other_cases"] = other
+        result["notes"].append("source has no explicit TC identifiers; each executed authored module call is counted as one case")
+        if totals["incomplete"]:
+            result["notes"].append("incomplete means a rescued or unrecorded module-call outcome; it is not a pass or a skip")
+        return result
+    # Explicit case evidence is still useful in a partially labelled target,
+    # but totals cannot masquerade as a complete count of the module's cases.
+    partial = bool(catalog["errors"] or state["unmatched_case"])
+    result["coverage"] = "PARTIAL" if partial else "COMPLETE"
+    result["identified_case_counts"] = {state: 0 for state in STATES}
+    totals = {key: 0 for key in ("started", "passed", "failed", "skipped", "incomplete")}
+    other = 0
+    partly_skipped_not_started = 0
     for identity, tasks in observed.items():
         case = catalog["cases"][identity]
         notices = case.get("skip_notices", set())
@@ -801,6 +840,25 @@ def _summarize_catalog(log, module, run_id, build, fabric, collection_root, test
         else:
             totals["incomplete"] += 1
             record_case(identity, case, "incomplete")
+    for key, call in untagged_seen.items():
+        outcomes = call["outcomes"] or {"unknown"}
+        case = {"label": safe_label(call["label"]), "state": call["state"] if call["state"] in STATES else "other"}
+        if outcomes == {"skipped"}:
+            totals["skipped"] += 1
+            record_case(key, case, "skipped")
+            continue
+        totals["started"] += 1
+        if case["state"] in STATES:
+            result["identified_case_counts"][case["state"]] += 1
+        else:
+            other += 1
+        outcome = ("failed" if "failed" in outcomes else
+                   "incomplete" if outcomes & {"rescued", "unknown"} else "passed")
+        totals[outcome] += 1
+        record_case(key, case, outcome)
+    if untagged_seen:
+        result["count_unit"] = "authored TC cases plus distinct unlabelled authored module calls"
+        result["notes"].append("independently matched unlabelled authored module calls counted once; base and cleanup excluded")
     result["identified_testcase_totals"] = totals
     result["identified_other_cases"] = other
     result["catalog_case_count"] = len(catalog["cases"])

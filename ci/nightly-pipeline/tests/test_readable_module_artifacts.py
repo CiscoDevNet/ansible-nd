@@ -26,8 +26,8 @@ def aggregate_with_receipt(cli, job):
 def test_publisher_exports_one_flat_full_txt_and_one_build_skip_report(tmp_path, structured):
     workspace, queue, job, cli = smoke.queue_fixture(tmp_path, structured)
     raw = Path(job["log"]).read_bytes()
-    result_before = json.loads((queue / "results" / (job["id"] + ".json")).read_text()) if structured else None
     descriptor = cli("next")["execution"]
+    result_before = json.loads((queue / "results" / (job["id"] + ".json")).read_text())
     assert descriptor["files"] == ["test_output_fabric_ND43_IBGP_nd_example.txt"]
     public_log = workspace / descriptor["files"][0]
     assert public_log.parent == workspace
@@ -151,7 +151,7 @@ def test_unreached_authored_case_is_not_reported_as_skipped(tmp_path, monkeypatc
     assert aggregate["rows"][0]["case_totals"]["skipped"] == 1
 
 
-def test_missing_case_identifiers_are_unknown_even_when_task_skips_are_visible(tmp_path, monkeypatch):
+def test_missing_case_identifiers_use_numeric_authored_counts_not_task_skips(tmp_path, monkeypatch):
     monkeypatch.setattr(smoke, "TASKS", [(re.sub(r" TC\d+", "", name), action, arguments, outcome)
                                        for name, action, arguments, outcome in smoke.TASKS])
     workspace, _, job, cli = smoke.queue_fixture(tmp_path, True)
@@ -159,8 +159,9 @@ def test_missing_case_identifiers_are_unknown_even_when_task_skips_are_visible(t
     aggregate = aggregate_with_receipt(cli, job)
     text = (workspace / aggregate["skiplist_file"]).read_text()
     assert "Authored case inventory unavailable" in text
-    assert "skipped=unknown" in text and "GATHERED - gather" in text
-    assert aggregate["rows"][0]["case_totals"]["skipped"] is None
+    assert "skipped=0" in text and "GATHERED - gather" in text
+    assert "skipped=unknown" not in text
+    assert aggregate["rows"][0]["case_totals"]["skipped"] == 0
 
 
 def test_no_log_skip_and_quoted_condition_values_remain_private(tmp_path):

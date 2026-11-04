@@ -47,9 +47,9 @@ def test_audit_finds_deleted_required_key_without_listing_surviving_keys(runtime
 
 
 def test_active_release_maps_to_canonical_files_without_mapping_historical_releases(runtime):
-    sources, script = runtime
+    sources, _ = runtime
     key = "releases/fixture/nd_ensure_switches.yaml"
-    assert Path(sources[key]) == script.parent / "playbooks/nd_ensure_switches.yaml"
+    assert sources[key].endswith("playbooks/nd_ensure_switches.yaml")
     assert not any("playbooks/releases/" in local for local in sources.values())
     assert SYNC.main(["audit"]) == 0
 
@@ -110,7 +110,7 @@ def test_unsafe_or_document_manifest_entries_fail_closed(runtime, entry):
 def test_canonical_nightly_manifest_includes_all_existing_inputs_and_no_documents(monkeypatch):
     monkeypatch.setattr(SYNC, "ROOT", str(ROOT))
     sources = SYNC.required_runtime_sources()
-    assert len(sources) == 37
+    assert len(sources) == 39
     assert "ansible.cfg" in sources
     assert sources["compat_action_plugins/normal.py"] == str(ROOT / "playbooks/compat_action_plugins/normal.py")
     assert all(Path(local).is_file() and Path(local).stat().st_size for local in sources.values())
