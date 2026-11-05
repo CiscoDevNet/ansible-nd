@@ -1,0 +1,42 @@
+---
+# Setup deliberately sends one control-parent action. It does not emulate the
+# production inverse, and it must prove the full coupled footprint afterward.
+- name: Mark preparation pending before the request leaves the runner
+  ansible.builtin.set_fact:
+    coupled_case_write_pending: true
+
+- name: Prepare one known native parent using the real breakout REST endpoint
+  cisco.nd.nd_rest:
+    method: POST
+    path: "/api/v1/manage/fabrics/{{ test_breakout_coupled_fabric_name | urlencode }}/interfaceActions/breakout"
+    content:
+      interfaces:
+        - switchId: "{{ test_breakout_coupled_switch_id }}"
+          interfaceName: "{{ coupled_control }}"
+          breakoutMap: "{{ coupled_map }}"
+  check_mode: false
+  register: coupled_preparation_result
+
+- name: Require one explicit identity-matched successful setup item
+  ansible.builtin.assert:
+    that:
+      - coupled_preparation_result.status in [200, 201, 207]
+      - coupled_preparation_result.jsondata is mapping
+      - coupled_preparation_result.jsondata.results is sequence
+      - coupled_preparation_result.jsondata.results | length == 1
+      - coupled_preparation_result.jsondata.results[0].switchId == test_breakout_coupled_switch_id
+      - coupled_preparation_result.jsondata.results[0].interfaceName == coupled_control
+      - coupled_preparation_result.jsondata.results[0].status | lower == 'success'
+    fail_msg: "Coupled setup did not report a completed identified success; no write replay is permitted. {{ coupled_preparation_result }}"
+
+- name: Independently prove the declared sibling was affected by the real setup request
+  ansible.builtin.include_tasks: coupled_observe.yaml
+  vars:
+    coupled_observe_profile: map_a
+    coupled_observe_only: false
+    coupled_observe_baseline: "{{ coupled_native_baseline }}"
+    coupled_observe_settle: true
+
+- name: Release setup barrier only after completed response and settled profile validation
+  ansible.builtin.set_fact:
+    coupled_case_write_pending: false

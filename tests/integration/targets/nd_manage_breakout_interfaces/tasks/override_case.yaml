@@ -1,0 +1,58 @@
+---
+- name: Initialize an explicit selected-switch desired set preserving non-test families
+  ansible.builtin.set_fact:
+    breakout_override_config: "{{ test_breakout_preserved_config }}"
+
+- name: Preserve empty selected-switch groups as scope, not an independent clear command
+  ansible.builtin.set_fact:
+    breakout_override_config: "{{ breakout_override_config + [{'switch_id': test_switch_serial, 'interface_names': []}] }}"
+  when: breakout_override_case.empty_group | default(false) or breakout_override_case.desired | length == 0
+
+- name: Add each desired test parent with its per-interface creation map
+  ansible.builtin.set_fact:
+    breakout_override_config: >-
+      {{ breakout_override_config + [{'switch_id': test_switch_serial,
+          'interface_names': [breakout_matrix_fixtures[item].control_parent],
+          'breakout_map': breakout_override_case.map_override | default(breakout_matrix_fixtures[item].profiles.map_a.breakout_map)}] }}
+  loop: "{{ breakout_override_case.desired }}"
+
+- name: "{{ breakout_override_case.id }} - {{ breakout_override_case.name }}"
+  cisco.nd.nd_manage_breakout_interfaces:
+    fabric_name: "{{ test_fabric_name }}"
+    state: overridden
+    config: "{{ breakout_override_config }}"
+    verify:
+      enabled: "{{ breakout_override_case.verify | default(true) }}"
+  check_mode: "{{ breakout_override_case.check_mode | default(false) }}"
+  register: breakout_matrix_last_result
+  ignore_errors: true
+
+- name: Validate original overridden result without hiding mixed no-op/success outcomes
+  ansible.builtin.assert:
+    that:
+      - not (breakout_matrix_last_result.failed | default(false))
+      - breakout_matrix_last_result.changed == breakout_override_case.changed
+      - breakout_matrix_last_result.recovery | default([]) | length == 0
+      - >-
+        breakout_matrix_last_result.api_outcomes | map(attribute='outcome') |
+        reject('in', ['success', 'noop', 'planned']) | list | length == 0
+      - not (breakout_override_case.check_mode | default(false)) or breakout_matrix_last_result.after_status == 'predicted'
+      - breakout_override_case.verify | default(true) or breakout_matrix_last_result.verification is not defined
+    fail_msg: "{{ breakout_override_case.id }} failed: {{ breakout_matrix_last_result }}"
+
+- name: Verify phase ordering and absence of per-parent write expansion
+  ansible.builtin.assert:
+    that:
+      - >-
+        breakout_matrix_last_result.api_calls | selectattr('method', 'equalto', 'POST') |
+        map(attribute='path') | map('regex_replace', '^.*/interfaceActions/', '') | list == breakout_override_case.writes
+      - >-
+        breakout_override_case.verify | default(true)
+        or (breakout_matrix_last_result.api_calls |
+            selectattr('method', 'equalto', 'GET') | selectattr('path', 'search', '/interfacesSummary') | list | length) == 1
+  when: ansible_verbosity | int >= 3
+
+- name: Validate the actual desired family set and preserved outside scope
+  ansible.builtin.include_tasks: matrix_observe.yaml
+  vars:
+    breakout_matrix_profiles: "{{ breakout_override_case.profiles }}"

@@ -1,13 +1,18 @@
 ---
 # The caller loops over fixture indices. Every observation covers the complete
 # declared hardware group, never just its control parent or response snapshot.
-- name: Capture optional bulk guards only after the first controller operation
+- name: Capture optional bulk guards before the first mutation
   cisco.nd.nd_manage_breakout_interfaces_validate:
     fabric_name: "{{ test_fabric_name }}"
     switch_id: "{{ breakout_bulk_fixtures[breakout_bulk_index].switch_id }}"
     fixture: "{{ breakout_bulk_fixtures[breakout_bulk_index] }}"
     expected_profile: "{{ breakout_bulk_profiles[breakout_bulk_index] }}"
     observe_only: true
+    whole_switch: true
+    include_speeds: true
+    owned_interfaces: >-
+      {{ breakout_bulk_fixtures | selectattr('switch_id', 'equalto', breakout_bulk_fixtures[breakout_bulk_index].switch_id) |
+         map(attribute='native_interfaces') | flatten | unique | list }}
     retries: "{{ test_breakout_observe_retries }}"
     interval: "{{ test_breakout_observe_interval }}"
   check_mode: false
@@ -17,7 +22,7 @@
     - (breakout_bulk_index | string) not in breakout_bulk_baselines
     - (breakout_bulk_index | string) not in breakout_bulk_guard_baselines
 
-- name: Save guard baseline without claiming pre-mutation observation
+- name: Save the independently captured guard baseline
   ansible.builtin.set_fact:
     breakout_bulk_guard_baselines: >-
       {{ breakout_bulk_guard_baselines | combine({(breakout_bulk_index | string): breakout_bulk_guard_observation.snapshot}) }}
@@ -33,6 +38,11 @@
       {{ breakout_bulk_baselines.get(breakout_bulk_index | string,
            breakout_bulk_guard_baselines.get(breakout_bulk_index | string, omit)) }}
     unchanged: "{{ breakout_bulk_index in (breakout_bulk_unchanged_indices | default([])) }}"
+    whole_switch: true
+    include_speeds: true
+    owned_interfaces: >-
+      {{ breakout_bulk_fixtures | selectattr('switch_id', 'equalto', breakout_bulk_fixtures[breakout_bulk_index].switch_id) |
+         map(attribute='native_interfaces') | flatten | unique | list }}
     retries: "{{ test_breakout_observe_retries }}"
     interval: "{{ test_breakout_observe_interval }}"
   check_mode: false

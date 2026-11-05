@@ -1,0 +1,63 @@
+---
+# Shared fixture preparation only; test execution remains ordinary Ansible
+# tasks. No common-runner/harness dependency or production helpers are used.
+- name: Initialize independent multi-parent fixture state
+  ansible.builtin.set_fact:
+    breakout_bulk_fixtures: []
+    breakout_matrix_fixtures: []
+    breakout_matrix_snapshots: {}
+    breakout_matrix_baselines: {}
+    breakout_matrix_ready: false
+    breakout_matrix_last_result: {}
+    breakout_matrix_failure: {}
+
+- name: Validate declared independent fixture schemas without controller calls
+  ansible.builtin.include_tasks: validate_bulk_fixture.yaml
+  loop: "{{ test_breakout_bulk_fixtures }}"
+  loop_control:
+    loop_var: breakout_bulk_candidate
+
+- name: Select two independently reserved parents on the primary switch
+  ansible.builtin.set_fact:
+    breakout_matrix_fixtures: "{{ (breakout_bulk_fixtures | selectattr('switch_id', 'equalto', test_switch_serial) | list)[:2] }}"
+
+- name: Explain unavailable two-parent switch coverage
+  ansible.builtin.debug:
+    msg: "SKIP {{ breakout_matrix_suite }}: two independent fixtures on test_switch_serial are required."
+  when: breakout_matrix_fixtures | length < 2
+
+- name: Require genuinely single-family independent footprints
+  ansible.builtin.assert:
+    that:
+      - item.native_interfaces | length == 1
+      - item.profiles.map_a.child_lanes | length == 1
+    fail_msg: Coupled groups belong in the separate coupled suite, not the ordinary independent-parent matrix.
+  loop: "{{ breakout_matrix_fixtures }}"
+  when: breakout_matrix_fixtures | length == 2
+
+- name: Initialize the two-parent independent baseline
+  ansible.builtin.set_fact:
+    breakout_matrix_ready: true
+    breakout_matrix_owned: "{{ breakout_matrix_fixtures | map(attribute='native_interfaces') | flatten | unique | list }}"
+    breakout_matrix_profiles: [native, native]
+  when: breakout_matrix_fixtures | length == 2
+
+- name: Capture both native footprints before any write
+  ansible.builtin.include_tasks: matrix_observe.yaml
+  vars:
+    breakout_matrix_observe_only: true
+  when: breakout_matrix_ready | bool
+
+- name: Save immutable matrix baseline and declared outside family identities
+  ansible.builtin.set_fact:
+    breakout_matrix_baselines: "{{ breakout_matrix_snapshots }}"
+    breakout_matrix_outside: >-
+      {{ (breakout_matrix_snapshots['0'].outside_families.keys() | list +
+          (breakout_matrix_snapshots.values() | map(attribute='families') |
+           map('dict2items') | flatten | rejectattr('value.children', 'equalto', []) |
+           map(attribute='key') | list)) | difference(breakout_matrix_owned) | unique | sort }}
+  when: breakout_matrix_ready | bool
+
+- name: Prove both operator-reserved footprints are initially native
+  ansible.builtin.include_tasks: matrix_observe.yaml
+  when: breakout_matrix_ready | bool

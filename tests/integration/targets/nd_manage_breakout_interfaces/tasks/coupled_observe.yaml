@@ -1,0 +1,41 @@
+---
+- name: Validate test-only GET settling limits before any controller observation or mutation
+  ansible.builtin.assert:
+    that:
+      - test_breakout_coupled_observe_retries is integer
+      - test_breakout_coupled_observe_retries is not boolean
+      - test_breakout_coupled_observe_retries >= 1
+      - test_breakout_coupled_observe_retries <= 10
+      - test_breakout_coupled_observe_interval is number
+      - test_breakout_coupled_observe_interval is not boolean
+      - test_breakout_coupled_observe_interval >= 0
+      - test_breakout_coupled_observe_interval <= 60
+      - (test_breakout_coupled_observe_retries - 1) * test_breakout_coupled_observe_interval <= 60
+    fail_msg: Coupled test observation allows 1-10 GET attempts and at most 60 seconds total settling sleep; mutations are never retried.
+
+- name: Independently observe complete coupled-switch topology and reserved lane speeds
+  cisco.nd.nd_manage_breakout_interfaces_validate:
+    fabric_name: "{{ test_breakout_coupled_fabric_name }}"
+    switch_id: "{{ test_breakout_coupled_switch_id }}"
+    fixture: "{{ coupled_fixture }}"
+    expected_profile: "{{ coupled_observe_profile | default('native') }}"
+    observe_only: "{{ coupled_observe_only | default(false) }}"
+    unchanged: "{{ coupled_observe_unchanged | default(false) }}"
+    baseline: "{{ coupled_observe_baseline | default(omit) }}"
+    whole_switch: true
+    include_speeds: true
+    topology_only: true
+    # Observe-only snapshots must remain immediate. Only explicitly requested
+    # strict profile validation may perform bounded additional GETs.
+    retries: "{{ test_breakout_coupled_observe_retries if coupled_observe_settle | default(false) | bool and not (coupled_observe_only | default(false) | bool) else 1 }}"
+    interval: "{{ test_breakout_coupled_observe_interval if coupled_observe_settle | default(false) | bool and not (coupled_observe_only | default(false) | bool) else 0 }}"
+  check_mode: false
+  register: coupled_observation
+
+- name: Require complete independently observed evidence rather than API response inference
+  ansible.builtin.assert:
+    that:
+      - not coupled_observation.changed
+      - not (coupled_observation.failed | default(false))
+      - coupled_observation.snapshot.families is mapping
+      - coupled_observation.snapshot.outside_families is mapping

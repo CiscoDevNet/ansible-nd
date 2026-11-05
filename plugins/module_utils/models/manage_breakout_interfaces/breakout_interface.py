@@ -85,18 +85,18 @@ class BreakoutInterfaceModel(NDBaseModel):
         """Return the public grouped input specification without map enumeration."""
         return {
             "fabric_name": {"type": "str", "required": True},
-            "state": {"type": "str", "choices": ["merged", "deleted"], "default": "merged"},
+            "state": {"type": "str", "choices": ["merged", "deleted", "overridden"], "default": "merged"},
             "config": {
                 "type": "list",
                 "elements": "dict",
-                "required": True,
+                "default": [],
                 "options": {
                     "switch_id": {"type": "str", "required": True},
                     "interface_names": {"type": "list", "elements": "str", "required": True},
                     "breakout_map": {"type": "str"},
                 },
             },
-            "verify": {"type": "dict", "options": {"enabled": {"type": "bool", "default": False}}},
+            "verify": {"type": "dict", "apply_defaults": True, "options": {"enabled": {"type": "bool", "default": True}}},
         }
 
 
@@ -107,10 +107,16 @@ def expand_config(raw_config: Any, state: str) -> list[BreakoutInterfaceModel]:
     equals the supplied map. The map is required only as the create argument.
     ``deleted`` accepts the same native parent or a child alias for its whole
     parent family. It never accepts a map or requests removal of just one lane.
+    ``overridden`` uses parents and create maps like ``merged``. Empty or
+    omitted config selects the whole fabric; empty interface lists select a
+    switch with no desired breakouts. The caller retains raw groups to resolve
+    those scopes because an empty desired set produces no interface models.
     """
-    if state not in {"merged", "deleted"}:
-        raise ValueError("state must be merged or deleted")
-    if not isinstance(raw_config, list) or not raw_config:
+    if state not in {"merged", "deleted", "overridden"}:
+        raise ValueError("state must be merged, deleted, or overridden")
+    if raw_config is None and state == "overridden":
+        return []
+    if not isinstance(raw_config, list) or (not raw_config and state != "overridden"):
         raise ValueError("config must be a non-empty list")
 
     expanded: list[BreakoutInterfaceModel] = []
@@ -122,21 +128,26 @@ def expand_config(raw_config: Any, state: str) -> list[BreakoutInterfaceModel]:
         unexpected = set(group) - allowed
         if unexpected:
             raise ValueError(f"Unsupported config[{index}] option(s): {', '.join(sorted(unexpected))}")
+        # An overridden clear-switch group has no interface models, but its
+        # selector must still be valid before any controller connection opens.
+        switch_id = BreakoutInterfaceModel.normalize_switch_id(group.get("switch_id"))
         names = group.get("interface_names")
-        if not isinstance(names, list) or not names:
-            raise ValueError(f"config[{index}].interface_names must be a non-empty list")
+        if not isinstance(names, list) or (not names and state != "overridden"):
+            requirement = "a list" if state == "overridden" else "a non-empty list"
+            raise ValueError(f"config[{index}].interface_names must be {requirement}")
         breakout_map = group.get("breakout_map")
-        if state == "merged" and (not isinstance(breakout_map, str) or not breakout_map.strip()):
+        if names and state in {"merged", "overridden"} and (not isinstance(breakout_map, str) or not breakout_map.strip()):
             raise ValueError(f"config[{index}].breakout_map is required and must be non-empty for state={state}")
         if state == "deleted" and breakout_map is not None:
             raise ValueError(f"config[{index}].breakout_map must be omitted for state=deleted")
+        breakout_map = BreakoutInterfaceModel.normalize_breakout_map(breakout_map)
         for name in names:
             requested_child = None
             child_match = _CHILD_INTERFACE.fullmatch(name.strip()) if state == "deleted" and isinstance(name, str) else None
             if child_match is not None:
                 requested_child = BreakoutInterfaceModel.normalize_requested_child(name)
                 name = requested_child.rsplit("/", 1)[0]
-            model = BreakoutInterfaceModel(switch_id=group.get("switch_id"), interface_name=name, breakout_map=breakout_map, requested_child=requested_child)
+            model = BreakoutInterfaceModel(switch_id=switch_id, interface_name=name, breakout_map=breakout_map, requested_child=requested_child)
             key = (model.switch_id.casefold(), model.interface_name.casefold())
             if key in seen:
                 raise ValueError(f"Interface {model.interface_name} on switch {model.switch_id} is specified more than once")
@@ -159,6 +170,6 @@ def validate_module_params(params: dict[str, Any], raw_args: dict[str, Any] | No
     if verify is not None:
         if not isinstance(verify, dict) or set(verify) - {"enabled"}:
             raise ValueError("verify accepts only a dictionary with the enabled option")
-        if not isinstance(verify.get("enabled", False), bool):
+        if not isinstance(verify.get("enabled", True), bool):
             raise ValueError("verify.enabled must be a boolean")
     return expanded

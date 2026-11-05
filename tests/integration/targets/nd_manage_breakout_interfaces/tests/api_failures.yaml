@@ -1,0 +1,77 @@
+---
+- name: Explain disposable-fixture opt-in for controller-rejected requests
+  ansible.builtin.debug:
+    msg: >-
+      SKIP API failure probes: set test_breakout_allow_api_failures=true only for disposable reserved interfaces.
+      A rejected map can still alter interface intent; these tests do not promise full configuration rollback.
+  when: not (test_breakout_allow_api_failures | bool)
+
+- name: Exercise real controller failures without fabricating response faults
+  when: test_breakout_allow_api_failures | bool
+  block:
+    - name: Require detailed completion evidence and two disposable independent fixtures
+      ansible.builtin.assert:
+        that:
+          - ansible_verbosity | int >= 3
+          - test_breakout_bulk_fixtures | length >= 2
+          - test_breakout_invalid_map is string and test_breakout_invalid_map | trim | length > 0
+        fail_msg: Run the opted-in failure probes with -vvv and two disposable independent fixtures.
+
+    - name: Prepare disposable native footprints and outside preservation evidence
+      ansible.builtin.include_tasks: ../tasks/matrix_prepare.yaml
+      vars:
+        breakout_matrix_suite: api_failures
+
+    - name: Run genuine invalid-map and mixed-validity requests in both orders
+      ansible.builtin.include_tasks: ../tasks/api_failure_case.yaml
+      loop:
+        - {id: F02, name: Rejected map on a native parent, entries: [{index: 0, valid: false}]}
+        - {id: F03, name: Valid request before invalid request, entries: [{index: 0, valid: true}, {index: 1, valid: false}]}
+        - {id: F04, name: Invalid request before valid request, entries: [{index: 1, valid: false}, {index: 0, valid: true}]}
+        - {id: F06, name: Explicit delete then rejected new map is non-atomic, prepare_delete: true, entries: [{index: 0, valid: false}]}
+      loop_control:
+        loop_var: breakout_failure_case
+        label: "{{ breakout_failure_case.id }}"
+      when: breakout_matrix_ready | bool
+
+    - name: Validate any protection groups before an authoritative failure probe
+      ansible.builtin.assert:
+        that:
+          - item.switch_id == test_switch_serial
+          - item.interface_names is sequence and item.interface_names is not string
+          - item.interface_names | length > 0
+          - item.interface_names | difference(breakout_matrix_outside) | length == 0
+          - item.breakout_map is string and item.breakout_map | trim | length > 0
+      loop: "{{ test_breakout_preserved_config }}"
+      when: breakout_matrix_ready | bool
+
+    - name: Reject duplicate or incomplete explicitly supplied protection
+      ansible.builtin.assert:
+        that:
+          - >-
+            test_breakout_preserved_config | map(attribute='interface_names') | flatten | list | unique | length
+            == test_breakout_preserved_config | map(attribute='interface_names') | flatten | list | length
+          - breakout_matrix_outside | difference(test_breakout_preserved_config | map(attribute='interface_names') | flatten | list) | length == 0
+      when:
+        - breakout_matrix_ready | bool
+        - test_breakout_preserved_config | length > 0
+
+    - name: Explain missing protection for the overridden failure probe
+      ansible.builtin.debug:
+        msg: SKIP F05 authoritative failure probe; explicitly preserve every outside family first.
+      when:
+        - breakout_matrix_ready | bool
+        - breakout_matrix_outside | difference(test_breakout_preserved_config | map(attribute='interface_names') | flatten | list) | length > 0
+
+    - name: Prove failed creation stops before destructive overridden cleanup
+      ansible.builtin.include_tasks: ../tasks/api_failure_case.yaml
+      vars:
+        breakout_failure_case:
+          id: F05
+          name: Failed overridden creation retains omitted baseline family
+          state: overridden
+          prepare_omitted: true
+          entries: [{index: 0, valid: false}]
+      when:
+        - breakout_matrix_ready | bool
+        - breakout_matrix_outside | difference(test_breakout_preserved_config | map(attribute='interface_names') | flatten | list) | length == 0

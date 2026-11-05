@@ -1,0 +1,103 @@
+---
+- name: Report missing resources for authoritative selected-switch tests
+  ansible.builtin.debug:
+    msg: SKIP overridden matrix; supply two independent native fixtures on the primary switch.
+  when: test_breakout_bulk_fixtures | length < 2
+
+- name: Prepare two independent fixtures without changing the controller
+  ansible.builtin.include_tasks: ../tasks/matrix_prepare.yaml
+  vars:
+    breakout_matrix_suite: overridden
+  when: test_breakout_bulk_fixtures | length >= 2
+
+- name: Validate explicitly preserved non-test desired groups before authoritative writes
+  ansible.builtin.assert:
+    that:
+      - item.switch_id == test_switch_serial
+      - item.interface_names is sequence and item.interface_names is not string
+      - item.interface_names | length > 0
+      - item.interface_names | difference(breakout_matrix_outside) | length == 0
+      - item.breakout_map is string and item.breakout_map | trim | length > 0
+    fail_msg: Preserved groups may name only already-broken, independently observed outside families on the selected switch.
+  loop: "{{ test_breakout_preserved_config }}"
+  when: breakout_matrix_ready | default(false)
+
+- name: Determine whether every existing outside breakout is explicitly preserved
+  ansible.builtin.set_fact:
+    breakout_override_preserved_names: "{{ test_breakout_preserved_config | map(attribute='interface_names') | flatten | list }}"
+  when: breakout_matrix_ready | default(false)
+
+- name: Reject incomplete or duplicate explicitly supplied protection groups
+  ansible.builtin.assert:
+    that:
+      - breakout_matrix_outside | difference(breakout_override_preserved_names) | length == 0
+      - breakout_override_preserved_names | unique | length == breakout_override_preserved_names | length
+  when:
+    - breakout_matrix_ready | default(false)
+    - test_breakout_preserved_config | length > 0
+
+- name: Explain why authoritative override cannot run against unprotected breakouts
+  ansible.builtin.debug:
+    msg: >-
+      SKIP overridden writes: existing outside families {{ breakout_matrix_outside }} must be explicitly preserved
+      with test_breakout_preserved_config, or use an isolated switch. No existing family will be removed to prepare tests.
+  when:
+    - breakout_matrix_ready | default(false)
+    - breakout_matrix_outside | difference(breakout_override_preserved_names) | length > 0
+
+- name: Exercise selected-switch create-first reconciliation with protected existing resources
+  when:
+    - breakout_matrix_ready | default(false)
+    - breakout_matrix_outside | difference(breakout_override_preserved_names) | length == 0
+  block:
+    - name: Run independent overridden workflows in a known sequence
+      ansible.builtin.include_tasks: ../tasks/override_case.yaml
+      loop:
+        - {id: O01, name: Create first desired parent, desired: [0], changed: true, writes: [breakout], profiles: [map_a, native]}
+        - {id: O02, name: Repeat identical desired set, desired: [0], changed: false, writes: [], profiles: [map_a, native]}
+        - {id: O03, name: Existing desired map is not replaced, desired: [0], map_override: existing-map-noop-only, changed: false, writes: [], profiles: [map_a, native]}
+        - {id: O04, name: Union separate groups on one switch, desired: [0, 1], changed: true, writes: [breakout], profiles: [map_a, map_a]}
+        - {id: O05, name: Remove only omitted test family, desired: [0], changed: true, writes: [remove], profiles: [map_a, native]}
+        - {id: O06, name: Create missing desired family before removal, desired: [1], changed: true, writes: [breakout, remove], profiles: [native, map_a]}
+        - {id: O07, name: Repeat reconciled desired set, desired: [1], changed: false, writes: [], profiles: [native, map_a]}
+        - {id: O08, name: Empty scope group does not clear other desired groups, desired: [0, 1], empty_group: true, changed: true, writes: [breakout], profiles: [map_a, map_a]}
+        - {id: O09, name: Empty and nonempty groups are idempotent as a union, desired: [0, 1], empty_group: true, changed: false, writes: [], profiles: [map_a, map_a]}
+        - {id: O10, name: Response-only removal, desired: [0], verify: false, changed: true, writes: [remove], profiles: [map_a, native]}
+        - {id: O11, name: Response-only creation, desired: [0, 1], verify: false, changed: true, writes: [breakout], profiles: [map_a, map_a]}
+        - {id: O12, name: Predict removal without executing it, desired: [1], check_mode: true, changed: true, writes: [], profiles: [map_a, map_a]}
+        - {id: O13, name: Execute previously predicted removal, desired: [1], changed: true, writes: [remove], profiles: [native, map_a]}
+      loop_control:
+        loop_var: breakout_override_case
+        label: "{{ breakout_override_case.id }}"
+
+    - name: Reject clear-switch opt-in when the switch contains non-test resources
+      ansible.builtin.assert:
+        that: breakout_matrix_outside | length == 0
+        fail_msg: Switch-clear tests require a wholly test-owned switch; preserved outside families cannot be cleared.
+      when: test_breakout_allow_switch_clear | bool
+
+    - name: Exercise explicit empty selected-switch scope only when isolated
+      ansible.builtin.include_tasks: ../tasks/override_case.yaml
+      loop:
+        - {id: O14, name: Clear only the explicitly selected switch, desired: [], changed: true, writes: [remove], profiles: [native, native]}
+        - {id: O15, name: Repeat selected-switch clear, desired: [], changed: false, writes: [], profiles: [native, native]}
+      loop_control:
+        loop_var: breakout_override_case
+      when: test_breakout_allow_switch_clear | bool
+
+    - name: Report skipped destructive selected-switch clear cases
+      ansible.builtin.debug:
+        msg: SKIP O14/O15 selected-switch clear; test_breakout_allow_switch_clear is false.
+      when: not (test_breakout_allow_switch_clear | bool)
+
+  rescue:
+    - name: Preserve the original authoritative workflow failure
+      ansible.builtin.set_fact:
+        breakout_matrix_failure: {task: "{{ ansible_failed_task.name }}", result: "{{ ansible_failed_result }}"}
+  always:
+    - name: Teardown only the independently reserved matrix parents
+      ansible.builtin.include_tasks: ../tasks/matrix_cleanup.yaml
+    - name: Do not hide an overridden regression after successful cleanup
+      ansible.builtin.assert:
+        that: breakout_matrix_failure | length == 0
+        fail_msg: "Original overridden scenario failure: {{ breakout_matrix_failure }}"

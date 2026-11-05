@@ -80,7 +80,10 @@ def inventory(serial=SERIAL, platform="nx-os", **row_fields):
 
 def summary(*names, switch=SERIAL, **row_fields):
     """Only the classification fields supplied by a filtered summary query."""
-    rows = [{"switchId": switch, "interfaceName": name, "interfaceType": "Ethernet", "physicalInterface": True, "fex": False, **row_fields} for name in names]
+    rows = [
+        {"switchId": switch, "interfaceName": name, "interfaceType": "Ethernet", "physicalInterface": True, "discovered": True, "fex": False, **row_fields}
+        for name in names
+    ]
     return response({"interfaces": rows, "meta": {"counts": {"total": len(rows), "remaining": 0}}})
 
 
@@ -181,6 +184,20 @@ def assert_family_get(call, parent, switch=SERIAL):
     assert query["switchId"] == [switch]
     assert query["includeAll"] == ["true"]
     assert query["filter"] == ["interfaceName:*" + parent + "*"]
+
+
+def assert_ethernet_get(call, switch=SERIAL):
+    """Require a complete switch-wide guard read with no retained action body."""
+    path = urlsplit(call["path"])
+    query = parse_qs(path.query)
+    assert call["verb"] == HttpVerbEnum.GET
+    assert path.path == BASE + "/interfacesSummary"
+    assert query["switchId"] == [switch]
+    assert query["includeAll"] == ["true"]
+    assert query["filter"] == ["interfaceType:ethernet"]
+    assert query["max"] == ["1000"]
+    assert query["offset"] == ["0"]
+    assert call["payload"] is None
 
 
 def test_complete_breakout_accepts_response_without_readback():
@@ -449,7 +466,7 @@ def test_action_uses_existing_shared_retry_then_matches_completed_response():
     assert result["api_calls"][2]["http_status"] == 207
 
 
-def test_verification_is_opt_in_focused_topology_not_map_fetch():
+def test_verification_is_opt_in_switch_topology_not_map_fetch():
     result, calls = run(
         [summary("Ethernet1/50"), action(item("Ethernet1/50")), summary("Ethernet1/50/1", "Ethernet1/50/2")],
         verify={"enabled": True},
@@ -457,7 +474,9 @@ def test_verification_is_opt_in_focused_topology_not_map_fetch():
     assert result["failed"] is False
     assert result["after_status"] == "observed"
     assert len(calls) == 4
-    assert_family_get(calls[3], "Ethernet1/50")
+    assert_ethernet_get(calls[1])
+    assert_ethernet_get(calls[3])
+    assert result["verification"]["phases"] == [{"switch_id": SERIAL, "phase": "breakout", "collateral": [], "topology_matches": True}]
     assert all("/policies" not in call["path"] for call in calls)
 
 
@@ -468,8 +487,11 @@ def test_optional_observation_does_not_erase_missing_result_error():
     )
     assert result["failed"] is True
     assert result["after_status"] == "observed"
+    assert result["may_have_changed"] is True
+    assert outcomes(result)[(SERIAL, "Ethernet1/50")]["outcome"] == "unknown"
     assert len(calls) == 4
-    assert_family_get(calls[3], "Ethernet1/50")
+    assert_ethernet_get(calls[1])
+    assert_ethernet_get(calls[3])
 
 
 def test_check_mode_skips_optional_verification_even_when_enabled():
@@ -557,8 +579,10 @@ def test_filtered_summary_pagination_finishes_before_selecting_child():
             "meta": {"counts": {"total": 2, "remaining": 1}},
         }
     )
+    last_page = summary("Ethernet1/50/1")
+    last_page["DATA"]["meta"]["counts"]["total"] = 2
     result, calls = run(
-        [first_page, summary("Ethernet1/50/1"), action(item("Ethernet1/50/1"))],
+        [first_page, last_page, action(item("Ethernet1/50/1"))],
         state="deleted",
         config=[group("Ethernet1/50", breakout_map=None)],
     )
@@ -579,19 +603,24 @@ def test_transport_exception_is_unknown_without_replaying_mutation():
     assert len(writes(calls)) == 1
 
 
-def test_optional_verification_is_not_attempted_after_aborted_action():
+def test_opt_in_guard_observes_after_aborted_action_without_replay_or_false_api_success():
     result, calls = run(
         [summary("Ethernet1/50"), TimeoutError("Controller action response was lost"), summary("Ethernet1/50/1")],
         verify={"enabled": True},
     )
     assert result["failed"] is True
     assert result["may_have_changed"] is True
-    assert result["after_status"] == "unknown"
-    assert "after" not in result
-    assert result["verification"] == {"enabled": True, "complete": False}
-    assert "Optional topology verification was not attempted because the action request did not complete." in result["msg"]
-    assert len(calls) == 3
+    assert result["after_status"] == "observed"
+    assert result["after"][0]["broken_out"] is True
+    assert outcomes(result)[(SERIAL, "Ethernet1/50")]["outcome"] == "unknown"
+    assert result["verification"]["complete"] is True
+    assert result["verification"]["phases"][0]["topology_matches"] is True
+    assert result["recovery"] == []
+    assert "Controller action response was lost" in result["msg"]
+    assert len(calls) == 4
     assert len(writes(calls)) == 1
+    assert_ethernet_get(calls[1])
+    assert_ethernet_get(calls[3])
 
 
 def test_duplicate_user_targets_fail_validation_before_any_api():
@@ -657,23 +686,25 @@ def test_missing_or_unrecognized_item_status_is_unknown_not_success(status):
     assert len(calls) == 3
 
 
-def test_opt_in_verification_reads_only_mutated_not_noop_families():
+def test_opt_in_verification_reads_mutated_switch_and_preserves_noop_family():
     result, calls = run(
-        [summary("Ethernet1/50/1", "Ethernet1/51"), action(item("Ethernet1/50/1")), summary("Ethernet1/50")],
+        [summary("Ethernet1/50/1", "Ethernet1/51", speed="25Gb"), action(item("Ethernet1/50/1")), summary("Ethernet1/50", "Ethernet1/51")],
         state="deleted",
         config=[group("Ethernet1/50", "Ethernet1/51", breakout_map=None)],
         verify={"enabled": True},
     )
     assert result["failed"] is False
-    assert result["after_status"] == "partially_observed"
-    assert result["verification"]["scope"] == [(SERIAL, "Ethernet1/50")]
+    assert result["after_status"] == "observed"
+    assert result["verification"]["phases"] == [{"switch_id": SERIAL, "phase": "unbreakout", "collateral": [], "topology_matches": True}]
     after = {(entry["switch_id"], entry["interface_name"]): entry for entry in result["after"]}
-    assert after[(SERIAL, "Ethernet1/50")]["evidence"] == "post_action_discovery"
-    assert after[(SERIAL, "Ethernet1/51")]["evidence"] == "initial_discovery"
+    assert after[(SERIAL, "Ethernet1/50")]["broken_out"] is False
+    assert after[(SERIAL, "Ethernet1/51")]["broken_out"] is False
     assert outcomes(result)[(SERIAL, "Ethernet1/51")]["outcome"] == "noop"
     assert len(calls) == 4
-    assert_family_get(calls[1], "Ethernet1/5")
-    assert_family_get(calls[3], "Ethernet1/50")
+    assert len(writes(calls)) == 1
+    assert writes(calls)[0]["payload"] == {"interfaces": [{"switchId": SERIAL, "interfaceName": "Ethernet1/50/1"}]}
+    assert_ethernet_get(calls[1])
+    assert_ethernet_get(calls[3])
 
 
 def test_noop_does_not_trigger_opt_in_post_action_verification():
@@ -1258,12 +1289,12 @@ def test_lost_discovery_response_is_registered_at_read_verbosity():
 
 
 @pytest.mark.parametrize("state", ["merged", "deleted"])
-def test_post_timeout_preserves_unknown_outcome_without_followup_get(state):
+def test_post_timeout_preserves_unknown_api_outcome_with_body_free_guard_get(state):
     trace = Results()
     initial = "Ethernet1/50" if state == "merged" else "Ethernet1/50/1"
     final = "Ethernet1/50/1" if state == "merged" else "Ethernet1/50"
     result, calls = run(
-        [summary(initial), TimeoutError("Lost action response"), summary(final)],
+        [summary(initial, speed="25Gb"), TimeoutError("Lost action response"), summary(final)],
         state=state,
         config=[group("Ethernet1/50", breakout_map=None if state == "deleted" else "25g-4x")],
         verify={"enabled": True},
@@ -1271,15 +1302,21 @@ def test_post_timeout_preserves_unknown_outcome_without_followup_get(state):
     )
     assert result["failed"] is True
     assert result["may_have_changed"] is True
-    assert result["after_status"] == "unknown"
-    assert "after" not in result
-    assert result["verification"] == {"enabled": True, "complete": False}
-    operations = [OperationType.QUERY, OperationType.QUERY, OperationType.CREATE if state == "merged" else OperationType.DELETE]
+    assert result["after_status"] == "observed"
+    assert result["after"][0]["broken_out"] is (state == "merged")
+    assert outcomes(result)[(SERIAL, "Ethernet1/50")]["outcome"] == "unknown"
+    assert result["verification"]["complete"] is True
+    assert result["verification"]["phases"][0]["topology_matches"] is True
+    assert result["recovery"] == []
+    operations = [OperationType.QUERY, OperationType.QUERY, OperationType.CREATE if state == "merged" else OperationType.DELETE, OperationType.QUERY]
     assert_registered_calls(trace, calls, operations, state=state)
-    assert [entry["RETURN_CODE"] for entry in trace.responses] == [200, 200, -1]
+    assert [entry["RETURN_CODE"] for entry in trace.responses] == [200, 200, -1, 200]
     assert trace.responses[2]["response_received"] is False
     assert trace.results[2]["success"] is False
-    assert len(calls) == 3
+    assert len(calls) == 4
+    assert len(writes(calls)) == 1
+    assert_ethernet_get(calls[1])
+    assert_ethernet_get(calls[3])
 
 
 @pytest.mark.parametrize("state", ["merged", "deleted"])
@@ -1573,18 +1610,19 @@ def test_deleted_child_check_mode_plans_lowest_existing_child_without_write():
 
 def test_deleted_child_opt_in_verification_accepts_child_gone_and_parent_restored():
     result, calls = run(
-        [summary("Ethernet1/50/3", "Ethernet1/50/1"), action(item("Ethernet1/50/1")), summary("Ethernet1/50")],
+        [summary("Ethernet1/50/3", "Ethernet1/50/1", speed="25Gb"), action(item("Ethernet1/50/1")), summary("Ethernet1/50")],
         state="deleted",
         config=[group("Ethernet1/50/3", breakout_map=None)],
         verify={"enabled": True},
     )
     assert result["failed"] is False
     assert result["after_status"] == "observed"
-    assert result["verification"]["topology_matches"] is True
+    assert result["verification"]["phases"][0]["topology_matches"] is True
     assert result["after"][0]["interface_name"] == "Ethernet1/50"
     assert result["after"][0]["broken_out"] is False
     assert len(calls) == 4
-    assert_family_get(calls[3], "Ethernet1/50")
+    assert_ethernet_get(calls[1])
+    assert_ethernet_get(calls[3])
 
 
 def test_merged_child_selector_fails_before_any_api():
@@ -1903,7 +1941,7 @@ def test_invalid_local_config_is_rejected_before_platform_metadata_get(state, ch
 def test_replaced_is_rejected_before_any_switch_topology_policy_or_action_call(check_mode, verify):
     report, calls = run([], state="replaced", check_mode=check_mode, verify=verify)
     assert report["failed"] is True and report["changed"] is report["may_have_changed"] is False
-    assert "Unsupported state 'replaced'; only merged and deleted are supported." == report["msg"]
+    assert "Unsupported state 'replaced'; only merged, deleted, and overridden are supported." == report["msg"]
     assert calls == report["api_calls"] == report["api_outcomes"] == report["diff"] == []
     assert report["after_status"] == "unknown"
     assert report.get("before", []) == report.get("after", []) == []

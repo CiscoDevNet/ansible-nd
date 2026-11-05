@@ -1,0 +1,32 @@
+---
+# These names are later used as raw dictionary keys and scope intersections.
+# Reject spelling variants before writes rather than mixing normalized observer
+# keys with raw testbed names, which could hide a protected breakout family.
+- name: Require canonical control, reserved and guard interface names
+  ansible.builtin.assert:
+    that:
+      - coupled_names_fixture.control_parent is match('^Ethernet[1-9][0-9]*/[1-9][0-9]*$')
+      - >-
+        (coupled_names_fixture.native_interfaces + (coupled_names_fixture.guard_interfaces | default([]))) |
+        select('match', '^Ethernet[1-9][0-9]*/[1-9][0-9]*$') | list | length ==
+        (coupled_names_fixture.native_interfaces + (coupled_names_fixture.guard_interfaces | default([]))) | length
+    fail_msg: >-
+      Coupled testbed parent names must use exact canonical Ethernet<slot>/<port>
+      spelling without whitespace in every field, including guard_interfaces.
+      No controller write has been made.
+
+- name: Require canonical parent keys and retained-native names in every profile
+  ansible.builtin.assert:
+    that:
+      - >-
+        ((item.value.child_lanes.keys() | list) + (item.value.native_interfaces | default([])) +
+         ((item.value.policy_maps | default({})).keys() | list) +
+         ((item.value.child_speeds | default({})).keys() | list)) |
+        select('match', '^Ethernet[1-9][0-9]*/[1-9][0-9]*$') | list | length ==
+        ((item.value.child_lanes.keys() | list) + (item.value.native_interfaces | default([])) +
+         ((item.value.policy_maps | default({})).keys() | list) +
+         ((item.value.child_speeds | default({})).keys() | list)) | length
+    fail_msg: >-
+      Every profile parent key and retained native parent must be canonical,
+      including child_lanes, policy_maps and child_speeds. No writes were made.
+  loop: "{{ coupled_names_fixture.profiles | dict2items }}"
