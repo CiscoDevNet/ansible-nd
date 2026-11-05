@@ -29,6 +29,7 @@ resolution.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -105,6 +106,56 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
     # bulk list-GET, so update() does not need to fall back to FabricContext (which would issue a
     # second list GET).
     _snapshot_switch_ids: dict[str, str] | None = None
+
+    # ------------------------------------------------------------------ #
+    # Shared-interface hook overrides (issue #653)
+    # ------------------------------------------------------------------ #
+
+    def preflight_safety(self, model_instances: Sequence[MaintenanceModeModel]) -> None:
+        """
+        # Summary
+
+        Switch-resolution preflight for a batch maintenance-mode request. `NDStateMachine.manage_state` runs the shared
+        `NDBaseInterfaceOrchestrator.preflight` before every merged mutation, and its switch-resolution step reads a top-level
+        `switch_ip` on each proposed item. This model carries its targets in `switches`, so the shared step raised
+        `AttributeError` on every merged run (issue #653). This override checks every `switches[*].switch_ip` against the
+        `switch_ip` -> `switchId` map that `query_all()` built from the bulk switches GET during state-machine init, so no request
+        is added and the single-list-GET contract in the class docstring holds.
+
+        `query_all()` already hard-fails on an unknown IP and on a switch in `migration` mode, so for the normal module path this
+        is defense in depth; it matters for a caller that reaches preflight with a model `query_all()` did not see. The platform
+        check in the shared `preflight_safety` reads interface-only fields and does not apply to a switch action, so it is not run.
+        The remaining shared `preflight` steps (capability, overridden-removal discovery) are already no-ops for this orchestrator
+        because it sets neither `interface_type` nor `xe_removal_requires_discovery`.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If one or more `switch_ip` values are not present in the snapshot built by `query_all()`.
+        """
+        known = self._snapshot_switch_ids or {}
+        unresolved = sorted({switch.switch_ip for model_instance in model_instances for switch in model_instance.switches if switch.switch_ip not in known})
+        if unresolved:
+            raise RuntimeError(f"Cannot resolve switch_ip to switchId in fabric '{self.fabric_name}' for: {', '.join(unresolved)}.")
+
+    def prepare_bulk_description_update(  # pylint: disable=unused-argument
+        self, model_instance: MaintenanceModeModel, previous_model: MaintenanceModeModel | None = None
+    ) -> dict[str, Any] | None:
+        """
+        # Summary
+
+        Decline the shared ND 4.3.1 `interfaceActions/modify` bulk-update path. On a 4.3.1 controller `NDStateMachine` offers
+        every update to `NDBaseInterfaceOrchestrator.prepare_bulk_description_update` before falling back to the orchestrator's
+        own `update()`; the shared hook reads `switch_ip` and `interface_name`, which this model does not carry (issue #653). A
+        maintenance-mode change is a `switchActions/changeSystemMode` POST, not an interface modify, so always return `None`
+        and let the state machine run `update()`.
+
+        ## Raises
+
+        None
+        """
+        return None
 
     # ------------------------------------------------------------------ #
     # CRUD method overrides (action-shaped semantics)
