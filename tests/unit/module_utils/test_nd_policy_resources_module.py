@@ -1717,3 +1717,82 @@ def test_nd_policy_resources_module_00510() -> None:
     payload = nd.calls[0][2]
     assert payload["description"] == ""
     assert payload["priority"] == 700
+
+
+def test_nd_policy_resources_module_00520() -> None:
+    """
+    # Summary
+
+    Verify a check-mode merged create reports ``changed: true`` (issue #630).
+
+    ## Test
+
+    - ``check_mode=True`` and a single ``create`` diff entry
+    - ``_execute_merged`` registers the would-be create without HTTP
+    - ``exit_module`` reports ``changed`` True and one ``after`` entry
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule._execute_merged``
+    - ``NDPolicyModule.exit_module``
+    """
+    module, _nd, _log = _make_module(check_mode=True)
+    captured: dict[str, Any] = {}
+
+    def capture_exit(**kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    module.module.exit_json = capture_exit  # type: ignore[method-assign]
+    want = {
+        "switchId": "FDO111",
+        "templateName": "feature_enable",
+        "priority": 500,
+        "templateInputs": {"featureName": "bfd"},
+    }
+    diff_results = [
+        {
+            "action": "create",
+            "want": want,
+            "have": None,
+            "diff": None,
+            "policy_id": None,
+            "error_msg": None,
+        }
+    ]
+
+    module._execute_merged(diff_results)
+    module.exit_module()
+
+    assert captured["changed"] is True
+    assert len(captured["after"]) == 1
+
+
+def test_nd_policy_resources_module_00530() -> None:
+    """
+    # Summary
+
+    Verify a check-mode no-diff deploy keeps ``changed: false`` (issue #630).
+
+    ## Test
+
+    - ``check_mode=True`` and ``_deploy_policies`` called with ``changed=False``
+      (the merged no-diff ``deploy: true`` path)
+    - ``exit_module`` reports ``changed`` False
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule._deploy_policies``
+    - ``NDPolicyModule.exit_module``
+    """
+    module, _nd, _log = _make_module(check_mode=True)
+    captured: dict[str, Any] = {}
+
+    def capture_exit(**kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    module.module.exit_json = capture_exit  # type: ignore[method-assign]
+
+    assert module._deploy_policies(["POLICY-1"], changed=False) is True
+    module.exit_module()
+
+    assert captured["changed"] is False
