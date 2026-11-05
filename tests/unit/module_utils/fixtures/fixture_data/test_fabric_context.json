@@ -295,5 +295,92 @@
             "local": false,
             "fabricStatus": "default"
         }
+    },
+    "test_fabric_context_00400a": {
+        "TEST_NOTES": [
+            "fabric_details: full fabric GET, fetched once and cached"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "category": "fabric",
+            "management": {
+                "type": "vxlanIbgp",
+                "mplsHandoff": false
+            }
+        }
+    },
+    "test_fabric_context_00410a": {
+        "TEST_NOTES": [
+            "fabric_details: fabric does not exist (404)"
+        ],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/missing_fabric",
+        "MESSAGE": "Not Found",
+        "DATA": {}
+    },
+    "test_fabric_context_00420a": {
+        "TEST_NOTES": [
+            "fabric_details before invalidate(): mplsHandoff false"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "category": "fabric",
+            "management": {
+                "type": "vxlanIbgp",
+                "mplsHandoff": false
+            }
+        }
+    },
+    "test_fabric_context_00420b": {
+        "TEST_NOTES": [
+            "fabric_details after invalidate(): re-fetched, mplsHandoff true"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "category": "fabric",
+            "management": {
+                "type": "vxlanIbgp",
+                "mplsHandoff": true
+            }
+        }
+    },
+    "test_fabric_context_00430a": {
+        "TEST_NOTES": [
+            "fabric_details: 200 body carrying an embedded error"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "code": 500,
+            "message": "backend unavailable"
+        }
+    },
+    "test_fabric_context_00440a": {
+        "TEST_NOTES": [
+            "fabric_details: GET fails with 500"
+        ],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "code": 500,
+            "message": "boom"
+        }
     }
 }
