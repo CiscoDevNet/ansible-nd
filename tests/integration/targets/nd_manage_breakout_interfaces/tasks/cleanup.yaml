@@ -3,7 +3,9 @@
 - name: Collect original module removal outcomes before considering cleanup writes
   ansible.builtin.set_fact:
     breakout_cleanup_original_removals: >-
-      {{ (breakout_result | default({})).api_outcomes | default([], true) |
+      {{ (((breakout_result | default({})).api_outcomes | default([], true))
+          + (((breakout_result | default({})).recovery | default([], true) |
+              map(attribute='api_outcomes', default=[]) | list) | sum(start=[]))) |
          selectattr('action', 'defined') | selectattr('action', 'equalto', 'unbreakout') | list }}
   when: breakout_owned | bool
 
@@ -18,6 +20,18 @@
                       and (breakout_cleanup_original_removals | map(attribute='outcome', default='unknown') | unique | list) == ['noop']))
          or (breakout_cleanup_original_removals | map(attribute='outcome', default='unknown') |
              reject('in', ['noop', 'planned', 'not_executed']) | list | length > 0) }}
+  when: breakout_owned | bool
+
+- name: Block cleanup writes after an uncertain forward or failed inverse action
+  ansible.builtin.set_fact:
+    breakout_cleanup_removal_blocked: >-
+      {{ (breakout_cleanup_removal_blocked | bool)
+         or (((breakout_result | default({})).api_outcomes | default([], true) | length) == 0)
+         or (((breakout_result | default({})).api_outcomes | default([], true) |
+              map(attribute='outcome', default='unknown') | select('equalto', 'unknown') | list | length) > 0)
+         or (((breakout_result | default({})).recovery | default([], true) |
+              map(attribute='status', default='unknown') |
+              reject('equalto', 'response_confirmed') | list | length) > 0) }}
   when: breakout_owned | bool
 
 - name: Inspect only a test-owned footprint before cleanup
@@ -49,6 +63,8 @@
         switch_id: "{{ test_switch_serial }}"
         fixture: "{{ breakout_fixture }}"
         expected_profile: native
+        whole_switch: true
+        include_speeds: true
         baseline: >-
           {{ breakout_observe_baseline | default(
                breakout_guard_baselines.get(test_switch_serial ~ '/' ~ breakout_fixture.control_parent, omit)
@@ -92,7 +108,7 @@
       - not (breakout_cleanup_removal_blocked | bool)
     fail_msg: >-
       Cleanup is read-only for this footprint because an original unbreakout
-      was attempted or its completion is uncertain. An explicit
+      was attempted or a forward/inverse action has missing or uncertain completion evidence. An explicit
       API success remains success even if native topology did not converge;
       it does not authorize another remove. No remove request will be retried,
       including through a coupled sibling alias. Original removal evidence:
@@ -141,6 +157,8 @@
     config:
       - switch_id: "{{ test_switch_serial }}"
         interface_names: "{{ [breakout_cleanup_selected] }}"
+    verify:
+      enabled: false
   check_mode: false
   register: breakout_cleanup_result
   when:
@@ -165,6 +183,8 @@
     fixture: "{{ breakout_fixture }}"
     expected_profile: native
     observe_only: true
+    whole_switch: true
+    include_speeds: true
     retries: 1
     interval: 0
   check_mode: false

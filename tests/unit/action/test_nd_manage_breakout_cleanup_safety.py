@@ -34,7 +34,7 @@ def _blocked(result, pending="", already_blocked=False):
         "breakout_cleanup_removal_blocked": already_blocked,
     }
     environment = _fact_environment()
-    for task in CLEANUP[:2]:
+    for task in CLEANUP[:3]:
         for key, expression in task["ansible.builtin.set_fact"].items():
             variables[key] = environment.from_string(expression).render(**variables)
     return variables["breakout_cleanup_removal_blocked"], variables["breakout_cleanup_original_removals"]
@@ -49,6 +49,12 @@ def test_original_failed_or_uncertain_deleted_request_blocks_cleanup_remove(stat
 @pytest.mark.parametrize("result", [{}, {"failed": True}, {"failed": True, "api_outcomes": []}, {"failed": True, "api_outcomes": None}])
 def test_lost_module_result_cannot_release_a_pending_removal_barrier(result):
     blocked, rows = _blocked(result, pending="deleted")
+    assert blocked is True and rows == []
+
+
+@pytest.mark.parametrize("result", [{}, {"failed": True}, {"failed": True, "api_outcomes": []}, {"failed": True, "api_outcomes": None}])
+def test_lost_creation_result_blocks_cleanup_even_without_a_removal_marker(result):
+    blocked, rows = _blocked(result)
     assert blocked is True and rows == []
 
 
@@ -91,9 +97,28 @@ def test_created_owned_breakout_can_be_cleaned_if_no_remove_has_been_attempted()
     assert blocked is False and rows == []
 
 
-def test_failed_breakout_does_not_itself_become_a_failed_remove():
+def test_uncertain_breakout_blocks_cleanup_without_becoming_a_remove():
     blocked, rows = _blocked({"api_outcomes": [{"action": "breakout", "outcome": "unknown"}]})
-    assert blocked is False and rows == []
+    assert blocked is True and rows == []
+
+
+@pytest.mark.parametrize("status", ["failed", "unknown", "not_attempted"])
+def test_uncertain_or_failed_automatic_inverse_blocks_cleanup(status):
+    result = {
+        "api_outcomes": [{"action": "breakout", "outcome": "success"}],
+        "recovery": [{"status": status, "api_outcomes": []}],
+    }
+    blocked, _ = _blocked(result)
+    assert blocked is True
+
+
+def test_inverse_remove_outcomes_participate_in_no_replay_barrier():
+    result = {
+        "api_outcomes": [{"action": "breakout", "outcome": "success"}],
+        "recovery": [{"status": "response_confirmed", "api_outcomes": [{"action": "unbreakout", "outcome": "success"}]}],
+    }
+    blocked, rows = _blocked(result)
+    assert blocked is True and rows == [{"action": "unbreakout", "outcome": "success"}]
 
 
 def test_mixed_remove_results_are_not_released_by_one_successful_family():

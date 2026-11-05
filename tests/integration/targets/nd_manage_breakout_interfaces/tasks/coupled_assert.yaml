@@ -1,0 +1,160 @@
+---
+- name: Require the original user-facing result and selected scope
+  ansible.builtin.assert:
+    that:
+      - (coupled_original_result.failed | default(false) | bool) == (coupled_case.expect in ['recovery', 'preflight_error'])
+      - (coupled_original_result.changed | bool) == (coupled_case.expect in ['recovery', 'success'])
+      - coupled_original_result.api_outcomes is sequence
+      - coupled_original_result.after_status is defined
+      - coupled_recovery_observation.snapshot is mapping
+    fail_msg: "The original production invocation did not satisfy {{ coupled_case.id }}: {{ coupled_original_result }}"
+
+- name: Validate automatic inverse status and truthful post-recovery provenance
+  ansible.builtin.assert:
+    that:
+      - coupled_original_result.after_status == 'unknown'
+      - coupled_original_result.recovery | length == 1
+      - coupled_original_result.recovery[0].switch_id == test_breakout_coupled_switch_id
+      - coupled_original_result.recovery[0].status == 'response_confirmed'
+      - not coupled_original_result.recovery[0].topology_verified
+      - coupled_original_result.recovery[0].api_outcomes | length == 1
+      - coupled_original_result.recovery[0].api_outcomes[0].outcome == 'success'
+      - coupled_original_result.recovery[0].api_outcomes[0].switch_id == test_breakout_coupled_switch_id
+      - coupled_original_result.verification.phases | map(attribute='collateral') | flatten | length > 0
+      - coupled_expected_collateral_parent in coupled_original_result.msg
+      - >-
+        coupled_expected_collateral_parent in
+        (coupled_original_result.verification.phases | map(attribute='collateral') | flatten | join(' '))
+      - coupled_original_result.observed_before_recovery is defined
+      - >-
+        coupled_original_result.recovery[0].api_outcomes[0].interface_name ==
+        (coupled_sibling if coupled_case.state == 'overridden' and coupled_case.initial == 'map_a'
+         and coupled_case.selector != 'sibling' else
+         coupled_control if coupled_case.state == 'overridden' and coupled_case.initial == 'map_a' else
+         coupled_sibling if coupled_case.selector in ['sibling', 'sibling_child'] else coupled_control)
+      - >-
+        coupled_original_result.recovery[0].action ==
+        ('unbreakout' if coupled_case.initial == 'native' else 'breakout')
+    fail_msg: "Missing, incorrect or unconfirmed module-driven inverse: {{ coupled_original_result }}"
+  when: coupled_case.expect == 'recovery'
+
+- name: Creation collateral errors explain the requested and unexpected parents and corrective input
+  ansible.builtin.assert:
+    that:
+      - coupled_control in coupled_original_result.msg
+      - coupled_sibling in coupled_original_result.msg
+      - "'include all affected parents' in coupled_original_result.msg"
+      - "'in config' in coupled_original_result.msg"
+    fail_msg: "Creation collateral must explain how to express the complete intended coupled scope. {{ coupled_original_result.msg }}"
+  when:
+    - coupled_case.expect == 'recovery'
+    - coupled_case.initial == 'native'
+
+- name: Removal collateral errors identify the retained family and explain the intended deleted scope
+  ansible.builtin.assert:
+    that:
+      - "'include' in coupled_original_result.msg"
+      - "'in the deleted config too' in coupled_original_result.msg"
+  when:
+    - coupled_case.expect == 'recovery'
+    - coupled_case.state == 'deleted'
+
+- name: Overridden removal errors explain the incompatible retained desired topology
+  ansible.builtin.assert:
+    that:
+      - "'desired topology cannot be maintained' in coupled_original_result.msg"
+      - "'include every coupled parent intended to remain broken out in config' in coupled_original_result.msg"
+  when:
+    - coupled_case.expect == 'recovery'
+    - coupled_case.state == 'overridden'
+    - coupled_case.initial == 'map_a'
+
+- name: Require recreation to use the original map inferred from the pre-action lane speeds
+  ansible.builtin.assert:
+    that:
+      - coupled_original_result.recovery[0].api_outcomes[0].breakout_map == coupled_map
+      - >-
+        coupled_original_result.recovery[0].api_outcomes[0].api_interface_name ==
+        coupled_original_result.recovery[0].api_outcomes[0].interface_name
+  when:
+    - coupled_case.expect == 'recovery'
+    - coupled_case.initial == 'map_a'
+
+- name: Require inverse removal to submit an actual child of the originally submitted parent
+  ansible.builtin.assert:
+    that:
+      - >-
+        coupled_original_result.recovery[0].api_outcomes[0].api_interface_name in
+        (coupled_original_result.observed_before_recovery |
+         selectattr('interface_name', 'equalto', coupled_control) | map(attribute='children') | first)
+  when:
+    - coupled_case.expect == 'recovery'
+    - coupled_case.initial == 'native'
+
+- name: No unrelated rollback or guard is invented for non-recovery cases
+  ansible.builtin.assert:
+    that:
+      - coupled_original_result.recovery | default([]) | length == 0
+      - >-
+        coupled_original_result.api_outcomes | map(attribute='outcome') | unique | list ==
+        (['noop'] if coupled_case.expect == 'noop' else ['success'] if coupled_case.expect == 'success' else [])
+      - >-
+        coupled_original_result.api_outcomes | length ==
+        (0 if coupled_case.expect == 'preflight_error' else coupled_case_selectors | length)
+      - >-
+        coupled_original_result.api_outcomes | map(attribute='switch_id') | unique | list ==
+        ([] if coupled_case.expect == 'preflight_error' else [test_breakout_coupled_switch_id])
+      - >-
+        coupled_original_result.api_outcomes | map(attribute='interface_name') | sort | list ==
+        ([] if coupled_case.expect == 'preflight_error' else
+         [coupled_control] if coupled_case.selector == 'former_child' else coupled_case_selectors | sort)
+  when: coupled_case.expect != 'recovery'
+
+- name: No-op and pre-write rejection do not run a post-action guard
+  ansible.builtin.assert:
+    that:
+      - coupled_original_result.verification is not defined
+      - coupled_original_result.after_status == ('unchanged' if coupled_case.expect == 'noop' else 'unknown')
+  when: coupled_case.expect in ['noop', 'preflight_error']
+
+- name: Verify disabled means no post-action guard or compensation
+  ansible.builtin.assert:
+    that:
+      - coupled_original_result.verification is not defined
+      - coupled_original_result.recovery | default([]) | length == 0
+      - coupled_original_result.after_status == 'response_confirmed'
+  when: not (coupled_case.verify | default(true) | bool)
+
+- name: Check action order and absence of a recovery readback in production trace
+  ansible.builtin.assert:
+    that:
+      - coupled_original_result.api_calls is defined
+      - >-
+        coupled_original_result.api_calls | map(attribute='path') |
+        select('search', '/policies(?:[/?]|$)|/(?:configSave|deploy)(?:[/?]|$)') | list | length == 0
+      - >-
+        coupled_original_result.api_calls | selectattr('method', 'equalto', 'POST') |
+        map(attribute='path') | map('regex_replace', '^.*/interfaceActions/', '') | list ==
+        (['breakout', 'remove', 'breakout'] if coupled_case.selector == 'control_plus_independent' else
+         ['breakout', 'remove'] if coupled_case.expect == 'recovery' and coupled_case.initial == 'native' else
+         ['remove', 'breakout'] if coupled_case.expect == 'recovery' else
+         [] if coupled_case.expect in ['noop', 'preflight_error'] else
+         ['remove'] if coupled_case.state == 'deleted' else ['breakout'])
+      - coupled_case.expect != 'recovery' or coupled_original_result.api_calls[-1].method == 'POST'
+    fail_msg: "Unexpected production API order; independent observer GETs are not part of this trace. {{ coupled_original_result.api_calls }}"
+  when: ansible_verbosity | int >= 3
+
+- name: Compare restored coupled families and lane speeds to the immutable pre-action baseline
+  ansible.builtin.assert:
+    that:
+      - coupled_recovery_observation.snapshot.families[item] == coupled_case_baseline.families[item]
+    fail_msg: "The inverse response did not prove restoration: independently observed family {{ item }} differs from baseline."
+  loop: "{{ test_breakout_coupled_fixture.native_interfaces }}"
+  when: coupled_case.expect == 'recovery'
+
+- name: Validate expected topology before cleanup rather than accepting inverse API success alone
+  ansible.builtin.include_tasks: coupled_observe.yaml
+  vars:
+    coupled_observe_profile: "{{ coupled_case.after }}"
+    coupled_observe_only: false
+    coupled_observe_baseline: "{{ coupled_native_baseline }}"

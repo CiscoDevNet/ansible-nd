@@ -18,10 +18,13 @@
       - breakout_result.api_outcomes | length == (breakout_expected_outcome_count | default(1) | int)
       - not (breakout_expected_changed | bool) or breakout_result.diff | length > 0
       - >-
-        breakout_result.api_outcomes | map(attribute='outcome') | unique | list
-        == ([breakout_expected_outcome | default('success')]
-        if (breakout_expected_outcome_count | default(1) | int) > 0 else [])
+        breakout_result.api_outcomes | map(attribute='outcome') | sort | list
+        == (breakout_expected_outcomes | sort | list
+        if breakout_expected_outcomes is defined else
+        ([breakout_expected_outcome | default('success')] *
+         (breakout_expected_outcome_count | default(1) | int)))
       - not (breakout_expect_empty_diff | default(false) | bool) or breakout_result.diff | length == 0
+      - (breakout_expected_failed | default(false) | bool) or breakout_result.recovery | default([]) | length == 0
     fail_msg: "Unexpected original module result: {{ breakout_result }}"
 
 - name: Validate requested after-state provenance when specified
@@ -60,3 +63,54 @@
   when:
     - ansible_verbosity | int >= 3
     - breakout_expected_get_count is defined
+
+- name: Validate topology discovery rounds without assuming a single-page switch
+  ansible.builtin.assert:
+    that:
+      - >-
+        breakout_result.api_calls | selectattr('method', 'equalto', 'GET') |
+        selectattr('path', 'search', '/interfacesSummary[?]') |
+        selectattr('path', 'search', '[?&]offset=0(?:&|$)') | list | length
+        == (breakout_expected_discovery_rounds | int)
+      - >-
+        breakout_result.api_calls | selectattr('purpose', 'defined') |
+        selectattr('purpose', 'equalto', 'switch_metadata') | list | length
+        == (breakout_expected_metadata_count | default(1) | int)
+    fail_msg: Discovery budget counts initial pages per query, not pagination continuation GETs.
+  when:
+    - ansible_verbosity | int >= 3
+    - breakout_expected_discovery_rounds is defined
+
+- name: Validate outcomes by original composite identity rather than response order
+  ansible.builtin.assert:
+    that:
+      - >-
+        breakout_result.api_outcomes |
+        selectattr('switch_id', 'equalto', breakout_expected_identity.switch_id) |
+        selectattr('interface_name', 'equalto', breakout_expected_identity.interface_name) |
+        selectattr('outcome', 'equalto', breakout_expected_identity.outcome) | list | length == 1
+    fail_msg: "Missing, duplicate or incorrect outcome for {{ breakout_expected_identity }}"
+  loop: "{{ breakout_expected_identities | default([]) }}"
+  loop_control:
+    loop_var: breakout_expected_identity
+    label: "{{ breakout_expected_identity.switch_id }}/{{ breakout_expected_identity.interface_name }}"
+
+- name: Require every completed guard phase to have no collateral on successful tasks
+  ansible.builtin.assert:
+    that:
+      - breakout_result.verification.enabled | bool
+      - breakout_result.verification.complete | bool
+      - breakout_result.verification.phases | length > 0
+      - breakout_result.verification.phases | selectattr('topology_matches', 'equalto', false) | list | length == 0
+      - breakout_result.verification.phases | rejectattr('collateral', 'equalto', []) | list | length == 0
+  when:
+    - not (breakout_expected_failed | default(false) | bool)
+    - breakout_result.verification is defined
+
+- name: Prohibit policy discovery and separate save or deploy requests from the module
+  ansible.builtin.assert:
+    that:
+      - >-
+        breakout_result.api_calls | map(attribute='path') |
+        select('search', '/policies|configSave|/deploy(?:[/?]|$)') | list | length == 0
+  when: ansible_verbosity | int >= 3

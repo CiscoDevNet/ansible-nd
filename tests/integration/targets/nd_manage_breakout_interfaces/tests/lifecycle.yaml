@@ -1,6 +1,6 @@
 ---
-# One lifecycle for any explicitly reserved hardware footprint. No pre-cleanup
-# or capability discovery: the operator promises the initial native condition.
+# Ordinary independently acting footprint. The optional coupled-switch tests
+# exercise scope violations separately; this lifecycle must never waive them.
 - name: Exercise merged breakout and whole-family deletion
   block:
     - name: Initialize removal recovery barrier before any lifecycle operation
@@ -36,8 +36,8 @@
         breakout_expected_changed: true
         breakout_expected_outcome: success
         breakout_expected_write_actions: [breakout]
-        breakout_expected_after_status: response_confirmed
-        breakout_expected_get_count: 2
+        breakout_expected_after_status: observed
+        breakout_expected_discovery_rounds: 2
 
     - name: MERGED - Validate map A and every reserved collateral interface
       ansible.builtin.include_tasks: ../tasks/observe.yaml
@@ -52,12 +52,26 @@
     - name: Validate broken-family selectors without sending mutation requests
       ansible.builtin.include_tasks: ../tasks/validate_broken_inputs.yaml
 
+    - name: MERGED - Repeat the identical creation request
+      cisco.nd.nd_manage_breakout_interfaces: *breakout_create_a
+      register: breakout_result
+
+    - name: MERGED - Require immediate first-repeat idempotency
+      ansible.builtin.include_tasks: ../tasks/assert_result.yaml
+      vars:
+        breakout_expected_changed: false
+        breakout_expected_outcome: noop
+        breakout_expected_write_actions: []
+        breakout_expect_empty_diff: true
+        breakout_expected_after_status: unchanged
+        breakout_expected_discovery_rounds: 1
+
     - name: MERGED - Repeat with normalized parent spelling
       cisco.nd.nd_manage_breakout_interfaces:
         fabric_name: "{{ test_fabric_name }}"
         state: merged
         config:
-          - switch_id: "{{ test_switch_serial }}"
+          - switch_id: " {{ test_switch_serial }} "
             interface_names: [" {{ breakout_control_parent | lower }} "]
             breakout_map: " {{ breakout_map_a | upper }} "
       register: breakout_result
@@ -69,7 +83,7 @@
         breakout_expected_outcome: noop
         breakout_expected_write_actions: []
         breakout_expect_empty_diff: true
-        breakout_expected_get_count: 2
+        breakout_expected_discovery_rounds: 1
 
     - name: MERGED - All broken families in the declared footprint are already broken out
       cisco.nd.nd_manage_breakout_interfaces:
@@ -110,6 +124,18 @@
         breakout_expect_empty_diff: true
       when: test_switch_ip | trim | length > 0
 
+    - name: MERGED - Require IP-resolution metadata reuse instead of another serial lookup
+      ansible.builtin.assert:
+        that:
+          - breakout_result.api_outcomes[0].switch_id == test_switch_serial
+          - breakout_result.api_outcomes[0].interface_name == breakout_control_parent
+          - >-
+            breakout_result.api_calls | selectattr('purpose', 'defined') |
+            selectattr('purpose', 'equalto', 'switch_metadata') | list | length == 1
+      when:
+        - test_switch_ip | trim | length > 0
+        - ansible_verbosity | int >= 3
+
     - name: MERGED - Repeating an existing breakout is a no-op with verification enabled
       cisco.nd.nd_manage_breakout_interfaces:
         <<: *breakout_create_a
@@ -125,7 +151,7 @@
         breakout_expected_write_actions: []
         breakout_expect_empty_diff: true
         breakout_expected_after_status: unchanged
-        breakout_expected_get_count: 2
+        breakout_expected_discovery_rounds: 1
 
     - name: MERGED - Do not invent verification for a no-op
       ansible.builtin.assert:
@@ -248,6 +274,24 @@
         breakout_expected_write_actions: []
         breakout_expect_empty_diff: true
 
+    - name: DELETED - A former child is also a no-op once the parent is native
+      cisco.nd.nd_manage_breakout_interfaces:
+        fabric_name: "{{ test_fabric_name }}"
+        state: deleted
+        config:
+          - switch_id: "{{ test_switch_serial }}"
+            interface_names: ["{{ breakout_former_child }}"]
+      register: breakout_result
+
+    - name: DELETED - Validate parent-then-former-child idempotency
+      ansible.builtin.include_tasks: ../tasks/assert_result.yaml
+      vars:
+        breakout_expected_changed: false
+        breakout_expected_outcome: noop
+        breakout_expected_write_actions: []
+        breakout_expect_empty_diff: true
+        breakout_expected_after_status: unchanged
+
     - name: CHECK MODE - Predict merged creation from native
       cisco.nd.nd_manage_breakout_interfaces: *breakout_create_a
       check_mode: true
@@ -302,7 +346,7 @@
         breakout_expected_outcome: success
         breakout_expected_write_actions: [breakout]
         breakout_expected_after_status: observed
-        breakout_expected_get_count: 3
+        breakout_expected_discovery_rounds: 2
 
     - name: MERGED - Validate complete map A footprint independently
       ansible.builtin.include_tasks: ../tasks/observe.yaml
@@ -370,7 +414,7 @@
           - breakout_result.api_outcomes[0].interface_name == breakout_child_family
           - breakout_result.api_outcomes[0].api_interface_name in breakout_actual_children
           - breakout_result.verification.complete
-          - breakout_result.verification.topology_matches
+          - breakout_result.verification.phases | selectattr('topology_matches', 'equalto', false) | list | length == 0
 
     - name: DELETED - Validate every physical parent in the footprint is restored
       ansible.builtin.include_tasks: ../tasks/observe.yaml
@@ -415,6 +459,175 @@
         breakout_expected_profile: native
         breakout_observe_baseline: "{{ breakout_native_baseline }}"
         breakout_observe_unchanged: true
+
+    - name: MERGED - Create from native using response-only verification mode
+      cisco.nd.nd_manage_breakout_interfaces:
+        <<: *breakout_create_a
+        verify:
+          enabled: false
+      register: breakout_result
+
+    - name: MERGED - Validate response-confirmed creation without a topology guard GET
+      ansible.builtin.include_tasks: ../tasks/assert_result.yaml
+      vars:
+        breakout_expected_changed: true
+        breakout_expected_outcome: success
+        breakout_expected_write_actions: [breakout]
+        breakout_expected_after_status: response_confirmed
+        breakout_expected_discovery_rounds: 1
+
+    - name: MERGED - Require no invented guard or child observations in response-only mode
+      ansible.builtin.assert:
+        that:
+          - breakout_result.verification is not defined
+          - >-
+            breakout_result.after | selectattr('switch_id', 'equalto', test_switch_serial) |
+            selectattr('interface_name', 'equalto', breakout_control_parent) |
+            map(attribute='evidence') | list == ['api_response']
+
+    - name: Independently verify response-only creation and capture its child
+      ansible.builtin.include_tasks: ../tasks/observe.yaml
+      vars:
+        breakout_expected_profile: map_a
+
+    - name: Save the independently observed child for response-only deletion
+      ansible.builtin.set_fact:
+        breakout_response_child: "{{ breakout_observation.snapshot.families[breakout_control_parent].children | last }}"
+        breakout_response_baseline: "{{ breakout_observation.snapshot }}"
+
+    - name: MERGED - Response-only repeated creation is still a no-op
+      cisco.nd.nd_manage_breakout_interfaces:
+        <<: *breakout_create_a
+        verify:
+          enabled: false
+      register: breakout_result
+
+    - name: MERGED - Validate response-only idempotency
+      ansible.builtin.include_tasks: ../tasks/assert_result.yaml
+      vars:
+        breakout_expected_changed: false
+        breakout_expected_outcome: noop
+        breakout_expected_write_actions: []
+        breakout_expect_empty_diff: true
+        breakout_expected_after_status: unchanged
+
+    - name: CHECK MODE - Predict response-only child deletion without a mutation
+      cisco.nd.nd_manage_breakout_interfaces:
+        fabric_name: "{{ test_fabric_name }}"
+        state: deleted
+        config:
+          - switch_id: "{{ test_switch_serial }}"
+            interface_names: ["{{ breakout_response_child }}"]
+        verify:
+          enabled: false
+      check_mode: true
+      register: breakout_result
+
+    - name: CHECK MODE - Validate response-only child deletion prediction
+      ansible.builtin.include_tasks: ../tasks/assert_result.yaml
+      vars:
+        breakout_expected_changed: true
+        breakout_expected_outcome: planned
+        breakout_expected_write_actions: []
+        breakout_expected_after_status: predicted
+
+    - name: Validate response-only idempotency and prediction did not change the controller
+      ansible.builtin.include_tasks: ../tasks/observe.yaml
+      vars:
+        breakout_expected_profile: map_a
+        breakout_observe_baseline: "{{ breakout_response_baseline }}"
+        breakout_observe_unchanged: true
+
+    - name: Mark response-only removal pending before the request
+      ansible.builtin.set_fact:
+        breakout_pending_removal: deleted
+
+    - name: DELETED - Remove using a child with verification disabled
+      cisco.nd.nd_manage_breakout_interfaces:
+        fabric_name: "{{ test_fabric_name }}"
+        state: deleted
+        config:
+          - switch_id: "{{ test_switch_ip if test_switch_ip | trim | length > 0 else test_switch_serial }}"
+            interface_names: ["{{ breakout_response_child }}"]
+        verify:
+          enabled: false
+      register: breakout_result
+
+    - name: DELETED - Require explicit response-confirmed removal without guard readback
+      ansible.builtin.include_tasks: ../tasks/assert_result.yaml
+      vars:
+        breakout_expected_changed: true
+        breakout_expected_outcome: success
+        breakout_expected_write_actions: [remove]
+        breakout_expected_after_status: response_confirmed
+        breakout_expected_discovery_rounds: 1
+
+    - name: Independently verify response-only deletion restored all reserved native parents
+      ansible.builtin.include_tasks: ../tasks/observe.yaml
+      vars:
+        breakout_expected_profile: native
+
+    - name: Release response-only removal barrier after independent native verification
+      ansible.builtin.set_fact:
+        breakout_pending_removal: ""
+
+    - name: Exercise an explicitly supplied alternative supported map after deletion
+      when: breakout_fixture.profiles.map_b is defined
+      block:
+        - name: MERGED - Create map B only after the original map was deleted
+          cisco.nd.nd_manage_breakout_interfaces:
+            fabric_name: "{{ test_fabric_name }}"
+            state: merged
+            config:
+              - switch_id: "{{ test_switch_serial }}"
+                interface_names: ["{{ breakout_control_parent }}"]
+                breakout_map: "{{ breakout_fixture.profiles.map_b.breakout_map }}"
+          register: breakout_result
+
+        - name: MERGED - Validate explicit deleted-to-merged map change result
+          ansible.builtin.include_tasks: ../tasks/assert_result.yaml
+          vars:
+            breakout_expected_changed: true
+            breakout_expected_outcome: success
+            breakout_expected_write_actions: [breakout]
+            breakout_expected_after_status: observed
+
+        - name: Validate map B child identities, speeds and active MAP independently
+          ansible.builtin.include_tasks: ../tasks/observe.yaml
+          vars:
+            breakout_expected_profile: map_b
+
+        - name: Mark alternative-profile removal pending before the request
+          ansible.builtin.set_fact:
+            breakout_active_profile: map_b
+            breakout_pending_removal: deleted
+
+        - name: DELETED - Remove the alternative profile using its parent
+          cisco.nd.nd_manage_breakout_interfaces: *breakout_delete_parent
+          register: breakout_result
+
+        - name: DELETED - Require confirmed alternative-profile removal
+          ansible.builtin.include_tasks: ../tasks/assert_result.yaml
+          vars:
+            breakout_expected_changed: true
+            breakout_expected_outcome: success
+            breakout_expected_write_actions: [remove]
+            breakout_expected_after_status: observed
+
+        - name: Validate native restoration after the alternative map
+          ansible.builtin.include_tasks: ../tasks/observe.yaml
+          vars:
+            breakout_expected_profile: native
+
+        - name: Release alternative-profile removal barrier
+          ansible.builtin.set_fact:
+            breakout_pending_removal: ""
+            breakout_active_profile: map_a
+
+    - name: Report unavailable optional alternative supported map
+      ansible.builtin.debug:
+        msg: SKIP explicit map-change lifecycle because profiles.map_b was not supplied.
+      when: breakout_fixture.profiles.map_b is not defined
 
     - name: Release ownership only after independently confirmed restoration
       ansible.builtin.set_fact:

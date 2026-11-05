@@ -17,9 +17,27 @@
         state: merged
         config: []
         error: config
+      - label: missing merged config
+        state: merged
+        error: config
+      - label: empty deleted config
+        state: deleted
+        config: []
+        error: config
+      - label: missing deleted config
+        state: deleted
+        error: config
       - label: empty interface list
         state: merged
         config: [{switch_id: "{{ test_switch_serial }}", interface_names: []}]
+        error: interface_names
+      - label: empty deleted interface list
+        state: deleted
+        config: [{switch_id: "{{ test_switch_serial }}", interface_names: []}]
+        error: interface_names
+      - label: missing interface list
+        state: merged
+        config: [{switch_id: "{{ test_switch_serial }}", breakout_map: "{{ breakout_map_a }}"}]
         error: interface_names
       - label: missing merged map
         state: merged
@@ -37,6 +55,14 @@
         state: merged
         config: [{switch_id: "{{ test_switch_serial }}", interface_names: ["{{ breakout_control_parent }}/1"], breakout_map: "{{ breakout_map_a }}"}]
         error: native parent
+      - label: child in overridden
+        state: overridden
+        config: [{switch_id: "{{ test_switch_serial }}", interface_names: ["{{ breakout_control_parent }}/1"], breakout_map: "{{ breakout_map_a }}"}]
+        error: native parent
+      - label: missing overridden create map
+        state: overridden
+        config: [{switch_id: "{{ test_switch_serial }}", interface_names: ["{{ breakout_control_parent }}"]}]
+        error: breakout_map
       - label: dotted subinterface
         state: deleted
         config: [{switch_id: "{{ test_switch_serial }}", interface_names: ["{{ breakout_control_parent }}.100"]}]
@@ -49,6 +75,18 @@
         state: deleted
         config: [{switch_id: "{{ test_switch_serial }}", interface_names: ["{{ breakout_control_parent }}/0"]}]
         error: positive
+      - label: zero slot
+        state: merged
+        config: [{switch_id: "{{ test_switch_serial }}", interface_names: [Ethernet0/1], breakout_map: "{{ breakout_map_a }}"}]
+        error: positive
+      - label: zero port
+        state: merged
+        config: [{switch_id: "{{ test_switch_serial }}", interface_names: [Ethernet1/0], breakout_map: "{{ breakout_map_a }}"}]
+        error: positive
+      - label: malformed interface
+        state: merged
+        config: [{switch_id: "{{ test_switch_serial }}", interface_names: [not-an-interface], breakout_map: "{{ breakout_map_a }}"}]
+        error: native parent
       - label: duplicate parent
         state: merged
         config: [{switch_id: "{{ test_switch_serial }}", interface_names: ["{{ breakout_control_parent }}", "{{ breakout_control_parent | lower }}"], breakout_map: "{{ breakout_map_a }}"}]
@@ -61,8 +99,8 @@
         state: deleted
         config: [{switch_id: "{{ test_switch_serial }}", interface_names: ["{{ breakout_control_parent }}/1", "{{ breakout_control_parent }}/2"]}]
         error: more than once
-      - label: unsupported overridden state
-        state: overridden
+      - label: unsupported gathered state
+        state: gathered
         config: [{switch_id: "{{ test_switch_serial }}", interface_names: ["{{ breakout_control_parent }}"], breakout_map: "{{ breakout_map_a }}"}]
         error: state
       - label: unsupported replaced state
@@ -74,12 +112,21 @@
         config: [{switch_id: "{{ test_switch_serial }}", interface_names: ["{{ breakout_control_parent }}"], breakout_map: "{{ breakout_map_a }}"}]
         verify: {retries: 3}
         error: retries
+      - label: invalid verify enabled value
+        state: merged
+        config: [{switch_id: "{{ test_switch_serial }}", interface_names: ["{{ breakout_control_parent }}"], breakout_map: "{{ breakout_map_a }}"}]
+        verify: {enabled: not-a-boolean}
+        error: enabled
+      - label: unsupported config group option
+        state: merged
+        config: [{switch_id: "{{ test_switch_serial }}", interface_names: ["{{ breakout_control_parent }}"], breakout_map: "{{ breakout_map_a }}", unsupported_option: true}]
+        error: unsupported_option
 
 - name: VALIDATION - Submit invalid local contracts
   cisco.nd.nd_manage_breakout_interfaces:
     fabric_name: "{{ invalid_contract.fabric_name | default(test_fabric_name) }}"
     state: "{{ invalid_contract.state }}"
-    config: "{{ invalid_contract.config }}"
+    config: "{{ invalid_contract.config | default(omit) }}"
     verify: "{{ invalid_contract.verify | default(omit) }}"
   loop: "{{ breakout_invalid_contracts }}"
   loop_control:
@@ -111,7 +158,7 @@
         breakout_map: "{{ breakout_map_a if invalid_state != 'deleted' else omit }}"
     config_actions:
       deploy: false
-  loop: [merged, deleted]
+  loop: [merged, deleted, overridden]
   loop_control:
     loop_var: invalid_state
   ignore_errors: true
@@ -147,6 +194,7 @@
           - switch_id: "{{ test_switch_ip }}"
             interface_names: ["{{ breakout_control_parent }}"]
             breakout_map: "{{ breakout_map_a }}"
+      check_mode: true
       ignore_errors: true
       register: breakout_resolved_duplicate
 
@@ -163,3 +211,68 @@
       ansible.builtin.include_tasks: ../tasks/observe.yaml
       vars:
         breakout_expected_profile: native
+
+- name: VALIDATION - Reject an operator-supplied unknown switch selector before mutation
+  when: test_breakout_unknown_switch_id | default('') | trim | length > 0
+  block:
+    - name: VALIDATION - Submit a selector known not to belong to this fabric
+      cisco.nd.nd_manage_breakout_interfaces:
+        fabric_name: "{{ test_fabric_name }}"
+        state: merged
+        config:
+          - switch_id: "{{ test_breakout_unknown_switch_id }}"
+            interface_names: ["{{ breakout_control_parent }}"]
+            breakout_map: "{{ breakout_map_a }}"
+      check_mode: true
+      register: breakout_unknown_switch
+      ignore_errors: true
+
+    - name: VALIDATION - Require unknown-switch failure before all writes
+      ansible.builtin.assert:
+        that:
+          - breakout_unknown_switch.failed | bool
+          - not (breakout_unknown_switch.changed | default(false) | bool)
+          - not (breakout_unknown_switch.may_have_changed | default(false) | bool)
+          - breakout_unknown_switch.api_calls | default([]) | rejectattr('method', 'equalto', 'GET') | list | length == 0
+
+    - name: VALIDATION - Confirm unknown-switch discovery left the real fixture unchanged
+      ansible.builtin.include_tasks: ../tasks/observe.yaml
+      vars:
+        breakout_expected_profile: native
+
+- name: VALIDATION - Exercise optional IOS-XE platform rejection without mutation
+  when: test_breakout_unsupported_switch_id | default('') | trim | length > 0
+  block:
+    - name: VALIDATION - Request breakout on the explicitly supplied IOS-XE switch
+      cisco.nd.nd_manage_breakout_interfaces:
+        fabric_name: "{{ test_fabric_name }}"
+        state: merged
+        config:
+          - switch_id: "{{ test_breakout_unsupported_switch_id }}"
+            interface_names: ["{{ breakout_control_parent }}"]
+            breakout_map: "{{ breakout_map_a }}"
+      check_mode: true
+      register: breakout_unsupported_switch
+      ignore_errors: true
+
+    - name: VALIDATION - Require explicit IOS-XE rejection before topology reads or writes
+      ansible.builtin.assert:
+        that:
+          - breakout_unsupported_switch.failed | bool
+          - not (breakout_unsupported_switch.changed | default(false) | bool)
+          - "'ios-xe' in breakout_unsupported_switch.msg | lower"
+          - breakout_unsupported_switch.api_calls | default([]) | rejectattr('method', 'equalto', 'GET') | list | length == 0
+          - breakout_unsupported_switch.api_calls | default([]) | selectattr('path', 'search', '/interfacesSummary') | list | length == 0
+
+    - name: VALIDATION - Confirm unsupported-platform discovery did not alter the fixture
+      ansible.builtin.include_tasks: ../tasks/observe.yaml
+      vars:
+        breakout_expected_profile: native
+
+- name: VALIDATION - Report optional discovery cases that need additional fixtures
+  ansible.builtin.debug:
+    msg: >-
+      Optional discovery fixtures: unknown switch={{ 'configured' if
+      test_breakout_unknown_switch_id | default('') | trim | length > 0 else 'SKIP (not supplied)' }};
+      IOS-XE switch={{ 'configured' if
+      test_breakout_unsupported_switch_id | default('') | trim | length > 0 else 'SKIP (not supplied)' }}.

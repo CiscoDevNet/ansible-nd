@@ -57,6 +57,20 @@
 - name: Exercise optional bulk lifecycle on independent declared groups
   when: breakout_bulk_fixtures | length >= 2
   block:
+    - name: Declare expected native baselines before any bulk mutation
+      ansible.builtin.set_fact:
+        breakout_bulk_profiles: "{{ ['native'] * (breakout_bulk_fixtures | length) }}"
+
+    - name: Independently require every reserved bulk footprint to start native
+      ansible.builtin.include_tasks: ../tasks/observe_bulk.yaml
+      loop: "{{ range(0, breakout_bulk_fixtures | length) | list }}"
+      loop_control:
+        loop_var: breakout_bulk_index
+
+    - name: Preserve true pre-mutation bulk baselines
+      ansible.builtin.set_fact:
+        breakout_bulk_baselines: "{{ breakout_bulk_snapshots }}"
+
     - name: B01 - Create every supplied independent parent in one bulk breakout
       cisco.nd.nd_manage_breakout_interfaces: &breakout_bulk_create
         fabric_name: "{{ test_fabric_name }}"
@@ -86,7 +100,7 @@
         breakout_expected_outcome_count: "{{ breakout_bulk_fixtures | length }}"
         breakout_expected_outcome: success
         breakout_expected_write_actions: [breakout]
-        breakout_expected_after_status: response_confirmed
+        breakout_expected_after_status: observed
 
     - name: B01 - Match every confirmed outcome to its original serial and parent
       ansible.builtin.assert: &breakout_bulk_identity_assert
@@ -139,6 +153,186 @@
       loop_control:
         loop_var: breakout_bulk_index
 
+    - name: Select the first independently reserved group for mixed-state tests
+      ansible.builtin.set_fact:
+        breakout_bulk_first: "{{ breakout_bulk_fixtures[0] }}"
+        breakout_bulk_pending_removals: "{{ [breakout_bulk_group_keys[0]] }}"
+
+    - name: B03 - Remove just the first independent group, retaining all other groups
+      cisco.nd.nd_manage_breakout_interfaces:
+        fabric_name: "{{ test_fabric_name }}"
+        state: deleted
+        config:
+          - switch_id: "{{ breakout_bulk_first.switch_id }}"
+            interface_names: ["{{ breakout_bulk_first.control_parent }}"]
+      register: breakout_result
+
+    - name: B03 - Require one confirmed removal and no collateral compensation
+      ansible.builtin.include_tasks: ../tasks/assert_result.yaml
+      vars:
+        breakout_expected_changed: true
+        breakout_expected_outcome: success
+        breakout_expected_write_actions: [remove]
+        breakout_expected_after_status: observed
+
+    - name: Declare mixed native and broken expected bulk profiles
+      ansible.builtin.set_fact:
+        breakout_bulk_profiles: "{{ ['native'] + ['map_a'] * (breakout_bulk_fixtures | length - 1) }}"
+        breakout_bulk_unchanged_indices: "{{ range(1, breakout_bulk_fixtures | length) | list }}"
+
+    - name: B03 - Confirm only the first group became native
+      ansible.builtin.include_tasks: ../tasks/observe_bulk.yaml
+      loop: "{{ range(0, breakout_bulk_fixtures | length) | list }}"
+      loop_control:
+        loop_var: breakout_bulk_index
+
+    - name: Release the independently confirmed first-group removal barrier
+      ansible.builtin.set_fact:
+        breakout_bulk_pending_removals: []
+
+    - name: B04 - Create only the native group while other broken groups are omitted
+      cisco.nd.nd_manage_breakout_interfaces:
+        fabric_name: "{{ test_fabric_name }}"
+        state: merged
+        config:
+          - switch_id: "{{ breakout_bulk_first.switch_id }}"
+            interface_names: ["{{ breakout_bulk_first.control_parent }}"]
+            breakout_map: "{{ breakout_bulk_first.profiles.map_a.breakout_map }}"
+      register: breakout_result
+
+    - name: B04 - Require creation without deleting unlisted baseline families
+      ansible.builtin.include_tasks: ../tasks/assert_result.yaml
+      vars:
+        breakout_expected_changed: true
+        breakout_expected_outcome: success
+        breakout_expected_write_actions: [breakout]
+        breakout_expected_after_status: observed
+
+    - name: Restore expected all-broken profiles while retaining comparisons for omitted groups
+      ansible.builtin.set_fact:
+        breakout_bulk_profiles: "{{ ['map_a'] * (breakout_bulk_fixtures | length) }}"
+
+    - name: B04 - Prove all omitted groups retained their children and maps
+      ansible.builtin.include_tasks: ../tasks/observe_bulk.yaml
+      loop: "{{ range(0, breakout_bulk_fixtures | length) | list }}"
+      loop_control:
+        loop_var: breakout_bulk_index
+
+    - name: Mark the first group removal pending for mixed-state bulk creation
+      ansible.builtin.set_fact:
+        breakout_bulk_pending_removals: "{{ [breakout_bulk_group_keys[0]] }}"
+
+    - name: B05 - Return only the first group to native before the mixed request
+      cisco.nd.nd_manage_breakout_interfaces:
+        fabric_name: "{{ test_fabric_name }}"
+        state: deleted
+        config:
+          - switch_id: "{{ breakout_bulk_first.switch_id }}"
+            interface_names: ["{{ breakout_bulk_first.control_parent }}"]
+      register: breakout_result
+
+    - name: B05 - Require confirmed mixed-state preparation
+      ansible.builtin.include_tasks: ../tasks/assert_result.yaml
+      vars:
+        breakout_expected_changed: true
+        breakout_expected_outcome: success
+        breakout_expected_write_actions: [remove]
+
+    - name: Set mixed-state expected profiles for independent preparation validation
+      ansible.builtin.set_fact:
+        breakout_bulk_profiles: "{{ ['native'] + ['map_a'] * (breakout_bulk_fixtures | length - 1) }}"
+
+    - name: B05 - Observe mixed-state preparation before the next request
+      ansible.builtin.include_tasks: ../tasks/observe_bulk.yaml
+      loop: "{{ range(0, breakout_bulk_fixtures | length) | list }}"
+      loop_control:
+        loop_var: breakout_bulk_index
+
+    - name: Release mixed-creation preparation removal barrier
+      ansible.builtin.set_fact:
+        breakout_bulk_pending_removals: []
+
+    - name: B05 - Merge all requested parents when only the first is native
+      cisco.nd.nd_manage_breakout_interfaces: *breakout_bulk_create
+      register: breakout_result
+
+    - name: B05 - Require one success and no-ops for the existing requested families
+      ansible.builtin.include_tasks: ../tasks/assert_result.yaml
+      vars:
+        breakout_expected_changed: true
+        breakout_expected_outcome_count: "{{ breakout_bulk_fixtures | length }}"
+        breakout_expected_outcomes: "{{ ['success'] + ['noop'] * (breakout_bulk_fixtures | length - 1) }}"
+        breakout_expected_write_actions: [breakout]
+        breakout_expected_after_status: "{{ 'observed' if breakout_bulk_fixtures | map(attribute='switch_id') | unique | length == 1 else 'partially_observed' }}"
+
+    - name: B05 - Match mixed outcomes to native versus previously broken identities
+      ansible.builtin.assert:
+        that:
+          - >-
+            breakout_result.api_outcomes |
+            selectattr('switch_id', 'equalto', item.switch_id) |
+            selectattr('interface_name', 'equalto', item.control_parent) |
+            map(attribute='outcome') | list == ['success' if bulk_identity_index == 0 else 'noop']
+      loop: "{{ breakout_bulk_fixtures }}"
+      loop_control:
+        index_var: bulk_identity_index
+        label: "{{ item.switch_id }}/{{ item.control_parent }}"
+
+    - name: Restore all-broken expected profiles after mixed merge
+      ansible.builtin.set_fact:
+        breakout_bulk_profiles: "{{ ['map_a'] * (breakout_bulk_fixtures | length) }}"
+
+    - name: B05 - Independently verify all maps after mixed merge
+      ansible.builtin.include_tasks: ../tasks/observe_bulk.yaml
+      loop: "{{ range(0, breakout_bulk_fixtures | length) | list }}"
+      loop_control:
+        loop_var: breakout_bulk_index
+
+    - name: Build bulk deletion using alternating real child and parent selectors
+      ansible.builtin.set_fact:
+        breakout_bulk_delete_config: []
+
+    - name: Use independently observed children rather than guessed lanes in bulk input
+      ansible.builtin.set_fact:
+        breakout_bulk_delete_config: >-
+          {{ breakout_bulk_delete_config + [{'switch_id': item.switch_id,
+             'interface_names': [breakout_bulk_snapshots[bulk_delete_index | string].families[item.control_parent].children | last
+                                if bulk_delete_index % 2 else item.control_parent]}] }}
+      loop: "{{ breakout_bulk_fixtures }}"
+      loop_control:
+        index_var: bulk_delete_index
+        label: "{{ item.switch_id }}/{{ item.control_parent }}"
+
+    - name: Mark only the first group pending before preparing mixed-state deletion
+      ansible.builtin.set_fact:
+        breakout_bulk_pending_removals: "{{ [breakout_bulk_group_keys[0]] }}"
+
+    - name: B06 - Prepare a native no-op alongside other broken deletion targets
+      cisco.nd.nd_manage_breakout_interfaces:
+        fabric_name: "{{ test_fabric_name }}"
+        state: deleted
+        config:
+          - switch_id: "{{ breakout_bulk_first.switch_id }}"
+            interface_names: ["{{ breakout_bulk_first.control_parent }}"]
+      register: breakout_result
+
+    - name: B06 - Require confirmed first-group removal before bulk deletion
+      ansible.builtin.include_tasks: ../tasks/assert_result.yaml
+      vars:
+        breakout_expected_changed: true
+        breakout_expected_outcome: success
+        breakout_expected_write_actions: [remove]
+
+    - name: Declare independently expected mixed deletion starting state
+      ansible.builtin.set_fact:
+        breakout_bulk_profiles: "{{ ['native'] + ['map_a'] * (breakout_bulk_fixtures | length - 1) }}"
+
+    - name: B06 - Confirm mixed deletion starting state and preserved other groups
+      ansible.builtin.include_tasks: ../tasks/observe_bulk.yaml
+      loop: "{{ range(0, breakout_bulk_fixtures | length) | list }}"
+      loop_control:
+        loop_var: breakout_bulk_index
+
     - name: Record every original bulk deletion target before invocation
       ansible.builtin.set_fact:
         breakout_bulk_pending_removals: "{{ breakout_bulk_group_keys }}"
@@ -150,12 +344,12 @@
         config: "{{ breakout_bulk_delete_config }}"
       register: breakout_result
 
-    - name: B02 - Require one confirmed removal outcome per independent group
+    - name: B02 - Require one native no-op and confirmed removal for each broken group
       ansible.builtin.include_tasks: ../tasks/assert_result.yaml
       vars:
         breakout_expected_changed: true
         breakout_expected_outcome_count: "{{ breakout_bulk_fixtures | length }}"
-        breakout_expected_outcome: success
+        breakout_expected_outcomes: "{{ ['noop'] + ['success'] * (breakout_bulk_fixtures | length - 1) }}"
         breakout_expected_write_actions: [remove]
 
     - name: B02 - Match every deletion outcome to its original serial and parent

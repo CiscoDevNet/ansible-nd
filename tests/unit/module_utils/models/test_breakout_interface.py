@@ -17,9 +17,10 @@ def _group(**changes):
     return group
 
 
+@pytest.mark.parametrize("state", ["merged", "overridden"])
 @pytest.mark.parametrize("switch_id", ["FDO222425SE", "192.0.2.10", "2001:db8::10"])
-def test_serial_and_management_ip_inputs_are_preserved(switch_id):
-    models = expand_config([_group(switch_id=f" {switch_id} ")], "merged")
+def test_serial_and_management_ip_inputs_are_preserved(switch_id, state):
+    models = expand_config([_group(switch_id=f" {switch_id} ")], state)
     assert models[0].switch_id == switch_id
 
 
@@ -139,16 +140,68 @@ def test_ansible_unset_optional_map_is_accepted_for_deleted():
     assert expand_config([_group(breakout_map=None)], "deleted")[0].breakout_map is None
 
 
-@pytest.mark.parametrize("state", ["replaced", "overridden", "gathered", "query", ""])
-def test_only_merged_and_deleted_are_supported(state):
-    with pytest.raises(ValueError, match="state must be merged or deleted"):
+@pytest.mark.parametrize("state", ["replaced", "gathered", "query", ""])
+def test_only_merged_deleted_and_overridden_are_supported(state):
+    with pytest.raises(ValueError, match="state must be merged, deleted, or overridden"):
         expand_config([_group()], state)
 
 
+@pytest.mark.parametrize("state", ["merged", "deleted"])
 @pytest.mark.parametrize("raw", [None, [], {}, "Ethernet1/50", [None], ["Ethernet1/50"]])
-def test_config_requires_nonempty_list_of_groups(raw):
+def test_mutating_selectors_require_nonempty_list_of_groups(raw, state):
     with pytest.raises(ValueError):
-        expand_config(raw, "merged")
+        expand_config(raw, state)
+
+
+@pytest.mark.parametrize("raw", [None, []])
+def test_overridden_omitted_or_empty_config_has_no_explicit_desired_models(raw):
+    assert expand_config(raw, "overridden") == []
+
+
+@pytest.mark.parametrize("raw", [{}, "Ethernet1/50", [None], ["Ethernet1/50"]])
+def test_overridden_still_requires_a_list_of_groups_when_config_is_supplied(raw):
+    with pytest.raises(ValueError):
+        expand_config(raw, "overridden")
+
+
+@pytest.mark.parametrize("switch_id", ["FDO222425SE", "192.0.2.10", "2001:db8::10"])
+def test_overridden_clear_switch_group_validates_without_creating_interface_models(switch_id):
+    raw = [{"switch_id": f" {switch_id} ", "interface_names": []}]
+    original = deepcopy(raw)
+    assert expand_config(raw, "overridden") == []
+    assert raw == original
+
+
+@pytest.mark.parametrize("switch_id", [None, "", "  ", 123, False])
+def test_overridden_clear_switch_group_still_rejects_invalid_switch_selector(switch_id):
+    with pytest.raises(ValueError, match="switch_id"):
+        expand_config([{"switch_id": switch_id, "interface_names": []}], "overridden")
+
+
+def test_overridden_clear_switch_group_requires_an_explicit_interface_list():
+    with pytest.raises(ValueError, match="interface_names must be a list"):
+        expand_config([{"switch_id": "FDO222425SE"}], "overridden")
+
+
+def test_overridden_clear_and_desired_groups_preserve_raw_scope_and_per_interface_maps():
+    raw = [
+        {"switch_id": "FDO222425SA", "interface_names": []},
+        _group(interface_names=["Ethernet1/50"], breakout_map="25g-4x"),
+        _group(interface_names=["Ethernet1/51"], breakout_map="50g-2x"),
+    ]
+    original = deepcopy(raw)
+    models = expand_config(raw, "overridden")
+    assert [(model.switch_id, model.interface_name, model.breakout_map) for model in models] == [
+        ("FDO222425SE", "Ethernet1/50", "25g-4x"),
+        ("FDO222425SE", "Ethernet1/51", "50g-2x"),
+    ]
+    assert raw == original
+
+
+@pytest.mark.parametrize("breakout_map", ["", "   ", 25, False])
+def test_overridden_clear_only_group_does_not_accept_a_malformed_optional_map(breakout_map):
+    with pytest.raises(ValueError, match="breakout_map"):
+        expand_config([_group(interface_names=[], breakout_map=breakout_map)], "overridden")
 
 
 @pytest.mark.parametrize("names", [None, [], "Ethernet1/50", {}, [None], [""], ["   "], [50]])
@@ -157,6 +210,7 @@ def test_interface_names_require_nonempty_list_of_parent_names(names):
         expand_config([_group(interface_names=names)], "merged")
 
 
+@pytest.mark.parametrize("state", ["merged", "overridden"])
 @pytest.mark.parametrize(
     "name",
     [
@@ -172,9 +226,9 @@ def test_interface_names_require_nonempty_list_of_parent_names(names):
         "Ethernet1/50extra",
     ],
 )
-def test_merged_rejects_non_parent_children_dotted_and_three_part_names(name):
+def test_create_states_reject_non_parent_children_dotted_and_three_part_names(name, state):
     with pytest.raises(ValueError):
-        expand_config([_group(interface_names=[name])], "merged")
+        expand_config([_group(interface_names=[name])], state)
 
 
 def test_parent_syntax_does_not_impose_a_hardware_slot_limit():
@@ -187,10 +241,11 @@ def test_switch_identifier_is_required_and_nonempty(switch_id):
         expand_config([_group(switch_id=switch_id)], "merged")
 
 
+@pytest.mark.parametrize("state", ["merged", "overridden"])
 @pytest.mark.parametrize("breakout_map", [None, "", "   ", 25, False])
-def test_merged_requires_nonblank_string_map(breakout_map):
+def test_create_states_require_nonblank_string_map_for_desired_parents(breakout_map, state):
     with pytest.raises(ValueError, match="breakout_map"):
-        expand_config([_group(breakout_map=breakout_map)], "merged")
+        expand_config([_group(breakout_map=breakout_map)], state)
 
 
 @pytest.mark.parametrize("breakout_map", ["25g-4x", "", "   ", 25])
@@ -228,7 +283,10 @@ def test_model_aliases_and_copy_do_not_invent_a_breakout_map():
 def test_argument_spec_has_grouped_dual_identifier_contract_and_no_map_choices():
     spec = BreakoutInterfaceModel.get_argument_spec()
     assert spec["fabric_name"]["required"] is True
-    assert spec["state"]["choices"] == ["merged", "deleted"]
+    assert spec["state"]["choices"] == ["merged", "deleted", "overridden"]
+    assert spec["config"]["default"] == []
+    assert spec["config"].get("required", False) is False
     assert spec["config"]["options"]["switch_id"]["type"] == "str"
     assert "choices" not in spec["config"]["options"]["breakout_map"]
-    assert spec["verify"]["options"]["enabled"]["default"] is False
+    assert spec["verify"]["apply_defaults"] is True
+    assert spec["verify"]["options"]["enabled"]["default"] is True

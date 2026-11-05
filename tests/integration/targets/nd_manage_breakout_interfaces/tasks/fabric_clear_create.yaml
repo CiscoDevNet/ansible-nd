@@ -1,0 +1,40 @@
+---
+- name: Prepare only validated reserved parents for the fabric-wide clear case
+  cisco.nd.nd_manage_breakout_interfaces:
+    fabric_name: "{{ test_fabric_name }}"
+    state: merged
+    config: "{{ breakout_fabric_create_config }}"
+  register: breakout_result
+  ignore_errors: true
+
+- name: Preserve the actual preparation response before any assertion or teardown
+  ansible.builtin.set_fact:
+    breakout_fabric_last_result: "{{ breakout_result }}"
+    breakout_fabric_last_action: breakout
+
+- name: Require complete identified creation responses without compensation
+  ansible.builtin.include_tasks: assert_result.yaml
+  vars:
+    breakout_expected_changed: true
+    breakout_expected_outcome_count: "{{ breakout_fabric_fixtures | length }}"
+    breakout_expected_outcome: success
+    breakout_expected_write_actions: [breakout]
+    breakout_expected_after_status: observed
+
+- name: Match each prepared parent to its original switch and interface identity
+  ansible.builtin.assert:
+    that:
+      - >-
+        breakout_result.api_outcomes | selectattr('switch_id', 'equalto', item.switch_id) |
+        selectattr('interface_name', 'equalto', item.control_parent) |
+        map(attribute='outcome') | list == ['success']
+  loop: "{{ breakout_fabric_fixtures }}"
+  loop_control:
+    label: "{{ item.switch_id }}/{{ item.control_parent }}"
+
+- name: Declare the exact prepared profile for each independently owned footprint
+  ansible.builtin.set_fact:
+    breakout_fabric_profiles: "{{ ['map_a'] * (breakout_fabric_fixtures | length) }}"
+
+- name: Independently confirm every prepared map and child speed before global deletion
+  ansible.builtin.include_tasks: fabric_clear_observe.yaml

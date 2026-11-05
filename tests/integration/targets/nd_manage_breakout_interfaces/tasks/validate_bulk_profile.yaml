@@ -2,7 +2,7 @@
 - name: Validate a supplied bulk profile without guessing hardware capability
   ansible.builtin.assert:
     that:
-      - breakout_bulk_candidate_profile.key == 'map_a'
+      - breakout_bulk_candidate_profile.key in ['map_a', 'map_b']
       - breakout_bulk_candidate_profile.value is mapping
       - breakout_bulk_candidate_profile.value.breakout_map is string
       - breakout_bulk_candidate_profile.value.breakout_map | trim | length > 0

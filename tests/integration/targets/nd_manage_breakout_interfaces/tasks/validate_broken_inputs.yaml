@@ -38,7 +38,7 @@
       - switch_id: "{{ test_switch_serial }}"
         interface_names: ["{{ breakout_missing_parent }}"]
         breakout_map: "{{ breakout_map_a if missing_family_state != 'deleted' else omit }}"
-  loop: [merged, deleted]
+  loop: [merged, deleted, overridden]
   loop_control:
     loop_var: missing_family_state
   ignore_errors: true

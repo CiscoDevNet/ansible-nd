@@ -839,3 +839,314 @@ def test_malformed_baseline_rejected_before_get(change):
     baseline.update(change)
     result, plugin = run([], baseline=baseline, unchanged=True)
     assert result["failed"] is True and plugin._execute_module.call_count == 0
+
+
+def enhanced_live(raw_fixture=None, profile="native", outside=False):
+    """Independent complete-switch controller envelopes including lane speeds."""
+    declared = raw_fixture or fixture()
+    scoped = live(declared, profile)
+    interfaces = [row for reply in scoped[:-1] for row in reply["current"]["interfaces"]]
+    maps = scoped[-1]["current"]["policies"]
+    for row in interfaces:
+        if row["interfaceName"].count("/") == 2:
+            config = declared["profiles"][profile]
+            parent = row["interfaceName"].rsplit("/", 1)[0]
+            breakout_map = config.get("policy_maps", {}).get(parent, config["breakout_map"])
+            row["speed"] = breakout_map.split("g-")[0] + "Gb"
+    if outside:
+        interfaces.extend([interface("Ethernet1/40/1", speed="50Gb"), interface("Ethernet1/40/2", speed="50Gb")])
+        interfaces.append(interface("Ethernet1/41"))
+        maps.append(policy("Ethernet1/40", MAP_B))
+    return [response("interfaces", interfaces), response("policies", maps)]
+
+
+@pytest.mark.parametrize("flag", ["whole_switch", "include_speeds", "topology_only"])
+@pytest.mark.parametrize("bad", [None, "true", 1, []])
+def test_new_observation_flags_require_actual_booleans(flag, bad):
+    result, plugin = run([], **{flag: bad})
+    assert result["failed"] is True and plugin._execute_module.call_count == 0
+
+
+@pytest.mark.parametrize("profile", ["native", "map_a", "map_b"])
+@pytest.mark.parametrize("quad", [False, True])
+def test_complete_switch_speed_profiles_are_independently_validated(profile, quad):
+    declared = fixture(quad)
+    result, plugin = run(enhanced_live(declared, profile), fixture=declared, expected_profile=profile, whole_switch=True, include_speeds=True)
+    assert result["failed"] is False
+    assert result["snapshot"]["outside_families"] == {}
+    assert result["snapshot"]["outside_policy_maps"] == {}
+    assert "child_speeds" in result["checks"]
+    for parent, family in result["snapshot"]["families"].items():
+        expected = 25 if profile == "map_a" else 50
+        assert family["child_speeds"] == {child: expected for child in family["children"]}
+    query = parse_qs(urlsplit(plugin._execute_module.call_args_list[0].kwargs["module_args"]["path"]).query)
+    assert query["filter"] == ["interfaceType:ethernet"]
+    assert query["switchId"] == [SERIAL]
+    policy_query = parse_qs(urlsplit(plugin._execute_module.call_args_list[1].kwargs["module_args"]["path"]).query)
+    assert policy_query["filter"] == ["switchId:" + SERIAL + " AND templateName:breakout_interface"]
+
+
+def test_whole_switch_overrides_scoped_custom_filter_and_exposes_only_outside_breakouts():
+    declared = fixture()
+    declared["interface_filter"] = "interfaceName:Ethernet1/50"
+    result, _ = run(enhanced_live(outside=True), fixture=declared, whole_switch=True, include_speeds=True)
+    assert result["failed"] is False
+    assert result["snapshot"]["outside_families"] == {
+        "Ethernet1/40": {"native": False, "children": ["Ethernet1/40/1", "Ethernet1/40/2"], "child_speeds": {"Ethernet1/40/1": 50, "Ethernet1/40/2": 50}}
+    }
+    assert result["snapshot"]["outside_policy_maps"] == {"Ethernet1/40": MAP_B}
+
+
+@pytest.mark.parametrize("change", ["appear", "disappear", "children", "speed", "policy"])
+def test_whole_switch_baseline_protects_outside_families_and_intent(change):
+    prior, _ = run(enhanced_live(outside=change != "appear"), whole_switch=True, include_speeds=True, observe_only=True)
+    replies = enhanced_live(profile="map_a", outside=change != "disappear")
+    if change == "children":
+        replies[0]["current"]["interfaces"][-3]["interfaceName"] = "Ethernet1/40/3"
+    elif change == "speed":
+        replies[0]["current"]["interfaces"][-3]["speed"] = "25Gb"
+    elif change == "policy":
+        replies[1]["current"]["policies"][-1]["templateInputs"]["MAP"] = MAP_A
+    result, _ = run(replies, expected_profile="map_a", whole_switch=True, include_speeds=True, baseline=prior["snapshot"])
+    assert result["failed"] is True
+    expected = "outside_policy_maps" if change == "policy" else "outside_families"
+    assert expected in {item["check"] for item in result["differences"]}
+
+
+def test_whole_switch_guard_families_are_not_misclassified_as_outside():
+    declared = fixture(guards=True)
+    prior, _ = run(enhanced_live(declared, outside=True), fixture=declared, whole_switch=True, observe_only=True)
+    result, _ = run(enhanced_live(declared, "map_a", outside=True), fixture=declared, expected_profile="map_a", whole_switch=True, baseline=prior["snapshot"])
+    assert result["failed"] is False
+    assert "Ethernet1/60" in result["snapshot"]["families"]
+    assert "Ethernet1/60" not in result["snapshot"]["outside_families"]
+    assert "outside_scope" in result["checks"]
+
+
+@pytest.mark.parametrize("speed", ["25Gb", "25 Gbps", "25000Mbps", "0.025Tbps", "25.0G", "25Gbit/s"])
+def test_controller_child_speeds_normalize_to_numeric_gbps(speed):
+    replies = enhanced_live(profile="map_a")
+    for row in replies[0]["current"]["interfaces"]:
+        row["speed"] = speed
+    result, _ = run(replies, expected_profile="map_a", include_speeds=True)
+    assert result["failed"] is False
+    assert set(result["snapshot"]["families"][PARENT]["child_speeds"].values()) == {25}
+
+
+@pytest.mark.parametrize("speed", [None, "auto", "unknown", "0Gb", "25", 25, True, "-25Gb", "NaNGb"])
+def test_missing_or_ambiguous_child_speed_never_proves_recovery(speed):
+    replies = enhanced_live(profile="map_a")
+    replies[0]["current"]["interfaces"][0]["speed"] = speed
+    result, _ = run(replies, expected_profile="map_a", include_speeds=True, observe_only=True)
+    assert result["failed"] is True and "speed" in result["msg"]
+
+
+def test_correct_child_count_with_wrong_or_mixed_speed_fails():
+    replies = enhanced_live(profile="map_a")
+    replies[0]["current"]["interfaces"][0]["speed"] = "10Gb"
+    result, _ = run(replies, expected_profile="map_a", include_speeds=True)
+    assert result["failed"] is True and result["differences"][0]["check"] == "topology"
+
+
+def test_explicit_per_parent_speed_supports_mixed_maps_and_topology_only_recovery():
+    declared = fixture(True)
+    profile = declared["profiles"]["map_a"]
+    profile["child_lanes"]["Ethernet1/23"] = [1, 2]
+    profile["child_speeds"] = {"Ethernet1/21": 25, "Ethernet1/23": 50}
+    profile["policy_maps"] = {"Ethernet1/21": MAP_A, "Ethernet1/23": MAP_B}
+    result, _ = run(enhanced_live(declared, "map_a"), fixture=declared, expected_profile="map_a", include_speeds=True)
+    assert result["failed"] is False
+    assert set(result["snapshot"]["families"]["Ethernet1/23"]["child_speeds"].values()) == {50}
+
+
+@pytest.mark.parametrize("speed", [0, -1, True, "25", float("inf"), float("nan")])
+def test_malformed_declared_speed_is_rejected_before_controller_access(speed):
+    declared = fixture()
+    declared["profiles"]["map_a"]["child_speeds"] = {PARENT: speed}
+    result, plugin = run([], fixture=declared, validate_only=True, include_speeds=True)
+    assert result["failed"] is True and plugin._execute_module.call_count == 0
+
+
+def test_unrecognized_map_needs_explicit_speed_when_speed_validation_enabled():
+    declared = fixture()
+    declared["profiles"]["map_a"]["breakout_map"] = "future-profile"
+    result, plugin = run([], fixture=declared, include_speeds=True, validate_only=True)
+    assert result["failed"] is True and plugin._execute_module.call_count == 0
+    declared["profiles"]["map_a"]["child_speeds"] = {PARENT: 25}
+    result, _ = run([], fixture=declared, include_speeds=True, validate_only=True)
+    assert result["failed"] is False
+
+
+@pytest.mark.parametrize("profile", ["native", "map_a"])
+def test_topology_only_retains_but_does_not_assert_reserved_policy_maps(profile):
+    replies = enhanced_live(profile=profile)
+    replies[1] = response("policies", [policy(breakout_map=MAP_B)])
+    result, _ = run(replies, expected_profile=profile, include_speeds=True, topology_only=True)
+    assert result["failed"] is False
+    assert result["snapshot"]["policy_maps"] == {PARENT: MAP_B}
+    assert "policy_maps" not in result["checks"]
+    normal, _ = run(replies, expected_profile=profile, include_speeds=True)
+    assert normal["failed"] is True
+
+
+def test_topology_only_unchanged_allows_reserved_policy_ownership_change():
+    declared = fixture(True)
+    prior_replies = enhanced_live(declared, "map_a")
+    prior_replies[1] = response("policies", [policy("Ethernet1/21")])
+    prior, _ = run(prior_replies, fixture=declared, expected_profile="map_a", observe_only=True, whole_switch=True, include_speeds=True)
+    current = enhanced_live(declared, "map_a")
+    current[1] = response("policies", [policy("Ethernet1/23", policyId="RECREATED-ID")])
+    result, _ = run(
+        current,
+        fixture=declared,
+        expected_profile="map_a",
+        whole_switch=True,
+        include_speeds=True,
+        topology_only=True,
+        unchanged=True,
+        baseline=prior["snapshot"],
+    )
+    assert result["failed"] is False
+    strict, _ = run(current, fixture=declared, expected_profile="map_a", whole_switch=True, include_speeds=True, unchanged=True, baseline=prior["snapshot"])
+    assert strict["failed"] is True
+
+
+@pytest.mark.parametrize("scope", ["guard", "outside"])
+def test_topology_only_never_ignores_guard_or_outside_policy_drift(scope):
+    declared = fixture(guards=True)
+    prior, _ = run(enhanced_live(declared, outside=True), fixture=declared, whole_switch=True, observe_only=True)
+    replies = enhanced_live(declared, "map_a", outside=True)
+    if scope == "guard":
+        replies[1]["current"]["policies"].append(policy("Ethernet1/60"))
+        replies[1]["current"]["meta"]["counts"]["total"] += 1
+    else:
+        replies[1]["current"]["policies"][-1]["templateInputs"]["MAP"] = MAP_A
+    result, _ = run(replies, fixture=declared, expected_profile="map_a", whole_switch=True, topology_only=True, baseline=prior["snapshot"])
+    assert result["failed"] is True
+    assert ("guard_policy" if scope == "guard" else "outside_policy_maps") in {item["check"] for item in result["differences"]}
+
+
+def test_topology_only_does_not_accept_malformed_policy_evidence():
+    replies = enhanced_live(profile="map_a")
+    replies[1]["current"]["policies"][0]["markDeleted"] = None
+    result, _ = run(replies, expected_profile="map_a", topology_only=True)
+    assert result["failed"] is True
+
+
+@pytest.mark.parametrize("kind", ["foreign_switch", "missing_flags", "missing_speed", "duplicate"])
+def test_outside_physical_evidence_is_strict(kind):
+    replies = enhanced_live(outside=True)
+    row = replies[0]["current"]["interfaces"][-3]
+    if kind == "foreign_switch":
+        row["switchId"] = "OTHER"
+    elif kind == "missing_flags":
+        del row["physicalInterface"]
+    elif kind == "missing_speed":
+        del row["speed"]
+    else:
+        replies[0]["current"]["interfaces"].append(deepcopy(row))
+        replies[0]["current"]["meta"]["counts"]["total"] += 1
+    result, _ = run(replies, whole_switch=True, include_speeds=True, observe_only=True)
+    assert result["failed"] is True
+
+
+def test_fex_subinterfaces_and_config_only_rows_are_not_outside_families():
+    replies = enhanced_live()
+    replies[0]["current"]["interfaces"].extend(
+        [
+            interface("Ethernet1/40/1", fex=True),
+            interface("Ethernet1/40/2", physicalInterface=False, fex=None),
+            interface("Ethernet1/41/1.100"),
+            interface("Ethernet1/42/1/1"),
+        ]
+    )
+    replies[0]["current"]["meta"]["counts"]["total"] += 4
+    result, _ = run(replies, whole_switch=True, include_speeds=True)
+    assert result["failed"] is False and result["snapshot"]["outside_families"] == {}
+
+
+def test_whole_switch_consumes_all_interface_and_policy_pages_before_comparison():
+    replies = enhanced_live(profile="map_a", outside=True)
+    interfaces = replies[0]["current"]["interfaces"]
+    policies = replies[1]["current"]["policies"]
+    pages = []
+    for collection, rows, split in [("interfaces", interfaces, 4), ("policies", policies, 1)]:
+        for start, end in [(0, split), (split, len(rows))]:
+            page = response(collection, rows[start:end])
+            page["current"]["meta"]["counts"] = {"total": len(rows), "remaining": len(rows) - end}
+            pages.append(page)
+    result, plugin = run(pages, expected_profile="map_a", whole_switch=True, include_speeds=True)
+    assert result["failed"] is False
+    assert "Ethernet1/40" in result["snapshot"]["outside_families"]
+    assert [parse_qs(urlsplit(call.kwargs["module_args"]["path"]).query)["offset"][0] for call in plugin._execute_module.call_args_list] == [
+        "0",
+        "4",
+        "0",
+        "1",
+    ]
+
+
+def test_declared_pagination_total_cannot_change_between_pages():
+    first = response("interfaces", [interface()])
+    first["current"]["meta"]["counts"] = {"total": 3, "remaining": 2}
+    second = response("interfaces", [interface("Ethernet1/40")])
+    second["current"]["meta"]["counts"] = {"total": 2, "remaining": 0}
+    result, _ = run([first, second], whole_switch=True, observe_only=True)
+    assert result["failed"] is True and "total changed" in result["msg"]
+
+
+@pytest.mark.parametrize("change", ["missing_outside", "overlap", "bad_speed", "missing_speed", "outside_native"])
+def test_enhanced_baseline_must_supply_complete_compatible_evidence(change):
+    prior, _ = run(enhanced_live(outside=True), whole_switch=True, include_speeds=True, observe_only=True)
+    baseline = prior["snapshot"]
+    if change == "missing_outside":
+        del baseline["outside_families"]
+    elif change == "overlap":
+        baseline["outside_policy_maps"][PARENT] = MAP_A
+    elif change == "bad_speed":
+        baseline["outside_families"]["Ethernet1/40"]["child_speeds"]["Ethernet1/40/1"] = "50Gb"
+    elif change == "missing_speed":
+        del baseline["families"][PARENT]["child_speeds"]
+    else:
+        baseline["outside_families"]["Ethernet1/40"] = {"native": True, "children": [], "child_speeds": {}}
+    result, plugin = run([], whole_switch=True, include_speeds=True, baseline=baseline)
+    assert result["failed"] is True and plugin._execute_module.call_count == 0
+
+
+def test_other_declared_owned_fixture_can_change_without_hiding_truly_outside_collateral():
+    owned = ["Ethernet1/40"]
+    prior, _ = run(enhanced_live(), whole_switch=True, include_speeds=True, owned_interfaces=owned, observe_only=True)
+    result, _ = run(
+        enhanced_live(profile="map_a", outside=True),
+        expected_profile="map_a",
+        whole_switch=True,
+        include_speeds=True,
+        owned_interfaces=owned,
+        baseline=prior["snapshot"],
+    )
+    assert result["failed"] is False
+    assert result["snapshot"]["outside_families"] == {}
+    assert result["snapshot"]["outside_policy_maps"] == {}
+    assert result["snapshot"]["owned_interfaces"] == owned
+    replies = enhanced_live(profile="map_a", outside=True)
+    replies[0]["current"]["interfaces"].append(interface("Ethernet1/42/1", speed="25Gb"))
+    replies[0]["current"]["meta"]["counts"]["total"] += 1
+    result, _ = run(replies, expected_profile="map_a", whole_switch=True, include_speeds=True, owned_interfaces=owned, baseline=prior["snapshot"])
+    assert result["failed"] is True
+    assert result["differences"][0]["check"] == "outside_families"
+
+
+@pytest.mark.parametrize(
+    "owned,whole",
+    [(["Ethernet1/40"], False), (["Ethernet1/40", "ethernet1/40"], True), (["Ethernet1/40/1"], True), ("Ethernet1/40", True), (["Ethernet1/60"], True)],
+)
+def test_other_owned_scope_must_be_explicit_unique_parent_names_and_not_guards(owned, whole):
+    result, plugin = run([], fixture=fixture(guards=True), owned_interfaces=owned, whole_switch=whole, validate_only=True)
+    assert result["failed"] is True and plugin._execute_module.call_count == 0
+
+
+def test_other_owned_scope_cannot_change_between_baseline_and_validation():
+    prior, _ = run(enhanced_live(), whole_switch=True, owned_interfaces=["Ethernet1/40"], observe_only=True)
+    result, plugin = run([], whole_switch=True, owned_interfaces=["Ethernet1/41"], baseline=prior["snapshot"])
+    assert result["failed"] is True and "owned_interfaces" in result["msg"]
+    assert plugin._execute_module.call_count == 0

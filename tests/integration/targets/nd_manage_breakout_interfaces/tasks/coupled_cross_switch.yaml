@@ -1,0 +1,190 @@
+---
+- name: S22 - Preserve safe-switch progress while recovering only the coupled switch
+  block:
+    - name: Initialize isolated cross-switch result and safety barrier
+      ansible.builtin.set_fact:
+        coupled_cross_result: {}
+        coupled_cross_failure: {}
+        coupled_cross_coupled_observation: {}
+        coupled_cross_safe_observation: {}
+        coupled_cross_pending: false
+
+    - name: Capture safe-switch guard baseline without assuming native starting state
+      ansible.builtin.include_tasks: coupled_safe_observe.yaml
+      vars:
+        coupled_safe_observe_only: true
+        coupled_safe_profile: native
+
+    - name: Save immutable baseline on the other switch
+      ansible.builtin.set_fact:
+        coupled_safe_baseline: "{{ coupled_safe_observation.snapshot }}"
+
+    - name: Require the reserved safe-switch parent native before its first write
+      ansible.builtin.include_tasks: coupled_safe_observe.yaml
+      vars:
+        coupled_safe_observe_only: false
+        coupled_safe_profile: native
+
+    - name: Require coupled footprint native before the cross-switch bulk action
+      ansible.builtin.include_tasks: coupled_observe.yaml
+      vars:
+        coupled_observe_profile: native
+        coupled_observe_only: false
+        coupled_observe_baseline: "{{ coupled_native_baseline }}"
+
+    - name: Mark cross-switch action pending before submission
+      ansible.builtin.set_fact:
+        coupled_cross_pending: true
+
+    - name: Request safe parent and only the coupled control in one production invocation
+      cisco.nd.nd_manage_breakout_interfaces:
+        fabric_name: "{{ test_breakout_coupled_fabric_name }}"
+        state: merged
+        config:
+          - switch_id: "{{ test_breakout_coupled_safe_fixture.switch_id }}"
+            interface_names: ["{{ test_breakout_coupled_safe_fixture.control_parent }}"]
+            breakout_map: "{{ test_breakout_coupled_safe_fixture.profiles.map_a.breakout_map }}"
+          - switch_id: "{{ test_breakout_coupled_switch_id }}"
+            interface_names: ["{{ coupled_control }}"]
+            breakout_map: "{{ coupled_map }}"
+      register: coupled_cross_result
+      ignore_errors: true
+
+    - name: Observe the coupled switch immediately before any cleanup
+      ansible.builtin.include_tasks: coupled_observe.yaml
+      vars:
+        coupled_observe_profile: native
+        coupled_observe_only: true
+        coupled_observe_baseline: "{{ coupled_native_baseline }}"
+
+    - name: Freeze independent coupled-switch evidence
+      ansible.builtin.set_fact:
+        coupled_cross_coupled_observation: "{{ coupled_observation }}"
+
+    - name: Observe the safe switch before any cleanup
+      ansible.builtin.include_tasks: coupled_safe_observe.yaml
+      vars:
+        coupled_safe_observe_only: true
+        coupled_safe_profile: map_a
+
+    - name: Freeze safe-switch evidence and release the write barrier only with confirmed recovery
+      ansible.builtin.set_fact:
+        coupled_cross_safe_observation: "{{ coupled_safe_observation }}"
+        coupled_cross_pending: >-
+          {{ coupled_cross_result.recovery | default([]) | length != 1 or
+             (coupled_cross_result.recovery | default([]) | map(attribute='status') | unique | list) != ['response_confirmed'] or
+             (coupled_cross_result.api_outcomes | default([]) | selectattr('outcome', 'equalto', 'unknown') | list | length > 0) or
+             coupled_cross_coupled_observation.snapshot.families != coupled_native_baseline.families }}
+
+    - name: Require collateral failure with one confirmed inverse on the violating switch only
+      ansible.builtin.assert:
+        that:
+          - coupled_cross_result.failed | bool
+          - coupled_cross_result.changed | bool
+          - coupled_cross_result.after_status == 'unknown'
+          - coupled_cross_result.api_outcomes | length == 2
+          - coupled_cross_result.api_outcomes | map(attribute='outcome') | unique | list == ['success']
+          - >-
+            coupled_cross_result.api_outcomes | map(attribute='switch_id') | sort | list ==
+            [test_breakout_coupled_switch_id, test_breakout_coupled_safe_fixture.switch_id] | sort
+          - >-
+            coupled_cross_result.api_outcomes |
+            selectattr('switch_id', 'equalto', test_breakout_coupled_switch_id) |
+            map(attribute='interface_name') | list == [coupled_control]
+          - >-
+            coupled_cross_result.api_outcomes |
+            selectattr('switch_id', 'equalto', test_breakout_coupled_safe_fixture.switch_id) |
+            map(attribute='interface_name') | list == [test_breakout_coupled_safe_fixture.control_parent]
+          - coupled_cross_result.recovery | length == 1
+          - coupled_cross_result.recovery[0].switch_id == test_breakout_coupled_switch_id
+          - coupled_cross_result.recovery[0].status == 'response_confirmed'
+          - not coupled_cross_result.recovery[0].topology_verified
+          - coupled_cross_result.recovery[0].action == 'unbreakout'
+          - coupled_cross_result.recovery[0].api_outcomes | length == 1
+          - coupled_cross_result.recovery[0].api_outcomes[0].interface_name == coupled_control
+          - >-
+            coupled_cross_result.recovery[0].api_outcomes[0].api_interface_name in
+            (coupled_cross_result.observed_before_recovery |
+             selectattr('switch_id', 'equalto', test_breakout_coupled_switch_id) |
+             selectattr('interface_name', 'equalto', coupled_control) | map(attribute='children') | first)
+          - coupled_cross_result.recovery[0].api_outcomes[0].outcome == 'success'
+          - coupled_control in coupled_cross_result.msg
+          - coupled_sibling in coupled_cross_result.msg
+          - "'include all affected parents' in coupled_cross_result.msg"
+
+    - name: Verify inverse placement and no recovery readback in production trace
+      ansible.builtin.assert:
+        that:
+          - >-
+            coupled_cross_result.api_calls | selectattr('method', 'equalto', 'POST') |
+            map(attribute='path') | map('regex_replace', '^.*/interfaceActions/', '') | list == ['breakout', 'remove']
+          - coupled_cross_result.api_calls[-1].method == 'POST'
+      when: ansible_verbosity | int >= 3
+
+    - name: Prove coupled topology was restored rather than trusting the inverse response
+      ansible.builtin.include_tasks: coupled_observe.yaml
+      vars:
+        coupled_observe_profile: native
+        coupled_observe_only: false
+        coupled_observe_baseline: "{{ coupled_native_baseline }}"
+
+    - name: Prove safe-switch creation remains and unrelated safe-switch state is preserved
+      ansible.builtin.include_tasks: coupled_safe_observe.yaml
+      vars:
+        coupled_safe_observe_only: false
+        coupled_safe_profile: map_a
+
+  rescue:
+    - name: Preserve the original cross-switch test failure
+      ansible.builtin.set_fact:
+        coupled_cross_failure: "{{ ansible_failed_result }}"
+        coupled_case_failures: "{{ coupled_case_failures + [{'id': 'S22', 'failure': ansible_failed_result}] }}"
+
+  always:
+    - name: Freeze cross-switch module and independent observation evidence before cleanup
+      ansible.builtin.set_fact:
+        coupled_case_records: >-
+          {{ coupled_case_records + [{'id': 'S22', 'result': coupled_cross_result,
+              'coupled_observation_before_cleanup': coupled_cross_coupled_observation,
+              'safe_observation_before_cleanup': coupled_cross_safe_observation,
+              'failure': coupled_cross_failure}] }}
+        coupled_stop_writes: "{{ coupled_stop_writes or coupled_cross_pending }}"
+
+    - name: Cleanup confirmed disjoint owned changes only after both snapshots are captured
+      when: not coupled_stop_writes
+      block:
+        - name: Validate coupled footprint native without replaying the inverse
+          ansible.builtin.include_tasks: coupled_cleanup.yaml
+
+        - name: Remove only the newly created safe-switch family
+          cisco.nd.nd_manage_breakout_interfaces:
+            fabric_name: "{{ test_breakout_coupled_fabric_name }}"
+            state: deleted
+            verify:
+              enabled: false
+            config:
+              - switch_id: "{{ test_breakout_coupled_safe_fixture.switch_id }}"
+                interface_names: ["{{ test_breakout_coupled_safe_fixture.control_parent }}"]
+          register: coupled_safe_cleanup
+          when: coupled_cross_safe_observation | length > 0
+
+        - name: Require completed safe-switch cleanup before further mutations
+          ansible.builtin.assert:
+            that:
+              - not (coupled_safe_cleanup.failed | default(false))
+              - coupled_safe_cleanup.api_outcomes | length == 1
+              - coupled_safe_cleanup.api_outcomes[0].outcome in ['success', 'noop']
+          when: coupled_cross_safe_observation | length > 0
+
+        - name: Independently verify the safe-switch footprint is native again
+          ansible.builtin.include_tasks: coupled_safe_observe.yaml
+          vars:
+            coupled_safe_profile: native
+            coupled_safe_observe_only: false
+          when: coupled_safe_baseline is defined
+
+      rescue:
+        - name: Preserve cleanup failure without replay and stop disruptive testing
+          ansible.builtin.set_fact:
+            coupled_stop_writes: true
+            coupled_case_failures: "{{ coupled_case_failures + [{'id': 'S22', 'stage': 'cleanup', 'failure': ansible_failed_result}] }}"

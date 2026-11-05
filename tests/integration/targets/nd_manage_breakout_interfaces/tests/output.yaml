@@ -37,17 +37,16 @@
       - output_result.after is not string and output_result.after is not mapping
       - output_result.diff is sequence and output_result.diff is not string and output_result.diff is not mapping
       - output_result.api_outcomes is sequence and output_result.api_outcomes is not string and output_result.api_outcomes is not mapping
-      - output_result.before | length == 1
-      - output_result.before[0].switch_id == test_switch_serial
-      - output_result.before[0].interface_name == breakout_control_parent
-      - not output_result.before[0].broken_out
-      - output_result.before[0].children == []
-      - output_result.after | length == 1
-      - output_result.after[0].switch_id == test_switch_serial
-      - output_result.after[0].interface_name == breakout_control_parent
-      - output_result.after[0].broken_out
-      - output_result.after[0].requested_breakout_map == breakout_map_a
-      - output_result.after[0].evidence == 'prediction'
+      # Whole-switch guard snapshots may include unrelated existing families.
+      # Select by composite identity instead of assuming exactly one row.
+      - output_before | length == 1
+      - not output_before[0].broken_out
+      - output_before[0].children == []
+      - output_after | length == 1
+      - output_after[0].broken_out
+      - output_after[0].requested_breakout_map == breakout_map_a
+      - output_after[0].evidence == 'prediction'
+      - output_after[0].children is not defined
       - output_result.diff | length == 1
       - output_result.after_status == 'predicted'
       - output_result.api_outcomes | map(attribute='outcome') | list == ['planned']
@@ -56,6 +55,16 @@
       - "('api_calls' in output_result) == (ansible_verbosity | int >= 3)"
       - output_result.api_calls | default([]) | rejectattr('method', 'equalto', 'GET') | list | length == 0
       - output_result.verification is not defined
+      - output_result.recovery == []
+      - output_result.api_outcomes[0].switch_id == test_switch_serial
+      - output_result.api_outcomes[0].interface_name == breakout_control_parent
+  vars:
+    output_before: >-
+      {{ output_result.before | selectattr('switch_id', 'equalto', test_switch_serial) |
+         selectattr('interface_name', 'equalto', breakout_control_parent) | list }}
+    output_after: >-
+      {{ output_result.after | selectattr('switch_id', 'equalto', test_switch_serial) |
+         selectattr('interface_name', 'equalto', breakout_control_parent) | list }}
   loop: "{{ breakout_output_results.results }}"
   loop_control:
     loop_var: output_result

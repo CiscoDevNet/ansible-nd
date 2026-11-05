@@ -27,7 +27,11 @@
     - name: Collect original direct removals for this group
       ansible.builtin.set_fact:
         breakout_bulk_cleanup_original_removals: >-
-          {{ breakout_bulk_cleanup_original_outcomes | selectattr('action', 'defined') |
+          {{ (breakout_bulk_cleanup_original_outcomes
+              + ((breakout_bulk_pre_cleanup_module_result.recovery | default([], true) |
+                   selectattr('switch_id', 'equalto', breakout_bulk_owned_fixture.switch_id) |
+                   map(attribute='api_outcomes', default=[]) | list) | sum(start=[]))) |
+             selectattr('action', 'defined') |
              selectattr('action', 'equalto', 'unbreakout') | list }}
 
     - name: Block removal replay until the original operation is independently settled
@@ -39,7 +43,13 @@
                             map(attribute='outcome', default='unknown') | unique | list) == ['noop']))
              or (breakout_bulk_cleanup_original_removals |
                  map(attribute='outcome', default='unknown') |
-                 reject('in', ['noop', 'planned', 'not_executed']) | list | length > 0) }}
+                 reject('in', ['noop', 'planned', 'not_executed']) | list | length > 0)
+             or (breakout_bulk_cleanup_original_outcomes |
+                 map(attribute='outcome', default='unknown') | select('equalto', 'unknown') | list | length > 0)
+             or (breakout_bulk_pre_cleanup_module_result.recovery | default([], true) |
+                 selectattr('switch_id', 'equalto', breakout_bulk_owned_fixture.switch_id) |
+                 map(attribute='status', default='unknown') |
+                 reject('equalto', 'response_confirmed') | list | length > 0) }}
 
     - name: Observe one owned bulk hardware group before recovery
       cisco.nd.nd_manage_breakout_interfaces_validate:
@@ -118,6 +128,8 @@
         config:
           - switch_id: "{{ breakout_bulk_owned_fixture.switch_id }}"
             interface_names: "{{ [breakout_bulk_cleanup_families | first] }}"
+        verify:
+          enabled: false
       check_mode: false
       register: breakout_bulk_cleanup_result
       when: breakout_bulk_cleanup_families | length > 0

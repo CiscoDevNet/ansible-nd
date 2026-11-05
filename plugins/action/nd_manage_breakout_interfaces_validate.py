@@ -26,6 +26,14 @@ Arguments:
     profile cannot prevent the subsequent independent observation or cleanup.
   baseline, unchanged: compare fresh state to a prior snapshot. Configured guard
     families and their policies are always compared when a baseline is supplied.
+  whole_switch: read complete switch Ethernet topology and breakout policies;
+    add outside_families and outside_policy_maps for nonreserved/non-guard scope.
+  owned_interfaces: other reserved parent names validated by separate fixtures;
+    exclude these from outside preservation checks (requires whole_switch).
+  include_speeds: record each physical child's speed as numeric Gbps and compare
+    it independently to the profile map (or optional child_speeds per parent).
+  topology_only: retain policy diagnostics, but do not require reserved policy
+    MAP equality. Guard and outside intent remain protected by the baseline.
   retries, interval: GET-only settling, default 3 attempts separated by 1 second;
     at most 10 attempts and 60 seconds of total requested sleep.
 
@@ -43,6 +51,7 @@ from __future__ import annotations
 import copy
 import ipaddress
 import json
+import math
 import re
 import time
 from collections import defaultdict
@@ -53,6 +62,9 @@ from ansible.errors import AnsibleError
 from ansible.plugins.action import ActionBase
 
 _PARENT = re.compile(r"^Ethernet([1-9]\d*)/([1-9]\d*)$", re.IGNORECASE)
+_MEMBER = re.compile(r"^Ethernet([1-9]\d*)/([1-9]\d*)(?:/([1-9]\d*))?$", re.IGNORECASE)
+_PROFILE_MAP = re.compile(r"([1-9]\d*(?:\.\d+)?)g-([1-9]\d*)x", re.IGNORECASE)
+_SPEED = re.compile(r"(\d+(?:\.\d+)?)\s*([mgt])(?:b(?:it)?(?:/s|ps)?)?", re.IGNORECASE)
 _PAGE_SIZE = 1000
 _MAX_PAGES = 100
 
@@ -81,6 +93,14 @@ def _map(value):
     if not isinstance(value, str) or not value.strip():
         raise ObservationError("Every expected or observed breakout MAP must be a nonempty string.")
     return value.strip().lower()
+
+
+def _speed(value):
+    """Normalize explicitly unit-bearing controller speeds; never guess units."""
+    matched = _SPEED.fullmatch(value.strip()) if isinstance(value, str) else None
+    if matched is None or not math.isfinite(float(matched.group(1))) or float(matched.group(1)) <= 0:
+        raise ObservationError("Physical child speed must contain a positive explicit Mbps/Gbps/Tbps value.")
+    return float(matched.group(1)) * {"m": 0.001, "g": 1, "t": 1000}[matched.group(2).lower()]
 
 
 def _prepare_fixture(raw):
@@ -134,10 +154,32 @@ def _prepare_fixture(raw):
             policy_maps[parent] = _map(value)
         if policy_maps.get(control) != breakout_map:
             raise ObservationError("Every profile must verify the requested control_parent MAP.")
+        declared_speeds = profile.get("child_speeds", {})
+        if not isinstance(declared_speeds, dict):
+            raise ObservationError("profile.child_speeds must map parents to positive numeric Gbps.")
+        speeds = {}
+        for name, value in declared_speeds.items():
+            parent = _parent(name)
+            if (
+                parent not in children
+                or parent in speeds
+                or isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
+            ):
+                raise ObservationError("profile.child_speeds must uniquely map child families to positive numeric Gbps.")
+            speeds[parent] = value
+        for parent in children:
+            if parent not in speeds:
+                match = _PROFILE_MAP.fullmatch(policy_maps.get(parent, breakout_map))
+                if match is not None:
+                    speeds[parent] = float(match.group(1))
         prepared[label] = {
             "children": children,
             "native": retained,
             "policy_maps": policy_maps,
+            "child_speeds": speeds,
         }
     custom_filter = raw.get("interface_filter")
     if custom_filter is not None and (not isinstance(custom_filter, str) or not custom_filter.strip()):
@@ -151,10 +193,13 @@ def _prepare_fixture(raw):
     }
 
 
-def _families(rows, switch_id, parents):
+def _families(rows, switch_id, parents, include_speeds=False):
     """Independent exact-match physical topology projection, without production imports."""
     wanted = {name.casefold(): name for name in parents}
     state = {name: {"native": False, "children": []} for name in sorted(parents)}
+    if include_speeds:
+        for family in state.values():
+            family["child_speeds"] = {}
     seen = set()
     for row in rows:
         name = row.get("interfaceName")
@@ -181,12 +226,35 @@ def _families(rows, switch_id, parents):
         if lane is None:
             state[canonical]["native"] = True
         else:
-            state[canonical]["children"].append(canonical + "/" + str(lane))
+            child = canonical + "/" + str(lane)
+            state[canonical]["children"].append(child)
+            if include_speeds:
+                state[canonical]["child_speeds"][child] = _speed(row.get("speed"))
     for parent, family in state.items():
         family["children"].sort(key=lambda name: int(name.rsplit("/", 1)[1]))
         if family["native"] and family["children"]:
             raise ObservationError("Ambiguous native parent and physical children for " + parent + ".")
     return state
+
+
+def _whole_parents(rows, switch_id):
+    """Classify every physical Ethernet family before projecting reserved scope."""
+    parents = set()
+    for row in rows:
+        name = row.get("interfaceName")
+        if not isinstance(name, str):
+            raise ObservationError("Interface rows must contain a string interfaceName.")
+        match = _MEMBER.fullmatch(name)
+        if match is None:
+            continue
+        if row.get("switchId") != switch_id:
+            raise ObservationError("Interface observation returned an unexpected switch identity for " + name + ".")
+        if row.get("physicalInterface") is False or row.get("fex") is True:
+            continue
+        if row.get("physicalInterface") is not True or row.get("fex") is not False:
+            raise ObservationError("Incomplete physicalInterface/fex evidence for " + name + ".")
+        parents.add("Ethernet%s/%s" % match.groups()[:2])
+    return parents
 
 
 def _policy_maps(rows, switch_id, parents):
@@ -220,7 +288,7 @@ def _policy_maps(rows, switch_id, parents):
     return dict(sorted(maps.items()))
 
 
-def _compare(snapshot, fixture, profile, baseline=None, unchanged=False):
+def _compare(snapshot, fixture, profile, baseline=None, unchanged=False, include_speeds=False, topology_only=False):
     differences = []
     if profile == "native":
         expected = {"children": {}, "native": fixture["native"], "policy_maps": {}}
@@ -232,6 +300,9 @@ def _compare(snapshot, fixture, profile, baseline=None, unchanged=False):
             "native": parent in expected["native"],
             "children": expected["children"].get(parent, []),
         }
+        if include_speeds:
+            children = expected["children"].get(parent, [])
+            want["child_speeds"] = {child: expected["child_speeds"][parent] for child in children}
         if family != want:
             differences.append(
                 {
@@ -242,7 +313,7 @@ def _compare(snapshot, fixture, profile, baseline=None, unchanged=False):
                 }
             )
     actual_maps = {parent: value for parent, value in snapshot["policy_maps"].items() if parent in fixture["native"]}
-    if actual_maps != expected["policy_maps"]:
+    if not topology_only and actual_maps != expected["policy_maps"]:
         differences.append(
             {
                 "check": "policy_maps",
@@ -251,7 +322,12 @@ def _compare(snapshot, fixture, profile, baseline=None, unchanged=False):
             }
         )
     if baseline is not None:
-        if unchanged and baseline != snapshot:
+        prior = copy.deepcopy(baseline)
+        current = copy.deepcopy(snapshot)
+        if topology_only:
+            for state in (prior, current):
+                state["policy_maps"] = {parent: value for parent, value in state["policy_maps"].items() if parent not in fixture["native"]}
+        if unchanged and prior != current:
             differences.append({"check": "unchanged", "expected": baseline, "actual": snapshot})
         for parent in fixture["guards"]:
             if baseline["families"][parent] != snapshot["families"][parent]:
@@ -272,10 +348,13 @@ def _compare(snapshot, fixture, profile, baseline=None, unchanged=False):
                         "actual": snapshot["policy_maps"].get(parent),
                     }
                 )
+        for field in ("outside_families", "outside_policy_maps"):
+            if field in baseline and baseline[field] != snapshot.get(field):
+                differences.append({"check": field, "expected": baseline[field], "actual": snapshot.get(field)})
     return differences
 
 
-def _baseline(raw, switch_id, parents):
+def _baseline(raw, switch_id, parents, include_speeds=False, whole_switch=False, owned_interfaces=None):
     if raw is None:
         return None
     if (
@@ -287,7 +366,22 @@ def _baseline(raw, switch_id, parents):
         raise ObservationError("baseline must be a snapshot for the same switch and complete footprint.")
     if set(raw["families"]) != set(parents) or not set(raw["policy_maps"]) <= set(parents):
         raise ObservationError("baseline families/policies must exactly cover the same fixture scope.")
-    for parent, family in raw["families"].items():
+    if whole_switch and (not isinstance(raw.get("outside_families"), dict) or not isinstance(raw.get("outside_policy_maps"), dict)):
+        raise ObservationError("whole_switch baseline must include outside_families and outside_policy_maps.")
+    if whole_switch and raw.get("owned_interfaces", []) != (owned_interfaces or []):
+        raise ObservationError("baseline owned_interfaces must match the current independent observer scope.")
+    outside = raw.get("outside_families", {})
+    outside_maps = raw.get("outside_policy_maps", {})
+    if (
+        not isinstance(outside, dict)
+        or not isinstance(outside_maps, dict)
+        or (set(outside) | set(outside_maps)) & (set(parents) | set(owned_interfaces or []))
+    ):
+        raise ObservationError("baseline outside scope must be a disjoint family/policy mapping.")
+    for name in set(outside) | set(outside_maps):
+        if _parent(name) != name:
+            raise ObservationError("baseline outside parents must be canonical native Ethernet names.")
+    for parent, family in {**raw["families"], **outside}.items():
         if not isinstance(family, dict) or type(family.get("native")) is not bool or not isinstance(family.get("children"), list):
             raise ObservationError("baseline family state is malformed for " + parent + ".")
         child_pattern = re.compile(re.escape(parent) + r"/[1-9]\d*$")
@@ -296,7 +390,17 @@ def _baseline(raw, switch_id, parents):
             raise ObservationError("baseline children must be unique exact members of " + parent + ".")
         if family["native"] and children:
             raise ObservationError("baseline has ambiguous parent and children for " + parent + ".")
-    for value in raw["policy_maps"].values():
+        if parent in outside and not children:
+            raise ObservationError("baseline outside_families must contain only breakout families.")
+        if include_speeds or "child_speeds" in family:
+            speeds = family.get("child_speeds")
+            if (
+                not isinstance(speeds, dict)
+                or set(speeds) != set(children)
+                or any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0 for value in speeds.values())
+            ):
+                raise ObservationError("baseline child_speeds must cover exact children with positive numeric Gbps.")
+    for value in list(raw["policy_maps"].values()) + list(outside_maps.values()):
         if _map(value) != value:
             raise ObservationError("baseline MAP values must be normalized snapshot values.")
     return copy.deepcopy(raw)
@@ -309,6 +413,7 @@ class ActionModule(ActionBase):
         offset = 0
         collected = []
         fingerprints = set()
+        declared_total = None
         for _ in range(_MAX_PAGES):
             url = path + "?" + urlencode({**query, "max": _PAGE_SIZE, "offset": offset})
             call = {"method": "GET", "path": url, "collection": collection}
@@ -344,17 +449,23 @@ class ActionModule(ActionBase):
             rows = [] if confirmed_empty else data.get(collection)
             if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
                 raise ObservationError("Observation must contain a " + collection + " array of objects.")
+            if "total" in counts:
+                if declared_total is not None and declared_total != counts["total"]:
+                    raise ObservationError("Observation pagination total changed between pages.")
+                declared_total = counts["total"]
             fingerprint = json.dumps(rows, sort_keys=True, separators=(",", ":"))
             if rows and fingerprint in fingerprints:
                 raise ObservationError("Observation repeated a page; pagination is incomplete.")
             fingerprints.add(fingerprint)
             collected.extend(rows)
-            if "total" in counts and offset + len(rows) > counts["total"]:
+            if declared_total is not None and offset + len(rows) > declared_total:
                 raise ObservationError("Observation contains more rows than its declared total.")
-            if "remaining" in counts and "total" in counts and offset + len(rows) + counts["remaining"] != counts["total"]:
+            if "remaining" in counts and declared_total is not None and offset + len(rows) + counts["remaining"] != declared_total:
                 raise ObservationError("Observation pagination remaining and total disagree.")
             more = (
-                counts["remaining"] > 0 if "remaining" in counts else (offset + len(rows) < counts["total"] if "total" in counts else len(rows) >= _PAGE_SIZE)
+                counts["remaining"] > 0
+                if "remaining" in counts
+                else (offset + len(rows) < declared_total if declared_total is not None else len(rows) >= _PAGE_SIZE)
             )
             if not more:
                 return collected
@@ -363,12 +474,14 @@ class ActionModule(ActionBase):
             offset += len(rows)
         raise ObservationError("Observation exceeded the pagination safety limit.")
 
-    def _observe(self, fabric, switch_id, fixture, task_vars, calls):
+    def _observe(self, fabric, switch_id, fixture, task_vars, calls, whole_switch=False, include_speeds=False, owned_interfaces=None):
         parents = sorted(fixture["native"] + fixture["guards"])
         base = "/api/v1/manage/fabrics/" + fabric + "/"
         # Wildcard summary filters are verified; summary OR filters are not.
         # Independent disjoint slot/leading-port-digit buckets stay narrow.
-        if fixture["interface_filter"]:
+        if whole_switch:
+            interface_filters = ["interfaceType:ethernet"]
+        elif fixture["interface_filter"]:
             interface_filters = [fixture["interface_filter"]]
         else:
             buckets = defaultdict(list)
@@ -391,14 +504,30 @@ class ActionModule(ActionBase):
                     calls,
                 )
             )
-        families = _families(interfaces, switch_id, parents)
-        policy_filter = " OR ".join("switchId:" + switch_id + " AND templateName:breakout_interface AND entityName:" + parent for parent in parents)
+        observed_parents = sorted(set(parents) | _whole_parents(interfaces, switch_id)) if whole_switch else parents
+        all_families = _families(interfaces, switch_id, observed_parents, include_speeds)
+        families = {parent: all_families[parent] for parent in parents}
+        policy_filter = "switchId:" + switch_id + " AND templateName:breakout_interface"
+        if not whole_switch:
+            policy_filter = " OR ".join(policy_filter + " AND entityName:" + parent for parent in parents)
         policies = self._pages(base + "policies", {"filter": policy_filter}, "policies", task_vars, calls)
-        return {
+        policy_parents = set(parents)
+        if whole_switch:
+            policy_parents.update(
+                _parent(row["entityName"]) for row in policies if isinstance(row.get("entityName"), str) and _PARENT.fullmatch(row["entityName"])
+            )
+        maps = _policy_maps(policies, switch_id, policy_parents)
+        snapshot = {
             "switch_id": switch_id,
             "families": families,
-            "policy_maps": _policy_maps(policies, switch_id, parents),
+            "policy_maps": {parent: value for parent, value in maps.items() if parent in parents},
         }
+        if whole_switch:
+            excluded = set(parents) | set(owned_interfaces or [])
+            snapshot["owned_interfaces"] = owned_interfaces or []
+            snapshot["outside_families"] = {parent: value for parent, value in all_families.items() if parent not in excluded and value["children"]}
+            snapshot["outside_policy_maps"] = {parent: value for parent, value in maps.items() if parent not in excluded}
+        return snapshot
 
     def run(self, tmp=None, task_vars=None):
         result = super().run(tmp, task_vars)
@@ -417,6 +546,10 @@ class ActionModule(ActionBase):
                 "validate_only",
                 "retries",
                 "interval",
+                "whole_switch",
+                "include_speeds",
+                "topology_only",
+                "owned_interfaces",
             }
             if set(args) - allowed:
                 raise ObservationError("Unknown validator arguments: " + ", ".join(sorted(set(args) - allowed)) + ".")
@@ -439,13 +572,25 @@ class ActionModule(ActionBase):
                 *fixture["profiles"],
             }:
                 raise ObservationError("expected_profile must be native or a configured profile label.")
-            for flag in ("unchanged", "observe_only", "validate_only"):
+            for flag in ("unchanged", "observe_only", "validate_only", "whole_switch", "include_speeds", "topology_only"):
                 if type(args.get(flag, False)) is not bool:
                     raise ObservationError(flag + " must be a boolean.")
             observe_only = args.get("observe_only", False)
             validate_only = args.get("validate_only", False)
             unchanged = args.get("unchanged", False)
-            baseline = _baseline(args.get("baseline"), switch_id, fixture["native"] + fixture["guards"])
+            whole_switch = args.get("whole_switch", False)
+            include_speeds = args.get("include_speeds", False)
+            topology_only = args.get("topology_only", False)
+            owned_interfaces = _parents(args.get("owned_interfaces", []), "owned_interfaces", allow_empty=True)
+            if owned_interfaces and not whole_switch:
+                raise ObservationError("owned_interfaces requires whole_switch so other families remain observable.")
+            if set(owned_interfaces) & set(fixture["guards"]):
+                raise ObservationError("owned_interfaces cannot overlap protected guard_interfaces.")
+            if include_speeds:
+                for declared in fixture["profiles"].values():
+                    if set(declared["child_speeds"]) != set(declared["children"]):
+                        raise ObservationError("include_speeds requires a recognizable profile map or explicit child_speeds for every child family.")
+            baseline = _baseline(args.get("baseline"), switch_id, fixture["native"] + fixture["guards"], include_speeds, whole_switch, owned_interfaces)
             if unchanged and baseline is None:
                 raise ObservationError("unchanged validation requires a baseline snapshot.")
             if fixture["guards"] and baseline is None and not observe_only and not validate_only:
@@ -472,13 +617,17 @@ class ActionModule(ActionBase):
             if self._task.check_mode:
                 raise ObservationError("Set check_mode: false on this GET-only validator task; nd_rest skips GETs in check mode.")
             for attempt in range(retries):
-                snapshot = self._observe(fabric, switch_id, fixture, task_vars, result["observation_calls"])
+                snapshot = self._observe(fabric, switch_id, fixture, task_vars, result["observation_calls"], whole_switch, include_speeds, owned_interfaces)
                 result["snapshot"] = snapshot
                 result["attempts"] = attempt + 1
-                differences = [] if observe_only else _compare(snapshot, fixture, profile, baseline, unchanged)
+                differences = [] if observe_only else _compare(snapshot, fixture, profile, baseline, unchanged, include_speeds, topology_only)
                 result["differences"] = differences
                 if not differences:
-                    result["checks"] = ["strict_observation"] if observe_only else ["topology", "policy_maps"]
+                    result["checks"] = ["strict_observation"] if observe_only else ["topology"] + ([] if topology_only else ["policy_maps"])
+                    if include_speeds and not observe_only:
+                        result["checks"].append("child_speeds")
+                    if whole_switch and baseline is not None and not observe_only:
+                        result["checks"].append("outside_scope")
                     if not observe_only and unchanged:
                         result["checks"].append("unchanged")
                     if not observe_only and fixture["guards"]:
