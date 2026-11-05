@@ -428,6 +428,9 @@ class NetworkBaseModel(NetworkCommonModel):
                 return model_cls.from_config(ansible_config, **kwargs)
         return super().from_config(ansible_config, **kwargs)
 
+    # TODO(4.3.1) TBD
+    # Observed default-echo compatibility for normal L3 VXLAN iBGP Networks;
+    # the supporting note must describe this L3 scope rather than L2 behavior.
     def _apply_reverse_diff_scope(self, data: dict[str, Any]) -> None:
         """Ignore only observed deterministic normal L3 VXLAN iBGP defaults.
 

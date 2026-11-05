@@ -24,10 +24,17 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import EthernetTrunkHostPolicyModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 
+# TODO(4.3.1) TBD
+# Retain enabled negotiation when ND's reset preview would generate invalid
+# "no negotiate auto" cleanup; the orchestrator requires fresh scoped proof.
 RETAIN_AUTO_NEGOTIATION_CONFIG = "negotiate auto"
+# TODO(4.3.1) TBD
+# Known routed sibling fields can remain in the trunk policy after normalize.
+# Their presence selects a guarded corrective replacement.
 ROUTED_SIBLING_RESET_FIELDS = frozenset({"ip", "prefix", "routingTag", "ipRedirects", "pimSparse", "vrfInterface"})
 
 
+# TODO(4.3.1) TBD
 def has_typed_routed_sibling_residue(config_data: dict) -> bool:
     """Select a corrective PUT for known routed echoes on a current NX trunk.
 
@@ -90,6 +97,7 @@ def has_typed_routed_sibling_residue(config_data: dict) -> bool:
     )
 
 
+# TODO(4.3.1) TBD
 def has_retained_reset_auto_negotiation(config_data: dict) -> bool:
     """Recognize only the redundant positive negotiation command at NX-OS reset defaults.
 
@@ -126,6 +134,7 @@ class InterfaceDefaultPolicyModel(NDNestedModel):
     "no configuration". Lab-verified on ND 4.2.1 (S1_LE1 Ethernet1/41) for the following classes of fields:
 
     - String name pointers (`qos_policy`, `queuing_policy`, `netflow_monitor`, `netflow_sampler`): `""` clears.
+    # TODO(4.3.1) TBD
     Storm-control numeric thresholds are omitted from reset defaults. ND 4.3.1
     generates real zero-level commands even when `stormControl` is false, so
     zero is not an unconfigured sentinel. An existing threshold selects the
@@ -243,7 +252,8 @@ class InterfaceDefaultConfig(NDNestedModel):
     # use this set to detect when `state: deleted` must fall back to the per-interface PUT-as-replace path via
     # `to_reset_payload()`. Lab-verified on ND 4.2.1 (S1_LE1 Ethernet1/41, 2026-05-29).
     UNRESETTABLE_FIELDS: ClassVar[set[str]] = {"bandwidth", "debounceLinkupTimer", "inheritBandwidth"}
-    # Unlike a nullable absent value, an explicit zero emits real storm CLI.
+    # TODO(4.3.1) TBD
+    # ND 4.3.1 emits real storm CLI for an explicit zero threshold.
     # All existing non-null rates therefore need the replacement reset path.
     STORM_THRESHOLD_FIELDS: ClassVar[frozenset[str]] = frozenset(
         "stormControl" + traffic + suffix for traffic in ("Broadcast", "Multicast", "Unicast") for suffix in ("Level", "LevelPps")

@@ -135,6 +135,7 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
             fields.append("configData.networkOS.networkOSType")
         known_policy = {field.alias or name for name, field in EthernetTrunkHostPolicyModel.model_fields.items()}
         known_policy.update(_default_interface_policy())
+        # TODO(4.3.1) interface-get-undocumented-ptp-field
         known_policy.add("ptp")  # Qualified false echo on normalized ND 4.3.1 NX-OS hosts.
         if iface.get("interfaceType") == "ethernet" and has_typed_routed_sibling_residue(config):
             known_policy.update(ROUTED_SIBLING_RESET_FIELDS)
@@ -211,7 +212,10 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         # Class C fields (bandwidth, debounceLinkupTimer, inheritBandwidth) survive interfaceActions/normalize because
         # ND's validator rejects 0/null for them, so a normalized interface still carries any prior value. We must treat
         # such an interface as configured (not an unconfigured default) so `state: deleted` keeps it in scope and routes
-        # it to the per-interface PUT-as-replace reset path. See InterfaceDefaultConfig.UNRESETTABLE_FIELDS for the set.
+        # it to the per-interface PUT-as-replace reset path. See InterfaceDefaultConfig.UNRESETTABLE_FIELDS for this set.
+        # TODO(4.3.1) TBD
+        # STORM_THRESHOLD_FIELDS need the same replacement path: zero-level thresholds generate real storm CLI even
+        # with stormControl disabled. This is a separate observed behavior from the ND 4.2.1 Class C fields above.
         if any(policy.get(field) is not None for field in InterfaceDefaultConfig.UNRESETTABLE_FIELDS | InterfaceDefaultConfig.STORM_THRESHOLD_FIELDS):
             return False
         if policy.get("vlanMappingEntries"):

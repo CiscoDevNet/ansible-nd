@@ -2062,6 +2062,9 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             by_type[f"fabric_{kind}"] = scoped
         return by_type
 
+    # TODO(4.3.1) TBD
+    # Guard ND-generated "no negotiate auto" reset cleanup with fresh interface
+    # and fabric previews before retaining the positive negotiation command.
     def _retain_reset_auto_negotiation(self, interface_name: str, switch_id: str, current: dict | None, *, refresh: bool = False) -> bool:
         """Keep an explicit enabled negotiation command during an automatic-speed reset.
 
@@ -2673,6 +2676,9 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             self._verify_reset_auto_negotiation(group)
         return results
 
+    # TODO(4.3.1) TBD
+    # ND can retain routed sibling fields after normalize. This correction uses
+    # the qualified field set checked by has_typed_routed_sibling_residue.
     def _correct_normalized_routed_residue(self, pairs: Sequence[tuple[str, str]]) -> list[ResponseType]:
         """Finish accepted routed normalization with staging only.
 

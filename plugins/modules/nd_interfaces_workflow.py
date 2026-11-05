@@ -573,16 +573,14 @@ resources:
         status:
           description:
           - V(planned) in check mode.
-          - The actual execution outcome in normal mode. HTTP 207 outcomes require an identified exact V(success); any requested target
-            without that evidence is V(failed), not V(uncertain).
+          - The actual execution outcome in normal mode.
           - V(failed) alone does not establish an explicit controller rejection; inspect C(rejection) when available.
           type: str
         rejection:
           description:
-          - Request-bound explicit synchronous negative evidence for a logical loopback, SVI or subinterface create.
-          - Requires HTTP 207 with one uniquely bound result per requested identity and recognized terminal statuses.
-          - Bare result names bind only when the mutation request targets one switch; other result names must qualify their switch explicitly.
-          - Missing, duplicate, contradictory, malformed and unknown outcomes cannot produce this receipt.
+          - Details of an explicit controller rejection of a requested loopback, SVI or subinterface creation.
+          - Returned only when the response can be unambiguously associated with the requested interface creation.
+          - Missing, duplicate, contradictory, malformed or unknown results do not produce this field.
           - Includes version, source, action, switch_id, interface_name, http_status, response_status and request_sha256.
           - Does not prove present interface absence, authorize deleting another interface, or establish device convergence.
           returned: for an exact named controller rejection of a supported logical create
