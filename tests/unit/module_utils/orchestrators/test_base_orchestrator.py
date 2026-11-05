@@ -441,6 +441,33 @@ class TestRequestErrorHandlingWithResults:
         assert result == {}
         assert len(results._tasks) == 1
 
+    @pytest.mark.parametrize("not_found_ok", [False, True])
+    def test_get_204_fails_even_when_not_found_is_optional(self, not_found_ok):
+        """No-content GET never proves a complete inventory or empty list."""
+        response = _success_response()
+        response["RETURN_CODE"] = 204
+        rest_send = _make_rest_send([response])
+        orch = _make_orchestrator(rest_send)
+
+        with pytest.raises(RuntimeError, match="Request failed"):
+            orch._request("/api/v1/stub", HttpVerbEnum.GET, not_found_ok=not_found_ok)
+
+    def test_get_404_fails_when_not_explicitly_optional(self):
+        rest_send = _make_rest_send([_not_found_response()])
+        orch = _make_orchestrator(rest_send)
+
+        with pytest.raises(RuntimeError, match="Request failed"):
+            orch._request("/api/v1/stub", HttpVerbEnum.GET)
+
+    def test_non_get_204_remains_successful(self):
+        response = _success_response()
+        response["RETURN_CODE"] = 204
+        response["METHOD"] = "POST"
+        rest_send = _make_rest_send([response])
+        orch = _make_orchestrator(rest_send)
+
+        assert orch._request("/api/v1/stub", HttpVerbEnum.POST, data={}) == {}
+
 
 # =============================================================================
 # Test: CRUD methods pass correct operation_type

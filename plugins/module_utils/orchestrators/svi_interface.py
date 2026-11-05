@@ -18,7 +18,7 @@ Unlike physical ethernet interfaces, SVIs support both `interfaceActions/remove`
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
@@ -74,6 +74,8 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
     interface_type: ClassVar[str] = "svi"
     interface_mode: ClassVar[str] = "managed"
     supports_bulk_create: ClassVar[bool] = True
+    supports_bulk_full_modify: ClassVar[bool] = True
+    supports_bulk_modify_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
     xe_removal_requires_discovery: ClassVar[bool] = True
 
@@ -84,6 +86,24 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
     query_all_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesListGet
     create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesRemove
+
+    def _canonicalize_bulk_wire_echo(self, config_data: dict[str, Any]) -> bool:
+        """Normalize the ND 4.3.1 NX-OS SVI HSRP-version GET echo for writes.
+
+        # TODO(4.3.1) svi-hsrpversion-string-echo-431: remove this when ND's
+        # GET and modify schemas agree. Its PUT schema already needs integer 1/2.
+        """
+        network_os = config_data.get("networkOS")
+        policy = network_os.get("policy") if isinstance(network_os, dict) else None
+        if not isinstance(policy, dict) or policy.get("policyType") != "svi":
+            return True
+        version = policy.get("hsrpVersion")
+        if version is None:
+            return True
+        if isinstance(version, str) and version in {"1", "2"}:
+            policy["hsrpVersion"] = int(version)
+            return True
+        return isinstance(version, int) and not isinstance(version, bool) and version in {1, 2}
 
     def create(self, model_instance: SviInterfaceModel, **kwargs) -> ResponseType:
         """

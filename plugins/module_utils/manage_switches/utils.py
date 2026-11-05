@@ -342,15 +342,22 @@ def mask_password(payload: dict[str, Any]) -> dict[str, Any]:
 
     ## Returns
 
-    - Copy with every ``password`` value replaced by ``"********"``.
+    - Copy with password values replaced by ``"********"``.
     """
     masked = deepcopy(payload)
-    if "password" in masked:
-        masked["password"] = "********"
-    if isinstance(masked.get("switches"), list):
-        for switch in masked["switches"]:
-            if isinstance(switch, dict) and "password" in switch:
-                switch["password"] = "********"
+
+    def redact(value: Any) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if isinstance(key, str) and key.lower().endswith("password"):
+                    value[key] = "********"
+                else:
+                    redact(item)
+        elif isinstance(value, list):
+            for item in value:
+                redact(item)
+
+    redact(masked)
     return masked
 
 

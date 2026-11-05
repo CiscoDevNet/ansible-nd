@@ -16,6 +16,7 @@ mutation operations are gated by check mode:
   item re-submitted without a policy is not a create and is not validated.
 - `preflight` (capability, PR #275 / issue #273) is then called over the proposed set, in check mode as well as
   normal mode, even though the underlying create/update calls are skipped in check mode.
+- `prepare_mutations` runs only after both preflight hooks succeed and before normal create/update reconciliation.
 - For `deleted` state neither `preflight` nor `preflight_create` is called (removing configuration does not depend on
   capability, and a policy-less item is correct for delete -- the documented out-of-scope decision); instead
   `preflight_delete` (PR #550 review) runs over the existing items about to be deleted, before the check-mode gate, so
@@ -34,15 +35,31 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
-from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
+    NDStateMachineError,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
+    NDStateMachine,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import (
+    LoopbackInterfaceOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    ResponseType,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
+    ResponseHandler,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
-from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
-from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
-from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
+from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
+    does_not_raise,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import (
+    MockAnsibleModule,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import (
+    ResponseGenerator,
+)
 from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
 
 
@@ -72,6 +89,9 @@ class _SpyLoopbackOrchestrator(LoopbackInterfaceOrchestrator):
         # Record-only, mirroring the `preflight` spy: the guard's own logic is covered in
         # test_base_interface.py; here we assert only that manage_state reaches it with the create subset.
         self._calls.append(("preflight_create", list(model_instances)))
+
+    def prepare_mutations(self, existing, proposed, check_mode=False) -> None:
+        self._calls.append(("prepare_mutations", check_mode))
 
     def preflight_delete(self, model_instances) -> None:
         self._calls.append(("preflight_delete", list(model_instances)))
@@ -170,11 +190,12 @@ def test_nd_state_machine_00100() -> None:
 
     calls = instance.model_orchestrator._calls
     names = [name for name, _ in calls]
-    assert names == ["preflight_create", "preflight"]
+    assert names == ["preflight_create", "preflight", "prepare_mutations"]
     # preflight_create receives the single new item (create subset)
     assert [m.get_identifier_value() for m in calls[0][1]] == [("192.168.12.151", "loopback10")]
     assert len(calls[1][1]) == 1
     assert calls[1][1][0].get_identifier_value() == ("192.168.12.151", "loopback10")
+    assert calls[2] == ("prepare_mutations", True)
 
 
 def test_nd_state_machine_00110() -> None:
@@ -188,8 +209,9 @@ def test_nd_state_machine_00110() -> None:
     ## Test
 
     - `state: merged`, `check_mode: False`, one proposed interface
-    - `preflight_create`, then `preflight`, then `create_bulk` are recorded (loopback supports bulk create)
-    - Both preflights precede the mutation
+    - `preflight_create`, then `preflight`, then `prepare_mutations`, then `create_bulk` are recorded
+      (loopback supports bulk create)
+    - Both preflights and mutation preparation precede normal reconciliation
 
     ## Classes and Methods
 
@@ -204,7 +226,8 @@ def test_nd_state_machine_00110() -> None:
         instance.manage_state()
 
     names = [name for name, _ in instance.model_orchestrator._calls]
-    assert names == ["preflight_create", "preflight", "create_bulk"]
+    assert names == ["preflight_create", "preflight", "prepare_mutations", "create_bulk"]
+    assert instance.model_orchestrator._calls[2] == ("prepare_mutations", False)
 
 
 def test_nd_state_machine_00120() -> None:
@@ -213,7 +236,7 @@ def test_nd_state_machine_00120() -> None:
 
     Verify `manage_state` does NOT call `preflight` or `preflight_create` for `deleted` state, documenting the out-of-scope
     decision: removing configuration does not depend on a switch's capability to host the interface type. The delete-specific
-    `preflight_delete` hook IS called (see 00170).
+    `preflight_delete` hook IS called (see 00240).
 
     ## Test
 
@@ -234,6 +257,7 @@ def test_nd_state_machine_00120() -> None:
     names = [name for name, _ in instance.model_orchestrator._calls]
     assert "preflight" not in names
     assert "preflight_create" not in names
+    assert "prepare_mutations" not in names
 
 
 def test_nd_state_machine_00125() -> None:
@@ -297,6 +321,7 @@ def test_nd_state_machine_00130() -> None:
     assert names.count("preflight") == 1
     assert names[0] == "preflight_create"
     assert names[1] == "preflight"
+    assert names[2] == "prepare_mutations"
     assert len(calls[1][1]) == 1
 
 
@@ -337,7 +362,13 @@ class _ExistingLoopbackSpy(_SpyLoopbackOrchestrator):
     """Spy whose inventory already contains loopback10, so a re-submitted policy-less item is not a create."""
 
     def query_all(self, model_instance=None, **kwargs) -> ResponseType:
-        return [{"switchIp": "192.168.12.151", "interfaceName": "loopback10", "interfaceType": "loopback"}]
+        return [
+            {
+                "switchIp": "192.168.12.151",
+                "interfaceName": "loopback10",
+                "interfaceType": "loopback",
+            }
+        ]
 
 
 def test_nd_state_machine_00140() -> None:
@@ -415,13 +446,14 @@ def test_nd_state_machine_00150() -> None:
     module = _build_module(state="merged", check_mode=False, config=_CONFIG)
     instance = NDStateMachine(module=module, model_orchestrator=spy)
 
-    with pytest.raises(NDStateMachineError, match=r"without a policy") as exc_info:
+    with pytest.raises(NDStateMachineError, match=r"^Preflight failed: .*without a policy") as exc_info:
         instance.manage_state()
 
     assert isinstance(exc_info.value.__cause__, RuntimeError)
 
     names = [name for name, _ in instance.model_orchestrator._calls]
     assert "preflight_create" in names
+    assert "prepare_mutations" not in names
     assert "create" not in names
     assert "create_bulk" not in names
 
@@ -506,6 +538,7 @@ def test_policy_guard_precedes_capability_preflight() -> None:
 
     names = [name for name, _ in instance.model_orchestrator._calls]
     assert names[0] == "preflight_create"
+    assert "prepare_mutations" not in names
 
 
 class _CapabilityOnlyFailingSpy(_SpyLoopbackOrchestrator):
@@ -546,12 +579,13 @@ def test_capability_preflight_runtime_error_is_normalized() -> None:
     module = _build_module(state="merged", check_mode=False, config=_CONFIG)
     instance = NDStateMachine(module=module, model_orchestrator=spy)
 
-    with pytest.raises(NDStateMachineError, match=r"capability preflight failed") as exc_info:
+    with pytest.raises(NDStateMachineError, match=r"^Preflight failed: capability preflight failed") as exc_info:
         instance.manage_state()
 
     assert isinstance(exc_info.value.__cause__, RuntimeError)
 
     names = [name for name, _ in instance.model_orchestrator._calls]
+    assert "prepare_mutations" not in names
     assert "create" not in names
     assert "create_bulk" not in names
 
@@ -572,7 +606,11 @@ class _ExistingConfiguredLoopbackSpy(_SpyLoopbackOrchestrator):
                 "configData": {
                     "networkOS": {
                         "networkOSType": "nx-os",
-                        "policy": {"policyType": "loopback", "adminState": True, "description": "stale description"},
+                        "policy": {
+                            "policyType": "loopback",
+                            "adminState": True,
+                            "description": "stale description",
+                        },
                     }
                 },
             }
@@ -583,7 +621,12 @@ _REMOVAL_CONFIG = [
     {
         "switch_ip": "192.168.12.151",
         "interface_name": "loopback10",
-        "config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"policy_type": "loopback", "admin_state": True}}},
+        "config_data": {
+            "network_os": {
+                "network_os_type": "nx-os",
+                "policy": {"policy_type": "loopback", "admin_state": True},
+            }
+        },
     }
 ]
 
@@ -628,6 +671,152 @@ def test_replaced_update_forwards_previous_model() -> None:
     assert previous_model.config_data.network_os.policy.description == "stale description"
 
 
+class _BulkConfiguredLoopbackSpy(_ExistingConfiguredLoopbackSpy):
+    """Exercise the standalone state-machine bulk seam with two existing rows."""
+
+    fail_name: str | None = None
+
+    def query_all(self, model_instance=None, **kwargs) -> ResponseType:
+        first = super().query_all(model_instance, **kwargs)[0]
+        second = {**first, "interfaceName": "loopback11"}
+        return [first, second]
+
+    def prepare_bulk_description_update(self, model_instance, previous_model=None):
+        assert previous_model is not None
+        return {
+            "interfaceName": model_instance.interface_name,
+            "switchId": "S1",
+            "configData": {"networkOS": {"policy": {"policyType": "loopback"}}},
+        }
+
+    def prepare_bulk_modify_context(self, model_instance, previous_model=None):
+        self._calls.append(("bulk_context", model_instance.interface_name))
+
+    def modify_bulk_prepared(self, payloads, *, payload_orchestrators=None, payload_models=None, payload_modes=None):
+        names = [payload["interfaceName"] for payload in payloads]
+        self._calls.append(("bulk_modify", names))
+        assert payload_orchestrators == [self] * len(payloads)
+        assert [model.interface_name for model in payload_models] == names
+        assert payload_modes == ["description"] * len(payloads)
+        rows = [
+            {
+                "name": f"S1~{name}",
+                "status": "failed" if name == self.fail_name else "success",
+            }
+            for name in names
+        ]
+        response = {"RETURN_CODE": 207, "DATA": {"results": rows}}
+        self.rest_send.response_current = response
+        self.rest_send.add_response(response)
+        if self.fail_name:
+            raise RuntimeError("one update failed")
+        return response["DATA"]
+
+
+def _bulk_replacement_config():
+    return [
+        {
+            "switch_ip": "192.168.12.151",
+            "interface_name": name,
+            "config_data": {
+                "network_os": {
+                    "network_os_type": "nx-os",
+                    "policy": {
+                        "policy_type": "loopback",
+                        "admin_state": True,
+                        "description": "updated description",
+                    },
+                }
+            },
+        }
+        for name in ("loopback10", "loopback11")
+    ]
+
+
+def test_standalone_description_updates_use_one_bulk_request() -> None:
+    spy = _BulkConfiguredLoopbackSpy(rest_send=_build_rest_send())
+    machine = NDStateMachine(
+        module=_build_module("replaced", False, _bulk_replacement_config()),
+        model_orchestrator=spy,
+    )
+
+    machine.manage_state()
+
+    assert [call for call in spy._calls if call[0] == "bulk_modify"] == [("bulk_modify", ["loopback10", "loopback11"])]
+    assert not any(call[0] == "update" for call in spy._calls)
+    assert len(machine.sent) == 2
+
+
+def test_standalone_qualified_full_policy_updates_use_one_bulk_request() -> None:
+    class FullPolicySpy(_BulkConfiguredLoopbackSpy):
+        def prepare_bulk_description_update(self, model_instance, previous_model=None):
+            return None
+
+        def prepare_bulk_full_update(self, model_instance, previous_model=None):
+            assert previous_model is not None
+            return {
+                "interfaceName": model_instance.interface_name,
+                "switchId": "S1",
+                "configData": {"networkOS": {"policy": {"policyType": "loopback"}}},
+            }
+
+        def modify_bulk_prepared(self, payloads, *, payload_orchestrators=None, payload_models=None, payload_modes=None):
+            assert payload_orchestrators == [self] * len(payloads)
+            assert [model.interface_name for model in payload_models] == ["loopback10", "loopback11"]
+            assert payload_modes == ["full", "full"]
+            self._calls.append(("bulk_modify", [payload["interfaceName"] for payload in payloads]))
+            return {"results": [{"name": f"S1~{payload['interfaceName']}", "status": "success"} for payload in payloads]}
+
+    spy = FullPolicySpy(rest_send=_build_rest_send())
+    machine = NDStateMachine(
+        module=_build_module("replaced", False, _bulk_replacement_config()),
+        model_orchestrator=spy,
+    )
+
+    machine.manage_state()
+
+    assert [call for call in spy._calls if call[0] == "bulk_modify"] == [("bulk_modify", ["loopback10", "loopback11"])]
+    assert not any(call[0] == "update" for call in spy._calls)
+
+
+def test_standalone_partial_bulk_reconciles_only_accepted_update() -> None:
+    spy = _BulkConfiguredLoopbackSpy(rest_send=_build_rest_send())
+    spy.fail_name = "loopback11"
+    machine = NDStateMachine(
+        module=_build_module("replaced", False, _bulk_replacement_config()),
+        model_orchestrator=spy,
+    )
+
+    with pytest.raises(NDStateMachineError, match="one update failed"):
+        machine.manage_state()
+
+    assert {item.interface_name for item in machine.sent} == {"loopback10"}
+    assert machine.existing.get(("192.168.12.151", "loopback10")).config_data.network_os.policy.description == "updated description"
+    assert machine.existing.get(("192.168.12.151", "loopback11")).config_data.network_os.policy.description == "stale description"
+
+
+def test_standalone_post_write_failure_retains_accepted_update_in_after() -> None:
+    """A later preview failure must not replace an accepted PUT with old state."""
+
+    class AcceptedThenPreviewFailed(_ExistingConfiguredLoopbackSpy):
+        def model_post_init(self, context) -> None:
+            super().model_post_init(context)
+            self._accepted_post_write_model = None
+
+        def update(self, model_instance, **_kwargs):
+            self._accepted_post_write_model = model_instance
+            raise RuntimeError("member preview failed after accepted PUT")
+
+    spy = AcceptedThenPreviewFailed(rest_send=_build_rest_send())
+    machine = NDStateMachine(module=_build_module("replaced", False, _bulk_replacement_config()[:1]), model_orchestrator=spy)
+
+    with pytest.raises(NDStateMachineError, match="member preview failed after accepted PUT"):
+        machine.manage_state()
+
+    assert {item.interface_name for item in machine.sent} == {"loopback10"}
+    assert machine.existing.get(("192.168.12.151", "loopback10")).config_data.network_os.policy.description == "updated description"
+
+
 def test_nd_state_machine_00200() -> None:
     """
     # Summary
@@ -654,7 +843,7 @@ def test_nd_state_machine_00200() -> None:
         instance.manage_state()
 
     names = [name for name, _ in instance.model_orchestrator._calls]
-    assert names == ["preflight_create", "preflight", "reconcile_no_diff"]
+    assert names == ["preflight_create", "preflight", "prepare_mutations", "reconcile_no_diff"]
 
 
 def test_nd_state_machine_00205() -> None:
@@ -668,7 +857,7 @@ def test_nd_state_machine_00205() -> None:
         instance.manage_state()
 
     names = [name for name, _ in instance.model_orchestrator._calls]
-    assert names == ["preflight_create", "preflight", "reconcile_no_diff"]
+    assert names == ["preflight_create", "preflight", "prepare_mutations", "reconcile_no_diff"]
     assert instance.output.format()["changed"] is False
 
 
@@ -688,6 +877,7 @@ def test_nd_state_machine_00206(check_mode: bool) -> None:
     assert [name for name, _ in spy._calls] == [
         "preflight_create",
         "preflight",
+        "prepare_mutations",
         "reconcile_no_diff",
     ]
 
@@ -766,7 +956,58 @@ def test_nd_state_machine_00210() -> None:
     assert "delete_bulk" not in names
 
 
-def test_nd_state_machine_00170() -> None:
+class _RaisingPrepareMutationsSpy(_SpyLoopbackOrchestrator):
+    """Spy whose prerequisite mutation hook raises after both preflight hooks succeed."""
+
+    def prepare_mutations(self, existing, proposed, check_mode=False) -> None:
+        self._calls.append(("prepare_mutations", check_mode))
+        raise RuntimeError("source-group detach failed")
+
+
+def test_nd_state_machine_00220() -> None:
+    """Classify a failed prerequisite mutation separately from preflight validation."""
+    spy = _RaisingPrepareMutationsSpy(rest_send=_build_rest_send())
+    module = _build_module(state="merged", check_mode=False, config=_CONFIG)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with pytest.raises(NDStateMachineError, match=r"^Failed to prepare mutations: source-group detach failed$") as exc_info:
+        instance.manage_state()
+
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+    names = [name for name, _ in instance.model_orchestrator._calls]
+    assert names == ["preflight_create", "preflight", "prepare_mutations"]
+    assert "create" not in names
+    assert "create_bulk" not in names
+
+
+_NORMALIZED_PREPARE_ERROR = NDStateMachineError("already normalized")
+
+
+class _NormalizedPrepareMutationsErrorSpy(_SpyLoopbackOrchestrator):
+    """Spy whose prerequisite mutation hook raises an already-normalized state-machine error."""
+
+    def prepare_mutations(self, existing, proposed, check_mode=False) -> None:
+        self._calls.append(("prepare_mutations", check_mode))
+        raise _NORMALIZED_PREPARE_ERROR
+
+
+def test_nd_state_machine_00230() -> None:
+    """Do not relabel an NDStateMachineError raised by mutation preparation."""
+    spy = _NormalizedPrepareMutationsErrorSpy(rest_send=_build_rest_send())
+    module = _build_module(state="merged", check_mode=False, config=_CONFIG)
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+
+    with pytest.raises(NDStateMachineError, match=r"^already normalized$") as exc_info:
+        instance.manage_state()
+
+    assert exc_info.value is _NORMALIZED_PREPARE_ERROR
+    names = [name for name, _ in instance.model_orchestrator._calls]
+    assert names == ["preflight_create", "preflight", "prepare_mutations"]
+    assert "create" not in names
+    assert "create_bulk" not in names
+
+
+def test_nd_state_machine_00240() -> None:
     """
     # Summary
 
@@ -819,7 +1060,7 @@ def test_nd_state_machine_00175(check_mode: bool) -> None:
     ]
 
 
-def test_nd_state_machine_00180() -> None:
+def test_nd_state_machine_00250() -> None:
     """
     # Summary
 
@@ -854,7 +1095,7 @@ class _RaisingDeletePreflightSpy(_SpyLoopbackOrchestrator):
         raise RuntimeError("Interface Ethernet1/7 is a member of port-channel 10")
 
 
-def test_nd_state_machine_00190() -> None:
+def test_nd_state_machine_00260() -> None:
     """
     # Summary
 
@@ -875,7 +1116,10 @@ def test_nd_state_machine_00190() -> None:
     module = _build_module(state="deleted", check_mode=False, config=_CONFIG)
     instance = NDStateMachine(module=module, model_orchestrator=spy)
 
-    with pytest.raises(NDStateMachineError, match=r"Preflight failed: Interface Ethernet1/7 is a member of port-channel 10"):
+    with pytest.raises(
+        NDStateMachineError,
+        match=r"Preflight failed: Interface Ethernet1/7 is a member of port-channel 10",
+    ):
         instance.manage_state()
 
     names = [name for name, _ in spy._calls]

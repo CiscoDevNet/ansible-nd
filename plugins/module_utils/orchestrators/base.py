@@ -13,7 +13,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import MutationResponseType, ResponseType
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
@@ -51,6 +51,8 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     model_class: ClassVar[type[NDBaseModel]] = NDBaseModel
     supports_bulk_create: ClassVar[bool] = False
     supports_bulk_delete: ClassVar[bool] = False
+    # TODO: Remove this compatibility bridge when PR #525 unifies execution.
+    supports_mutation_outcomes: ClassVar[bool] = False
 
     # bulk_payload_key is the JSON wrapper key the bulk endpoint expects,
     # e.g. "links" for /api/v1/manage/links POST.
@@ -116,7 +118,12 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         ### Exception
 
         - If the request fails (non-success result from the controller).
-        - If `not_found_ok` is False and the controller returns a 404.
+        - For any GET that returns 204 (no content); an empty query-all list
+          must be a successful 200 response with an explicit empty result.
+        - For any GET that returns 404 unless `not_found_ok` is True; only
+          callers explicitly requesting optional-not-found semantics get `{}`.
+          This shared contract applies to all Gen3 orchestrators, not just
+          interface inventory reads. Non-GET 204 handling is unchanged.
         """
         self.rest_send.path = path
         self.rest_send.verb = verb
@@ -133,6 +140,9 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         # a GET 404 would fall through and return the raw 404 DATA body.
         if not_found_ok and self.rest_send.return_code == 404:
             return {}
+
+        if verb == HttpVerbEnum.GET and self.rest_send.return_code in (204, 404):
+            raise RuntimeError(f"Request failed {self.rest_send.error_summary}")
 
         if not self.rest_send.success:
             raise Exception(f"Request failed {self.rest_send.error_summary}")
@@ -178,7 +188,26 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         exactly as a normal run would (e.g. ethernet refuses to normalize a port-channel member, or links reject an
         ambiguous controller identity). This is distinct from the capability `preflight` hook because deletion does not
         require switch capability validation. Not invoked for the fabric-wide `overridden` delete set. Base implementation
-        is a no-op.
+        is a no-op. Outcome-aware execution also invokes it for planned overridden deletions.
+
+        ## Raises
+
+        None
+        """
+        return
+
+    def prepare_mutations(self, existing, proposed, check_mode: bool = False) -> None:
+        """
+        # Summary
+
+        Optional hook invoked after all preflight checks succeed and immediately
+        before create/update reconciliation begins.
+
+        Subclasses can use this for ordered prerequisite mutations that cannot
+        be represented as a single resource update. The base implementation is
+        a no-op. Implementations must update ``existing`` in check mode as if
+        the prerequisite mutation succeeded so the predicted ``after`` state
+        remains accurate.
 
         ## Raises
 
@@ -218,14 +247,14 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         return False
 
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
-    def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
+    def create(self, model_instance: ModelType, **kwargs) -> MutationResponseType:
         try:
             api_endpoint = self.create_endpoint()
             return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=model_instance.to_payload(), operation_type=OperationType.CREATE)
         except Exception as e:
             raise Exception(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def update(self, model_instance: ModelType, **kwargs) -> ResponseType:
+    def update(self, model_instance: ModelType, **kwargs) -> MutationResponseType:
         try:
             api_endpoint = self.update_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
@@ -233,7 +262,7 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         except Exception as e:
             raise Exception(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def delete(self, model_instance: ModelType, **kwargs) -> ResponseType:
+    def delete(self, model_instance: ModelType, **kwargs) -> MutationResponseType:
         try:
             api_endpoint = self.delete_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
@@ -288,9 +317,9 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         return self._request(endpoint.path, endpoint.verb, data={payload_key: items}, operation_type=operation_type) or {}
 
     @requires_bulk_support("supports_bulk_create")
-    def create_bulk(self, model_instances: list[ModelType], **kwargs) -> ResponseType:
+    def create_bulk(self, model_instances: list[ModelType], **kwargs) -> MutationResponseType:
         raise NotImplementedError
 
     @requires_bulk_support("supports_bulk_delete")
-    def delete_bulk(self, model_instances: list[ModelType], **kwargs) -> ResponseType:
+    def delete_bulk(self, model_instances: list[ModelType], **kwargs) -> MutationResponseType:
         raise NotImplementedError

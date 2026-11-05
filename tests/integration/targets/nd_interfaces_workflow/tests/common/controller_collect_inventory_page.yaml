@@ -1,0 +1,97 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Resolve the next independent raw inventory offset
+  ansible.builtin.set_fact:
+    nd_iw_raw_page_offset: "{{ nd_iw_raw_next_offsets[nd_iw_raw_switch_id] | default(0) | int }}"
+
+- name: Read one independent raw interface inventory page
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ nd_iw_current_fabric.fabric_name | urlencode
+      }}/switches/{{ nd_iw_raw_switch_id | urlencode }}/interfaces?max=500&offset={{ nd_iw_raw_page_offset }}
+    method: get
+  register: nd_iw_raw_page_response
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+- name: Verify the independent page response has a valid collection
+  ansible.builtin.assert:
+    that:
+      - nd_iw_raw_page_response.status | int == 200
+      - nd_iw_raw_page_response.current.interfaces is sequence
+      - nd_iw_raw_page_response.current.interfaces is not string
+    fail_msg: >-
+      Independent raw inventory page failed for switch {{ nd_iw_raw_switch_id }}
+      at offset {{ nd_iw_raw_page_offset }}.
+
+- name: Extract independent page rows and metadata
+  ansible.builtin.set_fact:
+    nd_iw_raw_page_rows: "{{ nd_iw_raw_page_response.current.interfaces }}"
+    nd_iw_raw_page_meta: >-
+      {{ nd_iw_raw_page_response.current.meta
+         | default(nd_iw_raw_page_response.current.metadata | default({})) }}
+
+- name: Compute independent page continuation evidence
+  ansible.builtin.set_fact:
+    nd_iw_raw_page_next_offset: "{{ (nd_iw_raw_page_offset | int) + (nd_iw_raw_page_rows | length) }}"
+    nd_iw_raw_page_total: >-
+      {{ nd_iw_raw_page_meta.counts.total
+         | default(nd_iw_raw_page_meta.total | default(-1)) | int }}
+    nd_iw_raw_page_remaining: >-
+      {{ nd_iw_raw_page_meta.counts.remaining
+         | default(nd_iw_raw_page_meta.remaining | default(-1)) | int }}
+    nd_iw_raw_page_keys: >-
+      {{ nd_iw_raw_page_rows
+         | map(attribute='interfaceName') | map('lower')
+         | map('regex_replace', '^', nd_iw_raw_switch_id ~ '|') | list }}
+
+- name: Determine whether another independent page is required
+  ansible.builtin.set_fact:
+    nd_iw_raw_page_more: >-
+      {{ (nd_iw_raw_page_next_offset | int < nd_iw_raw_page_total | int)
+         if nd_iw_raw_page_total | int >= 0 else
+         ((nd_iw_raw_page_remaining | int > 0)
+          if nd_iw_raw_page_remaining | int >= 0 else
+          ((nd_iw_raw_page_meta.links.next | default('', true) | length > 0)
+           if nd_iw_raw_page_meta.links.next is defined else
+           (nd_iw_raw_page_rows | length == 500))) }}
+
+- name: Reject incomplete, duplicated, or contradictory independent pages
+  ansible.builtin.assert:
+    that:
+      - nd_iw_raw_page_meta is mapping
+      - nd_iw_raw_page_keys | length == nd_iw_raw_page_keys | unique | list | length
+      - nd_iw_raw_page_keys | intersect(nd_iw_raw_seen_keys) | length == 0
+      - nd_iw_raw_page_total | int < 0 or nd_iw_raw_page_next_offset | int <= nd_iw_raw_page_total | int
+      - >-
+        nd_iw_raw_page_total | int < 0 or nd_iw_raw_page_remaining | int < 0 or
+        nd_iw_raw_page_remaining | int == nd_iw_raw_page_total | int - nd_iw_raw_page_next_offset | int
+      - not (nd_iw_raw_page_more | bool) or nd_iw_raw_page_rows | length > 0
+      - nd_iw_raw_page_counts[nd_iw_raw_switch_id] | default(0) | int < 1000
+      - >-
+        nd_iw_raw_totals[nd_iw_raw_switch_id] is not defined or nd_iw_raw_page_total | int < 0 or
+        nd_iw_raw_totals[nd_iw_raw_switch_id] | int == nd_iw_raw_page_total | int
+    fail_msg: >-
+      Independent raw inventory is incomplete or inconsistent for switch
+      {{ nd_iw_raw_switch_id }} at offset {{ nd_iw_raw_page_offset }}.
+
+- name: Retain the independent page and its exact request count
+  ansible.builtin.set_fact:
+    nd_iw_raw_interfaces: >-
+      {{ nd_iw_raw_interfaces
+         + (nd_iw_raw_page_rows
+            | map('combine', {'nd_iw_raw_switch_id': nd_iw_raw_switch_id}) | list) }}
+    nd_iw_raw_seen_keys: "{{ nd_iw_raw_seen_keys + nd_iw_raw_page_keys }}"
+    nd_iw_raw_page_counts: >-
+      {{ nd_iw_raw_page_counts | combine({nd_iw_raw_switch_id:
+         (nd_iw_raw_page_counts[nd_iw_raw_switch_id] | default(0) | int) + 1}) }}
+    nd_iw_raw_next_offsets: >-
+      {{ nd_iw_raw_next_offsets | combine({nd_iw_raw_switch_id: nd_iw_raw_page_next_offset | int}) }}
+    nd_iw_raw_totals: >-
+      {{ nd_iw_raw_totals | combine({nd_iw_raw_switch_id: nd_iw_raw_page_total | int})
+         if nd_iw_raw_page_total | int >= 0 else nd_iw_raw_totals }}
+
+- name: Continue the independent raw inventory read when needed
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/controller_collect_inventory_page.yaml"
+  when: nd_iw_raw_page_more | bool

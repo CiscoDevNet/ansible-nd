@@ -43,7 +43,6 @@ class PortChannelRoutedInterfaceOrchestrator(PortChannelBaseOrchestrator):
     """
 
     model_class: ClassVar[type[NDBaseModel]] = PortChannelRoutedInterfaceModel
-
     # Capability preflight (PR #577 review): `capableSwitches?interfaceType=portChannel&mode=routed` lists every switch of a VXLAN and a
     # Campus VXLAN fabric, Catalyst included (lab-verified 2026-09-21 on ND 4.2.1.10 and 4.3.1.175).
     interface_type: ClassVar[str] = "portChannel"

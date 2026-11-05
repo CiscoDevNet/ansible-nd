@@ -108,9 +108,9 @@ class NDBaseModel(BaseModel, ABC):
     # only after omit/read-back and explicit-value probes establish a deterministic value for every supported
     # release/fabric in scope. Dynamic, conditional, release-divergent, or otherwise unresolved values must be
     # preserved or omitted instead. A wrong value here breaks replaced/overridden idempotency.
-    # Values MUST be in the model's DUMPED form, not the schema-declared form: when a validator coerces a field
-    # on read (e.g. loopback `routeMapTag` schema integer 12345 stored as string "12345"), the table must hold
-    # the coerced value or the default never matches and the field silently reopens issue #410 for that model.
+    # Values MUST be in the model's DUMPED form, not an unnormalized controller echo: when a validator coerces a field
+    # on read (e.g. a numeric-string loopback `routeMapTag` to integer 12345), the table must hold the coerced value
+    # or the default never matches and the field silently reopens issue #410 for that model.
     reverse_diff_defaults: ClassVar[Dict[str, Any]] = {}
 
     # Keys (field ALIASES / wire keys) stripped from this model's level of the reverse-pass dump regardless of

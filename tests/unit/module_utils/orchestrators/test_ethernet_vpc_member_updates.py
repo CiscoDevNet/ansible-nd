@@ -280,6 +280,7 @@ class _Controller:
 
 
 class _FabricContext:
+    fabric_name = "fabric_1"
     switch_map = {LOCAL_IP: LOCAL_SERIAL, PEER_IP: PEER_SERIAL}
 
     @staticmethod

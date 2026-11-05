@@ -14,7 +14,7 @@ the `local` and `fabricStatus` fields used by the pre-flight checks.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from enum import Enum
 from ipaddress import ip_address
@@ -103,6 +103,7 @@ class FabricContext:
         self._switch_map: dict[str, str] | None = None
         self._switch_map_by_id: dict[str, str] | None = None
         self._platform_map: dict[str, PlatformType | None] | None = None
+        self._switch_records_by_id: dict[str, dict] | None = None
         # Targeted IP lookups are partial inventory, never a complete switch map.
         self._resolved_switch_ips: dict[str, str] = {}
         # Exact targeted records do not make the fabric inventory complete.
@@ -271,8 +272,9 @@ class FabricContext:
         """
         # Summary
 
-        Drop all cached state, including targeted IP resolution, so the next lookup re-fetches from the API.
-        Useful after a mutation that should be reflected on subsequent reads.
+        Drop all cached state so the next access to `fabric_summary`, `switches`, switch lookup, platform type, or
+        switch synchronization status re-fetches from the API. Targeted IP resolution and exact switch-record caches
+        are also cleared. Useful after a mutation that should be reflected on subsequent reads.
 
         ## Raises
 
@@ -283,6 +285,7 @@ class FabricContext:
         self._switch_map = None
         self._switch_map_by_id = None
         self._platform_map = None
+        self._switch_records_by_id = None
         self._resolved_switch_ips.clear()
         self._resolved_switch_records.clear()
 
@@ -499,6 +502,10 @@ class FabricContext:
         - If the fabric does not exist (switches GET 404 confirmed by an absent `fabric_summary`).
         """
         if self._switch_map is not None:
+            # Some injected/shared contexts predate the platform index and carry only the two identity maps. Treat their platform
+            # evidence as unknown rather than asserting: unknown is already the documented safe no-mismatch result.
+            if self._platform_map is None:
+                self._platform_map = {switch_ip: None for switch_ip in self._switch_map}
             return
         ep = EpManageSwitchesListGet()
         ep.fabric_name = self._fabric_name
@@ -517,6 +524,7 @@ class FabricContext:
             for sw in switches
             if sw.get("fabricManagementIp") and sw.get("switchId")
         }
+        self._switch_records_by_id = {sw["switchId"]: sw for sw in switches if sw.get("switchId")}
 
     @staticmethod
     def _parse_platform_type(raw: object) -> PlatformType | None:
@@ -658,6 +666,51 @@ class FabricContext:
         if switch_ip not in self._platform_map:
             raise RuntimeError(f"No switch found with fabricManagementIp '{switch_ip}' in fabric '{self._fabric_name}'.")
         return self._platform_map[switch_ip]
+
+    @staticmethod
+    def _normalize_config_sync_status(value: object) -> bool | None:
+        """Normalize controller switch synchronization spellings to true, false, or unknown."""
+        if not isinstance(value, str):
+            return None
+        normalized = "".join(character for character in value.casefold() if character.isalnum())
+        if normalized in {"insync", "synced", "synchronized", "synchronised"}:
+            return True
+        if normalized in {"outofsync", "notsync", "notsynced", "notsynchronized", "notsynchronised", "pending"}:
+            return False
+        return None
+
+    def switch_config_in_sync(self, switch_id: str) -> bool | None:
+        """
+        # Summary
+
+        Return the cached switch configuration synchronization state.
+
+        The Manage Switches inventory commonly reports `configSyncStatus` under `additionalData`, with some API
+        variants returning it at the top level. `True` means explicitly synchronized, `False` means explicitly
+        out of sync or pending, and `None` means the controller omitted or returned an unrecognized status. This
+        method reuses the switch inventory already loaded for IP/ID resolution and does not issue a separate request.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the switches API query fails.
+        """
+        self._load_switch_maps()
+        if self._switch_records_by_id is None:
+            raise AssertionError("switch records are None after _load_switch_maps()")
+        record = self._switch_records_by_id.get(switch_id)
+        if not isinstance(record, Mapping):
+            return None
+        additional_data = record.get("additionalData")
+        containers = (additional_data, record)
+        for container in containers:
+            if not isinstance(container, Mapping):
+                continue
+            normalized = self._normalize_config_sync_status(container.get("configSyncStatus"))
+            if normalized is not None:
+                return normalized
+        return None
 
     def validate_for_mutation(self) -> None:
         """

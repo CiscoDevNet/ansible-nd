@@ -84,7 +84,8 @@ options:
                     - Use V(iosXeLoopbackShutNoshut) to manage only the admin state of an IOS-XE loopback.
                     - Use V(iosXeUnderlayLoopback) for an IOS-XE underlay (NVE source) loopback.
                     - Use V(iosXeInternalLoopback) for an IOS-XE internal loopback (IPv4/IPv6 and PIM options).
-                    - Use V(csrLoopback) for a CSR loopback.
+                    - Use V(csrLoopback) for a CSR loopback. Supported on Nexus Dashboard releases before 4.3.1; on 4.3.1 and later
+                      the module fails before writing.
                     - Use V(csr1kvLoopback) for a CSR1kv loopback (admin state and freeform config only).
                     type: str
                     required: true
@@ -132,8 +133,9 @@ options:
                     description:
                     - The route-map tag associated with the interface IP address.
                     - The ND default is V(12345).
+                    - Decimal strings from older playbooks are accepted and sent to ND as integers.
                     - Applies when policy_type is C(loopback).
-                    type: str
+                    type: int
                   advertise_loopback:
                     description:
                     - Whether to advertise the loopback address via OSPF/IS-IS.
@@ -292,7 +294,7 @@ EXAMPLES = r"""
               policy_type: loopback
               ip: 10.2.1.1
               description: VTEP loopback
-              route_map_tag: "12345"
+              route_map_tag: 12345
       - switch_ip: 192.168.1.2
         interface_name: loopback0
         config_data:
@@ -515,6 +517,7 @@ EXAMPLES = r"""
       deploy: true
     state: deleted
 
+# csrLoopback is supported on Nexus Dashboard releases before 4.3.1; on 4.3.1 and later the module fails before writing.
 - name: Merge a CSR loopback
   cisco.nd.nd_interface_loopback:
     fabric_name: fabric-xe
