@@ -136,3 +136,20 @@ def test_whitespace_only_gathered_filter_is_rejected():
             normalize_filter=LocalUserModel.normalize_gathered_filter,
             supported_properties=LocalUserModel.gathered_filter_properties,
         )
+
+
+def test_local_user_rejects_empty_field_alongside_valid_filter():
+    with pytest.raises(
+        ValueError,
+        match=r"contains empty values.*'first_name'",
+    ):
+        validate_gathered_filters(
+            filters=[
+                {
+                    "login_id": "alice",
+                    "first_name": "",
+                }
+            ],
+            normalize_filter=LocalUserModel.normalize_gathered_filter,
+            supported_properties=LocalUserModel.gathered_filter_properties,
+        )

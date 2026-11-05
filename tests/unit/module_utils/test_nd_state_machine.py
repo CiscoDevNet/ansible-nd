@@ -42,6 +42,7 @@ import ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine as sta
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.local_user.local_user import LocalUserModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
@@ -1887,6 +1888,34 @@ def test_nd_state_machine_00300(monkeypatch) -> None:
     assert orchestrator.prepare_calls == []
     assert orchestrator.query_calls == [{}]
     assert machine.output.format()["gathered"] == [{"name": "wanted", "value": 10}]
+
+
+def test_gathered_mixed_valid_and_empty_filter_fails_before_query(monkeypatch) -> None:
+    """Reject an explicit empty criterion before the orchestrator can query ND."""
+    monkeypatch.setattr(state_machine_module, "NDBaseOrchestrator", _FakeOrchestratorBase)
+    monkeypatch.setattr(state_machine_module, "RestSend", _FakeRestSend)
+    monkeypatch.setattr(state_machine_module, "Sender", _FakeSender)
+
+    orchestrator = _FakeOrchestratorBase(LocalUserModel, response_data=[])
+
+    with pytest.raises(
+        ValueError,
+        match=r"contains empty values.*'first_name'",
+    ):
+        NDStateMachine(
+            module=_FakeModule(
+                state="gathered",
+                config=[
+                    {
+                        "login_id": "alice",
+                        "first_name": "",
+                    }
+                ],
+            ),
+            model_orchestrator=orchestrator,
+        )
+
+    assert orchestrator.query_calls == []
 
 
 @pytest.mark.parametrize(

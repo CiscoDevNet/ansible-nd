@@ -201,6 +201,24 @@ def test_empty_filter_item_is_rejected(filter_item):
         _filter([_response()], [filter_item])
 
 
+@pytest.mark.parametrize("empty_value", ["", "   ", [], {}])
+def test_mixed_valid_and_empty_filter_values_are_rejected(empty_value):
+    with pytest.raises(
+        ValueError,
+        match=r"contains empty values.*'secondary'",
+    ):
+        validate_gathered_filters(
+            filters=[
+                {
+                    "name": "wanted",
+                    "secondary": empty_value,
+                }
+            ],
+            normalize_filter=None,
+            supported_properties=("name", "secondary"),
+        )
+
+
 def test_validate_rejects_non_dict_filters_item():
     with pytest.raises(ValueError, match="must be a dictionary.*index 0"):
         validate_gathered_filters(

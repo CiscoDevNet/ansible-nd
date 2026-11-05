@@ -91,6 +91,31 @@ def build_lucene_expressions(
     return expressions
 
 
+def _find_explicit_empty_paths(value: dict[str, Any], prefix: str = "") -> list[str]:
+    """Return paths whose supplied filter values are explicitly empty."""
+    empty_paths: list[str] = []
+
+    for key, item in value.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if item is None:
+            continue
+        if isinstance(item, str):
+            if not item.strip():
+                empty_paths.append(path)
+            continue
+        if isinstance(item, list):
+            if not item:
+                empty_paths.append(path)
+            continue
+        if isinstance(item, dict):
+            if not item:
+                empty_paths.append(path)
+            else:
+                empty_paths.extend(_find_explicit_empty_paths(item, path))
+
+    return empty_paths
+
+
 def _contains_active_value(value: Any) -> bool:
     """Return whether a filter value contains an explicitly supplied criterion."""
     if isinstance(value, dict):
@@ -257,6 +282,8 @@ def validate_gathered_filters(
     3. Model-specific validation and normalization — field constraints are
     applied and values are converted to canonical form.
     4. Active-value check — at least one non-empty criterion must remain.
+    5. Explicit-empty check — no supplied criterion may be an empty string,
+    list, or mapping alongside another active criterion.
 
     Property validation runs before model-specific normalization so unsupported
     keys are reported using the exact property paths supplied by the user.
@@ -287,6 +314,14 @@ def validate_gathered_filters(
 
         if not _contains_active_value(normalized):
             raise ValueError(f"Gathered filter item at index {idx} must contain " f"at least one filtering criterion.")
+
+        empty_paths = _find_explicit_empty_paths(normalized)
+        if empty_paths:
+            raise ValueError(
+                f"Gathered filter item at index {idx} contains empty values for: "
+                f"{', '.join(repr(path) for path in empty_paths)}. "
+                "Omit unused fields instead of setting them to an empty value."
+            )
 
         normalized_filters.append(normalized)
 
