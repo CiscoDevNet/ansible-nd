@@ -18,15 +18,18 @@ from __future__ import annotations
 
 import logging
 import re
-from copy import deepcopy
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from time import sleep
 from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.interface_pagination import (
+    InterfacePaginationError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_deployment_history import (
     EpManageFabricsSwitchesDeploymentHistoryGet,
@@ -36,9 +39,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesModify,
     EpManageInterfacesPreview,
     EpManageInterfacesRemove,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.interface_pagination import (
-    InterfacePaginationError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import (
     FabricContext,
@@ -60,6 +60,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
     ModelType,
     NDBaseOrchestrator,
+    requires_bulk_support,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
     ResponseType,
@@ -148,6 +149,10 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     # opts out — used by interface types with no capability endpoint (e.g. future breakout).
     interface_type: ClassVar[str] = ""
     interface_mode: ClassVar[str] = ""
+    # Wire `interfaceType` the shared `query_all` filters on ("loopback", "svi", "subInterface", "portChannel", "vpc"). Every concrete
+    # subclass that inherits the base `query_all` must set it. This is NOT the capability-preflight opt-in: that is `interface_type` /
+    # `interface_mode` above, which several families deliberately leave "" to skip the `capableSwitches` GET.
+    query_interface_type: ClassVar[str] = ""
     # Subclasses whose delete side removes IOS-XE logical interfaces (`interfaceActions/remove` + deploy) set this so `state: deleted`
     # and `state: overridden` refuse a removal ND cannot complete yet (see `_check_xe_removal_discovered`).
     xe_removal_requires_discovery: ClassVar[bool] = False
@@ -370,15 +375,16 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         # Summary
 
         Build the bulk-create groups: resolve each model's `switch_ip` to a `switchId`, run `_prepare_bulk_item`, inject the `switchId`
-        into the payload, and group the resulting items by `(switch_id, policy_type)`. Group insertion order follows the first model of
-        each group. Shared by every orchestrator that posts `interfaces[]` bodies (issue #409).
+        into the payload, run `_decorate_write_payload` on it (the same hook the singular `create` / `update` templates call; a no-op
+        unless a family overrides it, e.g. vPC's peer switch ID), and group the resulting items by `(switch_id, policy_type)`. Group
+        insertion order follows the first model of each group. Shared by every orchestrator that posts `interfaces[]` bodies (issue #409).
 
         ## Raises
 
         ### RuntimeError
 
         - Via `_resolve_switch_id` if no switch matches a model's `switch_ip` in the fabric.
-        - Propagated from a subclass `_prepare_bulk_item`.
+        - Propagated from a subclass `_prepare_bulk_item` or `_decorate_write_payload`.
         """
         # TODO(4.2.1) bulk-interface-create-rejects-mixed-policy-types
         # ND rejects an interfaces[] array mixing policyType values (207 with a single failed item; nothing is created), even though
@@ -389,6 +395,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             self._prepare_bulk_item(model_instance, switch_id, **kwargs)
             payload = model_instance.to_payload()
             payload["switchId"] = switch_id
+            self._decorate_write_payload(payload, model_instance, switch_id)
             group_key = BulkCreateGroupKey(
                 switch_id=switch_id,
                 policy_type=self._desired_policy_type(model_instance),
@@ -1433,6 +1440,319 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         api_endpoint.fabric_name = self.fabric_name
         api_endpoint.switch_sn = switch_sn
         return api_endpoint
+
+    # --- CRUD templates (issue #348) ---
+    #
+    # One shared implementation of create / update / delete / delete_bulk / create_bulk / query_one / query_all for the interface
+    # families that post `interfaces[]` bodies to the per-switch interfaces endpoint. Family differences live in the small hooks below;
+    # every default is a no-op or trivial and none issues a request.
+
+    def _managed_policy_types(self) -> set[str]:
+        """
+        # Summary
+
+        Return the wire `policyType` values this orchestrator manages; `query_all` keeps only records carrying one of them. Every concrete
+        subclass that uses the base `query_all` must override it.
+
+        ## Raises
+
+        ### NotImplementedError
+
+        - Always, in the base implementation.
+        """
+        raise NotImplementedError("Subclasses must implement _managed_policy_types()")
+
+    @staticmethod
+    def _policy_type_of(iface: dict) -> str | None:
+        """
+        # Summary
+
+        Return the `configData.networkOS.policy.policyType` of an interface record, or `None` when any level is absent or `null`
+        (a discovered, policy-less record).
+
+        ## Raises
+
+        None
+        """
+        policy = ((iface.get("configData") or {}).get("networkOS") or {}).get("policy") or {}
+        return policy.get("policyType")
+
+    def _decorate_write_payload(self, payload: dict[str, Any], model_instance: ModelType, switch_id: str) -> None:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Hook that mutates a write payload in place after `switchId` is injected and before it is sent. Called by `create`, `update` and
+        `bulk_create_groups`. The base implementation does nothing; a family whose write body needs a controller-derived key (e.g. vPC's
+        peer switch ID) overrides it.
+
+        ## Raises
+
+        None
+        """
+        return None
+
+    def _before_update(self, model_instance: ModelType, switch_id: str, previous_model: ModelType | None) -> Any:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Hook run by `update` after the switch is resolved and before the PUT is built. Its return value is handed to
+        `_after_update_accepted` as `context`. The base implementation does nothing and returns `None`.
+
+        ## Raises
+
+        None
+        """
+        return None
+
+    def _on_update_accepted(self, model_instance: ModelType, switch_id: str) -> None:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Hook run by `update` immediately after the PUT is accepted and before `_prepare_deploy_context` / `_queue_deploy`, so a later
+        failure in this `update` can still be reported as an accepted write. The base implementation does nothing.
+
+        ## Raises
+
+        None
+        """
+        return None
+
+    def _after_update_accepted(self, model_instance: ModelType, switch_id: str, context: Any) -> None:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Hook run by `update` after the deploy is queued, with the `context` returned by `_before_update`. A failure here leaves the deploy
+        queued for the failure-path finalizer. The base implementation does nothing.
+
+        ## Raises
+
+        None
+        """
+        return None
+
+    def _delete_side_name(self, model_instance: ModelType) -> str:
+        """
+        # Summary
+
+        Return the interface name `delete` queues for removal and deploy. The base implementation returns `model_instance.interface_name`;
+        a family whose delete-side endpoint needs a canonical spelling overrides it.
+
+        ## Raises
+
+        None
+        """
+        return model_instance.interface_name
+
+    def _prepare_delete_context(self, model_instance: ModelType, name: str, switch_id: str) -> None:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Hook run by `delete` after the delete-side name is resolved and before the pair is queued. The base implementation does nothing.
+
+        ## Raises
+
+        None
+        """
+        return None
+
+    def _managed_records(self, switch_ip: str, switch_id: str, managed_types: set[str]) -> list[dict]:
+        """
+        # Summary
+
+        Return the cached interface records on `switch_id` whose `interfaceType` equals `query_interface_type` and whose policy type is in
+        `managed_types`. Each record is a shallow copy stamped with `switchIp`, so the shared `_switch_interfaces` cache never carries a key
+        the controller did not send.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `_switch_interfaces` if the interface-list API request fails.
+        """
+        records = []
+        for iface in self._switch_interfaces(switch_id).values():
+            if iface.get("interfaceType") != self.query_interface_type or self._policy_type_of(iface) not in managed_types:
+                continue
+            record = dict(iface)
+            record["switchIp"] = switch_ip
+            records.append(record)
+        return records
+
+    def create(self, model_instance: ModelType, **kwargs) -> ResponseType:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Create one interface. Resolves the switch, builds the payload with `switchId`, runs `_decorate_write_payload`, POSTs it inside an
+        `interfaces` array, then runs `_prepare_deploy_context` and queues a deploy for later bulk execution via `deploy_pending`.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - `Create failed for <identifier>: ...` if any step fails, including a 207 Multi-Status response with a failed `DATA.results[]`
+          item (detected centrally by `NdV1Strategy.is_success`, which `_request` consults). No deploy is queued when the POST fails.
+        """
+        try:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            api_endpoint = self._configure_endpoint(self.create_endpoint(), switch_sn=switch_id)
+            payload = model_instance.to_payload()
+            payload["switchId"] = switch_id
+            self._decorate_write_payload(payload, model_instance, switch_id)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data={"interfaces": [payload]})
+            self._prepare_deploy_context(model_instance, switch_id)
+            self._queue_deploy(model_instance.interface_name, switch_id)
+            return result
+        except Exception as e:
+            raise RuntimeError(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
+
+    def update(self, model_instance: ModelType, **kwargs) -> ResponseType:
+        """
+        # Summary
+
+        Update one interface. Resolves the switch, runs `_before_update` (with `kwargs["previous_model"]`), builds the payload with
+        `switchId`, runs `_decorate_write_payload` and PUTs it to the per-interface path. After the PUT is accepted it runs
+        `_on_update_accepted`, `_prepare_deploy_context`, queues a deploy, then runs `_after_update_accepted` with the `_before_update` result.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - `Update failed for <identifier>: ...` if any step fails. A failure after the PUT is accepted leaves whatever deploy was already
+          queued in place for the failure-path finalizer.
+        """
+        try:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            context = self._before_update(model_instance, switch_id, kwargs.get("previous_model"))  # pylint: disable=assignment-from-none
+            api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
+            api_endpoint.set_identifiers(model_instance.interface_name)
+            payload = model_instance.to_payload()
+            payload["switchId"] = switch_id
+            self._decorate_write_payload(payload, model_instance, switch_id)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+            self._on_update_accepted(model_instance, switch_id)
+            self._prepare_deploy_context(model_instance, switch_id)
+            self._queue_deploy(model_instance.interface_name, switch_id)
+            self._after_update_accepted(model_instance, switch_id, context)
+            return result
+        except Exception as e:
+            raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
+
+    def delete(self, model_instance: ModelType, **kwargs) -> None:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Queue one interface for deferred bulk removal via `remove_pending` and bulk deploy via `deploy_pending`. Resolves the switch, takes
+        the name from `_delete_side_name`, runs `_prepare_delete_context`, then queues the remove and the deploy. No API call is made here.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `_resolve_switch_id` if no switch matches the model's `switch_ip` in the fabric.
+        - Propagated from a subclass `_delete_side_name` or `_prepare_delete_context`.
+        """
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        name = self._delete_side_name(model_instance)
+        self._prepare_delete_context(model_instance, name, switch_id)
+        self._queue_remove(name, switch_id)
+        self._queue_deploy(name, switch_id)
+
+    @requires_bulk_support("supports_bulk_delete")
+    def delete_bulk(self, model_instances: list[ModelType], **kwargs) -> None:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Queue several interfaces for deferred bulk removal and deployment by running `delete` on each, in order. No API call is made here.
+
+        ## Raises
+
+        ### AttributeError
+
+        - If `supports_bulk_delete` is disabled on the orchestrator.
+
+        ### RuntimeError
+
+        - Via `delete` for any model.
+        """
+        for model_instance in model_instances:
+            self.delete(model_instance)
+
+    @requires_bulk_support("supports_bulk_create")
+    def create_bulk(self, model_instances: list[ModelType], **kwargs) -> ResponseType:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Create several interfaces with one POST per `(switch_id, policy_type)` group built by `bulk_create_groups`, each sent by
+        `_post_bulk_create_group`, which queues a deploy for every interface the controller accepted. Returns the per-group responses.
+
+        ## Raises
+
+        ### AttributeError
+
+        - If `supports_bulk_create` is disabled on the orchestrator.
+
+        ### RuntimeError
+
+        - `Bulk create failed: ...` if any step fails, including a 207 Multi-Status response with a failed `DATA.results[]` item. The
+          items that response reports as accepted are still queued for deploy (`_post_bulk_create_group`); the rejected ones are not.
+        """
+        try:
+            groups = self.bulk_create_groups(model_instances)
+            results: list[Any] = [self._post_bulk_create_group(group_key, items) for group_key, items in groups.items()]
+            return results
+        except Exception as e:
+            raise RuntimeError(f"Bulk create failed: {e}") from e
+
+    def query_one(self, model_instance: ModelType, **kwargs) -> ResponseType:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Query one interface by name on its switch with a GET to the per-interface path.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - `Query failed for <identifier>: ...` if the switch cannot be resolved or the query API request fails.
+        """
+        try:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            api_endpoint = self._configure_endpoint(self.query_one_endpoint(), switch_sn=switch_id)
+            api_endpoint.set_identifiers(model_instance.interface_name)
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
+        except Exception as e:
+            raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
+
+    def query_all(self, model_instance: ModelType | None = None, **kwargs) -> ResponseType:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Validate the fabric context and return the managed interfaces on every switch from `_switches_to_query` (fabric-wide for
+        `state: overridden`, the configured switches otherwise), collected per switch by `_managed_records` with `switchIp` stamped on each.
+        `query_interface_type` and `_managed_policy_types` are checked before the wrap, so a misconfigured subclass surfaces as itself.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the subclass did not set `query_interface_type`.
+        - `Query all failed: ...` if the fabric does not exist, is in deployment-freeze mode, or an interface-list request fails.
+
+        ### NotImplementedError
+
+        - If the subclass does not implement `_managed_policy_types`.
+        """
+        if not self.query_interface_type:
+            raise RuntimeError(f"{type(self).__name__} must set query_interface_type to use the shared query_all")
+        managed = self._managed_policy_types()
+        try:
+            self.validate_prerequisites()
+            records: list[dict] = []
+            for switch_ip, switch_id in self._switches_to_query().items():
+                records.extend(self._managed_records(switch_ip, switch_id, managed))
+            return records
+        except Exception as e:
+            raise RuntimeError(f"Query all failed: {e}") from e
 
     def _queue_deploy(self, interface_name: str, switch_id: str) -> None:
         """

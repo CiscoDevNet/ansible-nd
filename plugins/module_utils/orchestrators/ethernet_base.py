@@ -2135,26 +2135,6 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 self._queue_normalize(model_instance.interface_name, switch_id)
             self._queue_deploy(model_instance.interface_name, switch_id)
 
-    def query_one(self, model_instance: ModelType, **kwargs) -> ResponseType:
-        """
-        # Summary
-
-        Query a single ethernet interface by name on a specific switch.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - If the query API request fails.
-        """
-        try:
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            api_endpoint = self._configure_endpoint(self.query_one_endpoint(), switch_sn=switch_id)
-            api_endpoint.set_identifiers(model_instance.interface_name)
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
-        except Exception as e:
-            raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
-
     def query_all(self, model_instance: ModelType | None = None, **kwargs) -> ResponseType:
         """
         # Summary
