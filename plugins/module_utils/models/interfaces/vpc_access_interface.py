@@ -59,7 +59,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.storm_control import StormControlMutexMixin
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, VlanId
 
 # Splits an interface name into its leading alphabetic prefix and the rest (digits/separators).
 _INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
@@ -143,7 +143,7 @@ class AccessVpcHostPolicyModel(StormControlMutexMixin):
     # TODO(4.2.1) vpc-interface-peer-vlan-collapse
     # ND accessVpcHost wire echoes a single `accessVlan` even though the create schema requires per-peer
     # `peer1AccessVlan` / `peer2AccessVlan`. See `serialize_policy` below for the split-on-write workaround.
-    access_vlan: int | None = Field(default=None, alias="accessVlan", ge=1, le=4094, description="VLAN for the access port on both peers")
+    access_vlan: VlanId | None = Field(default=None, alias="accessVlan", description="VLAN for the access port on both peers")
 
     # --- Per-Peer Fields (peer1 = switch_ip, peer2 = peer_switch_id) ---
 

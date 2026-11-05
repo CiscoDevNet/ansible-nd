@@ -38,10 +38,9 @@ use the ND-native `peer1_*` / `peer2_*` naming where `peer1` corresponds to `swi
 from __future__ import annotations
 
 import re
-from typing import Annotated, Any, ClassVar, Literal, Optional  # Optional needed for Annotated runtime expr (see types.py)
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    BeforeValidator,
     Field,
     SerializationInfo,
     field_validator,
@@ -61,13 +60,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     TrunkVpcHostPolicyTypeEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.storm_control import StormControlMutexMixin
-from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
-
-# Shape regex: "none", "all", or comma-separated VLAN ids/ranges. Range bounds are validated separately.
-_ALLOWED_VLANS_SHAPE = re.compile(r"^(none|all|(\d+(-\d+)?)(,\d+(-\d+)?)*)$")
-# Single VLAN id or range token (e.g. "100" or "100-200"). Range bounds are validated separately.
-_VLAN_ID_OR_RANGE_SHAPE = re.compile(r"^\d+(-\d+)?$")
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel, VlanMappingEntryModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AllowedVlans, AsciiDescription, VlanId
 
 # Splits an interface name into its leading alphabetic prefix and the rest (digits/separators).
 _INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
@@ -76,128 +70,6 @@ _INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
 # "Ethernet". Any case-insensitive NX-OS abbreviation (e.g. "e", "eth", "ether") expands to the full form so
 # user input matches the wire key and idempotency holds.
 _CANONICAL_MEMBER_TYPE = "Ethernet"
-
-
-def _validate_vlan_id_or_range(token: str, field_name: str) -> None:
-    """
-    # Summary
-
-    Validate a single VLAN id or range token (e.g. `"100"` or `"100-200"`) and confirm every id is in 1..4094 and any range has start <= end.
-
-    ## Raises
-
-    ### ValueError
-
-    - If `token` does not match `\\d+(-\\d+)?`.
-    - If any VLAN id is outside 1..4094.
-    - If a range has start greater than end.
-    """
-    if not _VLAN_ID_OR_RANGE_SHAPE.match(token):
-        raise ValueError(f"{field_name} entry {token!r} must be a VLAN id or range (e.g. '100' or '100-200')")
-    if "-" in token:
-        start_str, end_str = token.split("-", 1)
-        start, end = int(start_str), int(end_str)
-        if not 1 <= start <= 4094 or not 1 <= end <= 4094:
-            raise ValueError(f"{field_name} range {token!r} is out of bounds; VLAN ids must be in 1..4094")
-        if start > end:
-            raise ValueError(f"{field_name} range {token!r} has start greater than end")
-    else:
-        vid = int(token)
-        if not 1 <= vid <= 4094:
-            raise ValueError(f"{field_name} id {vid} is out of bounds; VLAN ids must be in 1..4094")
-
-
-def _validate_allowed_vlans(value):
-    """
-    # Summary
-
-    Validate `allowed_vlans` matches `"none"`, `"all"`, or a comma-separated list of VLAN ids/ranges where every id is in 1..4094 and every range start <= end.
-    ND returns single-id values as JSON ints (e.g. `250`) but accepts both forms on input; this validator coerces int -> str so round-trips and idempotency
-    comparisons are stable.
-
-    ## Raises
-
-    ### ValueError
-
-    - If `value` is a non-empty string that does not match the expected shape.
-    - If any VLAN id is outside 1..4094.
-    - If any range has start greater than end.
-    """
-    if value is None or value == "":
-        return value
-    # TODO(4.2.1) interface-get-field-normalization
-    # ND echoes a single-id allowed_vlans as a JSON int (e.g. 250) on GET even though POST/PUT accept (and the
-    # spec types it as) a string. We coerce int -> str here so a GET response round-trips against the str the
-    # user supplied and idempotency comparisons stay stable. Remove when the GET-side retype is fixed.
-    if isinstance(value, int) and not isinstance(value, bool):
-        value = str(value)
-    if not isinstance(value, str):
-        return value
-    if value in ("none", "all"):
-        return value
-    if not _ALLOWED_VLANS_SHAPE.match(value):
-        raise ValueError(f"allowed_vlans must be 'none', 'all', or a comma-separated list of VLAN ids/ranges (e.g. '1-200,500-2000,3000'); got {value!r}")
-    for token in value.split(","):
-        _validate_vlan_id_or_range(token, "allowed_vlans")
-    return value
-
-
-def _validate_customer_vlan_id_list(value):
-    """
-    # Summary
-
-    Validate `customer_vlan_id` is a list of non-empty VLAN id or range strings where every id is in 1..4094 and every range start <= end.
-
-    ## Raises
-
-    ### ValueError
-
-    - If any list entry is not a non-empty string.
-    - If any entry is not a VLAN id or range, has an id outside 1..4094, or has a reversed range.
-    """
-    if value is None:
-        return value
-    if not isinstance(value, list):
-        return value
-    for entry in value:
-        if not isinstance(entry, str) or not entry:
-            raise ValueError(f"customer_vlan_id entries must be non-empty strings (VLAN id or range); got {entry!r}")
-        _validate_vlan_id_or_range(entry, "customer_vlan_id")
-    return value
-
-
-# TODO: After all per-policy interface modules merge to develop, consolidate AllowedVlans, CustomerVlanIdList,
-# and _validate_vlan_id_or_range into models/types.py so siblings share a single source of truth. This module
-# carries its own copy to keep the vpc stack self-contained. Tracked in CiscoDevNet/ansible-nd#347.
-AllowedVlans = Annotated[Optional[str], BeforeValidator(_validate_allowed_vlans)]
-"""Trunk allowed-VLANs spec (`str | None`): 'none', 'all', or comma-separated VLAN ids/ranges in 1..4094."""
-
-CustomerVlanIdList = Annotated[Optional[list[str]], BeforeValidator(_validate_customer_vlan_id_list)]
-"""Customer VLAN id list (`list[str] | None`): each entry is a VLAN id or range in 1..4094 (e.g. `['100', '200-300']`)."""
-
-
-class TrunkVpcHostVlanMappingEntryModel(NDNestedModel):
-    """
-    # Summary
-
-    A single VLAN mapping entry for a vPC trunk host. Maps to one element of `policy.vlanMappingEntries` in the
-    ND API. Entries translate customer VLAN ids to a provider VLAN id, optionally using selective dot1q-tunnel mode.
-
-    ## Raises
-
-    None
-    """
-
-    customer_inner_vlan_id: int | None = Field(
-        default=None, alias="customerInnerVlanId", ge=1, le=4094, description="Inner customer VLAN id (selective dot1q-tunnel only)"
-    )
-    customer_vlan_id: CustomerVlanIdList = Field(
-        default=None,
-        alias="customerVlanId",
-        description="Customer VLAN id list; each entry is a VLAN id or range string in 1..4094 (e.g. ['100', '200-300'])",
-    )
-    dot1q_tunnel: bool | None = Field(default=None, alias="dot1qTunnel", description="Use selective dot1q-tunnel mode for this entry")
-    provider_vlan_id: int | None = Field(default=None, alias="providerVlanId", ge=1, le=4094, description="Provider VLAN id")
 
 
 class TrunkVpcHostPolicyModel(StormControlMutexMixin):
@@ -303,7 +175,7 @@ class TrunkVpcHostPolicyModel(StormControlMutexMixin):
         alias="allowedVlans",
         description="Trunk allowed VLANs ('none', 'all', or comma-separated VLAN ids/ranges in 1..4094, e.g. '100-200,300')",
     )
-    native_vlan: int | None = Field(default=None, alias="nativeVlan", ge=1, le=4094, description="Trunk native VLAN id")
+    native_vlan: VlanId | None = Field(default=None, alias="nativeVlan", description="Trunk native VLAN id")
 
     # --- Per-Peer Fields (peer1 = switch_ip, peer2 = peer_switch_id) ---
 
@@ -327,7 +199,7 @@ class TrunkVpcHostPolicyModel(StormControlMutexMixin):
     # --- VLAN Mapping ---
 
     vlan_mapping: bool | None = Field(default=None, alias="vlanMapping", description="Enable VLAN mapping on the trunk")
-    vlan_mapping_entries: list[TrunkVpcHostVlanMappingEntryModel] | None = Field(
+    vlan_mapping_entries: list[VlanMappingEntryModel] | None = Field(
         default=None, alias="vlanMappingEntries", description="VLAN mapping entries (used when vlan_mapping is enabled)"
     )
 
