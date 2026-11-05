@@ -2738,6 +2738,37 @@ def test_response_handler_nd_01570():
     assert strategy.extract_error_message(response) == "ND Error: loopback10: invalid policyType"
 
 
+def test_response_handler_nd_01580():
+    """
+    # Summary
+
+    Verify `extract_error_message` labels a failing VRF 207 `results[]` item by its `vrfName` key (issue #640).
+
+    ## Test
+
+    - 207 response whose `results[]` carries the `vrfActions/remove` shape from the 4.2.1 / 4.3.1 Manage OpenAPI:
+      `{vrfName, status, message}` with one `success` and one `failed` item
+    - Only the failed item is reported, labelled `MyVRF_50001: Specified VRF does not exist`
+
+    ## Classes and Methods
+
+    - NdV1Strategy.extract_error_message()
+    - NdV1Strategy._format_multistatus_failure()
+    """
+    strategy = NdV1Strategy()
+    response = {
+        "RETURN_CODE": 207,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"status": "success", "vrfName": "MyVRF_50000"},
+                {"message": "Specified VRF does not exist", "status": "failed", "vrfName": "MyVRF_50001"},
+            ]
+        },
+    }
+    assert strategy.extract_error_message(response) == "ND Error: MyVRF_50001: Specified VRF does not exist"
+
+
 # =============================================================================
 # Test: 4xx terminal classification in the retry policy (issue #457, PR #502)
 # =============================================================================
