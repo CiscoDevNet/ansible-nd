@@ -31,6 +31,7 @@ wrapping or flattening.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -109,25 +110,72 @@ class EthernetAccessPolicyModel(StormControlMutexMixin):
     }
 
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
-    access_vlan: int | None = Field(default=None, alias="accessVlan", ge=1, le=4094, description="VLAN for this access port")
-    bandwidth: int | None = Field(default=None, alias="bandwidth", ge=1, le=100000000, description="Bandwidth in kilobits")
-    bpdu_filter: BpduFilterEnum | None = Field(default=None, alias="bpduFilter", description="Configure spanning-tree BPDU filter")
+    access_vlan: int | None = Field(
+        default=None,
+        alias="accessVlan",
+        ge=1,
+        le=4094,
+        description="VLAN for this access port",
+    )
+    bandwidth: int | None = Field(
+        default=None,
+        alias="bandwidth",
+        ge=1,
+        le=100000000,
+        description="Bandwidth in kilobits",
+    )
+    bpdu_filter: BpduFilterEnum | None = Field(
+        default=None,
+        alias="bpduFilter",
+        description="Configure spanning-tree BPDU filter",
+    )
     bpdu_guard: BpduGuardEnum | None = Field(default=None, alias="bpduGuard", description="Enable spanning-tree BPDU guard")
     cdp: bool | None = Field(default=None, alias="cdp", description="Enable CDP on the interface")
-    debounce_timer: int | None = Field(default=None, alias="debounceTimer", ge=0, le=20000, description="Link debounce timer in milliseconds")
-    debounce_linkup_timer: int | None = Field(
-        default=None, alias="debounceLinkupTimer", ge=1000, le=10000, description="Link debounce link-up timer in milliseconds"
+    debounce_timer: int | None = Field(
+        default=None,
+        alias="debounceTimer",
+        ge=0,
+        le=20000,
+        description="Link debounce timer in milliseconds",
     )
-    description: AsciiDescription = Field(default=None, alias="description", max_length=254, description="Interface description")
+    debounce_linkup_timer: int | None = Field(
+        default=None,
+        alias="debounceLinkupTimer",
+        ge=1000,
+        le=10000,
+        description="Link debounce link-up timer in milliseconds",
+    )
+    description: AsciiDescription = Field(
+        default=None,
+        alias="description",
+        max_length=254,
+        description="Interface description",
+    )
     duplex_mode: DuplexModeEnum | None = Field(default=None, alias="duplexMode", description="Port duplex mode")
-    error_detection_acl: bool | None = Field(default=None, alias="errorDetectionAcl", description="Enable error detection for ACL installation failures")
-    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    error_detection_acl: bool | None = Field(
+        default=None,
+        alias="errorDetectionAcl",
+        description="Enable error detection for ACL installation failures",
+    )
+    extra_config: str | None = Field(
+        default=None,
+        alias="extraConfig",
+        description="Additional CLI for the interface",
+    )
     fec: FecEnum | None = Field(default=None, alias="fec", description="Forward error correction mode")
     inherit_bandwidth: int | None = Field(
-        default=None, alias="inheritBandwidth", ge=1, le=100000000, description="Inherit bandwidth in kilobits for sub-interfaces"
+        default=None,
+        alias="inheritBandwidth",
+        ge=1,
+        le=100000000,
+        description="Inherit bandwidth in kilobits for sub-interfaces",
     )
     link_type: LinkTypeEnum | None = Field(default=None, alias="linkType", description="Spanning-tree link type")
-    monitor: bool | None = Field(default=None, alias="monitor", description="Enable switchport monitor for SPAN/ERSPAN")
+    monitor: bool | None = Field(
+        default=None,
+        alias="monitor",
+        description="Enable switchport monitor for SPAN/ERSPAN",
+    )
     mtu: MtuEnum | None = Field(default=None, alias="mtu", description="Interface MTU")
     negotiate_auto: bool | None = Field(default=None, alias="negotiateAuto", description="Enable link auto-negotiation")
     netflow: bool | None = Field(default=None, alias="netflow", description="Enable Netflow on the interface")
@@ -160,7 +208,9 @@ class EthernetAccessPolicyModel(StormControlMutexMixin):
     speed: SpeedEnum | None = Field(default=None, alias="speed", description="Interface speed")
     storm_control: bool | None = Field(default=None, alias="stormControl", description="Enable traffic storm control")
     storm_control_action: StormControlActionEnum | None = Field(
-        default=None, alias="stormControlAction", description="Storm control action on threshold violation"
+        default=None,
+        alias="stormControlAction",
+        description="Storm control action on threshold violation",
     )
     storm_control_broadcast_level: float | None = Field(
         default=None,
@@ -352,6 +402,13 @@ class EthernetAccessConfigDataModel(NDNestedModel):
         return data
 
 
+class EthernetAccessGatheredPolicyFilterModel(NDNestedModel):
+    """Validate policy fields supported by partial gathered filters."""
+
+    admin_state: bool | None = Field(default=None, alias="adminState")
+    access_vlan: int | None = Field(default=None, alias="accessVlan", ge=1, le=4094)
+
+
 class EthernetAccessInterfaceModel(NDBaseModel):
     """
     # Summary
@@ -371,6 +428,15 @@ class EthernetAccessInterfaceModel(NDBaseModel):
     identifiers: ClassVar[list[str] | None] = ["switch_ip", "interface_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
 
+    # --- Gathered Filtering Configuration ---
+
+    supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "switch_ip",
+        "interface_name",
+        "config_data.network_os.policy.admin_state",
+        "config_data.network_os.policy.access_vlan",
+    )
     # --- Serialization Configuration ---
 
     payload_exclude_fields: ClassVar[set[str]] = {"switch_ip"}
@@ -420,6 +486,68 @@ class EthernetAccessInterfaceModel(NDBaseModel):
         """
         return normalize_ethernet_interface_name(value)
 
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """
+        Validate and normalize a partial gathered-state filter.
+
+        Gathered filters are not complete EthernetAccessInterfaceModel instances,
+        so their values do not automatically pass through the complete resource
+        model. Apply the relevant partial-policy validation and preserve the
+        interface-name normalization used by complete resources.
+
+        ## Raises
+
+        ### ValidationError
+
+        - If a supported nested policy criterion fails its normal field
+          validation.
+        """
+        normalized = deepcopy(filter_item)
+
+        switch_ip = normalized.get("switch_ip")
+        if isinstance(switch_ip, str):
+            normalized["switch_ip"] = switch_ip.strip()
+
+        if "interface_name" in normalized:
+            interface_name = normalized["interface_name"]
+            if isinstance(interface_name, str):
+                interface_name = interface_name.strip()
+            normalized["interface_name"] = normalize_ethernet_interface_name(interface_name)
+
+        config_data = normalized.get("config_data")
+        if not isinstance(config_data, dict):
+            return normalized
+
+        network_os = config_data.get("network_os")
+        if not isinstance(network_os, dict):
+            return normalized
+
+        policy = network_os.get("policy")
+        if not isinstance(policy, dict):
+            return normalized
+
+        validated_policy = EthernetAccessGatheredPolicyFilterModel.model_validate(
+            policy,
+            by_name=True,
+            context={"mode": "config", "state": "gathered"},
+        )
+        network_os["policy"] = validated_policy.model_dump(
+            by_alias=False,
+            exclude_none=True,
+            context={"mode": "config"},
+        )
+
+        return normalized
+
+    def to_gathered_config(self, **kwargs: Any) -> dict[str, Any]:
+        """Return gathered output in the module's grouped input shape."""
+        config = super().to_gathered_config(**kwargs)
+        interface_name = config.pop("interface_name", None)
+        if interface_name is not None:
+            config["interface_names"] = [interface_name]
+        return config
+
     # --- Argument Spec ---
 
     @classmethod
@@ -438,17 +566,17 @@ class EthernetAccessInterfaceModel(NDBaseModel):
             config=dict(
                 type="list",
                 elements="dict",
-                required=True,
+                required=False,
                 options=dict(
-                    switch_ip=dict(type="str", required=True),
-                    interface_names=dict(type="list", elements="str", required=True),
+                    switch_ip=dict(type="str", required=False),
+                    interface_names=dict(type="list", elements="str", required=False),
                     config_data=dict(
                         type="dict",
                         options=dict(
                             network_os=dict(
                                 type="dict",
                                 options=dict(
-                                    network_os_type=dict(type="str", default="nx-os", choices=["nx-os", "ios-xe"]),
+                                    network_os_type=dict(type="str", choices=["nx-os", "ios-xe"]),
                                     policy=dict(
                                         type="dict",
                                         options=dict(
@@ -459,18 +587,33 @@ class EthernetAccessInterfaceModel(NDBaseModel):
                                             admin_state=dict(type="bool"),
                                             access_vlan=dict(type="int"),
                                             bandwidth=dict(type="int"),
-                                            bpdu_filter=dict(type="str", choices=[e.value for e in BpduFilterEnum]),
-                                            bpdu_guard=dict(type="str", choices=[e.value for e in BpduGuardEnum]),
+                                            bpdu_filter=dict(
+                                                type="str",
+                                                choices=[e.value for e in BpduFilterEnum],
+                                            ),
+                                            bpdu_guard=dict(
+                                                type="str",
+                                                choices=[e.value for e in BpduGuardEnum],
+                                            ),
                                             cdp=dict(type="bool"),
                                             debounce_timer=dict(type="int"),
                                             debounce_linkup_timer=dict(type="int"),
                                             description=dict(type="str"),
-                                            duplex_mode=dict(type="str", choices=[e.value for e in DuplexModeEnum]),
+                                            duplex_mode=dict(
+                                                type="str",
+                                                choices=[e.value for e in DuplexModeEnum],
+                                            ),
                                             error_detection_acl=dict(type="bool"),
                                             extra_config=dict(type="str"),
-                                            fec=dict(type="str", choices=[e.value for e in FecEnum]),
+                                            fec=dict(
+                                                type="str",
+                                                choices=[e.value for e in FecEnum],
+                                            ),
                                             inherit_bandwidth=dict(type="int"),
-                                            link_type=dict(type="str", choices=[e.value for e in LinkTypeEnum]),
+                                            link_type=dict(
+                                                type="str",
+                                                choices=[e.value for e in LinkTypeEnum],
+                                            ),
                                             monitor=dict(type="bool"),
                                             mtu=dict(type="str"),
                                             negotiate_auto=dict(type="bool"),
@@ -485,7 +628,10 @@ class EthernetAccessInterfaceModel(NDBaseModel):
                                             queuing_policy=dict(type="str"),
                                             speed=dict(type="str", choices=_SPEED_ARGSPEC_CHOICES),
                                             storm_control=dict(type="bool"),
-                                            storm_control_action=dict(type="str", choices=[e.value for e in StormControlActionEnum]),
+                                            storm_control_action=dict(
+                                                type="str",
+                                                choices=[e.value for e in StormControlActionEnum],
+                                            ),
                                             storm_control_broadcast_level=dict(type="float"),
                                             storm_control_broadcast_level_pps=dict(type="int"),
                                             storm_control_multicast_level=dict(type="float"),
@@ -503,6 +649,6 @@ class EthernetAccessInterfaceModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
         )
