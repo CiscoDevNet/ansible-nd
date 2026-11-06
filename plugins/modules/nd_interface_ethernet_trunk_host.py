@@ -738,6 +738,7 @@ before:
     planning/reporting projection containing the member identity and safe fields. It uses C(trunkHost) for NX-OS or
     C(iosXeTrunkHost) for IOS-XE as the reporting policy and omits the authentic member discriminator, owning identifier,
     and membership metadata. It does not represent a policy conversion.
+  - For O(state=gathered), this is an empty list because gathered resources are returned under C(gathered).
   returned: always
   type: list
   elements: dict
@@ -758,6 +759,7 @@ after:
     scope and is absent from this list.
   - For a supported member update, the entry is the resulting host-shaped safe-field projection. The authentic member
     policy and parent membership remain unchanged on the controller but are not included in this output projection.
+  - For O(state=gathered), this is an empty list because no reconciliation is performed.
   returned: always
   type: list
   elements: dict
@@ -773,13 +775,13 @@ diff:
   description:
   - Reserved for the per-interface difference between C(before) and C(after).
   - Currently always an empty list for this module family; compare C(before) and C(after) directly.
-  returned: always
+  returned: when O(state) is not V(gathered)
   type: list
   elements: dict
   sample: []
 proposed:
   description: The configuration the module proposed to apply, before reconciliation with the controller.
-  returned: when O(output_level) is V(info) or V(debug)
+  returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
   sample:
@@ -808,21 +810,22 @@ msg:
   sample: "Configuration error: ..."
 gathered:
   description:
-  - User-managed trunkHost interfaces matching the supplied O(config) filters.
+  - User-managed trunk-host interfaces matching the supplied O(config) filters.
   - Returned in reusable Ansible configuration format.
   returned: when O(state=gathered)
   type: list
   elements: dict
 """
 
-import copy
 import logging
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import get_raw_module_args
 from ansible_collections.cisco.nd.plugins.module_utils.interface_config_normalizer import (
     expand_ethernet_config as _expand_ethernet_config,
+    expand_ethernet_gathered_filters as _expand_ethernet_gathered_filters,
     validate_ethernet_across_item_duplicates as _validate_ethernet_across_item_duplicates,
     validate_ethernet_interface_names as _validate_ethernet_interface_names,
     validate_ethernet_within_item_duplicates as _validate_ethernet_within_item_duplicates,
@@ -855,38 +858,12 @@ def expand_config(config_list: list[dict]) -> list[dict]:
     return _expand_ethernet_config(config_list)
 
 
-def expand_gathered_filters(config_list):
-    """
-    Expand interface_names in gathered filter items to singular interface_name.
-
-    Each filter item with interface_names: [A, B] becomes two filter items:
-    {interface_name: A, ...} and {interface_name: B, ...}.
-    Multiple filter items use OR semantics, so this correctly expresses
-    "show me A OR B".
-
-    This is the gathered-filter counterpart of expand_config(), which performs
-    the same name-flattening for mutation states. Both exist because the user-facing
-    argspec uses interface_names (list) while the internal model uses interface_name
-    (singular).
-
-    Raises ValueError when an interface_names entry is null, empty/whitespace-only, or not a string,
-    so invalid partial filters fail before the state machine can issue an API request.
-    """
-    if not config_list:
-        return config_list
-    _validate_ethernet_interface_names(config_list, require_interface_names=False)
-    expanded = []
-    for item in config_list:
-        names = item.get("interface_names", None) or []
-        if names:
-            for name in names:
-                new_item = copy.deepcopy(item)
-                new_item.pop("interface_names", None)
-                new_item["interface_name"] = name
-                expanded.append(new_item)
-        else:
-            expanded.append(copy.deepcopy(item))
-    return expanded
+def expand_gathered_filters(config_list, raw_config_list=None):
+    """Delegate gathered Ethernet filter normalization and expansion."""
+    return _expand_ethernet_gathered_filters(
+        config_list,
+        raw_config_list=raw_config_list,
+    )
 
 
 def main() -> None:
@@ -932,7 +909,7 @@ def main() -> None:
         )
     else:
         try:
-            module.params["config"] = expand_gathered_filters(module.params.get("config"))
+            module.params["config"] = expand_gathered_filters(module.params.get("config"), get_raw_module_args().get("config"))
         except (ValueError, TypeError) as e:
             module.fail_json(msg=f"Gathered filter error: {e}")
 
