@@ -223,33 +223,49 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
     # Results registration helper
     # ------------------------------------------------------------------
 
-    def _register_result(self, action, operation_type, message, changed, diff=None, verb=HttpVerbEnum.GET, path="", payload=None):
+    def _register_result(
+        self,
+        action,
+        operation_type,
+        message,
+        changed,
+        diff=None,
+        verb=HttpVerbEnum.GET,
+        path="",
+        payload=None,
+        return_code=200,
+    ):
         """Register a successful API call result with the Results tracker.
 
         Centralises the repeated pattern of setting action, operation_type,
         response_current, result_current, diff_current and calling
-        ``register_api_call()``.  All calls use ``RETURN_CODE=200`` and
-        ``success=True``; error paths in the main module entry point set
-        these fields directly.
+        ``register_api_call()``. Live API calls pass the controller-provided
+        return code; synthetic check-mode and aggregate summaries default to
+        ``RETURN_CODE=200``. Error paths in the main module entry point set
+        these fields directly. Summaries for the ``merged`` and ``deleted``
+        states use verbosity level 2, while ``gathered`` summaries use level 3.
 
         Args:
             action: Short label for the operation (e.g. ``'merge'``, ``'delete'``, ``'gathered'``).
-            operation_type: ``OperationType`` enum value.
+            operation_type: ``OperationType`` enum value retained as internal
+                result metadata; output verbosity is determined by module state.
             message: Human-readable message for ``response_current["MESSAGE"]``.
             changed: Whether the operation mutated state.
             diff: Diff dict to attach when provided. Defaults to ``{}``.
             verb: ``HttpVerbEnum`` value for the HTTP method used.  Defaults to ``GET``.
             path: API endpoint path string.  Defaults to ``""``.
             payload: Request payload dict, or ``None`` for GET / no-body requests.
+            return_code: HTTP status returned by ND. Defaults to synthetic success ``200``.
         """
         self.results.action = action
         self.results.operation_type = operation_type
         self.results.verb_current = verb
         self.results.path_current = path
         self.results.payload_current = payload
-        self.results.response_current = {"RETURN_CODE": 200, "MESSAGE": message}
+        self.results.response_current = {"RETURN_CODE": return_code, "MESSAGE": message}
         self.results.result_current = {"success": True, "changed": changed}
         self.results.diff_current = diff if diff is not None else {}
+        self.results.verbosity_level_current = 3 if self.state == "gathered" else 2
         self.results.register_api_call()
 
     # ------------------------------------------------------------------
@@ -1217,6 +1233,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             api_start = time.monotonic()
             try:
                 remove_resp_data = self.nd.request(remove_ep.path, remove_ep.verb, data=remove_req.to_payload())
+                remove_return_code = self.nd.status
             except Exception:
                 self.log.exception(
                     "manage_merged: Update delete API call failed after %.3f second(s) (path=%s, resource_count=%s)",
@@ -1248,7 +1265,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                     resp_item_data = resp_item
                 else:
                     resp_item_data = resp_item.model_dump(by_alias=True, exclude_none=True)
-                self.api_responses.append({"RETURN_CODE": 200, "DATA": resp_item_data})
+                self.api_responses.append({"RETURN_CODE": remove_return_code, "DATA": resp_item_data})
 
             self._register_result(
                 "merge",
@@ -1259,6 +1276,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 verb=HttpVerbEnum.POST,
                 path=remove_ep.path,
                 payload=remove_req.to_payload(),
+                return_code=remove_return_code,
             )
 
         self.log.info(
@@ -1272,6 +1290,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         api_start = time.monotonic()
         try:
             resp_data = self.nd.request(create_ep.path, create_ep.verb, data=batch.to_payload())
+            create_return_code = self.nd.status
         except Exception:
             self.log.exception(
                 "manage_merged: Batch create API call failed after %.3f second(s) (path=%s, resource_count=%s)",
@@ -1329,7 +1348,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 resp_item_data = resp_item.model_dump(by_alias=True, exclude_none=True)
                 resp_item_entity_name = resp_item.entity_name
 
-            self.api_responses.append({"RETURN_CODE": 200, "DATA": resp_item_data})
+            self.api_responses.append({"RETURN_CODE": create_return_code, "DATA": resp_item_data})
             # GAP-5: Validate that the API response fields match what we sent.
             if resp_item_entity_name is not None:
                 allocation_key = ResourceManagerDiffEngine._make_resource_key_from_resource(
@@ -1367,6 +1386,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             verb=HttpVerbEnum.POST,
             path=create_ep.path,
             payload=batch.to_payload(),
+            return_code=create_return_code,
         )
 
     def manage_deleted(self):
@@ -1469,6 +1489,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         api_start = time.monotonic()
         try:
             resp_data = self.nd.request(ep.path, ep.verb, data=remove_req.to_payload())
+            remove_return_code = self.nd.status
         except Exception:
             self.log.exception(
                 "manage_deleted: Delete API call failed after %.3f second(s) (path=%s, resource_count=%s)",
@@ -1501,7 +1522,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 resp_item_data = resp_item
             else:
                 resp_item_data = resp_item.model_dump(by_alias=True, exclude_none=True)
-            self.api_responses.append({"RETURN_CODE": 200, "DATA": resp_item_data})
+            self.api_responses.append({"RETURN_CODE": remove_return_code, "DATA": resp_item_data})
 
         self.log.info(
             "manage_deleted: Successfully deleted %s resource(s): %s",
@@ -1519,6 +1540,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             verb=HttpVerbEnum.POST,
             path=ep.path,
             payload=remove_req.to_payload(),
+            return_code=remove_return_code,
         )
 
     def manage_gathered(self):
