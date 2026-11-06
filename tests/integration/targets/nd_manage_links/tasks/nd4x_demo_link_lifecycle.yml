@@ -22,27 +22,6 @@
         {%- endif -%}
       {%- endfor -%}
       {{ links }}
-    nd4x_rest_replace_absent_links: >-
-      {%- set absent = [] -%}
-      {%- for old_link in nd4x_create_config -%}
-        {%- set identity = namespace(found=false) -%}
-        {%- for new_link in nd4x_rest_replace_links -%}
-          {%- if old_link.src_fabric_name == new_link.src_fabric_name and
-                old_link.dst_fabric_name == new_link.dst_fabric_name and
-                old_link.src_switch_name == new_link.src_switch_name and
-                old_link.dst_switch_name == new_link.dst_switch_name and
-                old_link.src_interface_name == new_link.src_interface_name and
-                old_link.dst_interface_name == new_link.dst_interface_name and
-                (old_link.src_cluster_name | default('')) == (new_link.src_cluster_name | default('')) and
-                (old_link.dst_cluster_name | default('')) == (new_link.dst_cluster_name | default('')) -%}
-            {%- set identity.found = true -%}
-          {%- endif -%}
-        {%- endfor -%}
-        {%- if not identity.found -%}
-          {%- set _ = absent.append(old_link) -%}
-        {%- endif -%}
-      {%- endfor -%}
-      {{ absent }}
     nd4x_rest_override_links: "{{ nd4x_override_config }}"
     nd4x_rest_recreate_links: >-
       {{ (nd4x_override_config + nd4x_recreate_config)
@@ -71,6 +50,30 @@
       {{ links }}
     nd4x_rest_delete_one_absent_links: "{{ nd4x_delete_one_config }}"
     nd4x_rest_delete_bulk_absent_links: "{{ nd4x_delete_bulk_config }}"
+
+- name: Build identities removed by replacement
+  ansible.builtin.set_fact:
+    nd4x_rest_replace_absent_links: >-
+      {%- set absent = [] -%}
+      {%- for old_link in nd4x_create_config -%}
+        {%- set identity = namespace(found=false) -%}
+        {%- for new_link in nd4x_rest_replace_links -%}
+          {%- if old_link.src_fabric_name == new_link.src_fabric_name and
+                old_link.dst_fabric_name == new_link.dst_fabric_name and
+                old_link.src_switch_name == new_link.src_switch_name and
+                old_link.dst_switch_name == new_link.dst_switch_name and
+                old_link.src_interface_name == new_link.src_interface_name and
+                old_link.dst_interface_name == new_link.dst_interface_name and
+                (old_link.src_cluster_name | default('')) == (new_link.src_cluster_name | default('')) and
+                (old_link.dst_cluster_name | default('')) == (new_link.dst_cluster_name | default('')) -%}
+            {%- set identity.found = true -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- if not identity.found -%}
+          {%- set _ = absent.append(old_link) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ absent }}
 
 - name: Build complete REST assertions for every lifecycle operation
   ansible.builtin.include_tasks: nd4x_demo_build_rest_expectations.yml
@@ -515,6 +518,7 @@
         nd4x_assert_collection: "{{ nd4x_override.first_run_result.after }}"
         nd4x_expected_links: "{{ nd4x_rest_override_links }}"
         nd4x_assert_scope_links: "{{ nd4x_create_config }}"
+      when: nd4x_run_overridden | default(false) | bool
 
     - name: "{{ nd4x_policy_name }} OVERRIDDEN: Verify exact REST scoped state"
       ansible.builtin.include_tasks: nd4x_demo_assert_rest_scope.yml
@@ -573,6 +577,9 @@
         nd4x_assert_collection: "{{ nd4x_recreate.first_run_result.after }}"
         nd4x_expected_links: "{{ nd4x_rest_recreate_links }}"
         nd4x_assert_scope_links: "{{ nd4x_create_config }}"
+      when:
+        - nd4x_run_overridden | default(false) | bool
+        - nd4x_recreate_config | length > 0
 
     - name: "{{ nd4x_policy_name }} RECREATE: Verify exact REST scoped state"
       ansible.builtin.include_tasks: nd4x_demo_assert_rest_scope.yml

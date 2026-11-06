@@ -165,7 +165,7 @@
         create_expectations:
           - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/54' & @.configData.policyType == 'userDefined')].configData.templateInputs.allowedVlans", equals: "10,20,30"}
         update_expectations:
-          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/54' & @.configData.policyType == 'userDefined')].configData.templateInputs.mtu", equals: 1500}
+          - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/54' & @.configData.policyType == 'userDefined')].configData.templateInputs.mtu", equals: "1500"}
         replace_expectations:
           - {jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/54' & @.configData.policyType == 'userDefined')].configData.templateInputs.allowedVlans", equals: "100,200"}
         recreate_expectations:

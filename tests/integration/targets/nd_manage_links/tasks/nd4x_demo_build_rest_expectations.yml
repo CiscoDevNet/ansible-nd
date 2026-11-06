@@ -42,7 +42,11 @@
             {%- for key_part in key_parts[1:] -%}
               {%- set rest_key_builder.value = rest_key_builder.value ~ key_part[:1] | upper ~ key_part[1:] -%}
             {%- endfor -%}
-            {%- set _ = expectations.append({'jsonpath': selector ~ '.configData.templateInputs.' ~ rest_key_builder.value, 'equals': template_input.value}) -%}
+            {%- set rest_expected_value = template_input.value -%}
+            {%- if link.config_data.policy_type == 'userDefined' and template_input.key == 'mtu' -%}
+              {%- set rest_expected_value = template_input.value | string -%}
+            {%- endif -%}
+            {%- set _ = expectations.append({'jsonpath': selector ~ '.configData.templateInputs.' ~ rest_key_builder.value, 'equals': rest_expected_value}) -%}
           {%- endif -%}
         {%- endfor -%}
       {%- endfor -%}

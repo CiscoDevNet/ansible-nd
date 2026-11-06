@@ -23,7 +23,7 @@
     fail_msg: >-
       Could not verify that the {{ nd4x_scope_assert_label }} reserved scope
       is clean. Expected HTTP 200 with a links collection from
-      {{ item.item.path }}, got status {{ item.status | default('unknown') }},
+      {{ item.nd4x_scope_query.path | default('unknown') }}, got status {{ item.status | default('unknown') }},
       failed={{ item.failed | default(false) }}, response={{ item.jsondata | default('missing') }}.
   loop: "{{ nd4x_scope_query_results.results }}"
 

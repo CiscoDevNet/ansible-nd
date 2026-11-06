@@ -148,7 +148,7 @@
     fail_msg: >-
       Could not resolve the switch identifier or reserved interfaces for
       extended policy {{ item.scope }} on {{ item.fabric }}/{{ item.switch_name }}.
-  loop: "{{ nd4x_extended_interface_inventory_targets }}"
+  loop: "{{ nd4x_extended_interface_inventory_targets | default([]) }}"
   when:
     - nd4x_links_supported | default(false) | bool
     - nd4x_extended_cases | length > 0
@@ -157,9 +157,10 @@
   ansible.builtin.include_tasks: nd4x_demo_validate_interface_inventory.yml
   vars:
     nd4x_interface_inventory_label: ND4X EXTENDED PREFLIGHT
+    nd4x_interface_inventory_targets: "{{ nd4x_extended_interface_inventory_targets | default([]) }}"
   when:
     - nd4x_links_supported | default(false) | bool
-    - nd4x_extended_interface_inventory_targets | length > 0
+    - nd4x_extended_interface_inventory_targets | default([]) | length > 0
 
 - name: "ND4X EXTENDED PREFLIGHT: Read every reserved policy scope"
   cisco.nd.nd_rest:

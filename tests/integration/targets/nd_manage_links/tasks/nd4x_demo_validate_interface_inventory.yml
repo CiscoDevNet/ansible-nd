@@ -7,7 +7,7 @@
   cisco.nd.nd_rest:
     path: "/api/v1/manage/fabrics/{{ item.fabric }}/switches/{{ item.switch_id }}/interfaces"
     method: get
-  loop: "{{ nd4x_interface_inventory_targets }}"
+  loop: "{{ nd4x_interface_inventory_targets | default([]) }}"
   loop_control:
     label: "{{ item.fabric }}/{{ item.switch_name }}"
   register: nd4x_interface_inventory_queries

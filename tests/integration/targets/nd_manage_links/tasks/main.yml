@@ -63,10 +63,10 @@
     nd4x_links_page_size: '{{ nd_test_nd4x_links_page_size | default(10000) | int }}'
     nd4x_links_max_pages: '{{ nd_test_nd4x_links_max_pages | default(1000) | int }}'
 
-    test_iosxe_switch_a: '{{ nd_test_iosxe_switch_a | default(test_switch_a) }}'
-    test_iosxe_switch_b: '{{ nd_test_iosxe_switch_b | default(test_switch_b) }}'
-    test_vpc_switch_a: '{{ nd_test_vpc_switch_a | default(test_switch_a) }}'
-    test_vpc_switch_b: '{{ nd_test_vpc_switch_b | default(test_switch_b) }}'
+    test_iosxe_switch_a: '{{ nd_test_iosxe_switch_a | default(nd_test_switch_a | default("n9k-z17-62")) }}'
+    test_iosxe_switch_b: '{{ nd_test_iosxe_switch_b | default(nd_test_switch_b | default("n9k-z17-63")) }}'
+    test_vpc_switch_a: '{{ nd_test_vpc_switch_a | default(nd_test_switch_a | default("n9k-z17-62")) }}'
+    test_vpc_switch_b: '{{ nd_test_vpc_switch_b | default(nd_test_switch_b | default("n9k-z17-63")) }}'
 
     # ND4X harness safety metadata. These values are intentionally not
     # invented by the target: the caller must identify the dedicated test
@@ -233,7 +233,7 @@
 
 # ND 4.x harness scenarios. These are never selected by the default target run;
 # the original suite above remains unchanged and continues to provide default
-# coverage. Select these with --tags never,nd4x_demo,<scenario-tag>.
+# coverage. Select these with --tags nd4x_demo,<scenario-tag>.
 - name: Run ND 4.x nd_manage_links harness preflight
   ansible.builtin.include_tasks:
     file: nd4x_demo_preflight.yml

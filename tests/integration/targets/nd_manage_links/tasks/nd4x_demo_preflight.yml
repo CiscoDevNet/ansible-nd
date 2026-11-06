@@ -154,26 +154,55 @@
   register: nd4x_links_switch_queries
   when: nd4x_links_supported | bool
 
-- name: "ND4X PREFLIGHT: Verify both test switches exist in every required fabric"
+- name: "ND4X PREFLIGHT: Build required endpoint switch expectations"
+  ansible.builtin.set_fact:
+    nd4x_links_preflight_switch_endpoints: >-
+      {%- set endpoints = [] -%}
+      {%- for scope in nd4x_links_preflight_scopes
+            if scope.enabled | bool -%}
+        {%- set _ = endpoints.append({
+              'scope': scope.name,
+              'role': 'source',
+              'fabric': scope.src_fabric,
+              'switch_name': test_switch_a
+            }) -%}
+        {%- set _ = endpoints.append({
+              'scope': scope.name,
+              'role': 'destination',
+              'fabric': scope.dst_fabric,
+              'switch_name': test_switch_b
+            }) -%}
+      {%- endfor -%}
+      {{ endpoints }}
+  when: nd4x_links_supported | bool
+
+- name: "ND4X PREFLIGHT: Verify every required endpoint switch exists"
   ansible.builtin.assert:
     that:
-      - item.status | int == 200
       - >-
         (
-          item.jsondata.switches | default([])
-          | selectattr('hostname', 'equalto', test_switch_a)
-          | list | length
-        ) == 1
+          nd4x_links_switch_queries.results
+          | selectattr('item', 'equalto', item.fabric)
+          | map(attribute='status')
+          | first
+          | default(0)
+          | int
+        ) == 200
       - >-
         (
-          item.jsondata.switches | default([])
-          | selectattr('hostname', 'equalto', test_switch_b)
-          | list | length
+          nd4x_links_switch_queries.results
+          | selectattr('item', 'equalto', item.fabric)
+          | map(attribute='jsondata.switches')
+          | first
+          | default([], true)
+          | selectattr('hostname', 'equalto', item.switch_name)
+          | list
+          | length
         ) == 1
     fail_msg: >-
-      Required switches {{ test_switch_a }} and {{ test_switch_b }} were not
-      found uniquely in fabric {{ item.item }}.
-  loop: "{{ nd4x_links_switch_queries.results }}"
+      Required {{ item.role }} switch {{ item.switch_name }} was not found
+      uniquely in fabric {{ item.fabric }} for {{ item.scope }}.
+  loop: "{{ nd4x_links_preflight_switch_endpoints }}"
   when: nd4x_links_supported | bool
 
 - name: "ND4X PREFLIGHT: Build physical interface inventory targets"
@@ -224,6 +253,7 @@
   ansible.builtin.include_tasks: nd4x_demo_validate_interface_inventory.yml
   vars:
     nd4x_interface_inventory_label: ND4X PREFLIGHT
+    nd4x_interface_inventory_targets: "{{ nd4x_links_interface_inventory_targets | default([]) }}"
   when:
     - nd4x_links_supported | bool
     - nd4x_links_interface_inventory_targets | length > 0
