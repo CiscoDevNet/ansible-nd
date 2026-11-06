@@ -14,10 +14,12 @@ Covers `validate_within_item_duplicates`, `validate_across_item_duplicates`, and
 
 from __future__ import absolute_import, division, print_function
 
+import json
 from typing import Any
 
 import pytest
 import yaml
+from ansible.module_utils import basic as ansible_basic
 from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
 from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import validate_gathered_filters
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import (
@@ -523,6 +525,149 @@ def test_expand_gathered_filters_00100_rejects_invalid_interface_names(invalid_n
     config = [{"switch_ip": "1.1.1.1", "interface_names": [invalid_name]}]
     with pytest.raises(ValueError, match=r"interface_names\[0\]"):
         expand_gathered_filters(config)
+
+
+class _GatheredStateMachineReached(BaseException):
+    """Signal that gathered preprocessing completed and reached the state machine."""
+
+    def __init__(self, params: dict[str, Any], check_mode: bool) -> None:
+        super().__init__()
+        self.params = params
+        self.check_mode = check_mode
+
+
+class _GatheredModuleFailed(BaseException):
+    """Capture module.fail_json output during gathered preprocessing."""
+
+    def __init__(self, result: dict[str, Any]) -> None:
+        super().__init__()
+        self.result = result
+
+
+def _set_gathered_module_args(
+    monkeypatch: pytest.MonkeyPatch,
+    module_args: dict[str, Any],
+) -> None:
+    """Expose raw arguments to the real AnsibleModule parser."""
+    payload = json.dumps({"ANSIBLE_MODULE_ARGS": module_args}).encode("utf-8")
+    monkeypatch.setattr(ansible_basic, "_ANSIBLE_ARGS", payload)
+    monkeypatch.setattr(ansible_basic, "_ANSIBLE_PROFILE", "legacy", raising=False)
+
+
+def _capture_gathered_state_machine(*, module, model_orchestrator) -> None:
+    """Stop after gathered preprocessing and capture the parsed module parameters."""
+    del model_orchestrator
+    raise _GatheredStateMachineReached(module.params, module.check_mode)
+
+
+def _raise_gathered_module_failed(_module, **kwargs: Any) -> None:
+    """Replace fail_json so tests can inspect the failure."""
+    raise _GatheredModuleFailed(kwargs)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        [{"switch_ip": "1.1.1.1"}],
+        [
+            {
+                "config_data": {
+                    "network_os": {
+                        "policy": {
+                            "admin_state": True,
+                        }
+                    }
+                }
+            }
+        ],
+    ],
+    ids=["switch_only", "policy_only"],
+)
+@pytest.mark.parametrize(
+    "check_mode",
+    [False, True],
+    ids=["normal_mode", "check_mode"],
+)
+def test_gathered_entrypoint_00200_allows_omitted_interface_names(
+    monkeypatch: pytest.MonkeyPatch,
+    config: list[dict[str, Any]],
+    check_mode: bool,
+) -> None:
+    """
+    Verify the real Ansible parser may inject interface_names=None for an omitted
+    option without turning it into an explicitly invalid gathered filter.
+    """
+    monkeypatch.setattr(nd_interface_ethernet_access, "require_pydantic", lambda _module: None)
+    monkeypatch.setattr(nd_interface_ethernet_access, "setup_logging", lambda _module: None)
+    monkeypatch.setattr(nd_interface_ethernet_access, "NDStateMachine", _capture_gathered_state_machine)
+
+    _set_gathered_module_args(
+        monkeypatch,
+        {
+            "fabric_name": "fabric-1",
+            "state": "gathered",
+            "config": config,
+            "_ansible_check_mode": check_mode,
+        },
+    )
+
+    with pytest.raises(_GatheredStateMachineReached) as exc_info:
+        nd_interface_ethernet_access.main()
+
+    parsed_config = exc_info.value.params["config"]
+
+    assert exc_info.value.check_mode is check_mode
+    assert len(parsed_config) == 1
+    assert "interface_names" not in parsed_config[0]
+
+    if "switch_ip" in config[0]:
+        assert parsed_config[0]["switch_ip"] == "1.1.1.1"
+    else:
+        policy = parsed_config[0]["config_data"]["network_os"]["policy"]
+        assert policy["admin_state"] is True
+
+
+@pytest.mark.parametrize(
+    "check_mode",
+    [False, True],
+    ids=["normal_mode", "check_mode"],
+)
+def test_gathered_entrypoint_00201_rejects_explicit_null_interface_names(
+    monkeypatch: pytest.MonkeyPatch,
+    check_mode: bool,
+) -> None:
+    """Verify explicitly supplied interface_names=None remains invalid."""
+    monkeypatch.setattr(nd_interface_ethernet_access, "require_pydantic", lambda _module: None)
+    monkeypatch.setattr(nd_interface_ethernet_access, "setup_logging", lambda _module: None)
+    monkeypatch.setattr(
+        nd_interface_ethernet_access.AnsibleModule,
+        "fail_json",
+        _raise_gathered_module_failed,
+    )
+
+    _set_gathered_module_args(
+        monkeypatch,
+        {
+            "fabric_name": "fabric-1",
+            "state": "gathered",
+            "config": [
+                {
+                    "switch_ip": "1.1.1.1",
+                    "interface_names": None,
+                }
+            ],
+            "_ansible_check_mode": check_mode,
+        },
+    )
+
+    with pytest.raises(_GatheredModuleFailed) as exc_info:
+        nd_interface_ethernet_access.main()
+
+    message = exc_info.value.result["msg"]
+
+    assert "Gathered filter error" in message
+    assert "interface_names" in message
+    assert "must be a list" in message
 
 
 # --- config_actions.deploy default ---

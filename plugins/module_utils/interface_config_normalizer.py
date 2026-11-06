@@ -42,6 +42,46 @@ def validate_ethernet_interface_names(
             )
 
 
+def expand_ethernet_gathered_filters(
+    config_list: list[dict[str, Any]] | None,
+    *,
+    raw_config_list: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]] | None:
+    """Normalize and expand optional gathered Ethernet filters."""
+    if not config_list:
+        return config_list
+
+    normalized = deepcopy(config_list)
+
+    if isinstance(raw_config_list, list):
+        for item_index, item in enumerate(normalized):
+            raw_item = raw_config_list[item_index] if item_index < len(raw_config_list) else None
+
+            if isinstance(item, dict) and isinstance(raw_item, dict) and "interface_names" not in raw_item and item.get("interface_names") is None:
+                item.pop("interface_names", None)
+
+    validate_ethernet_interface_names(
+        normalized,
+        require_interface_names=False,
+    )
+
+    expanded: list[dict[str, Any]] = []
+
+    for item in normalized:
+        interface_names = item.get("interface_names") or []
+
+        if interface_names:
+            for interface_name in interface_names:
+                expanded_item = deepcopy(item)
+                expanded_item.pop("interface_names", None)
+                expanded_item["interface_name"] = interface_name
+                expanded.append(expanded_item)
+        else:
+            expanded.append(deepcopy(item))
+
+    return expanded
+
+
 def validate_ethernet_within_item_duplicates(config_list: list[dict[str, Any]]) -> None:
     """Reject a repeated case-insensitive name within one Ethernet group."""
     for item_index, group in enumerate(config_list):
