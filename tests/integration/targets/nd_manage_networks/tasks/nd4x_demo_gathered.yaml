@@ -1,0 +1,116 @@
+---
+- name: Run nd_manage_networks gathered harness scenarios
+  block:
+    - name: "GATHERED SETUP: Remove reserved harness Network"
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd4x_network_fabric_name }}"
+        state: deleted
+        config:
+          - network_name: harness-nd-network-gathered
+
+    - name: "GATHERED SETUP: Create the Network to inspect"
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd4x_network_fabric_name }}"
+        state: merged
+        config: "{{ nd4x_network_gathered_config }}"
+
+    - name: "GATHERED: Read Network configuration through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_networks
+        state: gathered
+        common_args:
+          fabric_name: "{{ nd4x_network_fabric_name }}"
+          output_level: debug
+        config: "{{ nd4x_network_gathered_config }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_network_check_mode_queries }}"
+        nd_queries: "{{ nd4x_network_validation_queries }}"
+      register: nd4x_network_gathered_result
+
+    - name: "GATHERED: Verify read-only harness phases and returned Network"
+      vars:
+        gathered_network: >-
+          {{
+            nd4x_network_gathered_result.first_run_result.gathered
+            | default([])
+            | selectattr('network_name', 'equalto', 'harness-nd-network-gathered')
+            | first | default({})
+          }}
+      ansible.builtin.assert:
+        that:
+          - not nd4x_network_gathered_result.check_mode_result.changed | bool
+          - not nd4x_network_gathered_result.first_run_result.changed | bool
+          - nd4x_network_gathered_result.idempotency_attempts == 1
+          - not nd4x_network_gathered_result.second_run_result.changed | bool
+          - nd4x_network_gathered_result.first_run_result.fabric_type == nd4x_network_expected_fabric_type
+          - gathered_network.network_name == 'harness-nd-network-gathered'
+          - nd4x_network_gathered_result.check_mode_query_results | length == nd4x_network_check_mode_queries | length
+          - gathered_network.network_id | int == nd4x_network_gathered_expected_id | int
+          - gathered_network.vlan_id | int == nd4x_network_gathered_expected_vlan | int
+
+    - name: "GATHERED: Validate parent fields with the legacy Network validator"
+      cisco.nd.tests.integration._nd_network_validate:
+        nd_data: "{{ nd4x_network_gathered_result.first_run_result }}"
+        test_data: "{{ nd4x_network_gathered_config }}"
+
+    - name: "GATHERED: Read child Network configuration directly through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_networks
+        state: gathered
+        common_args:
+          fabric_name: "{{ nd4x_network_child_fabric_name }}"
+          output_level: debug
+        config: []
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_network_check_mode_queries }}"
+      register: nd4x_network_child_gathered_result
+      when: nd4x_network_topology in ['msd', 'mcfg']
+
+    - name: "GATHERED: Verify direct child Network result"
+      vars:
+        child_gathered_network: >-
+          {{
+            nd4x_network_child_gathered_result.first_run_result.gathered
+            | default([])
+            | selectattr('network_name', 'equalto', 'harness-nd-network-gathered')
+            | first | default({})
+          }}
+      ansible.builtin.assert:
+        that:
+          - not nd4x_network_child_gathered_result.first_run_result.changed | bool
+          - child_gathered_network.network_name == 'harness-nd-network-gathered'
+          - child_gathered_network.network_id | int == nd4x_network_gathered_expected_id | int
+          - child_gathered_network.vlan_id | int == nd4x_network_gathered_expected_vlan | int
+      when: nd4x_network_topology in ['msd', 'mcfg']
+
+    - name: "GATHERED: Validate child fields with the legacy Network validator"
+      cisco.nd.tests.integration._nd_network_validate:
+        nd_data: "{{ nd4x_network_child_gathered_result.first_run_result }}"
+        test_data: "{{ nd4x_network_gathered_config }}"
+      when: nd4x_network_topology in ['msd', 'mcfg']
+
+  always:
+    - name: "GATHERED CLEANUP: Remove reserved harness Network"
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd4x_network_fabric_name }}"
+        state: deleted
+        config:
+          - network_name: harness-nd-network-gathered

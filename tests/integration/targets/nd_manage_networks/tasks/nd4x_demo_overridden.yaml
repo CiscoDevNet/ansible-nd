@@ -1,0 +1,183 @@
+---
+- name: "OVERRIDDEN PREFLIGHT: Require destructive-test opt-in"
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_destructive_tests_enabled | bool
+      - nd4x_network_destructive_scope_confirmed | bool
+    fail_msg: >-
+      The nd_manage_networks overridden harness scenario removes Networks not
+      present in the desired configuration. Set both
+      nd_network_harness_destructive_tests_enabled=true and
+      nd_network_harness_destructive_scope_confirmed=true after reserving the
+      harness Network names on a dedicated test fabric.
+
+- name: Run nd_manage_networks overridden harness scenarios
+  block:
+    - name: "OVERRIDDEN SETUP: Remove reserved harness Networks"
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd4x_network_fabric_name }}"
+        state: deleted
+        config:
+          - network_name: harness-nd-network-over-keep
+          - network_name: harness-nd-network-over-remove
+
+    - name: "OVERRIDDEN SETUP: Seed two harness Networks"
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd4x_network_fabric_name }}"
+        state: merged
+        config: "{{ nd4x_network_overridden_seed_config }}"
+
+    - name: "OVERRIDDEN SAFETY: Read all Networks before override"
+      cisco.nd.nd_rest:
+        path: "{{ nd4x_network_parent_network_path }}"
+        method: get
+      register: nd4x_network_overridden_inventory
+
+    - name: "OVERRIDDEN SAFETY: Require a harness-only Network inventory"
+      vars:
+        overridden_inventory_networks: >-
+          {{
+            nd4x_network_overridden_inventory.current.networks
+            | default(nd4x_network_overridden_inventory.current.items | default([]))
+          }}
+      ansible.builtin.assert:
+        that:
+          - overridden_inventory_networks | length > 0
+          - >-
+            overridden_inventory_networks
+            | map(attribute='networkName', default='')
+            | reject('match', '^harness-nd-network-')
+            | list | length == 0
+        fail_msg: >-
+          Refusing to run overridden against this fabric. The complete Network
+          inventory must contain only resources with the reserved
+          harness-nd-network- prefix. Use a dedicated harness fabric.
+
+    - name: "OVERRIDDEN: Reduce Networks through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_networks
+        state: overridden
+        common_args:
+          fabric_name: "{{ nd4x_network_fabric_name }}"
+          output_level: debug
+        config: "{{ nd4x_network_overridden_config }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_network_check_mode_queries }}"
+        nd_queries: "{{ nd4x_network_validation_queries }}"
+      register: nd4x_network_overridden_result
+
+    - name: "OVERRIDDEN: Verify retained and removed Networks"
+      vars:
+        returned_networks: "{{ nd4x_network_overridden_result.first_run_result.after | default([]) }}"
+      ansible.builtin.assert:
+        that:
+          - nd4x_network_overridden_result.check_mode_result.changed | bool
+          - nd4x_network_overridden_result.first_run_result.changed | bool
+          - nd4x_network_overridden_result.idempotency_attempts == 1
+          - not nd4x_network_overridden_result.second_run_result.changed | bool
+          - returned_networks | selectattr('network_name', 'equalto', 'harness-nd-network-over-keep') | list | length == 1
+          - returned_networks | selectattr('network_name', 'equalto', 'harness-nd-network-over-remove') | list | length == 0
+          - >-
+            returned_networks
+            | selectattr('network_name', 'equalto', 'harness-nd-network-over-keep')
+            | selectattr('network_id', 'equalto', nd4x_network_overridden_expected_id | int)
+            | list | length == 1
+
+    - name: "OVERRIDDEN: Gather parent Networks after override"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_networks
+        state: gathered
+        common_args:
+          fabric_name: "{{ nd4x_network_fabric_name }}"
+          output_level: debug
+        config: []
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_network_check_mode_queries }}"
+        nd_queries: "{{ nd4x_network_validation_queries }}"
+      register: nd4x_network_overridden_parent_gathered
+
+    - name: "OVERRIDDEN: Validate retained fields with the legacy Network validator"
+      cisco.nd.tests.integration._nd_network_validate:
+        nd_data: "{{ nd4x_network_overridden_parent_gathered.first_run_result }}"
+        test_data: "{{ nd4x_network_overridden_config }}"
+
+    - name: "OVERRIDDEN: Validate omitted Network absence from gathered parent state"
+      cisco.nd.tests.integration._nd_network_validate:
+        nd_data: "{{ nd4x_network_overridden_parent_gathered.first_run_result }}"
+        test_data:
+          - network_name: harness-nd-network-over-remove
+        present: false
+
+    - name: "OVERRIDDEN: Gather child Networks after parent override"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_networks
+        state: gathered
+        common_args:
+          fabric_name: "{{ nd4x_network_child_fabric_name }}"
+          output_level: debug
+        config: []
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_network_check_mode_queries }}"
+        nd_queries: "{{ nd4x_network_validation_queries }}"
+      register: nd4x_network_overridden_child_result
+      when: nd4x_network_topology in ['msd', 'mcfg']
+
+    - name: "OVERRIDDEN: Verify child Network retained and omitted state"
+      vars:
+        child_returned_networks: "{{ nd4x_network_overridden_child_result.first_run_result.after | default([]) }}"
+        child_kept_network: >-
+          {{
+            child_returned_networks
+            | selectattr('network_name', 'equalto', 'harness-nd-network-over-keep')
+            | first | default({})
+          }}
+      ansible.builtin.assert:
+        that:
+          - child_returned_networks | selectattr('network_name', 'equalto', 'harness-nd-network-over-keep') | list | length == 1
+          - child_kept_network.network_id | int == nd4x_network_overridden_expected_id | int
+          - child_kept_network.vlan_id | int == nd4x_network_base_vlan + 104
+          - child_kept_network.vlan_name is search('over_keep_vlan')
+          - child_returned_networks | selectattr('network_name', 'equalto', 'harness-nd-network-over-remove') | list | length == 0
+      when: nd4x_network_topology in ['msd', 'mcfg']
+
+    - name: "OVERRIDDEN: Validate child fields with the legacy Network validator"
+      cisco.nd.tests.integration._nd_network_validate:
+        nd_data: "{{ nd4x_network_overridden_child_result.first_run_result }}"
+        test_data: "{{ nd4x_network_overridden_config }}"
+      when: nd4x_network_topology in ['msd', 'mcfg']
+
+  always:
+    - name: "OVERRIDDEN CLEANUP: Remove reserved harness Networks"
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd4x_network_fabric_name }}"
+        state: deleted
+        config:
+          - network_name: harness-nd-network-over-keep
+          - network_name: harness-nd-network-over-remove

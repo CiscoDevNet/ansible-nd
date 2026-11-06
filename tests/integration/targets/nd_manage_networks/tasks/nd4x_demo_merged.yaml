@@ -1,0 +1,253 @@
+---
+- name: Run nd_manage_networks merged harness scenarios
+  block:
+    - name: "MERGED SETUP: Remove reserved harness Network"
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd4x_network_fabric_name }}"
+        state: deleted
+        config: "{{ nd4x_network_merged_cleanup_config }}"
+      register: nd4x_network_merged_cleanup
+
+    - name: "MERGED: Stage Network configuration through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_networks
+        state: merged
+        common_args:
+          fabric_name: "{{ nd4x_network_fabric_name }}"
+          output_level: debug
+        config: "{{ nd4x_network_merged_config }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_network_check_mode_queries }}"
+        nd_queries: "{{ nd4x_network_validation_queries }}"
+      register: nd4x_network_merged_result
+
+    - name: "MERGED: Verify staged Network and topology result"
+      vars:
+        merged_network: >-
+          {{
+            nd4x_network_merged_result.first_run_result.after
+            | default([])
+            | selectattr('network_name', 'equalto', 'harness-nd-network-merged')
+            | first
+          }}
+        merged_resource_network: >-
+          {{
+            nd4x_network_merged_result.first_run_result.after
+            | default([])
+            | selectattr('network_name', 'equalto', 'harness-nd-network-merged-resource')
+            | first | default({})
+          }}
+        merged_l3_network: >-
+          {{
+            nd4x_network_merged_result.first_run_result.after
+            | default([])
+            | selectattr('network_name', 'equalto', 'harness-nd-network-merged-l3')
+            | first | default({})
+          }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_network_merged_result.check_mode_result.changed | bool
+          - nd4x_network_merged_result.first_run_result.changed | bool
+          - nd4x_network_merged_result.idempotency_attempts == 1
+          - not nd4x_network_merged_result.second_run_result.changed | bool
+          - nd4x_network_merged_result.check_mode_query_results | length == nd4x_network_check_mode_queries | length
+          - nd4x_network_merged_result.nd_query_results | length == nd4x_network_validation_queries | length
+          - nd4x_network_merged_result.first_run_result.fabric_type == nd4x_network_expected_fabric_type
+          - >-
+            nd4x_network_topology != 'standalone'
+            or nd4x_network_merged_result.first_run_result.workflow
+            == 'Standalone Fabric Network Processing'
+          - merged_network.network_name == 'harness-nd-network-merged'
+          - merged_network.network_id | int == nd4x_network_merged_expected_id | int
+          - merged_network.vlan_id | int == nd4x_network_merged_expected_vlan | int
+          - >-
+            nd4x_network_topology not in ['msd', 'mcfg']
+            or (
+              merged_resource_network.network_name == 'harness-nd-network-merged-resource'
+              and merged_resource_network.network_id | int == nd4x_network_base_id + 102
+              and merged_resource_network.vlan_id | int == nd4x_network_base_vlan + 102
+            )
+          - >-
+            nd4x_network_topology != 'msd'
+            or (
+              nd4x_network_merged_result.first_run_result.workflow
+              == 'Multisite Parent with Child Fabric Processing'
+              and nd4x_network_merged_result.first_run_result.parent_fabric.fabric_type
+              == 'multisite_parent'
+              and nd4x_network_merged_result.first_run_result.child_fabrics | length == 1
+              and nd4x_network_merged_result.first_run_result.child_fabrics[0].fabric_name
+              == nd4x_network_child_fabric_name
+              and nd4x_network_merged_result.first_run_result.child_fabrics[0].fabric_type
+              == 'multisite_child'
+            )
+          - >-
+            nd4x_network_topology != 'mcfg'
+            or (
+              nd4x_network_merged_result.first_run_result.workflow
+              == 'Multicluster Parent without Child Fabric Processing'
+              and nd4x_network_merged_result.first_run_result.parent_fabric.fabric_type
+              == 'multicluster_parent'
+              and nd4x_network_merged_result.first_run_result.child_fabrics is not defined
+            )
+          - >-
+            nd4x_network_l3_vrf_name | length == 0
+            or (
+              merged_l3_network.network_name == 'harness-nd-network-merged-l3'
+              and not merged_l3_network.is_l2only | bool
+              and merged_l3_network.vrf_name == nd4x_network_l3_vrf_name
+              and merged_l3_network.gateway_ipv4_address == '10.91.2.1/24'
+            )
+
+    - name: "MERGED: Validate staged fields with the legacy Network validator"
+      cisco.nd.tests.integration._nd_network_validate:
+        nd_data: "{{ nd4x_network_merged_result.first_run_result }}"
+        test_data: "{{ nd4x_network_merged_config }}"
+
+    - name: "MERGED: Deploy staged Network configuration through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_networks
+        state: merged
+        common_args:
+          fabric_name: "{{ nd4x_network_fabric_name }}"
+          output_level: debug
+        config: "{{ nd4x_network_merged_deploy_config }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_network_check_mode_queries }}"
+        nd_queries: "{{ nd4x_network_validation_queries }}"
+      register: nd4x_network_merged_deploy_result
+
+    - name: "MERGED: Verify deployment and idempotency"
+      ansible.builtin.assert:
+        that:
+          - nd4x_network_merged_deploy_result.first_run_result.changed | bool
+          - nd4x_network_merged_deploy_result.idempotency_attempts == 1
+          - not nd4x_network_merged_deploy_result.second_run_result.changed | bool
+          - nd4x_network_merged_deploy_result.first_run_result.fabric_type == nd4x_network_expected_fabric_type
+          - >-
+            nd4x_network_topology != 'msd'
+            or nd4x_network_merged_deploy_result.first_run_result.child_fabrics | length == 1
+          - >-
+            nd4x_network_topology != 'mcfg'
+            or nd4x_network_merged_deploy_result.first_run_result.child_fabrics is not defined
+          - >-
+            nd4x_network_merged_deploy_result.first_run_result.after
+            | default([])
+            | selectattr('network_name', 'equalto', 'harness-nd-network-merged')
+            | selectattr('network_id', 'equalto', nd4x_network_merged_expected_id | int)
+            | list | length == 1
+          - >-
+            nd4x_network_topology not in ['msd', 'mcfg']
+            or (
+              nd4x_network_merged_deploy_result.first_run_result.after
+              | default([])
+              | selectattr('network_name', 'equalto', 'harness-nd-network-merged-resource')
+              | selectattr('network_id', 'equalto', nd4x_network_base_id + 102)
+              | list | length == 1
+            )
+
+    - name: "MERGED: Gather parent Networks after deployment"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_networks
+        state: gathered
+        common_args:
+          fabric_name: "{{ nd4x_network_fabric_name }}"
+          output_level: debug
+        config: "{{ nd4x_network_merged_deploy_config }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_network_check_mode_queries }}"
+        nd_queries: "{{ nd4x_network_validation_queries }}"
+      register: nd4x_network_merged_parent_gathered
+
+    - name: "MERGED: Validate deployed fields with the legacy Network validator"
+      cisco.nd.tests.integration._nd_network_validate:
+        nd_data: "{{ nd4x_network_merged_parent_gathered.first_run_result }}"
+        test_data: "{{ nd4x_network_merged_deploy_config }}"
+
+    - name: "MERGED: Gather child Networks after parent deployment"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_networks
+        state: gathered
+        common_args:
+          fabric_name: "{{ nd4x_network_child_fabric_name }}"
+          output_level: debug
+        config: []
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_network_check_mode_queries }}"
+        nd_queries: "{{ nd4x_network_validation_queries }}"
+      register: nd4x_network_merged_child_result
+      when: nd4x_network_topology in ['msd', 'mcfg']
+
+    - name: "MERGED: Verify child Networks match both parent deploy types"
+      vars:
+        child_merged_switch: >-
+          {{
+            nd4x_network_merged_child_result.first_run_result.gathered
+            | default([])
+            | selectattr('network_name', 'equalto', 'harness-nd-network-merged')
+            | first | default({})
+          }}
+        child_merged_resource: >-
+          {{
+            nd4x_network_merged_child_result.first_run_result.gathered
+            | default([])
+            | selectattr('network_name', 'equalto', 'harness-nd-network-merged-resource')
+            | first | default({})
+          }}
+      ansible.builtin.assert:
+        that:
+          - child_merged_switch.network_id | int == nd4x_network_base_id + 101
+          - child_merged_switch.vlan_id | int == nd4x_network_base_vlan + 101
+          - child_merged_switch.vlan_name == 'harness_nd_network_parent_merged_vlan'
+          - child_merged_resource.network_id | int == nd4x_network_base_id + 102
+          - child_merged_resource.vlan_id | int == nd4x_network_base_vlan + 102
+          - child_merged_resource.vlan_name == 'harness_nd_network_parent_merged_resource_vlan'
+      when: nd4x_network_topology in ['msd', 'mcfg']
+
+    - name: "MERGED: Validate child fields with the legacy Network validator"
+      cisco.nd.tests.integration._nd_network_validate:
+        nd_data: "{{ nd4x_network_merged_child_result.first_run_result }}"
+        test_data: "{{ nd4x_network_merged_deploy_config }}"
+      when: nd4x_network_topology in ['msd', 'mcfg']
+
+  always:
+    - name: "MERGED CLEANUP: Remove reserved harness Network"
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd4x_network_fabric_name }}"
+        state: deleted
+        config: "{{ nd4x_network_merged_cleanup_config }}"

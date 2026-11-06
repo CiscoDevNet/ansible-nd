@@ -1,0 +1,48 @@
+---
+- name: "NEGATIVE: Reject child_fabric_config on a standalone fabric"
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ nd4x_network_fabric_name }}"
+    state: merged
+    config: "{{ nd4x_network_negative_config }}"
+  check_mode: true
+  register: nd4x_network_standalone_negative_result
+  ignore_errors: true
+  when: nd4x_network_topology == 'standalone'
+
+- name: "NEGATIVE: Verify standalone child_fabric_config rejection"
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_standalone_negative_result.failed | bool
+      - >-
+        'child_fabric_config is only valid'
+        in nd4x_network_standalone_negative_result.msg
+      - not (nd4x_network_standalone_negative_result.changed | default(false) | bool)
+    fail_msg: >-
+      Expected standalone child_fabric_config to be rejected without changes;
+      got failed={{ nd4x_network_standalone_negative_result.failed | default(false) }}
+      and msg={{ nd4x_network_standalone_negative_result.msg | default('no error message') }}.
+  when: nd4x_network_topology == 'standalone'
+
+- name: "NEGATIVE: Reject write operation on an MCFG child fabric"
+  cisco.nd.nd_manage_networks:
+    fabric_name: "{{ nd4x_network_child_fabric_name }}"
+    state: merged
+    config: "{{ nd4x_network_negative_child_write_config }}"
+  check_mode: true
+  register: nd4x_network_negative_result
+  ignore_errors: true
+  when: nd4x_network_topology == 'mcfg'
+
+- name: "NEGATIVE: Verify MCFG child-fabric rejection message"
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_negative_result.failed | bool
+      - >-
+        'Only state=\'gathered\' is allowed on child fabrics'
+        in nd4x_network_negative_result.msg
+      - not (nd4x_network_negative_result.changed | default(false) | bool)
+    fail_msg: >-
+      Expected an MCFG child write to be rejected without changes;
+      got failed={{ nd4x_network_negative_result.failed | default(false) }}
+      and msg={{ nd4x_network_negative_result.msg | default('no error message') }}.
+  when: nd4x_network_topology == 'mcfg'

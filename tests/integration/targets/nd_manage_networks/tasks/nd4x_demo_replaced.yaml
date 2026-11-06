@@ -1,0 +1,142 @@
+---
+- name: Run nd_manage_networks replaced harness scenarios
+  block:
+    - name: "REPLACED SETUP: Remove reserved harness Network"
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd4x_network_fabric_name }}"
+        state: deleted
+        config:
+          - network_name: harness-nd-network-replaced
+      register: nd4x_network_replaced_cleanup
+
+    - name: "REPLACED SETUP: Create the base Network"
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd4x_network_fabric_name }}"
+        state: merged
+        config: "{{ nd4x_network_replaced_seed_config }}"
+      register: nd4x_network_replaced_seed
+
+    - name: "REPLACED: Replace Network configuration through the harness"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_networks
+        state: replaced
+        common_args:
+          fabric_name: "{{ nd4x_network_fabric_name }}"
+          output_level: debug
+        config: "{{ nd4x_network_replaced_config }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_network_check_mode_queries }}"
+        nd_queries: "{{ nd4x_network_validation_queries }}"
+      register: nd4x_network_replaced_result
+
+    - name: "REPLACED: Verify harness phases and returned Network"
+      vars:
+        replaced_network: >-
+          {{
+            nd4x_network_replaced_result.first_run_result.after
+            | default([])
+            | selectattr('network_name', 'equalto', 'harness-nd-network-replaced')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - nd4x_network_replaced_result.check_mode_result.changed | bool
+          - nd4x_network_replaced_result.first_run_result.changed | bool
+          - nd4x_network_replaced_result.idempotency_attempts == 1
+          - not nd4x_network_replaced_result.second_run_result.changed | bool
+          - nd4x_network_replaced_result.first_run_result.fabric_type == nd4x_network_expected_fabric_type
+          - replaced_network.network_name == 'harness-nd-network-replaced'
+          - replaced_network.network_id | int == nd4x_network_replaced_expected_id | int
+          - replaced_network.vlan_id | int == nd4x_network_replaced_expected_vlan | int
+          - replaced_network.vlan_name is search('replaced')
+
+    - name: "REPLACED: Gather parent Network after replacement"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_networks
+        state: gathered
+        common_args:
+          fabric_name: "{{ nd4x_network_fabric_name }}"
+          output_level: debug
+        config: "{{ nd4x_network_replaced_config }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_network_check_mode_queries }}"
+        nd_queries: "{{ nd4x_network_validation_queries }}"
+      register: nd4x_network_replaced_parent_gathered
+
+    - name: "REPLACED: Validate fields with the legacy Network validator"
+      cisco.nd.tests.integration._nd_network_validate:
+        nd_data: "{{ nd4x_network_replaced_parent_gathered.first_run_result }}"
+        test_data: "{{ nd4x_network_replaced_config }}"
+
+    - name: "REPLACED: Gather child Network after parent replacement"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_networks
+        state: gathered
+        common_args:
+          fabric_name: "{{ nd4x_network_child_fabric_name }}"
+          output_level: debug
+        config: []
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_network_check_mode_queries }}"
+        nd_queries: "{{ nd4x_network_validation_queries }}"
+      register: nd4x_network_replaced_child_result
+      when: nd4x_network_topology in ['msd', 'mcfg']
+
+    - name: "REPLACED: Verify child Network reflects replacement"
+      vars:
+        child_replaced_network: >-
+          {{
+            nd4x_network_replaced_child_result.first_run_result.gathered
+            | default([])
+            | selectattr('network_name', 'equalto', 'harness-nd-network-replaced')
+            | first | default({})
+          }}
+      ansible.builtin.assert:
+        that:
+          - child_replaced_network.network_id | int == nd4x_network_replaced_expected_id | int
+          - child_replaced_network.vlan_id | int == nd4x_network_replaced_expected_vlan | int
+          - child_replaced_network.vlan_name is search('replaced')
+          - child_replaced_network.enable_ir is defined
+          - not (child_replaced_network.enable_ir | bool)
+      when: nd4x_network_topology in ['msd', 'mcfg']
+
+    - name: "REPLACED: Validate child fields with the legacy Network validator"
+      cisco.nd.tests.integration._nd_network_validate:
+        nd_data: "{{ nd4x_network_replaced_child_result.first_run_result }}"
+        test_data: "{{ nd4x_network_replaced_config }}"
+      when: nd4x_network_topology in ['msd', 'mcfg']
+
+  always:
+    - name: "REPLACED CLEANUP: Remove reserved harness Network"
+      cisco.nd.nd_manage_networks:
+        fabric_name: "{{ nd4x_network_fabric_name }}"
+        state: deleted
+        config:
+          - network_name: harness-nd-network-replaced
