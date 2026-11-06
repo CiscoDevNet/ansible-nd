@@ -1031,6 +1031,11 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         # Unknown releases retain the existing string representation.
         if len(release) < 3 or release[:2] != (4, 2):
             return payload
+        if key_type == "type6":
+            raise ValueError(
+                f"VRF '{payload.get('vrfName', 'unknown')}': bgp_passwd_encrypt 'type6' is not supported by the ND 4.2 Manage API "
+                f"(detected: {version}); use '3des' or 'type7', or ND 4.3.1 or later."
+            )
         return dict(payload, fabricData=dict(fabric_data, bgpPasswordKeyType=_BGP_KEY_TYPE_NUMBERS[key_type]))
 
     def _create_or_update_payload(self, model_instance: NDVrfModel, *, updating: bool = False) -> dict[str, Any]:
@@ -1060,6 +1065,10 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 ):
                     core_data.pop(field, None)
         return self._manage_api_vrf_payload(payload)
+
+    def validate_write_payload(self, model_instance: NDVrfModel, *, updating: bool = False) -> None:
+        """Validate the effective wire payload without changing the planned model or sending a request."""
+        self._create_or_update_payload(model_instance.model_copy(deep=True), updating=updating)
 
     # ── Create ────────────────────────────────────────────────────
 

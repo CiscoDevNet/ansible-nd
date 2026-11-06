@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import PARENT_CHILD_ONLY_VRF_FIELDS, VrfParentConfigModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_data_models import VrfDataModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.child_vrf import ChildVrfStrategy
@@ -100,6 +101,16 @@ def test_bgp_pair_and_sparse_updates_converge_through_actual_state_preparation(m
         changed = bool(change) and not (change == {"bgp_passwd_encrypt": "type7"} and key_type == "type7")
         for check, expected in ((True, changed), (False, changed), (False, False), (True, False)):
             coordinator, calls = _coordinator(monkeypatch, strategy, state, [observed], check=check, version=version)
+            unsupported_write = version.startswith("4.2.") and intent["bgp_passwd_encrypt"] == "type6" and changed
+            if unsupported_write and not check:
+                with pytest.raises(NDStateMachineError, match="type6.*not supported.*ND 4.2"):
+                    _manage(coordinator, entry, state)
+                assert sum(call["verb"].value == "GET" for call in calls) == 1
+                assert not [call for call in calls if call["verb"].value != "GET"]
+                continue
+            if unsupported_write:
+                # Rejected writes leave the change pending on subsequent check-mode runs.
+                expected = True
             sm = _manage(coordinator, entry, state)
             assert sm.output.format()["changed"] is expected
             assert sum(call["verb"].value == "GET" for call in calls) == 1
@@ -111,7 +122,9 @@ def test_bgp_pair_and_sparse_updates_converge_through_actual_state_preparation(m
                 payload = writes[0]["data"]
                 wire_key = {"3des": 3, "type6": 6, "type7": 7}[intent["bgp_passwd_encrypt"]] if version.startswith("4.2.") else intent["bgp_passwd_encrypt"]
                 assert payload["fabricData"]["bgpPasswordKeyType"] == wire_key
-                assert payload["fabricData"]["bgpPassword"] == intent["bgp_password"]
+                # Sparse retries retain observed state, including a password whose prior edit was rejected.
+                expected_password = entry.get("bgp_password", str(observed["fabricData"]["bgpPassword"]))
+                assert payload["fabricData"]["bgpPassword"] == expected_password
                 observed = {**observed, **deepcopy(payload)}
                 if version.startswith("4.2.") and intent["bgp_password"].isdigit():
                     observed["fabricData"]["bgpPassword"] = int(intent["bgp_password"])

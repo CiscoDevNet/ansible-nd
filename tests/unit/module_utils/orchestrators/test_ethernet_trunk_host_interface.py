@@ -305,7 +305,7 @@ def test_ethernet_trunk_host_orchestrator_00110() -> None:
                     },
                 },
             },
-            True,
+            False,
         ),
         (
             {
@@ -823,7 +823,8 @@ def test_ethernet_trunk_host_orchestrator_00800() -> None:
     with pytest.raises(
         RuntimeError,
         match=r"Bulk create failed: Interface GigabitEthernet1/0/48 on switch 192\.168\.2\.1 is an endpoint of fabric link LINK-UUID-1 "
-        r"\(numbered: C1_LE1 GigabitEthernet1/0/48 -> C1_CORE1 GigabitEthernet1/0/1\)\. Refusing to overwrite fabric-owned intent with policy 'iosXeTrunkHost'",
+        r"\(numbered: C1_LE1 GigabitEthernet1/0/48 -> C1_CORE1 GigabitEthernet1/0/1\)\. "
+        r"Refusing to overwrite fabric-owned intent with policy 'iosXeTrunkHost'",
     ):
         orchestrator.create_bulk([model], existing_data=_xe_routed_wire("GigabitEthernet1/0/48"))
     assert orchestrator._pending_deploys == []

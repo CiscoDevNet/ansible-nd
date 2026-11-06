@@ -48,11 +48,6 @@
         v6_redist_direct_rmap: FABRIC-RMAP-REDIST-SUBNET
         ipv6_linklocal_enable: true
         disable_rt_auto: true
-        trm_enable: false
-        netflow_enable: false
-        adv_host_routes: true
-        adv_default_routes: false
-        static_default_route: false
         max_bgp_paths: 2
         max_ibgp_paths: 2
         import_vpn_rt:
@@ -73,12 +68,11 @@
             adv_default_routes: false
             static_default_route: false
             bgp_password: abcdef12
-            bgp_passwd_encrypt: 3
+            bgp_passwd_encrypt: 3des
             trm_enable: false
             netflow_enable: false
       - vrf_name: ansible-msd-merged-l3vni
         vrf_id: "{{ nd_vrf_base_id + 27 }}"
-        l3vni_wo_vlan: true
         vrf_description: Ansible ND VRF MSD merged L3VNI without VLAN
         loopback_route_tag: 12347
         max_bgp_paths: 1
@@ -93,11 +87,6 @@
           - "65000:50027"
         export_evpn_rt:
           - "65000:50027"
-        adv_host_routes: false
-        adv_default_routes: true
-        static_default_route: true
-        trm_enable: false
-        netflow_enable: false
         deploy: false
         child_fabric_config:
           - fabric_name: "{{ nd_vrf_msd_child_fabric }}"
@@ -105,6 +94,8 @@
             adv_host_routes: false
             adv_default_routes: true
             static_default_route: true
+            trm_enable: false
+            netflow_enable: false
       - vrf_name: ansible-msd-merged-parent
         vrf_id: "{{ nd_vrf_base_id + 28 }}"
         vlan_id: "{{ nd_vrf_base_vlan + 28 }}"
@@ -116,10 +107,13 @@
         max_ibgp_paths: 3
         ipv6_linklocal_enable: true
         disable_rt_auto: false
-        adv_host_routes: true
-        adv_default_routes: true
-        static_default_route: true
         deploy: false
+        # Per-fabric settings are explicit member overrides.
+        child_fabric_config:
+          - fabric_name: "{{ nd_vrf_msd_child_fabric }}"
+            adv_host_routes: true
+            adv_default_routes: true
+            static_default_route: true
   delegate_to: localhost
   tags:
     - msd
