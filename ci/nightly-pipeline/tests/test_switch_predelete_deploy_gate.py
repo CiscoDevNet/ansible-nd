@@ -13,7 +13,7 @@ from test_switch_rehome_preflight import execute, expression_environment, guard,
 ])
 def test_active_pipelines_select_fabric_deployment_release(filename):
     source = (Path(__file__).resolve().parents[1] / filename).read_text()
-    assert "def SWITCH_LIFECYCLE_CONSUL_PREFIX = 'releases/interface-baseline-startup-save-20261104'" in source
+    assert "def SWITCH_LIFECYCLE_CONSUL_PREFIX = 'releases/predelete-diagnostics-20261106'" in source
 
 
 @pytest.mark.parametrize('scenario', [
@@ -87,6 +87,35 @@ def test_response_checker_rejects_module_failure_even_with_http_200():
     response = {'status': 200, 'failed': True, 'current': {}}
     result = response_report(response)
     assert result['accepted'] is False and result['category'] == 'MODULE_FAILURE'
+
+
+@pytest.mark.parametrize('scenario', ['predelete_save_module_failure', 'predelete_save_400', 'predelete_deploy_403'])
+def test_failed_requests_emit_safe_diagnostics_before_stopping(tmp_path, scenario):
+    completed, state = execute(tmp_path, scenario)
+    assert completed.returncode != 0
+    assert 'NDP_SWITCH_PREDELETE_RESPONSE' in completed.stdout
+    assert 'failure_kind' in completed.stdout
+    assert state['selected_calls'] == []
+    assert 'DESTINATION_ADD_REACHED' not in completed.stdout
+    assert 'DO_NOT_PRINT_ME' not in completed.stdout
+    assert 'RAW_PAYLOAD' not in completed.stdout
+
+
+@pytest.mark.parametrize('reply,expected', [
+    ({'status': 401, 'msg': 'secret DO_NOT_PRINT_ME'}, 'AUTHENTICATION_OR_AUTHORIZATION'),
+    ({'status': 403}, 'AUTHENTICATION_OR_AUTHORIZATION'),
+    ({'status': 504}, 'TIMEOUT'),
+    ({'msg': 'request timed out password=DO_NOT_PRINT_ME'}, 'TIMEOUT'),
+    ({'status': 400}, 'HTTP_REJECTION'),
+    ({'msg': 'configuration dependency RAW_PAYLOAD'}, 'CONFIGURATION_OR_DEPENDENCY'),
+    ({'failed': True}, 'MODULE_FAILURE'),
+])
+def test_request_failure_kind_never_contains_payloads(reply, expected):
+    task = named(move_tasks()[1]['block'], 'Report sanitized failed pre-delete request')
+    value = expression_environment().from_string(task['vars']['_nd_predelete_failure_kind']).render(
+        _predelete_reply=reply)
+    assert value == expected
+
 
 
 def response_report(response):

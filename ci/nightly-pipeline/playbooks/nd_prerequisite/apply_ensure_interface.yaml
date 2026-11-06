@@ -1,14 +1,14 @@
 ---
 # ensure_interface: administratively bring up an allowlisted physical interface.
-# NDFC carries admin state as the ADMIN_STATE nvPair of the interface policy, so the
-# actual no-shutdown is delegated to the shared admin_up_interface.yaml helper (GET
-# policy -> force ADMIN_STATE=true via combine -> PUT globalInterface -> deploy). The
-# guard below still refuses anything that is not an Ethernet<x>/<y> physical port.
+# The shared helper preserves policy, journals the before-image and verifies the
+# observed admin state. Only the current operation, not the reservation pool, is enabled.
 - name: "ensure_interface guard {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }}"
   ansible.builtin.assert:
     that:
       - _ndp_operation.interface is match('^Ethernet[0-9]+/[0-9]+$')
       - _ndp_operation.admin_state | bool
+      - _ndp_operation.interface in _ndp_registry.lab.interface_allowlist[_ndp_operation.switch_ref]
+      - _ndp_switch_serial[_ndp_operation.switch_ref] == _ndp_registry.lab.switches[_ndp_operation.switch_ref].serial
     fail_msg: "Refusing to touch a non-allowlisted interface: {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }}"
   run_once: true
 

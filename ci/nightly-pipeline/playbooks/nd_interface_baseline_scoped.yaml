@@ -1,0 +1,96 @@
+---
+# Isolated unused-port audit/repair. No membership operations or admin-up calls.
+# Supply the owning fabric, registry switch aliases and exact physical port names.
+# Audit is the default; apply preserves all existing reservation/readiness checks.
+- name: Audit or shut down only explicitly selected unused interfaces
+  hosts: nd
+  gather_facts: false
+  vars:
+    nd_cleanup_apply: false
+    nd_cleanup_fabric: ""
+    nd_cleanup_switch_refs: []
+    nd_cleanup_interfaces: []
+  tasks:
+    - name: Resolve the reservation registry
+      ansible.builtin.set_fact:
+        _nd_cleanup_registry_path: >-
+          {{ lookup('ansible.builtin.first_found', {
+               'files': [nd_cleanup_registry_file | default(''),
+                         playbook_dir ~ '/nd_prerequisite_profiles.yaml',
+                         playbook_dir ~ '/../tests/nd_prerequisite_profiles.yaml'], 'skip': false}) }}
+
+    - name: Load reservations privately
+      ansible.builtin.include_vars:
+        file: "{{ _nd_cleanup_registry_path }}"
+        name: _nd_cleanup_registry
+      no_log: true
+
+    - name: Require an explicit scope within the three approved lab fabrics
+      ansible.builtin.assert:
+        that:
+          - nd_cleanup_apply is boolean
+          - nd_cleanup_fabric in [_nd_cleanup_registry.lab.fabrics.advanced.name, _nd_cleanup_registry.lab.fabrics.network_ebgp.name, _nd_cleanup_registry.lab.fabrics.external.name]
+          - nd_cleanup_switch_refs is sequence and nd_cleanup_switch_refs is not string and nd_cleanup_switch_refs is not mapping
+          - nd_cleanup_switch_refs | length > 0
+          - (nd_cleanup_switch_refs | difference(_nd_cleanup_registry.lab.switches.keys()) | length) == 0
+          - nd_cleanup_interfaces is sequence and nd_cleanup_interfaces is not string and nd_cleanup_interfaces is not mapping
+          - nd_cleanup_interfaces | length > 0
+        fail_msg: "NDP_INTERFACE_CLEANUP_SCOPE_REQUIRED: select the owning lab fabric, known switches and exact physical interfaces."
+      no_log: true
+
+    - name: Create a private local directory for before-images and API checkpoints
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: nd_interface_cleanup_
+      delegate_to: localhost
+      connection: local
+      register: _nd_cleanup_evidence
+      check_mode: false
+
+    - name: Restrict evidence directory permissions
+      ansible.builtin.file:
+        path: "{{ _nd_cleanup_evidence.path }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      connection: local
+      check_mode: false
+
+    - name: Run the bounded audit or selected unused-port repair
+      nd_interface_baseline:
+        registry: "{{ _nd_cleanup_registry }}"
+        fabrics: ["{{ nd_cleanup_fabric }}"]
+        switch_refs: "{{ nd_cleanup_switch_refs }}"
+        interfaces: "{{ nd_cleanup_interfaces }}"
+        apply: "{{ nd_cleanup_apply }}"
+        journal_path: "{{ _nd_cleanup_evidence.path }}/mutations.jsonl"
+        timeout_seconds: "{{ nd_cleanup_timeout_seconds | default(900) | int }}"
+        call_timeout_seconds: 30
+        poll_seconds: "{{ nd_cleanup_poll_seconds | default(5) | int }}"
+      register: _nd_cleanup_result
+      failed_when: false
+      no_log: true
+
+    - name: Save the final sanitized decision and verification result privately
+      ansible.builtin.copy:
+        dest: "{{ _nd_cleanup_evidence.path }}/result.json"
+        content: "{{ _nd_cleanup_result | to_nice_json }}"
+        mode: "0600"
+      delegate_to: localhost
+      connection: local
+      check_mode: false
+      no_log: true
+
+    - name: Report the bounded result without raw ND payloads
+      ansible.builtin.debug:
+        msg:
+          - "NDP_INTERFACE_CLEANUP reason={{ _nd_cleanup_result.reason | default('UNVERIFIED') }} apply={{ _nd_cleanup_result.apply | default(false) }} inspected={{ _nd_cleanup_result.inspected | default(0) }} candidates={{ _nd_cleanup_result.candidates | default(0) }} verified={{ _nd_cleanup_result.verified | default(0) }} remaining_connectivity={{ _nd_cleanup_result.remaining_connectivity_alerts if (_nd_cleanup_result.remaining_connectivity_alerts | default(none)) is not none else 'UNVERIFIED' }}"
+          - "{{ _nd_cleanup_result.decisions | default([]) }}"
+          - "Private evidence: {{ _nd_cleanup_evidence.path }}"
+
+    - name: Require complete evidence and natural alert clearance for an applied repair
+      ansible.builtin.assert:
+        that:
+          - (_nd_cleanup_result.baseline_failed | default(true)) is sameas false
+          - not (_nd_cleanup_result.apply | default(false)) or (_nd_cleanup_result.remaining_connectivity_alerts | default(-1)) == 0
+        fail_msg: "NDP_INTERFACE_CLEANUP_BLOCKED: readiness, unused-port evidence, deployment or fresh alert clearance is incomplete."

@@ -13,6 +13,15 @@
     name: _nd_interface_baseline_registry
   no_log: true
 
+- name: Create a private baseline checkpoint directory
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: nd_interface_baseline_
+  delegate_to: localhost
+  connection: local
+  register: _nd_interface_baseline_checkpoint
+  check_mode: false
+
 - name: Plan or apply the bounded interface baseline
   nd_interface_baseline:
     registry: "{{ _nd_interface_baseline_registry }}"
@@ -21,6 +30,12 @@
           + (nd_switch_rehome_fabrics | default([]))
           + [nd_fabric_name | default(''), nd_external_fabric_name | default('')])
          | reject('equalto', '') | unique | list }}
+    switch_refs: "{{ _nd_interface_baseline_registry.lab.switches.keys() | list }}"
+    journal_path: "{{ _nd_interface_baseline_checkpoint.path }}/mutations.jsonl"
+    ensure_host_admin_down_default: true
+    # This include runs only at lifecycle boundaries or after reset, when the
+    # target has finished cleanup. Future reservations are not active port use.
+    idle_reserved_ports: true
     apply: >-
       {{ (nd_interface_baseline_apply | default(lookup('env', 'ND_INTERFACE_BASELINE_APPLY') | default(false, true)) | bool)
           and (nd_switch_apply | default(true) | bool)

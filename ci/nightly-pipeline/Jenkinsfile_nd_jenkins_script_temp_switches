@@ -9,7 +9,6 @@ import groovy.transform.Field
 @Field String SKIPLIST_DETAILS_BUF = ''
 @Field String BUILD_FAILURE_REASON_BUF = ''
 @Field String LINT_SUMMARY_BUF = ''
-@Field String ND_REPORTING_REVISION = 'build131-execution-fixes-20261030'
 
 // ============================================================================
 // WEBEX NOTIFICATION TARGET - both Webex space room IDs live here so the
@@ -222,7 +221,7 @@ def SWITCH_CREDENTIALS_ID = 'SWITCH_CREDENTIALS'
 @Field
 def CONSUL_PREFLIGHT_FILES = ['nd_ensure_switches.yaml', 'action_plugins/nd_switch_discovery.py']
 @Field
-def SWITCH_LIFECYCLE_CONSUL_PREFIX = 'releases/interface-baseline-startup-save-20261104'
+def SWITCH_LIFECYCLE_CONSUL_PREFIX = 'releases/predelete-diagnostics-20261106'
 
 @Field
 def CONSUL_PREREQUISITE_FILES = [
@@ -992,7 +991,7 @@ git -C "${COLLECTIONS_DIRECTORY}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null
     post {
         always {
             script {
-                echo "NDP_NOTIFICATION_REVISION: ${ND_REPORTING_REVISION}"
+
                 // Optional rendering must never prevent the notification attempt.
                 try {
                     echo formatPhaseTimingTable(PHASE_TIMING_RESULTS.values().toList(),
@@ -1074,7 +1073,7 @@ git -C "${COLLECTIONS_DIRECTORY}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null
                         env.PIPELINE_FAILED = 'true'
                         currentBuild.result = 'FAILURE'
                     }
-                    echo "NDP_DETAILED_NOTIFICATION_FAILED: ${e.getClass().getName()}; revision=${ND_REPORTING_REVISION}; attempting a minimal build notification"
+                    echo "NDP_DETAILED_NOTIFICATION_FAILED: ${e.getClass().getName()}; attempting a minimal build notification"
                     try {
                         sendWebexNotificationMessages([minimalBuildNotification(e.getClass().getName())])
                     } catch (Exception fallbackError) {
@@ -1158,7 +1157,6 @@ def minimalBuildNotification(exceptionClass = 'unavailable') {
         (customNote ? "${customNote}\n\n" : '') +
         "Branch: ${branch}\nCommit: ${commit}\n" +
         "Build result: ${currentBuild.currentResult}\n" +
-        "Reporting revision: ${ND_REPORTING_REVISION}\n" +
         "Detailed reporting error class: ${failureClass}\n" +
         'CASE COUNTS VALIDATION FAILED: no incomplete result table was published. Inspect closed execution logs and reporting diagnostics.\n' +
         "Console: ${JOB_URL}${BUILD_NUMBER}/console\n" +
@@ -1621,7 +1619,7 @@ def reportingJsonWriteValue(value, state, depth) {
 // Reporting owns files and receipts while execution owns every fabric mutation.
 // Aggregate Groovy state only after both branches have terminated.
 def prepareStructuredReporting() {
-    echo "NDP_REPORTING_REVISION: ${ND_REPORTING_REVISION}"
+
     def buildToken = (env.BUILD_TAG ?: "nd-${BUILD_NUMBER}").replaceAll(/[^A-Za-z0-9_.-]/, '_')
     // Isolate Python bytecode reads and writes from workspace caches.
     env.PYTHONPYCACHEPREFIX = "/tmp/nd-python-cache-${buildToken}"

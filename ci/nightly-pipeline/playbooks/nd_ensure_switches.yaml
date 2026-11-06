@@ -1189,24 +1189,60 @@
                 or (item.1.peer_switch_id in (nd_rehome_moves | map(attribute='serial') | list))
               failed_when: false
 
-            - name: Recalculate each source fabric before removing any switches
-              cisco.nd.nd_rest:
-                method: post
-                path: "/api/v1/manage/fabrics/{{ _rf }}/actions/configSave"
-                content: {}
-              loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
-              loop_control:
-                loop_var: _rf
-                label: "{{ _rf }}"
-              register: nd_predelete_save
-              # Preserve module failure and suppress Ansible 2.21's raw exception
-              # heading even on no_log tasks; keep this explicit condition.
-              failed_when: nd_predelete_save.failed | default(false)
-              timeout: "{{ _nd_predelete_call_limit }}"
-              vars:
-                ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
-              no_log: true
-              when: _nd_predelete_remaining | float > 0
+            - name: Guard Recalculate request failures
+              block:
+                - name: Recalculate each source fabric before removing any switches
+                  cisco.nd.nd_rest:
+                    method: post
+                    path: "/api/v1/manage/fabrics/{{ _rf }}/actions/configSave"
+                    content: {}
+                  loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
+                  loop_control:
+                    loop_var: _rf
+                    label: "{{ _rf }}"
+                  register: nd_predelete_save
+                  failed_when: nd_predelete_save.failed | default(false)
+                  timeout: "{{ _nd_predelete_call_limit }}"
+                  vars:
+                    ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
+                  no_log: true
+                  when: _nd_predelete_remaining | float > 0
+              rescue:
+                - &nd_predelete_request_failure_diagnostic
+                  name: Report sanitized failed pre-delete request
+                  vars:
+                    _predelete_operation: "{{ 'config-save' if ansible_failed_task.name == 'Recalculate each source fabric before removing any switches' else 'deploy' }}"
+                    _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _predelete_reply._rf | default('')) | map(attribute='serial') | list }}"
+                    _nd_predelete_failure_kind: >-
+                      {%- set http = _predelete_reply.status | default(0) | int -%}
+                      {%- set message = (_predelete_reply.msg | default('') | string)[:2048] | lower -%}
+                      {{- 'AUTHENTICATION_OR_AUTHORIZATION' if http in [401, 403] or message is search('authentication|authorization|unauthorized|forbidden|invalid credentials')
+                          else 'TIMEOUT' if http in [408, 504] or message is search('timed out|timeout|time limit')
+                          else 'HTTP_REJECTION' if http >= 400
+                          else 'CONFIGURATION_OR_DEPENDENCY' if message is search('recalculate|unpair|dependency|configuration|validation')
+                          else 'MODULE_FAILURE' -}}
+                  block:
+                    - name: Initialize sanitized request diagnostics
+                      ansible.builtin.set_fact:
+                        _nd_predelete_request_diagnostics: []
+                      no_log: true
+                    - name: Classify failed request without exposing loop results
+                      ansible.builtin.set_fact:
+                        _nd_predelete_request_diagnostics: "{{ _nd_predelete_request_diagnostics + [dict(_nd_predelete_response_report, failure_kind=_nd_predelete_failure_kind)] }}"
+                      loop: "{{ ansible_failed_result.results | default([ansible_failed_result]) }}"
+                      loop_control:
+                        loop_var: _predelete_reply
+                      no_log: true
+                    - name: Print sanitized pre-delete request diagnostics
+                      ansible.builtin.debug:
+                        msg: "NDP_SWITCH_PREDELETE_RESPONSE {{ _nd_predelete_diagnostic }}"
+                      loop: "{{ _nd_predelete_request_diagnostics }}"
+                      loop_control:
+                        loop_var: _nd_predelete_diagnostic
+                        label: pre-delete request
+                - name: Stop after failed Recalculate request
+                  ansible.builtin.fail:
+                    msg: "NDP_SWITCH_PREDELETE_DEPLOY_BLOCKED: Recalculate request failed; no Deploy or switch removal was attempted."
 
             - name: Classify Recalculate replies without publishing controller payloads
               ansible.builtin.set_fact:
@@ -1235,22 +1271,29 @@
               loop_control:
                 loop_var: _nd_predelete_check
 
-            - name: Deploy each source fabric before removing any switches
-              cisco.nd.nd_rest:
-                method: post
-                path: "/api/v1/manage/fabrics/{{ _rf }}/actions/deploy"
-                content: {}
-              loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
-              loop_control:
-                loop_var: _rf
-                label: "{{ _rf }}"
-              register: nd_predelete_deploy
-              failed_when: nd_predelete_deploy.failed | default(false)
-              timeout: "{{ _nd_predelete_call_limit }}"
-              vars:
-                ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
-              no_log: true
-              when: _nd_predelete_remaining | float > 0
+            - name: Guard Deploy request failures
+              block:
+                - name: Deploy each source fabric before removing any switches
+                  cisco.nd.nd_rest:
+                    method: post
+                    path: "/api/v1/manage/fabrics/{{ _rf }}/actions/deploy"
+                    content: {}
+                  loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
+                  loop_control:
+                    loop_var: _rf
+                    label: "{{ _rf }}"
+                  register: nd_predelete_deploy
+                  failed_when: nd_predelete_deploy.failed | default(false)
+                  timeout: "{{ _nd_predelete_call_limit }}"
+                  vars:
+                    ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
+                  no_log: true
+                  when: _nd_predelete_remaining | float > 0
+              rescue:
+                - *nd_predelete_request_failure_diagnostic
+                - name: Stop after failed Deploy request
+                  ansible.builtin.fail:
+                    msg: "NDP_SWITCH_PREDELETE_DEPLOY_BLOCKED: Deploy request failed; no switch removal was attempted."
 
             - name: Classify Deploy replies without publishing controller payloads
               ansible.builtin.set_fact:

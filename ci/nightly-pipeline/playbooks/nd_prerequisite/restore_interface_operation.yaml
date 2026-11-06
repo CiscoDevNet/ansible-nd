@@ -2,10 +2,22 @@
 - name: Validate the journaled prerequisite restore operation
   ansible.builtin.assert:
     that:
-      - _ndp_restore_operation.action in ['reset_routed_ethernet', 'delete_created_port_channel', 'delete_planned_link']
-      - not (_ndp_restore_operation.pre_change_intent_exists | bool)
+      - _ndp_restore_operation.action in ['reset_routed_ethernet', 'restore_ethernet', 'delete_created_port_channel', 'delete_planned_link']
+      - _ndp_restore_operation.action in ['reset_routed_ethernet', 'restore_ethernet'] or not (_ndp_restore_operation.pre_change_intent_exists | bool)
     fail_msg: "Refusing an unsupported or non-empty prerequisite restore snapshot."
   run_once: true
+
+- name: Require the captured Ethernet before-image instead of inventing host defaults
+  ansible.builtin.assert:
+    that:
+      - _ndp_restore_operation.pre_change_config_data is mapping
+      - _ndp_restore_operation.pre_change_config_data.mode in ['trunk', 'access', 'routed']
+      - _ndp_restore_operation.pre_change_config_data.networkOS.networkOSType == 'nx-os'
+      - _ndp_restore_operation.pre_change_config_data.networkOS.policy.adminState is boolean
+      - _ndp_restore_operation.pre_change_config_data.networkOS.policy.policyType | length > 0
+    fail_msg: "NDP_RESTORE_SNAPSHOT_REQUIRED: retain the journal and recover its before-image; never guess admin-up host defaults."
+  run_once: true
+  when: _ndp_restore_operation.action in ['reset_routed_ethernet', 'restore_ethernet']
 
 # The routed Ethernet / Port-channel parent is one this run created on a port the planner proved free, so every
 # sub-interface still on it was created by the test that just ran. ND refuses to change or delete the parent while
@@ -94,14 +106,8 @@
     - _ndp_restore_operation.action == 'delete_planned_link'
     - _ndp_restore_planned_link is failed
 
-# The routed parent is reset through the manage API instead of cisco.nd.nd_interface_ethernet_routed state: deleted.
-# That module's normalize request carries description: "" and ND 4.3 rejects it (400 ".../policy/description: minimum
-# string length is 1"; live 2026-10-08), which would leave the physical port routed. A per-interface PUT replace with
-# the int_trunk_host template defaults (every field ND reports for a default port; adminState+policyType alone is
-# refused with "Validation failed for following fields: [allowedVlans]") followed by an interface deploy is accepted.
-# The PUT is only sent while the port still carries routed intent, and the deploy runs only after the PUT succeeded
-# (nd_rest fails the task on an HTTP error), so a creation that never happened is not "reset" and a refused PUT is never
-# deployed.
+# Restore the full captured configuration. A fabricated trunkHost/admin-up default
+# can leave an unused port enabled or put edge semantics on a switch-facing link.
 - name: "Read the current intent of Ethernet parent {{ _ndp_restore_operation.interface }}"
   cisco.nd.nd_rest:
     path: >-
@@ -112,17 +118,28 @@
   no_log: true
   failed_when: false
   run_once: true
-  when: _ndp_restore_operation.action == 'reset_routed_ethernet'
+  when: _ndp_restore_operation.action in ['reset_routed_ethernet', 'restore_ethernet']
+
+- name: Require the current Ethernet identity before restoring its captured configuration
+  ansible.builtin.assert:
+    that:
+      - _ndp_restore_ethernet_cur.current.switchId | default('') == _ndp_restore_operation.serial
+      - _ndp_restore_ethernet_cur.current.interfaceName | default('') == _ndp_restore_operation.interface
+      - _ndp_restore_ethernet_cur.current.interfaceType | default('') == 'ethernet'
+    fail_msg: "NDP_RESTORE_IDENTITY_UNVERIFIED: refusing to overwrite an unidentified interface."
+  no_log: true
+  run_once: true
+  when: _ndp_restore_operation.action in ['reset_routed_ethernet', 'restore_ethernet']
 
 - name: "Reset Ethernet parent {{ _ndp_restore_operation.interface }} to its pre-test default"
   when:
-    - _ndp_restore_operation.action == 'reset_routed_ethernet'
+    - _ndp_restore_operation.action in ['reset_routed_ethernet', 'restore_ethernet']
     - >-
       ((_ndp_restore_ethernet_cur.current | default({})) is mapping)
-      and ((_ndp_restore_ethernet_cur.current.configData.networkOS.policy.policyType | default('')) | lower) == 'routedhost'
+      and (_ndp_restore_ethernet_cur.current.configData | default({})) != _ndp_restore_operation.pre_change_config_data
   run_once: true
   block:
-    - name: "Reset {{ _ndp_restore_operation.interface }} to the default trunk-host intent"
+    - name: "Restore {{ _ndp_restore_operation.interface }} to its captured pre-test intent"
       cisco.nd.nd_rest:
         path: >-
           /api/v1/manage/fabrics/{{ _ndp_restore_operation.fabric_name }}/switches/{{ _ndp_restore_operation.serial }}/interfaces/{{
@@ -132,20 +149,22 @@
           switchId: "{{ _ndp_restore_operation.serial }}"
           interfaceName: "{{ _ndp_restore_operation.interface }}"
           interfaceType: ethernet
-          configData:
-            mode: trunk
-            networkOS:
-              networkOSType: nx-os
-              policy:
-                adminState: true
-                allowedVlans: none
-                bpduGuard: default
-                mtu: jumbo
-                netflow: false
-                policyType: trunkHost
-                portTypeEdgeTrunk: true
-                speed: auto
+          configData: "{{ _ndp_restore_operation.pre_change_config_data }}"
       register: _ndp_restore_ethernet_put
+      no_log: true
+      failed_when: false
+
+    - name: Verify the exact restored intent was accepted before deploying
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ _ndp_restore_operation.fabric_name }}/switches/{{ _ndp_restore_operation.serial }}/interfaces/{{
+            _ndp_restore_operation.interface | replace('/', '%2F') }}
+        method: get
+      register: _ndp_restore_accepted
+      failed_when: >-
+        (_ndp_restore_accepted.current.switchId | default('')) != _ndp_restore_operation.serial or
+        (_ndp_restore_accepted.current.interfaceName | default('')) != _ndp_restore_operation.interface or
+        (_ndp_restore_accepted.current.configData | default({})) != _ndp_restore_operation.pre_change_config_data
       no_log: true
 
     # ND answers interfaceActions/deploy with HTTP 207 Multi-Status. nd_rest only returns a body for 200/201/202/204, so it
@@ -164,20 +183,25 @@
       no_log: true
       failed_when: false
 
-    # operData.mode is the mode discovered from the switch. An unreported mode (down or undiscovered port) cannot be
-    # judged, only a port that still reports routed is an unfinished restore.
-    - name: "Verify the switch no longer reports {{ _ndp_restore_operation.interface }} in routed mode"
-      cisco.nd.nd_rest:
-        path: >-
-          /api/v1/manage/fabrics/{{ _ndp_restore_operation.fabric_name }}/switches/{{ _ndp_restore_operation.serial }}/interfaces/{{
-            _ndp_restore_operation.interface | replace('/', '%2F') }}
-        method: get
-      register: _ndp_restore_ethernet_mode
-      retries: 12
-      delay: 10
-      until: >-
-        (((_ndp_restore_ethernet_mode.current | default({})).operData | default({})).mode | default('') | string | lower) != 'routed'
-      no_log: true
+- name: "Verify the exact intent and observed admin state of {{ _ndp_restore_operation.interface }}"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ _ndp_restore_operation.fabric_name }}/switches/{{ _ndp_restore_operation.serial }}/interfaces/{{
+        _ndp_restore_operation.interface | replace('/', '%2F') }}
+    method: get
+  register: _ndp_restore_ethernet_mode
+  retries: 12
+  delay: 10
+  until: >-
+    (_ndp_restore_ethernet_mode.current.switchId | default('')) == _ndp_restore_operation.serial
+    and (_ndp_restore_ethernet_mode.current.interfaceName | default('')) == _ndp_restore_operation.interface
+    and (_ndp_restore_ethernet_mode.current.configData | default({})) == _ndp_restore_operation.pre_change_config_data
+    and (_ndp_restore_ethernet_mode.current.operData.adminStatus | default('')) ==
+      ('up' if _ndp_restore_operation.pre_change_config_data.networkOS.policy.adminState else 'down')
+    and (_ndp_restore_ethernet_mode.current.operData.mode | default('')) == _ndp_restore_operation.pre_change_config_data.mode
+  no_log: true
+  run_once: true
+  when: _ndp_restore_operation.action in ['reset_routed_ethernet', 'restore_ethernet']
 
 - name: "Verify Ethernet parent {{ _ndp_restore_operation.interface }} no longer has routed intent"
   cisco.nd.nd_rest:

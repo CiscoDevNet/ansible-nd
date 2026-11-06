@@ -2,6 +2,7 @@ import copy
 import importlib.util
 import json
 import math
+import os
 from pathlib import Path
 import re
 import time
@@ -91,7 +92,7 @@ def shutdown_decision(evidence, protected):
     parent = physical_parent(interface)
     if any(physical_parent(value) == parent for value in reservations):
         return "PROTECTED_INTERFACE"
-    for field in ("identity_verified", "ready", "admin_up", "oper_down", "default_host_policy",
+    for field in ("identity_verified", "ready", "admin_up", "oper_down", "unused_reason", "default_host_policy",
                   "default_config", "no_neighbors", "no_attachments", "no_logical_children"):
         if evidence.get(field) is not True:
             return "UNVERIFIED_" + field.upper()
@@ -109,8 +110,15 @@ DEFAULT_POLICY = {
     "stormControlAction": "default", "stormControlBroadcastLevel": 0, "stormControlBroadcastLevelPps": 0,
     "stormControlMulticastLevel": 0, "stormControlMulticastLevelPps": 0,
     "stormControlUnicastLevel": 0, "stormControlUnicastLevelPps": 0, "vlanMapping": False,
+    "ptp": "false",
 }
 REQUIRED_POLICY_FIELDS = {"adminState", "allowedVlans", "bpduGuard", "mtu", "netflow", "policyType", "portTypeEdgeTrunk", "speed"}
+DEFAULT_ROUTED_POLICY = {
+    "adminState": True, "policyType": "routedHost", "mtu": 9216, "netflow": False,
+    "ptp": "false", "speed": "auto", "ipRedirects": False, "qos": False,
+    "fec": "auto", "pimDrPriority": 1, "pimSparse": False, "pfc": False,
+}
+REQUIRED_ROUTED_FIELDS = {"adminState", "policyType", "mtu", "netflow", "speed"}
 
 
 class BaselineBlocked(Exception):
@@ -119,7 +127,9 @@ class BaselineBlocked(Exception):
 
 class InterfaceBaseline:
     def __init__(self, registry, fabrics, request, apply=False, timeout_seconds=900, call_timeout_seconds=30,
-                 poll_seconds=5, clock=time.monotonic, sleep=time.sleep):
+                 poll_seconds=5, clock=time.monotonic, sleep=time.sleep, switch_refs=None,
+                 interfaces=None, journal_path=None, ensure_host_admin_down_default=False,
+                 idle_reserved_ports=False):
         self.registry = registry
         self.protected = registry_reservations(registry)
         if (type(apply) is not bool or not isinstance(fabrics, list) or not fabrics or len(fabrics) > 16
@@ -130,15 +140,88 @@ class InterfaceBaseline:
                 or not 0 < self.timeout <= 900 or not 0 < self.call_timeout <= 30 or self.poll < 0):
             raise ValueError("Invalid interface baseline deadline")
         self.fabrics, self.request, self.apply = list(dict.fromkeys(fabrics)), request, apply
+        if type(ensure_host_admin_down_default) is not bool:
+            raise ValueError("Invalid fabric default enforcement flag")
+        self.ensure_host_admin_down_default = ensure_host_admin_down_default
+        self.fabric_defaults = []
+        if ensure_host_admin_down_default:
+            owned_fabrics = {row.get("name") for row in registry["lab"].get("fabrics", {}).values()
+                            if isinstance(row, dict) and row.get("lifecycle") in {"retained", "preserved"}}
+            if not set(self.fabrics) <= owned_fabrics:
+                raise ValueError("Fabric default update outside the retained lab scope")
+        if switch_refs is not None and (not isinstance(switch_refs, list) or not switch_refs
+                or any(not isinstance(value, str) for value in switch_refs)
+                or len(switch_refs) != len(set(switch_refs))
+                or any(value not in registry["lab"]["switches"] for value in switch_refs)):
+            raise ValueError("Invalid selected switch scope")
+        if interfaces is not None and (switch_refs is None or not isinstance(interfaces, list)
+                or not interfaces or len(interfaces) > 64
+                or any(not isinstance(value, str) or not re.fullmatch(
+                    r"(?:ethernet|eth)[1-9][0-9]*/[1-9][0-9]*(?:/[1-9][0-9]*)?", value, re.I) for value in interfaces)):
+            raise ValueError("Invalid selected interface scope")
+        self.switch_refs = set(switch_refs) if switch_refs is not None else None
+        if type(idle_reserved_ports) is not bool or idle_reserved_ports and (switch_refs is None or journal_path is None):
+            raise ValueError("Idle reserved-port cleanup requires explicit switches and a durable checkpoint")
+        self.idle_reserved_ports = idle_reserved_ports
+        if idle_reserved_ports:
+            # Lifecycle boundaries have no active target. A future test reservation
+            # does not require no-shutdown now. All live link, neighbor, attachment,
+            # child-interface, identity, readiness and default-policy checks remain.
+            self.protected = {serial: [] for serial in self.protected}
+        self.interfaces = {re.sub(r"(?i)^eth(?:ernet)?", "Ethernet", value).lower() for value in interfaces} if interfaces is not None else None
+        if interfaces is not None and len(self.interfaces) != len(interfaces):
+            raise ValueError("Duplicate selected interface")
+        self.journal_path = Path(journal_path) if journal_path is not None else None
+        if self.journal_path is not None and (not self.journal_path.is_absolute()
+                or self.journal_path.is_symlink() or self.journal_path.parent.is_symlink()
+                or not self.journal_path.parent.is_dir()):
+            raise ValueError("Invalid protected checkpoint path")
         self.clock, self.sleep = clock, sleep
         self.changed, self.candidates, self.verified, self.inspected = False, 0, 0, 0
         self.decisions = []
+        self.readiness_incomplete = False
+        self.connectivity_verified_fabrics = []
+        self.remaining_connectivity_alerts = None
+
+    def checkpoint(self, value):
+        if self.journal_path is None:
+            return
+        secrets = [os.environ.get(key, "") for key in ("NDFC_USER", "NDFC_PASSWORD", "ANSIBLE_NXOS_SWITCH_USERNAME", "ANSIBLE_NXOS_SWITCH_PASSWORD")]
+
+        def redact(item):
+            if isinstance(item, dict):
+                return {key: "[redacted]" if re.search(r"(?i)password|passwd|secret|token|authorization|credentials?|community|api.?key", str(key)) else redact(child)
+                        for key, child in item.items() if key != "invocation"}
+            if isinstance(item, list):
+                return [redact(child) for child in item]
+            if isinstance(item, str):
+                for secret in secrets:
+                    if secret:
+                        item = item.replace(secret, "[redacted]")
+            return item
+
+        try:
+            if self.journal_path.is_symlink():
+                raise OSError("Checkpoint symlink")
+            descriptor = os.open(self.journal_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            with os.fdopen(descriptor, "a") as stream:
+                os.fchmod(stream.fileno(), 0o600)
+                stream.write(json.dumps(redact({"time_unix": time.time(), **value})) + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+        except (OSError, TypeError, ValueError) as error:
+            raise BaselineBlocked("CHECKPOINT_UNVERIFIED") from error
 
     def call(self, method, path, content=None):
         remaining = self.deadline - self.clock()
         if remaining <= 0:
             raise BaselineBlocked("DEADLINE_EXCEEDED")
+        if method != "get":
+            self.checkpoint({"phase": "request", "method": method, "path": path, "content": content})
         reply = self.request(method, path, content, min(remaining, self.call_timeout))
+        if method != "get":
+            self.checkpoint({"phase": "response", "method": method, "path": path,
+                             "reply": {key: reply[key] for key in ("status", "current", "jsondata", "response", "failed") if isinstance(reply, dict) and key in reply}})
         if self.clock() >= self.deadline:
             raise BaselineBlocked("DEADLINE_EXCEEDED")
         if not isinstance(reply, dict) or reply.get("failed") or type(reply.get("status")) is not int:
@@ -192,6 +275,12 @@ class InterfaceBaseline:
         meta = body.get("meta", {}) if isinstance(body, dict) else {}
         if isinstance(meta, dict) and (meta.get("next") or isinstance(meta.get("links"), dict) and meta["links"].get("next")):
             raise BaselineBlocked("INVENTORY_INCOMPLETE")
+        if isinstance(meta, dict) and "counts" in meta:
+            counts = meta["counts"]
+            if (not isinstance(counts, dict) or type(counts.get("total")) is not int
+                    or type(counts.get("remaining")) is not int or counts["remaining"] != 0
+                    or counts["total"] != len(rows)):
+                raise BaselineBlocked("INVENTORY_INCOMPLETE")
         return rows
 
     def ready_switches(self, fabric):
@@ -216,7 +305,7 @@ class InterfaceBaseline:
         ready = []
         for node in inventory:
             target = expected.get(node["switchId"])
-            if target is None:
+            if target is None or self.switch_refs is not None and target["name"] not in self.switch_refs:
                 continue
             data = node.get("additionalData", {})
             if (node.get("fabricManagementIp") == target.get("seed_ip") and isinstance(data, dict)
@@ -225,7 +314,10 @@ class InterfaceBaseline:
                     and str(node.get("switchRole", "")).lower().replace("_", "") == str(target.get("baseline_role", "")).lower().replace("_", "")):
                 ready.append(target)
             else:
+                self.readiness_incomplete = True
                 self.decisions.append({"switch": target["name"], "decision": "SWITCH_READINESS_OR_IDENTITY_UNVERIFIED"})
+                if self.apply:
+                    raise BaselineBlocked("SWITCH_READINESS_OR_IDENTITY_UNVERIFIED")
         return prefix, ready
 
     def linked_ports(self, fabric):
@@ -234,9 +326,13 @@ class InterfaceBaseline:
         physical = self.rows(body, "DATA" if isinstance(body, dict) and "DATA" in body else "links")
         linked = set()
         for row in managed + physical:
-            for short, long_name in (("src", "source"), ("dst", "destination")):
-                serial = row.get(short + "SwitchId", row.get(long_name + "SwitchId"))
-                name = row.get(short + "InterfaceName", row.get(long_name + "InterfaceName"))
+            legacy = "sw1-info" in row or "sw2-info" in row
+            for index, (short, long_name) in enumerate((("src", "source"), ("dst", "destination")), 1):
+                endpoint = row.get("sw%d-info" % index, {}) if legacy else {}
+                if not isinstance(endpoint, dict):
+                    raise BaselineBlocked("LINK_ENDPOINT_UNVERIFIED")
+                serial = endpoint.get("sw-serial-number") if legacy else row.get(short + "SwitchId", row.get(long_name + "SwitchId"))
+                name = endpoint.get("if-name") if legacy else row.get(short + "InterfaceName", row.get(long_name + "InterfaceName"))
                 if not isinstance(serial, str) or not serial or not isinstance(name, str) or not name:
                     raise BaselineBlocked("LINK_ENDPOINT_UNVERIFIED")
                 parent = physical_parent(name)
@@ -246,12 +342,14 @@ class InterfaceBaseline:
 
     def default_config(self, detail):
         config = detail.get("configData")
-        if not isinstance(config, dict) or set(config) != {"mode", "networkOS"} or config["mode"] != "trunk":
+        if not isinstance(config, dict) or set(config) != {"mode", "networkOS"} or config["mode"] not in {"trunk", "routed"}:
             return False
         network = config["networkOS"]
         if not isinstance(network, dict) or set(network) != {"networkOSType", "policy"} or network["networkOSType"] != "nx-os":
             return False
         policy = network["policy"]
+        defaults, required = ((DEFAULT_POLICY, REQUIRED_POLICY_FIELDS) if config["mode"] == "trunk"
+                              else (DEFAULT_ROUTED_POLICY, REQUIRED_ROUTED_FIELDS))
 
         def matches(value, expected):
             if type(expected) is bool:
@@ -260,12 +358,16 @@ class InterfaceBaseline:
                 return isinstance(value, str) and value == expected
             return type(value) in (int, float) and value == expected
 
-        return (isinstance(policy, dict) and REQUIRED_POLICY_FIELDS <= set(policy) <= set(DEFAULT_POLICY)
-                and all(matches(value, DEFAULT_POLICY[key]) for key, value in policy.items()))
+        # ND returns the default access VLAN as either integer 1 or string "1".
+        # Do not coerce other values: an address, VRF, custom policy or unknown field is intent.
+        return (isinstance(policy, dict) and required <= set(policy) <= set(defaults)
+                and all((key == "accessVlan" and value == "1") or matches(value, defaults[key])
+                        for key, value in policy.items()))
 
-    def observe(self, prefix, target, name, interfaces, linked):
+    def observe(self, prefix, target, name, interfaces, linked, detail=None):
         path = prefix + "/switches/" + quote(target["serial"], safe="") + "/interfaces/" + quote(name, safe="")
-        detail = self.call("get", path)
+        if detail is None:
+            detail = self.call("get", path)
         if not isinstance(detail, dict):
             raise BaselineBlocked("INTERFACE_DETAIL_UNVERIFIED")
         config = detail.get("configData", {})
@@ -276,7 +378,8 @@ class InterfaceBaseline:
         attachments = ("attachments", "attachedNetworks", "attachedVrfs", "networkAttachments", "vrfAttachments",
                    "portChannelId", "portChannel", "memberOf")
         neighbors = ("neighbor", "neighbors", "lldpNeighbors", "cdpNeighbors")
-        empty_attachments = all(container.get(key) in (None, False, 0, "", [], {})
+        empty_attachments = all(container.get(key) in ((None, False, 0, -1, "", [], {}) if key == "portChannelId"
+                                                       else (None, False, 0, "", [], {}))
                     for container in (detail, oper) if isinstance(container, dict) for key in attachments)
         empty_neighbors = all(container.get(key) in (None, False, 0, "", [], {})
                       for container in (detail, oper) if isinstance(container, dict) for key in neighbors)
@@ -284,7 +387,9 @@ class InterfaceBaseline:
                     "identity_verified": detail.get("switchId") == target["serial"] and detail.get("interfaceName") == name and detail.get("interfaceType") == "ethernet",
                     "admin_up": isinstance(policy, dict) and policy.get("adminState") is True,
                     "oper_down": isinstance(oper, dict) and oper.get("operationalStatus") == "down" and oper.get("adminStatus") == "up",
-                    "default_host_policy": isinstance(policy, dict) and policy.get("policyType") == "trunkHost",
+                    "unused_reason": isinstance(oper, dict) and isinstance(oper.get("operationalDescription"), str)
+                        and oper["operationalDescription"].strip().lower() == "link not connected",
+                    "default_host_policy": isinstance(policy, dict) and policy.get("policyType") in {"trunkHost", "routedHost"},
                     "default_config": valid_default, "no_attachments": valid_default and empty_attachments,
                     "no_neighbors": empty_neighbors and (target["serial"], physical_parent(name)) not in linked,
                     "no_logical_children": not any(row["interfaceName"].lower().startswith(name.lower() + ".") for row in interfaces)}
@@ -297,19 +402,82 @@ class InterfaceBaseline:
             raise BaselineBlocked("INTERFACE_INVENTORY_UNVERIFIED")
         return rows
 
+    def anomaly_rows(self, fabric):
+        rows, total = [], None
+        for page in range(32):
+            offset = page * 200
+            body = self.call("get", "/api/v1/analyze/anomalies/details?fabricName="
+                             + quote(fabric, safe="") + "&max=200&offset=" + str(offset)
+                             + "&fabricStatus=all&includeSuspendedAlerts=true")
+            batch = body.get("anomalies") if isinstance(body, dict) else None
+            counts = body.get("meta", {}).get("counts") if isinstance(body, dict) else None
+            if (not isinstance(batch, list) or len(batch) > 200
+                    or any(not isinstance(row, dict) for row in batch)):
+                raise BaselineBlocked("ANOMALY_EVIDENCE_UNVERIFIED")
+            if counts is None:
+                # Older releases omit pagination metadata only for a complete short result.
+                if page or len(batch) >= 200 or body.get("next") or body.get("meta", {}).get("links", {}).get("next"):
+                    raise BaselineBlocked("INVENTORY_INCOMPLETE")
+                rows.extend(batch)
+                break
+            if (not isinstance(counts, dict) or type(counts.get("total")) is not int
+                    or type(counts.get("remaining")) is not int or counts["total"] < 0
+                    or counts["remaining"] != counts["total"] - offset - len(batch)
+                    or body.get("offset", offset) != offset
+                    or total is not None and total != counts["total"]):
+                raise BaselineBlocked("INVENTORY_INCOMPLETE")
+            total = counts["total"]
+            rows.extend(batch)
+            if counts["remaining"] == 0:
+                break
+            if len(batch) != 200:
+                raise BaselineBlocked("INVENTORY_INCOMPLETE")
+        else:
+            raise BaselineBlocked("INVENTORY_INCOMPLETE")
+        if total is not None and len(rows) != total:
+            raise BaselineBlocked("INVENTORY_INCOMPLETE")
+        for row in rows:
+            if (not isinstance(row.get("anomalyString"), str) or type(row.get("cleared")) is not bool
+                    or "fabricName" in row and row["fabricName"] != fabric):
+                raise BaselineBlocked("ANOMALY_EVIDENCE_UNVERIFIED")
+        return rows
+
+    @staticmethod
+    def connectivity_warning(row):
+        return (any(row.get(key) == "CONNECTIVITY_INTERFACE_STATUS" for key in ("mnemonicTitle", "mnemonicDescription"))
+                or row.get("mnemonicNumber") == 200022
+                or row.get("resourceType") == "INTERFACE_STATUS" and str(row.get("category", "")).lower() == "connectivity"
+                or re.search(r"(?i)interface\s+(?:ethernet|eth)[0-9/]+\s+in undesired state", row["anomalyString"]) is not None)
+
+    def warning_matches(self, warning, serial, name):
+        text = warning["anomalyString"]
+        switch_id = warning.get("switchId")
+        if switch_id is not None and (not isinstance(switch_id, str) or not switch_id):
+            raise BaselineBlocked("ANOMALY_IDENTITY_UNVERIFIED")
+        serial_in_text = re.search(r"(?<![A-Za-z0-9])" + re.escape(serial) + r"(?![A-Za-z0-9])", text, re.I) is not None
+        if switch_id is not None and switch_id != serial:
+            if serial_in_text:
+                raise BaselineBlocked("ANOMALY_IDENTITY_UNVERIFIED")
+            return False
+        ports = {"Ethernet" + port for port in re.findall(
+            r"(?i)(?:ethernet|eth)\s*([1-9][0-9]*/[1-9][0-9]*(?:/[1-9][0-9]*)?)(?![0-9/.])", text)}
+        entity = warning.get("entityName")
+        if isinstance(entity, str) and re.fullmatch(r"(?:ethernet|eth)[1-9][0-9]*/[1-9][0-9]*(?:/[1-9][0-9]*)?", entity, re.I):
+            entity = re.sub(r"(?i)^eth(?:ernet)?", "Ethernet", entity)
+            if ports and entity.lower() not in {port.lower() for port in ports}:
+                raise BaselineBlocked("ANOMALY_IDENTITY_UNVERIFIED")
+            ports.add(entity)
+        port_matches = name.lower() in {port.lower() for port in ports}
+        if port_matches and switch_id is None and not serial_in_text:
+            raise BaselineBlocked("ANOMALY_IDENTITY_UNVERIFIED")
+        return port_matches and (switch_id == serial or serial_in_text)
+
     def verify(self, path, expected, fabric, target, name):
         while self.clock() < self.deadline:
             detail = self.call("get", path)
-            warnings = self.rows(self.call("get", "/api/v1/analyze/anomalies/details?fabricName=" + quote(fabric, safe="") + "&max=200&offset=0"), "anomalies", 200)
-            clear = True
-            for warning in warnings:
-                text = warning.get("anomalyString")
-                if not isinstance(text, str) or type(warning.get("cleared")) is not bool:
-                    raise BaselineBlocked("ANOMALY_EVIDENCE_UNVERIFIED")
-                serial_match = re.search(r"(?<![A-Za-z0-9])" + re.escape(target["serial"]) + r"(?![A-Za-z0-9])", text, re.I)
-                ports = re.findall(r"(?i)(?:ethernet|eth)\s*([1-9][0-9]*/[1-9][0-9]*(?:/[1-9][0-9]*)?)", text)
-                if serial_match and any(("Ethernet" + port).lower() == name.lower() for port in ports) and not warning["cleared"]:
-                    clear = False
+            warnings = self.anomaly_rows(fabric)
+            clear = not any(self.warning_matches(warning, target["serial"], name)
+                            for warning in warnings if not warning["cleared"] and self.connectivity_warning(warning))
             if (isinstance(detail, dict) and detail.get("switchId") == target["serial"] and detail.get("interfaceName") == name
                     and detail.get("configData") == expected and isinstance(detail.get("operData"), dict)
                     and detail["operData"].get("adminStatus") == "down" and detail["operData"].get("operationalStatus") == "down" and clear):
@@ -318,6 +486,37 @@ class InterfaceBaseline:
                     return
             self.sleep(min(self.poll, max(0, self.deadline - self.clock())))
         raise BaselineBlocked("VERIFICATION_DEADLINE")
+
+    def host_admin_default(self, fabric):
+        path = "/api/v1/manage/fabrics/" + quote(fabric, safe="")
+        current = self.call("get", path)
+        if (not isinstance(current, dict) or current.get("name") != fabric
+                or current.get("category") != "fabric" or not isinstance(current.get("management"), dict)):
+            raise BaselineBlocked("FABRIC_DEFAULT_UNVERIFIED")
+        management = current["management"]
+        # eBGP/external do not expose this property in ND 4.3. Never invent it.
+        if management.get("type") != "vxlanIbgp":
+            self.fabric_defaults.append({"fabric": fabric, "decision": "NOT_APPLICABLE"})
+            return
+        if type(management.get("hostInterfaceAdminState")) is not bool:
+            raise BaselineBlocked("FABRIC_DEFAULT_UNVERIFIED")
+        if management["hostInterfaceAdminState"] and self.apply:
+            self.ready_switches(fabric)
+            fresh = self.call("get", path)
+            if fresh != current:
+                raise BaselineBlocked("FABRIC_CHANGED_BEFORE_APPLY")
+            expected = copy.deepcopy(current)
+            expected["management"]["hostInterfaceAdminState"] = False
+            self.checkpoint({"phase": "before_fabric_default", "fabric": fabric, "before": current})
+            self.changed = True
+            self.call("put", path, expected)
+            verified = self.call("get", path)
+            if verified != expected:
+                raise BaselineBlocked("FABRIC_DEFAULT_UPDATE_UNVERIFIED")
+            management = verified["management"]
+        self.fabric_defaults.append({"fabric": fabric, "hostInterfaceAdminState": management["hostInterfaceAdminState"]})
+        if self.apply:
+            self.ready_switches(fabric)
 
     def run(self):
         self.deadline = self.clock() + self.timeout
@@ -334,23 +533,42 @@ class InterfaceBaseline:
                         raise BaselineBlocked("DUPLICATE_SWITCH_MEMBERSHIP")
                     seen.add(target["serial"])
                     rows = self.interface_rows(prefix, target["serial"])
+                    if self.interfaces is not None:
+                        present = {re.sub(r"(?i)^eth(?:ernet)?", "Ethernet", row["interfaceName"]).lower() for row in rows}
+                        if not self.interfaces <= present:
+                            raise BaselineBlocked("INTERFACE_SCOPE_INCOMPLETE")
                     owned = self.registry["lab"]["interface_allowlist"].get(target["name"])
                     for row in rows:
                         name = row["interfaceName"]
+                        if self.interfaces is not None and re.sub(r"(?i)^eth(?:ernet)?", "Ethernet", name).lower() not in self.interfaces:
+                            continue
                         if physical_parent(name) is None or "." in name:
                             continue
                         self.inspected += 1
                         if self.inspected > 2048:
                             raise BaselineBlocked("INTERFACE_SCOPE_EXCEEDED")
-                        if not owned:
+                        if not owned and self.switch_refs is None:
                             decision = "NO_OWNED_INTERFACE_SCOPE"
                         elif physical_parent(name) in self.protected[target["serial"]]:
                             decision = "PROTECTED_INTERFACE"
                         else:
-                            decision, detail, path = self.observe(prefix, target, name, rows, linked)
+                            # ND 4.3's complete interface list contains the same
+                            # configuration and operational data as each detail
+                            # GET. Use that fresh snapshot only for planning;
+                            # apply below still fetches the individual interface
+                            # again and compares its exact before-state.
+                            snapshot = row if (isinstance(row.get("configData"), dict)
+                                               and isinstance(row.get("operData"), dict)) else None
+                            decision, detail, path = self.observe(prefix, target, name, rows, linked, detail=snapshot)
                             if decision == "VERIFIED_UNUSED":
                                 plan.append((fabric, target, name, copy.deepcopy(detail["configData"])))
                         self.decisions.append({"switch": target["name"], "interface": name, "decision": decision})
+            if self.readiness_incomplete:
+                raise BaselineBlocked("SWITCH_READINESS_OR_IDENTITY_UNVERIFIED")
+            if self.switch_refs is not None and seen != {self.registry["lab"]["switches"][ref]["serial"] for ref in self.switch_refs}:
+                raise BaselineBlocked("SWITCH_SCOPE_INCOMPLETE")
+            if self.apply and not self.inspected:
+                raise BaselineBlocked("INTERFACE_SCOPE_UNVERIFIED")
             self.candidates = len(plan)
             for fabric, target, name, original in plan if self.apply else []:
                 prefix, fresh_targets = self.ready_switches(fabric)
@@ -360,21 +578,37 @@ class InterfaceBaseline:
                 decision, detail, path = self.observe(prefix, target, name, rows, self.linked_ports(fabric))
                 if decision != "VERIFIED_UNUSED" or detail.get("configData") != original:
                     self.decisions.append({"switch": target["name"], "interface": name, "decision": "CHANGED_BEFORE_APPLY"})
-                    continue
+                    raise BaselineBlocked("INTERFACE_CHANGED_BEFORE_APPLY")
                 expected = copy.deepcopy(original)
                 expected["networkOS"]["policy"]["adminState"] = False
+                self.checkpoint({"phase": "before_change", "fabric": fabric, "switchId": target["serial"], "interfaceName": name, "before": detail})
                 self.changed = True
                 self.call("put", path, {"switchId": target["serial"], "interfaceName": name, "interfaceType": "ethernet", "configData": expected})
                 self.call("post", prefix + "/interfaceActions/deploy", {"interfaces": [{"switchId": target["serial"], "interfaceName": name}]})
                 self.verify(path, expected, fabric, target, name)
                 self.verified += 1
+            if self.apply:
+                remaining = 0
+                for fabric in self.fabrics:
+                    remaining += sum(not row["cleared"] and self.connectivity_warning(row)
+                                     for row in self.anomaly_rows(fabric))
+                    self.connectivity_verified_fabrics.append(fabric)
+                self.remaining_connectivity_alerts = remaining
+                if remaining:
+                    raise BaselineBlocked("CONNECTIVITY_INTERFACE_STATUS_ACTIVE")
+            if self.ensure_host_admin_down_default:
+                for fabric in self.fabrics:
+                    self.host_admin_default(fabric)
         except BaselineBlocked as error:
             failed, reason = True, str(error)
         except Exception:
             failed, reason = True, "API_OR_SCHEMA_UNVERIFIED"
         return {"changed": self.changed, "failed": failed, "baseline_failed": failed, "msg": "NDP_INTERFACE_BASELINE " + reason,
                 "candidates": self.candidates, "verified": self.verified, "inspected": self.inspected,
-                "apply": self.apply, "decisions": self.decisions, "reason": reason}
+                "apply": self.apply, "decisions": self.decisions, "reason": reason,
+                "remaining_connectivity_alerts": self.remaining_connectivity_alerts,
+                "connectivity_verified_fabrics": self.connectivity_verified_fabrics,
+                "fabric_defaults": self.fabric_defaults, "idle_reserved_ports": self.idle_reserved_ports}
 
 
 class ActionModule(ActionBase):
@@ -414,6 +648,13 @@ class ActionModule(ActionBase):
                             payload = {"method": method, "path": path}
                             if content is not None:
                                 payload["content"] = content
+                            if method != "get" and connection is not None:
+                                # Keep the existing httpapi session and TLS policy, but
+                                # retain the 207 body older nd_rest versions discard.
+                                info = connection.send_request(method.upper(), path,
+                                                               json.dumps(content) if content is not None else None)
+                                return {"status": info.get("status"), "current": info.get("body"),
+                                        "failed": bool(info.get("error")) and info.get("status") != 207}
                             return self._execute_module(module_name="cisco.nd.nd_rest", module_args=payload, task_vars=values)
                         finally:
                             if previous_local is not None:

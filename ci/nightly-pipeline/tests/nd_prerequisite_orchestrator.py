@@ -520,7 +520,7 @@ def _is_routed_ethernet(state):
 # default values persisted (live ND 4.3, 2026-10-08), so those defaults are the free state as well.
 _DEFAULT_PORT_POLICIES = {"int_trunk_host", "trunkhost"}
 _DEFAULT_PORT_NV = {
-    "admin_state": "true", "allowed_vlans": "none", "bpduguard_enabled": "no",
+    "allowed_vlans": "none", "bpduguard_enabled": "no",
     "enable_netflow": "false", "mark_deleted": "false", "mtu": "jumbo",
     "porttype_fast_enabled": "true", "ptp": "false", "speed": "auto",
     # Persisted by a reset only; absent on a never-touched port.
@@ -544,7 +544,11 @@ def _is_default_free_port(state):
     }
     if not nv_pairs:
         return False
-    if set(nv_pairs) - _BOOKKEEPING_NV - set(_DEFAULT_PORT_NV):
+    # The baseline deliberately shuts unused ports. Admin-down alone is not
+    # application intent and must not make a free test parent unavailable.
+    if nv_pairs.get("admin_state", "true") not in {"true", "false"}:
+        return False
+    if set(nv_pairs) - _BOOKKEEPING_NV - set(_DEFAULT_PORT_NV) - {"admin_state"}:
         return False
     return all(nv_pairs.get(key, wanted) == wanted for key, wanted in _DEFAULT_PORT_NV.items())
 

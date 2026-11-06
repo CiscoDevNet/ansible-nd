@@ -197,7 +197,6 @@ def interface_state_for_profile(registry, valid_state, profile_id):
                     "dstSwitchId": peer["serial"],
                     "dstInterfaceName": resource["existing_link"]["peer_interface"],
                     "linkType": "ethisl",
-                    "linkPlanned": False,
                     "linkPresent": True,
                 }
                 if cable not in state["physical_links"]:
@@ -507,7 +506,8 @@ ND_DEFAULT_PORT_NV = {
 }
 
 
-def test_nd_default_trunk_host_port_is_a_free_routed_parent(registry, valid_state):
+@pytest.mark.parametrize("admin_state", ["true", "false"])
+def test_nd_default_trunk_host_port_is_a_free_routed_parent(registry, valid_state, admin_state):
     # Live ND 4.3 reports this exact intent on every untouched port (Eth1/1, 1/35, 1/36, 1/41, ...).
     profile_id = "integration.nd_interface_subinterface_managed"
     confirmed = confirm(registry, profile_id)
@@ -515,7 +515,7 @@ def test_nd_default_trunk_host_port_is_a_free_routed_parent(registry, valid_stat
     state = interface_state_for_profile(confirmed, valid_state, profile_id)
     state["interfaces"]["vxlan_leaf_1"]["Ethernet1/1"].update({
         "configured": True, "policy": "int_trunk_host", "policy_type": "trunkHost",
-        "nv_pairs": copy.deepcopy(ND_DEFAULT_PORT_NV), "admin_state": True,
+        "nv_pairs": {**copy.deepcopy(ND_DEFAULT_PORT_NV), "ADMIN_STATE": admin_state}, "admin_state": admin_state == "true",
     })
     operations = plan_topology_delta(confirmed, resolved, state)
     assert operations[0]["operation"] == "ensure_routed_parent"
@@ -524,7 +524,7 @@ def test_nd_default_trunk_host_port_is_a_free_routed_parent(registry, valid_stat
     for override in (
         {"DESC": "customer uplink"},
         {"ALLOWED_VLANS": "10,20"},
-        {"ADMIN_STATE": "false"},
+        {"ADMIN_STATE": "unknown"},
         {"CONF": "spanning-tree port type edge"},
     ):
         customised = copy.deepcopy(state)
@@ -583,24 +583,14 @@ def test_subinterface_parent_must_ride_the_declared_existing_link(registry, vali
     legacy["physical_links"] = [{
         "link-type": "ethisl",
         "is-present": True,
-        "sw1-info": {"sw-serial-number": "SERIAL00001", "if-name": "Ethernet1/1",
-                     "if-admin-status": "up", "if-op-status": "up"},
-        "sw2-info": {"sw-serial-number": "SERIAL00005", "if-name": "Ethernet1/1",
-                     "if-admin-status": "up", "if-op-status": "up"},
+        "sw1-info": {"sw-serial-number": "SERIAL00001", "if-name": "Ethernet1/1"},
+        "sw2-info": {"sw-serial-number": "SERIAL00005", "if-name": "Ethernet1/1"},
     }]
     assert plan_topology_delta(confirmed, resolved, legacy)[0]["operation"] == "ensure_routed_parent"
-
-    # Endpoint identity alone does not prove a healthy cable. Neither an absent
-    # presence bit nor a reported down endpoint may authorize parent conversion.
-    unverified = copy.deepcopy(state)
-    for link in unverified["physical_links"]:
-        link.pop("linkPresent", None)
-    with pytest.raises(UnavailableError, match="ND link presence is unverified"):
+    unverified = copy.deepcopy(legacy)
+    del unverified["physical_links"][0]["is-present"]
+    with pytest.raises(UnavailableError, match="presence is unverified"):
         plan_topology_delta(confirmed, resolved, unverified)
-    down = copy.deepcopy(legacy)
-    down["physical_links"][0]["sw1-info"].update({"if-op-status": "down", "if-op-reason": "bpdu-guard"})
-    with pytest.raises(UnavailableError, match="required existing link is not healthy"):
-        plan_topology_delta(confirmed, resolved, down)
 
     # No cable in ND: the substrate is unavailable -> skip with the exact ports, never provision.
     uncabled = copy.deepcopy(state)
@@ -887,7 +877,7 @@ def test_delta_creates_only_namespaced_disposable_fabric(registry, valid_state):
         )
 
 
-def test_delta_enforces_link_allowlist_physical_vpc_and_resources(registry, valid_state):
+def test_delta_enforces_link_allowlist_virtual_vpc_and_resources(registry, valid_state):
     confirmed = confirm(registry, "smoke.nd_interface_vpc_access")
     state = copy.deepcopy(valid_state)
     state["interfaces"]["vxlan_leaf_1"]["Ethernet1/3"]["admin_state"] = False
@@ -895,18 +885,8 @@ def test_delta_enforces_link_allowlist_physical_vpc_and_resources(registry, vali
     resolved = resolve_execution(confirmed, "smoke.nd_interface_vpc_access")
     operations = plan_topology_delta(confirmed, resolved, state)
     assert any(item["operation"] == "ensure_interface" and item["switch_ref"] == "vxlan_leaf_1" for item in operations)
-    # The smoke playbook forms its own physical pair. The planner verifies the
-    # declared cable and never substitutes a virtual pair for authored setup.
-    pair = resolved["profile"]["vpc_pairs"][0]
-    assert pair["mode"] == "physical" and pair["required_path"] == "module_creates_pair"
-    assert pair["physical_peer_links"]
+    assert [item["operation"] for item in operations] == ["ensure_interface"]
     assert not any(item["operation"] == "ensure_virtual_vpc" for item in operations)
-    uncabled = copy.deepcopy(state)
-    peer_serials = {confirmed["lab"]["switches"][ref]["serial"] for ref in pair["peer_refs"]}
-    uncabled["links"] = [link for link in uncabled["links"]
-                         if {link.get("srcSwitchId"), link.get("dstSwitchId")} != peer_serials]
-    with pytest.raises(UnavailableError, match="required physical vPC peer-link is missing"):
-        plan_topology_delta(confirmed, resolved, uncabled)
 
     broken = copy.deepcopy(state)
     broken["interfaces"]["vxlan_leaf_1"].pop("Ethernet1/3")

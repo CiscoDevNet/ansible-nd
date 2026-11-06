@@ -61,7 +61,7 @@
         _ndp_parent_before_objects | length == 1
         and ((_ndp_parent_before_objects | first).policy | default('')) == 'int_trunk_host'
         and _ndp_parent_before_extra_nv | length == 0
-        and (_ndp_parent_before_nv.ADMIN_STATE | default('true') | string | lower) == 'true'
+        and (_ndp_parent_before_nv.ADMIN_STATE | default('true') | string | lower) in ['true', 'false']
         and (_ndp_parent_before_nv.ALLOWED_VLANS | default('none') | string | lower) in ['none', '']
         and (_ndp_parent_before_nv.BPDUGUARD_ENABLED | default('no') | string | lower) == 'no'
         and (_ndp_parent_before_nv.ENABLE_NETFLOW | default('false') | string | lower) == 'false'
@@ -87,6 +87,30 @@
       }}
   run_once: true
 
+- name: "ensure_routed_parent capture the exact modern interface configuration"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ _ndp_operation.fabric_name }}/switches/{{ _ndp_operation.serial }}/interfaces/{{
+        _ndp_operation.interface | replace('/', '%2F') }}
+    method: get
+  register: _ndp_parent_before_detail
+  no_log: true
+  run_once: true
+
+- name: "ensure_routed_parent require an identified before-image before mutation"
+  ansible.builtin.assert:
+    that:
+      - _ndp_parent_before_detail.current is mapping
+      - _ndp_parent_before_detail.current.switchId == _ndp_operation.serial
+      - _ndp_parent_before_detail.current.interfaceName == _ndp_operation.interface
+      - _ndp_parent_before_detail.current.interfaceType == 'ethernet'
+      - _ndp_parent_before_detail.current.configData is mapping
+      - _ndp_parent_before_detail.current.configData.networkOS.policy.policyType == 'trunkHost'
+      - _ndp_parent_before_detail.current.configData.networkOS.policy.adminState is boolean
+    fail_msg: "Refusing to prepare a routed parent without an exact, identified restore configuration."
+  no_log: true
+  run_once: true
+
 - name: "ensure_routed_parent append the pre-change snapshot to the restore journal"
   ansible.builtin.set_fact:
     _ndp_prerequisite_restore_operations: >-
@@ -97,7 +121,8 @@
         'switch_ip': _ndp_operation.switch_ip,
         'fabric_name': _ndp_operation.fabric_name,
         'interface': _ndp_operation.interface,
-        'pre_change_intent_exists': false
+        'pre_change_intent_exists': false,
+        'pre_change_config_data': _ndp_parent_before_detail.current.configData
       }] }}
   run_once: true
 
