@@ -2786,6 +2786,12 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         try:
             return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
         except Exception:
+            # TODO(4.3.1) empty-interface-description-accepted
+            # The spec types the ethernet policy `description` as `interfaceDescription` (minLength 1) on both releases. ND 4.2.1 does
+            # not enforce it and needs `description: ""` to clear a description (an omitted field is left untouched); ND 4.3.1 enforces
+            # it (HTTP 400 `minimum string length is 1`) but resets an omitted field. Send the empty string first and, on that exact
+            # 400, resend the group without the key. Lab-verified 2026-09-11 on 4.2.1.10 and 4.3.1.175. The sibling site in
+            # `ethernet_dot1q_tunnel_host_interface.py` carries the same marker.
             if not self._normalize_omits_description and self._rejected_empty_description(response_count):
                 self._normalize_omits_description = True
                 payload = InterfaceDefaultConfig.to_normalize_payload(group, omit_description=True, retain_auto_negotiation=retain)
