@@ -17,13 +17,31 @@
       - peer1_switch_id: "{{ test_switch_ip_peer1 }}"
         peer2_switch_id: "{{ test_switch_ip_peer2 }}"
     state: deleted
-  ignore_errors: true
   when: test_manage_vpc_pairs
   tags: always
 
 - name: "SETUP: Pause for unpair convergence"
   ansible.builtin.pause:
     seconds: 30
+  when: test_manage_vpc_pairs
+  tags: always
+
+- name: "SETUP: Verify prior vPC pair is absent"
+  cisco.nd.nd_manage_vpc_pair:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - peer1_switch_id: "{{ test_switch_ip_peer1 }}"
+        peer2_switch_id: "{{ test_switch_ip_peer2 }}"
+    state: gathered
+  register: setup_pair_absent
+  when: test_manage_vpc_pairs
+  tags: always
+
+- name: "SETUP: Assert prior vPC pair is absent"
+  ansible.builtin.assert:
+    that:
+      - setup_pair_absent.gathered.vpc_pairs | default([]) | length == 0
   when: test_manage_vpc_pairs
   tags: always
 
@@ -41,4 +59,53 @@
   ansible.builtin.pause:
     seconds: 30
   when: test_manage_vpc_pairs
+  tags: always
+
+- name: "SETUP: Verify fresh vPC pair exists"
+  cisco.nd.nd_manage_vpc_pair:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - peer1_switch_id: "{{ test_switch_ip_peer1 }}"
+        peer2_switch_id: "{{ test_switch_ip_peer2 }}"
+    state: gathered
+  register: setup_pair_present
+  when: test_manage_vpc_pairs
+  tags: always
+
+- name: "SETUP: Assert fresh vPC pair exists exactly once"
+  ansible.builtin.assert:
+    that:
+      - setup_pair_present.gathered.vpc_pairs | default([]) | length == 1
+  when: test_manage_vpc_pairs
+  tags: always
+
+- name: "SETUP: Remove test access vPC interfaces from pair 1"
+  cisco.nd.nd_interface_vpc_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip_peer1 }}"
+        interface_name: vpc100
+      - switch_ip: "{{ test_switch_ip_peer1 }}"
+        interface_name: vpc101
+      - switch_ip: "{{ test_switch_ip_peer1 }}"
+        interface_name: vpc198
+      - switch_ip: "{{ test_switch_ip_peer1 }}"
+        interface_name: vpc199
+      - switch_ip: "{{ test_switch_ip_peer1 }}"
+        interface_name: "{{ vpc_multi_pair_name }}"
+    config_actions:
+      deploy: true
+    state: deleted
+  register: setup_vpc_access_delete
+  tags: always
+
+- name: "SETUP: Verify test access vPC interfaces are absent from pair 1"
+  ansible.builtin.assert:
+    that:
+      - >-
+        setup_vpc_access_delete.after
+        | selectattr('interface_name', 'in', ['vpc100', 'vpc101', 'vpc198', 'vpc199', vpc_multi_pair_name])
+        | list | length == 0
   tags: always

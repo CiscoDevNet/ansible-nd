@@ -28,14 +28,17 @@ import inspect
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
+    CsrLoopbackPolicyModel,
     IpfmLoopbackPolicyModel,
     LoopbackConfigDataModel,
     LoopbackInterfaceModel,
     MplsLoopbackPolicyModel,
     NexusLoopbackNetworkOSModel,
     NexusLoopbackPolicyModel,
+    XeLoopbackNetworkOSModel,
+    XeLoopbackPolicyModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import BulkCreateGroupKey, BulkCreateItem
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import BulkCreateGroupKey, BulkCreateItem, NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -508,9 +511,174 @@ def test_loopback_interface_00310() -> None:
     match = r"No switch found with fabricManagementIp '192\.168\.12\.151'"
     with pytest.raises(RuntimeError, match=match):
         instance.delete(model)
-
     assert instance._pending_removes == []
     assert instance._pending_deploys == []
+
+
+def _seed_loopback_inventory(instance: LoopbackInterfaceOrchestrator, records: list[dict]) -> None:
+    """Seed the complete switch inventory used by the delete preflight."""
+    instance.state_snapshot._interfaces_by_switch["FDO12345ABC"] = {record["interfaceName"].lower(): record for record in records}
+
+
+def _xe_loopback_record(name: str, status: str, *, network_os_type: str = "ios-xe", mode: str = "managed") -> dict:
+    """Build the NDFC inventory shape for one loopback, including an operational-only orphan."""
+    network_os = {"networkOSType": network_os_type}
+    if mode == "managed":
+        network_os["policy"] = {"policyType": "iosXeLoopback" if network_os_type == "ios-xe" else "loopback"}
+    return {
+        "interfaceName": name,
+        "interfaceType": "loopback",
+        "configData": {"mode": mode, "networkOS": network_os},
+        "operData": {"operationalStatus": status},
+    }
+
+
+@pytest.mark.parametrize("state", ["deleted", "overridden"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_loopback_interface_00320_xe_deployed_undiscovered_delete_is_blocked(state: str, check_mode: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A deployed IOS-XE loopback must be discovered before either delete path can remove it."""
+
+    def responses():
+        yield responses_loopback_interface("test_loopback_interface_00300a")
+
+    config = [{"switch_ip": "192.168.12.151", "interface_name": "Loopback222"}]
+    rest_send = _build_rest_send(ResponseGenerator(responses()), state=state, config=config)
+    rest_send.check_mode = check_mode
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    _seed_loopback_inventory(instance, [_xe_loopback_record("Loopback222", "unknown")])
+    model = _build_loopback_model(interface_name="Loopback222", include_config=False)
+    history_checks = []
+
+    def deployed(name: str, switch_id: str) -> bool:
+        history_checks.append((name, switch_id))
+        return True
+
+    monkeypatch.setattr(instance, "_xe_interface_deployed", deployed)
+    if state == "overridden":
+        monkeypatch.setattr(LoopbackInterfaceOrchestrator, "validate_prerequisites", lambda self: None)
+
+    with pytest.raises(RuntimeError, match=r"(?i)Cannot remove IOS-XE interface.*loopback222.*operationalStatus=unknown"):
+        if state == "deleted":
+            instance.preflight_delete([model])
+        else:
+            instance._check_overridden_removals_discovered([])
+
+    assert [(name.casefold(), switch_id) for name, switch_id in history_checks] == [("loopback222", "FDO12345ABC")]
+    assert rest_send.response_count == 1
+    assert instance._pending_removes == []
+    assert instance._pending_deploys == []
+
+
+@pytest.mark.parametrize("state", ["deleted", "overridden"])
+def test_loopback_interface_00325_xe_staged_undiscovered_delete_is_allowed(state: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Undiscovered IOS-XE intent with no device-side deployment can still be removed."""
+
+    def responses():
+        yield responses_loopback_interface("test_loopback_interface_00300a")
+
+    config = [{"switch_ip": "192.168.12.151", "interface_name": "Loopback222"}]
+    rest_send = _build_rest_send(ResponseGenerator(responses()), state=state, config=config)
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    _seed_loopback_inventory(instance, [_xe_loopback_record("Loopback222", "unknown")])
+    model = _build_loopback_model(interface_name="Loopback222", include_config=False)
+    history_checks = []
+
+    def not_deployed(name: str, switch_id: str) -> bool:
+        history_checks.append((name, switch_id))
+        return False
+
+    monkeypatch.setattr(instance, "_xe_interface_deployed", not_deployed)
+    if state == "overridden":
+        monkeypatch.setattr(LoopbackInterfaceOrchestrator, "validate_prerequisites", lambda self: None)
+
+    if state == "deleted":
+        instance.preflight_delete([model])
+    else:
+        instance._check_overridden_removals_discovered([])
+    instance.delete_bulk([model])
+
+    assert [(name.casefold(), switch_id) for name, switch_id in history_checks] == [("loopback222", "FDO12345ABC")]
+    assert rest_send.response_count == 1
+    assert instance._pending_removes == [("Loopback222", "FDO12345ABC")]
+    assert instance._pending_deploys == [("Loopback222", "FDO12345ABC")]
+
+
+def test_loopback_interface_00330_staged_and_discovered_deletes_remain_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only the undiscovered IOS-XE row needs deployment history; NX-OS remains unaffected."""
+
+    def responses():
+        yield responses_loopback_interface("test_loopback_interface_00300a")
+
+    names = ["Loopback220", "Loopback221", "Loopback223"]
+    config = [{"switch_ip": "192.168.12.151", "interface_name": name} for name in names]
+    rest_send = _build_rest_send(ResponseGenerator(responses()), state="deleted", config=config)
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    _seed_loopback_inventory(
+        instance,
+        [
+            _xe_loopback_record("Loopback220", "unknown"),
+            _xe_loopback_record("Loopback221", "up"),
+            _xe_loopback_record("Loopback223", "unknown", network_os_type="nx-os"),
+        ],
+    )
+    models = [_build_loopback_model(interface_name=name, include_config=False) for name in names]
+    history_checks = []
+
+    def not_deployed(name: str, switch_id: str) -> bool:
+        history_checks.append((name, switch_id))
+        return False
+
+    monkeypatch.setattr(instance, "_xe_interface_deployed", not_deployed)
+
+    instance.preflight_delete(models)
+    instance.delete_bulk(models)
+
+    assert [(name.casefold(), switch_id) for name, switch_id in history_checks] == [("loopback220", "FDO12345ABC")]
+    assert rest_send.response_count == 1
+    expected = [("Loopback220", "FDO12345ABC"), ("Loopback221", "FDO12345ABC"), ("loopback223", "FDO12345ABC")]
+    assert instance._pending_removes == expected
+    assert instance._pending_deploys == expected
+
+
+def test_loopback_interface_00340_operational_only_orphan_cannot_claim_delete_success() -> None:
+    """An explicit delete of a rediscovered IOS-XE orphan fails before any remove or deploy is queued."""
+
+    def responses():
+        yield responses_loopback_interface("test_loopback_interface_00300a")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()), state="deleted")
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    _seed_loopback_inventory(instance, [_xe_loopback_record("Loopback222", "up", mode="unknown")])
+    model = _build_loopback_model(interface_name="Loopback222", include_config=False)
+
+    with pytest.raises(RuntimeError, match=r"Cannot delete IOS-XE loopback loopback222.*operational-only row"):
+        instance.preflight_delete([model])
+
+    assert rest_send.response_count == 1
+    assert instance._pending_removes == []
+    assert instance._pending_deploys == []
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_loopback_interface_00350_pending_preview_does_not_block_canonical_xe_delete(check_mode: bool) -> None:
+    """NDFC may preview an already-deployed lowercase loopback as pending; canonical delete remains valid."""
+
+    def responses():
+        yield responses_loopback_interface("test_loopback_interface_00300a")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()), state="deleted")
+    rest_send.check_mode = check_mode
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    _seed_loopback_inventory(instance, [_xe_loopback_record("Loopback222", "up")])
+    model = _build_loopback_model(interface_name="Loopback222", include_config=False)
+
+    instance.preflight_delete([model])
+    instance.delete_bulk([model])
+
+    assert rest_send.response_count == 1
+    assert rest_send.check_mode is check_mode
+    assert instance._pending_removes == [("Loopback222", "FDO12345ABC")]
+    assert instance._pending_deploys == [("Loopback222", "FDO12345ABC")]
 
 
 # =============================================================================
@@ -1371,3 +1539,251 @@ def test_loopback_interface_01500() -> None:
     assert [item.interface_name for item in groups[keys[0]]] == ["loopback200", "loopback202"]
     assert groups[keys[1]][0].payload["switchId"] == "FDO12345ABC"
     assert isinstance(groups[keys[1]][0], BulkCreateItem)
+
+
+# =============================================================================
+# Test: csrLoopback release preflight (issue #632)
+# =============================================================================
+
+
+def _build_xe_loopback_model(policy_type: str, switch_ip: str = "192.168.12.151", interface_name: str = "loopback206") -> LoopbackInterfaceModel:
+    """Build a minimal IOS-XE `LoopbackInterfaceModel` carrying either a `csrLoopback` or an `iosXeLoopback` policy."""
+    if policy_type == "csrLoopback":
+        policy = CsrLoopbackPolicyModel(policy_type="csrLoopback", admin_state=True, ip="10.100.206.1")
+    else:
+        policy = XeLoopbackPolicyModel(policy_type="iosXeLoopback", admin_state=True, ip="10.100.205.1")
+    return LoopbackInterfaceModel(
+        switch_ip=switch_ip,
+        interface_name=interface_name,
+        config_data=LoopbackConfigDataModel(network_os=XeLoopbackNetworkOSModel(network_os_type="ios-xe", policy=policy)),
+    )
+
+
+def _existing_xe_loopback(policy_type: str, interface_name: str = "loopback206") -> dict:
+    """Wire-shaped IOS-XE loopback record as the per-switch interface list returns it."""
+    return {
+        "interfaceName": interface_name,
+        "interfaceType": "loopback",
+        "configData": {"mode": "managed", "networkOS": {"networkOSType": "ios-xe", "policy": {"policyType": policy_type, "adminState": True}}},
+    }
+
+
+def test_loopback_interface_01600() -> None:
+    """
+    # Summary
+
+    On ND 4.3.1 a proposed `csrLoopback` that does not exist yet is refused before any write: the controller rejects the policy
+    on create and update (issue #632), so the preflight fails with a message naming the interface, the switch and the release.
+
+    ## Test
+
+    - `controller_version` is `4.3.1.175`
+    - The switch's interface list is empty (seeded cache), so `loopback206` would be created
+    - `_check_csr_loopback_writable` raises RuntimeError naming `csrLoopback`, `loopback206 (192.168.12.151)` and `4.3.1.175`
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._check_csr_loopback_writable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    rest_send.controller_version = "4.3.1.175"
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance.state_snapshot._interfaces_by_switch["FDO12345ABC"] = {}
+
+    with pytest.raises(RuntimeError, match=r"csrLoopback.*loopback206 \(192\.168\.12\.151\)") as excinfo:
+        instance._check_csr_loopback_writable([_build_xe_loopback_model("csrLoopback")])
+    assert "4.3.1.175" in str(excinfo.value)
+    assert "#632" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("version", ["4.2.1.10", "4.2.3.7", None])
+def test_loopback_interface_01610(version) -> None:
+    """
+    # Summary
+
+    Below ND 4.3.1, and when the controller version is unknown, the csrLoopback preflight is a no-op: 4.2.1 accepts the policy
+    (lab-verified) and an unknown release must not block a write on speculation.
+
+    ## Test
+
+    - `controller_version` is a 4.2.x build or None
+    - A proposed `csrLoopback` passes without any request (no switch resolution, no interface fetch)
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._check_csr_loopback_writable()
+    """
+    rest_send = _build_rest_send(ResponseGenerator(iter([])))
+    rest_send.controller_version = version
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance._check_csr_loopback_writable([_build_xe_loopback_model("csrLoopback")])
+    assert instance._switch_interfaces_cache == {}
+
+
+def test_loopback_interface_01630() -> None:
+    """
+    # Summary
+
+    On ND 4.3.1 a `csrLoopback` that already exists with that policy type is not refused: re-stating it (an idempotent re-run)
+    issues no write, so the preflight must stay silent.
+
+    ## Test
+
+    - `controller_version` is `4.3.1.175`
+    - The switch's interface list (seeded cache) already holds `loopback206` as `csrLoopback`
+    - `_check_csr_loopback_writable` does not raise
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._check_csr_loopback_writable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    rest_send.controller_version = "4.3.1.175"
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance.state_snapshot._interfaces_by_switch["FDO12345ABC"] = {"loopback206": _existing_xe_loopback("csrLoopback")}
+
+    with does_not_raise():
+        instance._check_csr_loopback_writable([_build_xe_loopback_model("csrLoopback")])
+
+
+def test_loopback_interface_01640() -> None:
+    """
+    # Summary
+
+    On ND 4.3.1 a proposed IOS-XE loopback of any other policy type is not affected by the csrLoopback preflight.
+
+    ## Test
+
+    - `controller_version` is `4.3.1.175`
+    - A proposed `iosXeLoopback` passes without switch resolution or interface fetch
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._check_csr_loopback_writable()
+    """
+    rest_send = _build_rest_send(ResponseGenerator(iter([])))
+    rest_send.controller_version = "4.3.1.175"
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance._check_csr_loopback_writable([_build_xe_loopback_model("iosXeLoopback", interface_name="loopback205")])
+    assert instance._switch_interfaces_cache == {}
+
+
+def test_loopback_interface_01650() -> None:
+    """
+    # Summary
+
+    On ND 4.3.1 a policy-type transition to `csrLoopback` (the interface exists as `iosXeLoopback`) is refused: the transition is a
+    PUT, and the controller rejects `csrLoopback` on PUT as well as on create.
+
+    ## Test
+
+    - `controller_version` is `4.3.1.175`
+    - The switch's interface list (seeded cache) holds `loopback206` as `iosXeLoopback`
+    - A proposed `csrLoopback` `loopback206` raises RuntimeError
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator._check_csr_loopback_writable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    rest_send.controller_version = "4.3.1.175"
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance.state_snapshot._interfaces_by_switch["FDO12345ABC"] = {"loopback206": _existing_xe_loopback("iosXeLoopback")}
+
+    with pytest.raises(RuntimeError, match="csrLoopback"):
+        instance._check_csr_loopback_writable([_build_xe_loopback_model("csrLoopback")])
+
+
+def test_loopback_interface_01660(monkeypatch) -> None:
+    """
+    # Summary
+
+    The inherited `preflight` reaches the csrLoopback release check through `preflight_safety`, so `NDStateMachine.manage_state`
+    and the workflow executor (which call `preflight`) report the refusal, in check mode too.
+
+    ## Test
+
+    - `validate_switches_capable` and `_check_overridden_removals_discovered` are replaced by no-ops so their fixtures are not needed
+    - The switches list (1 IOS-XE switch) resolves the switch and satisfies the platform check
+    - `controller_version` is `4.3.1.175`; the switch's interface list is empty (seeded cache)
+    - `preflight` with a proposed `csrLoopback` raises the csrLoopback RuntimeError
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - LoopbackInterfaceOrchestrator.preflight_safety()
+    - LoopbackInterfaceOrchestrator._check_csr_loopback_writable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "validate_switches_capable", lambda self, model_instances: None)
+    monkeypatch.setattr(LoopbackInterfaceOrchestrator, "_check_overridden_removals_discovered", lambda self, model_instances: None)
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    rest_send.controller_version = "4.3.1.175"
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance.state_snapshot._interfaces_by_switch["FDO12345ABC"] = {}
+
+    with pytest.raises(RuntimeError, match="csrLoopback"):
+        instance.preflight([_build_xe_loopback_model("csrLoopback")])
+
+
+def test_loopback_interface_01670(monkeypatch) -> None:
+    """
+    # Summary
+
+    `preflight_safety` runs the shared safety checks and then the csrLoopback release check. The aggregate workflow planner calls
+    `preflight_safety` (never `preflight`) in check mode, so the guard has to live on this path for a `nd_interfaces_workflow` dry
+    run to report the refusal (PR #634 review).
+
+    ## Test
+
+    - The base `NDBaseInterfaceOrchestrator.preflight_safety` is replaced by a recorder so its own fixtures are not needed
+    - `controller_version` is `4.3.1.175`; the switch's interface list is empty (seeded cache)
+    - `preflight_safety` with a proposed `csrLoopback` calls the base safety check once, then raises the csrLoopback RuntimeError
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceOrchestrator.preflight_safety()
+    - LoopbackInterfaceOrchestrator._check_csr_loopback_writable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_loopback_interface(f"{method_name}a")
+
+    calls: list[int] = []
+
+    def fake_base_preflight_safety(self, model_instances):  # pylint: disable=unused-argument
+        calls.append(len(model_instances))
+
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", fake_base_preflight_safety)
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    rest_send.controller_version = "4.3.1.175"
+    instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
+    instance.state_snapshot._interfaces_by_switch["FDO12345ABC"] = {}
+
+    with pytest.raises(RuntimeError, match="csrLoopback"):
+        instance.preflight_safety([_build_xe_loopback_model("csrLoopback")])
+    assert calls == [1]

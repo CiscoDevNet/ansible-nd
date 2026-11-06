@@ -146,6 +146,24 @@ def test_unknown_top_level_argument_rejected(action_plugin):
         action_plugin._validate_arguments(arguments)
 
 
+def test_state_is_optional(action_plugin):
+    arguments = base_args()
+    arguments.pop("state")
+
+    action_plugin._validate_arguments(arguments)
+
+
+def test_empty_state_is_rejected_when_provided(action_plugin):
+    arguments = base_args()
+    arguments["state"] = ""
+
+    with pytest.raises(
+        AnsibleActionFail,
+        match="state must be a non-empty string",
+    ):
+        action_plugin._validate_arguments(arguments)
+
+
 def test_unknown_expected_phase_rejected(action_plugin):
     expected = {
         "wrong_phase": {
@@ -216,7 +234,7 @@ def test_unknown_check_mode_query_argument_rejected(
     queries = [
         {
             "path": "/api/v1/test",
-            "method": "post",
+            "unsupported": True,
         }
     ]
 
@@ -225,6 +243,18 @@ def test_unknown_check_mode_query_argument_rejected(
         match="Unsupported keys",
     ):
         action_plugin._validate_check_mode_queries(queries)
+
+
+@pytest.mark.parametrize("method", [None, "", "put", 1])
+def test_check_mode_query_method_must_be_read_only_get_or_post(action_plugin, method):
+    with pytest.raises(AnsibleActionFail, match="method must be get or post"):
+        action_plugin._validate_check_mode_queries([{"path": "/api/v1/test", "method": method}])
+
+
+@pytest.mark.parametrize("content", [[], "payload", 1])
+def test_check_mode_query_content_must_be_dictionary(action_plugin, content):
+    with pytest.raises(AnsibleActionFail, match="content must be a dictionary"):
+        action_plugin._validate_check_mode_queries([{"path": "/api/v1/test", "content": content}])
 
 
 @pytest.mark.parametrize("path", [None, "", "   ", [], {}])
@@ -372,12 +402,34 @@ def test_prepare_check_mode_queries_applies_defaults(
         {
             "name": "Snapshot",
             "path": "/api/v1/test",
+            "method": "get",
+            "content": None,
             "expected_status": 200,
             "unordered_paths": [],
             "ignore_keys": [],
             "pagination": None,
         }
     ]
+
+
+def test_post_check_mode_query_passes_method_and_content_to_rest(action_plugin):
+    query = {
+        "name": "Snapshot VRF attachments",
+        "path": "/api/v1/manage/fabrics/FAB/vrfAttachments/query",
+        "method": "post",
+        "content": {"vrfNames": []},
+        "expected_status": 200,
+        "unordered_paths": ["/attachments"],
+        "ignore_keys": [],
+        "pagination": None,
+    }
+    action_plugin._execute_module.return_value = snapshot_response({"attachments": []})
+
+    action_plugin._capture_check_mode_snapshots([query], task_vars={})
+
+    module_args = action_plugin._execute_module.call_args.kwargs["module_args"]
+    assert module_args["method"] == "post"
+    assert module_args["content"] == {"vrfNames": []}
 
 
 def test_prepare_check_mode_queries_prepares_pagination(action_plugin):
@@ -392,6 +444,25 @@ def test_prepare_check_mode_queries_prepares_pagination(action_plugin):
 
     assert prepared[0]["pagination"] == {"page_size": 100, "collection_key": "routeMaps", "max_pages": 10000}
     assert action_plugin._pagination_path(prepared[0]["path"], 100, 200) == "/api/v1/test?clusterName=CLUSTER&max=100&offset=200"
+
+
+def test_unpaginated_snapshot_rejects_response_with_remaining_records(action_plugin):
+    query = check_mode_query(unordered_paths=["/interfaces"])
+    interface_page = [{"interfaceName": "Ethernet1/%s" % index} for index in range(500)]
+    action_plugin._execute_module.return_value = snapshot_response(
+        {
+            "interfaces": interface_page,
+            "meta": {"counts": {"total": 501, "remaining": 1}},
+        }
+    )
+
+    with pytest.raises(
+        AnsibleActionFail,
+        match="reports 1 remaining records but pagination is not configured",
+    ):
+        action_plugin._capture_check_mode_snapshots([query], task_vars={})
+
+    action_plugin._execute_module.assert_called_once()
 
 
 def test_paginated_snapshot_aggregates_all_pages(action_plugin):
@@ -417,6 +488,43 @@ def test_paginated_snapshot_aggregates_all_pages(action_plugin):
     assert snapshots[0]["snapshot"] == {"routeMaps": [{"name": "RM1"}, {"name": "RM2"}, {"name": "RM3"}]}
 
 
+def test_paginated_check_mode_snapshot_detects_change_on_second_page(action_plugin):
+    query = check_mode_query(unordered_paths=["/interfaces"])
+    query["pagination"] = {
+        "page_size": 500,
+        "collection_key": "interfaces",
+        "max_pages": 2,
+    }
+    first_page = [{"interfaceName": "Ethernet1/%s" % index, "description": "unchanged"} for index in range(1, 501)]
+    second_page_before = [{"interfaceName": "Ethernet1/501", "description": "before"}]
+    second_page_after = [{"interfaceName": "Ethernet1/501", "description": "after"}]
+
+    def interface_page(rows, remaining):
+        return snapshot_response(
+            {
+                "interfaces": rows,
+                "meta": {"counts": {"total": 501, "remaining": remaining}},
+            }
+        )
+
+    action_plugin._task.args["check_mode_queries"] = [query]
+    action_plugin._execute_module.side_effect = [
+        interface_page(first_page, 1),
+        interface_page(second_page_before, 0),
+        {"changed": True, "failed": False},
+        interface_page(first_page, 1),
+        interface_page(second_page_after, 0),
+    ]
+
+    with pytest.raises(
+        AnsibleActionFail,
+        match="Controller state changed during predictive check mode",
+    ):
+        run_plugin(action_plugin)
+
+    assert action_plugin._execute_module.call_count == 5
+
+
 def test_paginated_snapshot_fetches_empty_sentinel_after_full_page(action_plugin):
     query = {
         "name": "Snapshot route maps",
@@ -436,6 +544,25 @@ def test_paginated_snapshot_fetches_empty_sentinel_after_full_page(action_plugin
     assert len(action_plugin._execute_module.call_args_list) == 2
     assert action_plugin._execute_module.call_args_list[1].kwargs["module_args"]["path"].endswith("clusterName=C1&max=2&offset=2")
     assert len(snapshots[0]["snapshot"]["routeMaps"]) == 2
+
+
+def test_paginated_snapshot_accepts_explicit_empty_collection_404(action_plugin):
+    query = {
+        "name": "Snapshot L3Outs",
+        "path": "/api/v1/manage/l3Outs?fabricName=FAB",
+        "expected_status": [200, 404],
+        "unordered_paths": ["/l3Outs"],
+        "ignore_keys": [],
+        "pagination": {"page_size": 100, "collection_key": "l3Outs", "max_pages": 3},
+    }
+    empty_response = snapshot_response({}, status=404, failed=True, msg="not found")
+    empty_response.pop("current")
+    action_plugin._execute_module.return_value = empty_response
+
+    snapshots = action_plugin._capture_check_mode_snapshots([query], task_vars={})
+
+    assert snapshots[0]["status"] == 404
+    assert snapshots[0]["snapshot"] == {"l3Outs": []}
 
 
 def test_paginated_snapshot_fails_closed_on_page_error(action_plugin):
@@ -573,6 +700,77 @@ def test_normal_execution_runs_each_phase_once(action_plugin):
     assert result["idempotency_attempts"] == 1
     assert result["second_run_result"]["changed"] is False
     assert action_plugin._task.check_mode is False
+
+
+def test_check_mode_only_skips_apply_and_idempotency(action_plugin):
+    action_plugin._task.args["check_mode_only"] = True
+    action_plugin._task.args["expected"] = {
+        "check_mode": {
+            "changed": False,
+            "failed": True,
+        }
+    }
+    action_plugin._execute_module.return_value = {
+        "changed": False,
+        "failed": True,
+        "msg": "predictive validation failed",
+    }
+
+    result = run_plugin(action_plugin)
+
+    assert action_plugin._execute_module.call_count == 1
+    assert action_plugin._execute_module.call_args.kwargs["module_name"] == "cisco.nd.nd_interface_ethernet_access"
+    assert action_plugin._task.check_mode is False
+    assert result["check_mode_result"]["failed"] is True
+    assert result["first_run_result"] is None
+    assert result["second_run_result"] is None
+    assert result["idempotency_attempts"] == 0
+
+
+def test_omitted_state_is_not_injected_into_target_module_args(action_plugin):
+    action_plugin._task.args.pop("state")
+    action_plugin._task.args["idempotency"] = False
+    action_plugin._task.args["expected"] = {
+        "check_mode": {"changed": True, "failed": False},
+        "apply": {"changed": False, "failed": False},
+    }
+    action_plugin._execute_module.side_effect = [
+        {"changed": True, "failed": False},
+        {"changed": False, "failed": False},
+    ]
+
+    run_plugin(action_plugin)
+
+    target_calls = [
+        invocation
+        for invocation in action_plugin._execute_module.call_args_list
+        if invocation.kwargs["module_name"] == "cisco.nd.nd_interface_ethernet_access"
+    ]
+    assert target_calls
+    assert all("state" not in invocation.kwargs["module_args"] for invocation in target_calls)
+
+
+def test_null_state_is_treated_as_omitted_and_not_injected(action_plugin):
+    action_plugin._task.args["state"] = None
+    action_plugin._task.args["idempotency"] = False
+    action_plugin._task.args["expected"] = {
+        "check_mode": {"changed": True, "failed": False},
+        "apply": {"changed": False, "failed": False},
+    }
+    action_plugin._execute_module.side_effect = [
+        {"changed": True, "failed": False},
+        {"changed": False, "failed": False},
+    ]
+
+    run_plugin(action_plugin)
+
+    target_calls = [
+        invocation
+        for invocation in action_plugin._execute_module.call_args_list
+        if invocation.kwargs["module_name"] == "cisco.nd.nd_interface_ethernet_access"
+    ]
+    assert target_calls
+    assert all("state" not in invocation.kwargs["module_args"] for invocation in target_calls)
 
 
 def test_idempotency_retries_until_expected_result(action_plugin):

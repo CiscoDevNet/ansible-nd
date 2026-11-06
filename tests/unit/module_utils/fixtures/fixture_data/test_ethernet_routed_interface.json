@@ -844,7 +844,7 @@
     },
     "test_preflight_delete_00720b": {
         "TEST_NOTES": [
-            "00720: interfaceList -- Ethernet1/7 is a member of port-channel 10"
+            "00720: interfaceList -- Ethernet1/7 has routedHost intent and stale portChannelId 10 with no parent claim"
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",

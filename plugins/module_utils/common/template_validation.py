@@ -68,6 +68,43 @@ _IPV4_SUBNET_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}$")
 _MAC_RE = re.compile(r"^([0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}$|^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$")
 
 
+def _literal_bool(value: Any) -> bool | None:
+    """Return a literal controller boolean without evaluating expressions."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().strip('"').lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+    return None
+
+
+def _parameter_is_required(parameter: dict[str, Any]) -> bool:
+    """Support both legacy ``optional`` and live ``IsMandatory`` schemas."""
+    if "optional" in parameter:
+        optional = _literal_bool(parameter.get("optional"))
+        if optional is not None:
+            return not optional
+
+    annotations = parameter.get("annotations") or {}
+    mandatory = _literal_bool(annotations.get("IsMandatory"))
+    return mandatory is True
+
+
+def _parameter_default(parameter: dict[str, Any]) -> Any:
+    """Return a default from either supported parameter-schema shape."""
+    if "defaultValue" in parameter:
+        return parameter.get("defaultValue")
+    return (parameter.get("metaProperties") or {}).get("defaultValue")
+
+
+def _value_is_unset(value: Any) -> bool:
+    """Treat null and blank strings as an omitted template value."""
+    return value is None or (isinstance(value, str) and value.strip() == "")
+
+
 # =============================================================================
 # Endpoint import (default factory)
 # =============================================================================
@@ -193,7 +230,7 @@ def fetch_template_params(
         data = request_fn(ep.path, ep.verb)
     except Exception as exc:  # noqa: BLE001
         if logger is not None:
-            logger.warning(f"Failed to fetch template '{template_name}' parameters: {exc}. " "Skipping template input validation.")
+            logger.warning(f"Failed to fetch template '{template_name}' parameters: {exc}. Skipping template input validation.")
         cache[template_name] = []
         return []
 
@@ -216,6 +253,7 @@ def validate_template_inputs(
     template_inputs: dict[str, Any],
     params: list[dict],
     *,
+    input_label: str = "templateInput",
     logger: logging.Logger | None = None,
 ) -> list[str]:
     """Validate user-provided ``templateInputs`` against a template schema.
@@ -235,9 +273,11 @@ def validate_template_inputs(
        NOT advertised in the "Valid keys" suggestion list shown for unknown
        keys -- users should never need to set them.
 
-    2. **Missing required parameters** -- every parameter where
-       ``optional`` is ``False`` AND ``defaultValue`` is empty / null /
-       whitespace-only must be supplied by the user.
+    2. **Missing required parameters** -- supports both the legacy
+       ``optional`` / top-level ``defaultValue`` schema and the live
+       ``annotations.IsMandatory`` / ``metaProperties.defaultValue`` schema.
+       A required parameter without a default must have a non-null,
+       non-blank user value.
 
     3. **Basic type validation** -- soft format checks for the parameter
        types ND defines for templates:
@@ -256,10 +296,12 @@ def validate_template_inputs(
        ``.lower()`` -ed before comparison) so ``"Integer"``, ``"INTEGER"``
        and ``"integer"`` are interchangeable.
 
-       Values that are empty strings or whitespace-only are treated as "not
-       set" and skip type validation.  This matters for the
-       ``gathered -> merged`` roundtrip where the controller returns ``""``
-       for unset optional parameters.
+       Null, empty-string, and whitespace-only values are treated as "not
+       set" and skip type validation. Optional parameters may remain unset;
+       required parameters are rejected by the preceding required-value
+       check. This matters for custom templates and for the
+       ``gathered -> merged`` roundtrip where the controller returns null or
+       ``""`` for unset optional parameters.
 
     Args:
         template_name:    Template name (used in error messages only).
@@ -275,6 +317,9 @@ def validate_template_inputs(
                           ``optional`` / ``defaultValue`` / (optional)
                           ``annotations.IsInternal`` / (optional)
                           ``metaProperties.validValues``.
+        input_label:      Customer-facing name used for one input key in error
+                          messages. The default preserves the policy-module
+                          terminology; other callers can use their option name.
         logger:           Optional logger for ENTER / EXIT / pass / fail
                           debug lines.  When supplied a WARNING line is
                           emitted summarising the error count on failure.
@@ -319,25 +364,27 @@ def validate_template_inputs(
     user_facing_names = set(param_map.keys())
     for user_key in template_inputs:
         if user_key not in valid_names:
-            errors.append(f"Unknown templateInput key '{user_key}' for template " f"'{template_name}'. Valid keys: {sorted(user_facing_names)}")
+            errors.append(f"Unknown {input_label} key '{user_key}' for template " f"'{template_name}'. Valid keys: {sorted(user_facing_names)}")
 
     # ------------------------------------------------------------------
     # Check 2: Missing required parameters
     # ------------------------------------------------------------------
     for pname, pdef in param_map.items():
-        is_optional = pdef.get("optional", True)
-        default_val = pdef.get("defaultValue")
-        has_default = default_val is not None and str(default_val).strip() != ""
+        is_required = _parameter_is_required(pdef)
+        default_val = _parameter_default(pdef)
+        has_default = not _value_is_unset(default_val)
+        supplied_value = template_inputs.get(pname)
+        has_supplied_value = pname in template_inputs and not _value_is_unset(supplied_value)
 
-        if not is_optional and not has_default and pname not in template_inputs:
-            errors.append(f"Required templateInput '{pname}' (type={pdef.get('parameterType', '?')}) " f"is missing for template '{template_name}'")
+        if is_required and not has_default and not has_supplied_value:
+            errors.append(f"Required {input_label} '{pname}' (type={pdef.get('parameterType', '?')}) " f"is missing for template '{template_name}'")
 
     # ------------------------------------------------------------------
     # Check 3: Basic type validation (soft checks)
-    # Empty strings are treated as "not set" -- the controller accepts
-    # them for optional fields, so we skip validation for them.  This is
-    # especially important for the gathered -> merged roundtrip where
-    # the controller returns "" for unset optional parameters.
+    # Null and empty strings are treated as "not set" -- the controller
+    # accepts them for optional fields, so we skip validation for them. This
+    # is especially important for custom-template payloads and for the
+    # gathered -> merged roundtrip.
     # ------------------------------------------------------------------
     for user_key, user_val in template_inputs.items():
         pdef = param_map.get(user_key)
@@ -345,49 +392,50 @@ def validate_template_inputs(
             continue  # Already flagged as unknown above
 
         ptype = (pdef.get("parameterType") or "").lower()
-        val_str = str(user_val)
-
-        # Skip type validation for empty/blank values -- they mean "not set"
-        if val_str.strip() == "":
+        # Skip type validation for null/blank values -- they mean "not set".
+        # Required unset values were already reported by Check 2.
+        if _value_is_unset(user_val):
             continue
+
+        val_str = str(user_val)
 
         if ptype == "boolean":
             if val_str.lower() not in ("true", "false"):
-                errors.append(f"templateInput '{user_key}' for template '{template_name}' " f"expects boolean (true/false), got '{val_str}'")
+                errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects boolean (true/false), got '{val_str}'")
 
         elif ptype == "integer":
             try:
                 int(val_str)
             except ValueError:
-                errors.append(f"templateInput '{user_key}' for template '{template_name}' " f"expects integer, got '{val_str}'")
+                errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects integer, got '{val_str}'")
 
         elif ptype == "long":
             try:
                 int(val_str)
             except ValueError:
-                errors.append(f"templateInput '{user_key}' for template '{template_name}' " f"expects long integer, got '{val_str}'")
+                errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects long integer, got '{val_str}'")
 
         elif ptype == "float":
             try:
                 float(val_str)
             except ValueError:
-                errors.append(f"templateInput '{user_key}' for template '{template_name}' " f"expects float, got '{val_str}'")
+                errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects float, got '{val_str}'")
 
         elif ptype in ("ipv4address", "ipaddress"):
             # Basic IPv4 shape check (per-octet 0-255 enforcement is the
             # controller's job)
             if not _IPV4_RE.match(val_str):
-                errors.append(f"templateInput '{user_key}' for template '{template_name}' " f"expects IPv4 address (e.g., 192.168.1.1), got '{val_str}'")
+                errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects IPv4 address (e.g., 192.168.1.1), got '{val_str}'")
 
         elif ptype == "ipv4addresswithsubnet":
             if not _IPV4_SUBNET_RE.match(val_str):
                 errors.append(
-                    f"templateInput '{user_key}' for template '{template_name}' " f"expects IPv4 address with subnet (e.g., 192.168.1.1/24), got '{val_str}'"
+                    f"{input_label} '{user_key}' for template '{template_name}' " f"expects IPv4 address with subnet (e.g., 192.168.1.1/24), got '{val_str}'"
                 )
 
         elif ptype == "macaddress":
             if not _MAC_RE.match(val_str):
-                errors.append(f"templateInput '{user_key}' for template '{template_name}' " f"expects MAC address, got '{val_str}'")
+                errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects MAC address, got '{val_str}'")
 
         elif ptype == "enum":
             # If metaProperties contains 'validValues', check against them
@@ -397,7 +445,7 @@ def validate_template_inputs(
                 # validValues format is typically "val1,val2,val3"
                 valid_values = [v.strip() for v in valid_values_str.split(",")]
                 if val_str not in valid_values:
-                    errors.append(f"templateInput '{user_key}' for template '{template_name}' " f"expects one of {valid_values}, got '{val_str}'")
+                    errors.append(f"{input_label} '{user_key}' for template '{template_name}' " f"expects one of {valid_values}, got '{val_str}'")
 
     if logger is not None:
         if errors:

@@ -57,6 +57,9 @@ def sanitize_list(list_to_sanitize, keys=None, values=None, list_recursive=True,
 
 def sanitize(obj_to_sanitize, keys=None, values=None, recursive=True, remove_none_values=True):
     """Clean up a Python object of type list or dict from specific keys, values and None values if specified"""
+    # A null response body (e.g. a 2xx action endpoint returning DATA: null) has nothing to sanitize.
+    if obj_to_sanitize is None:
+        return obj_to_sanitize
     if isinstance(obj_to_sanitize, dict):
         return sanitize_dict(obj_to_sanitize, keys, values, recursive, remove_none_values)
     elif isinstance(obj_to_sanitize, list):
@@ -125,9 +128,10 @@ def write_file(module, dest, content):
 
 
 class NDModule(object):
-    def __init__(self, module):
+    def __init__(self, module, accept_multistatus=False):
         self.module = module
         self.params = module.params
+        self._accept_multistatus = accept_multistatus
         self.result = dict(changed=False)
         self.headers = {"Content-Type": "application/json"}
 
@@ -227,7 +231,8 @@ class NDModule(object):
                 self.result["changed"] = True
 
         # 200: OK, 201: Created, 202: Accepted, 204: No Content
-        if self.status in (200, 201, 202, 204):
+        # 207: Multi-Status is returned without item parsing when explicitly accepted.
+        if self.status in (200, 201, 202, 204) or (self._accept_multistatus and self.status == 207):
             if output_format == "raw":
                 return info.get("raw")
             return info.get("body")

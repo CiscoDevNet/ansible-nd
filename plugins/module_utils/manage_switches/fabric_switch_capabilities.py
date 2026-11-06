@@ -29,7 +29,6 @@ class FabricSwitchCapability:
     platform_types: frozenset[PlatformType]
     roles: frozenset[SwitchRole]
     preserve_config_values: frozenset[bool]
-    default_preserve_config: bool
     roles_by_platform: dict[PlatformType, frozenset[SwitchRole]] | None = None
 
 
@@ -62,7 +61,7 @@ BROAD_FABRIC_ROLES = frozenset(
     }
 )
 
-CAMPUS_VXLAN_IOS_XE_ROLES = frozenset({SwitchRole.LEAF, SwitchRole.SPINE})
+CAMPUS_VXLAN_IOS_XE_ROLES = frozenset({SwitchRole.LEAF, SwitchRole.SPINE, SwitchRole.BORDER, SwitchRole.BORDER_SPINE})
 
 CAMPUS_VXLAN_NX_OS_ROLES = frozenset(
     {
@@ -99,7 +98,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=ROUTED_ROLES,
         preserve_config_values=frozenset({False}),
-        default_preserve_config=False,
     ),
     FabricSwitchCapability(
         family="External",
@@ -107,7 +105,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS, PlatformType.IOS_XE, PlatformType.IOS_XR, PlatformType.OTHER}),
         roles=BROAD_FABRIC_ROLES,
         preserve_config_values=frozenset({True}),
-        default_preserve_config=True,
     ),
     FabricSwitchCapability(
         family="Data Center VXLAN iBGP",
@@ -115,7 +112,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=BROAD_FABRIC_ROLES,
         preserve_config_values=frozenset({False, True}),
-        default_preserve_config=True,
     ),
     FabricSwitchCapability(
         family="Data Center VXLAN eBGP",
@@ -123,7 +119,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=BROAD_FABRIC_ROLES,
         preserve_config_values=frozenset({False}),
-        default_preserve_config=False,
     ),
     FabricSwitchCapability(
         family="Campus VXLAN",
@@ -131,7 +126,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS, PlatformType.IOS_XE}),
         roles=CAMPUS_VXLAN_ROLES,
         preserve_config_values=frozenset({False}),
-        default_preserve_config=False,
         roles_by_platform={
             PlatformType.IOS_XE: CAMPUS_VXLAN_IOS_XE_ROLES,
             PlatformType.NX_OS: CAMPUS_VXLAN_NX_OS_ROLES,
@@ -143,7 +137,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=ENHANCED_CLASSIC_LAN_ROLES,
         preserve_config_values=frozenset({False, True}),
-        default_preserve_config=True,
     ),
     FabricSwitchCapability(
         family="AI VXLAN iBGP",
@@ -151,7 +144,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=AI_VXLAN_ROLES,
         preserve_config_values=frozenset({False, True}),
-        default_preserve_config=True,
     ),
     FabricSwitchCapability(
         family="AI VXLAN eBGP",
@@ -159,7 +151,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=AI_VXLAN_ROLES,
         preserve_config_values=frozenset({False}),
-        default_preserve_config=False,
     ),
     FabricSwitchCapability(
         family="AI Routed",
@@ -167,7 +158,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=ROUTED_ROLES,
         preserve_config_values=frozenset({False}),
-        default_preserve_config=False,
     ),
     FabricSwitchCapability(
         family="IPFM",
@@ -175,7 +165,6 @@ FABRIC_SWITCH_CAPABILITY_MATRIX = (
         platform_types=frozenset({PlatformType.NX_OS}),
         roles=IPFM_ROLES,
         preserve_config_values=frozenset({False}),
-        default_preserve_config=False,
     ),
 )
 
@@ -212,16 +201,24 @@ def _enum_value(value: Any) -> str:
     return value.value if hasattr(value, "value") else str(value)
 
 
-def _supported_roles_for_platform(capability: FabricSwitchCapability, platform_type: PlatformType) -> frozenset[SwitchRole]:
+def _supported_roles_for_platform(capability: FabricSwitchCapability, platform_type: PlatformType, controller_version: str | None) -> frozenset[SwitchRole]:
     """Return supported roles for the supplied platform within a fabric family."""
     if capability.roles_by_platform is None:
         return capability.roles
-    return capability.roles_by_platform.get(platform_type, capability.roles)
+    roles = capability.roles_by_platform.get(platform_type, capability.roles)
+    if capability.family == "Campus VXLAN" and platform_type == PlatformType.IOS_XE:
+        try:
+            release = tuple(int(part) for part in (controller_version or "").split(".")[:3])
+        except ValueError:
+            release = ()
+        if release < (4, 3, 1):
+            return roles - {SwitchRole.BORDER_SPINE}
+    return roles
 
 
 def _resolve_preserve_config(capability: FabricSwitchCapability, preserve_config: bool | None) -> bool:
-    """Return explicit preserve_config or the fabric-derived default."""
-    return capability.default_preserve_config if preserve_config is None else preserve_config
+    """Default to false unless the fabric requires preservation; retain explicit input."""
+    return False not in capability.preserve_config_values if preserve_config is None else preserve_config
 
 
 def _resolve_platform_type(platform_type: PlatformType | None) -> PlatformType:
@@ -267,6 +264,7 @@ def validate_switch_configs_for_fabric_type(
     fabric_name: str,
     fabric_type: str,
     configs: list[SwitchConfigModel],
+    controller_version: str | None = None,
 ) -> FabricSwitchCapability:
     """
     # Summary
@@ -292,12 +290,15 @@ def validate_switch_configs_for_fabric_type(
                 f"{prefix}: platform_type '{_enum_value(cfg.platform_type)}' is not supported for {capability.family} fabric "
                 f"'{fabric_name}' (type '{fabric_type}'). Supported platform_type values: {_enum_values(capability.platform_types)}."
             )
-        supported_roles = _supported_roles_for_platform(capability, platform_type)
+        supported_roles = _supported_roles_for_platform(capability, platform_type, controller_version)
         if role is not None and role not in supported_roles:
             role_display = _enum_value(cfg.role) if cfg.role else "<unspecified>"
+            release_detail = ""
+            if capability.family == "Campus VXLAN" and platform_type == PlatformType.IOS_XE and role == SwitchRole.BORDER_SPINE:
+                release_detail = f" IOS-XE borderSpine requires ND 4.3.1 or later (detected: {controller_version or 'unknown'})."
             errors.append(
                 f"{prefix}: role '{role_display}' is not supported for platform_type '{_enum_value(cfg.platform_type)}' in "
-                f"{capability.family} fabric '{fabric_name}' (type '{fabric_type}'). Supported role values: {_enum_values(supported_roles)}."
+                f"{capability.family} fabric '{fabric_name}' (type '{fabric_type}'). Supported role values: {_enum_values(supported_roles)}.{release_detail}"
             )
         cfg.preserve_config = _resolve_preserve_config(capability, cfg.preserve_config)
         if cfg.preserve_config not in capability.preserve_config_values:

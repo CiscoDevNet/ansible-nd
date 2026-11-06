@@ -28,18 +28,20 @@ resolution) from `NDBaseInterfaceOrchestrator` and adds port-channel-specific fu
 - An IOS-XE member-mode `preflight()` that rejects, before any write, an `iosXeAccessPoHost`/`iosXeTrunkPoHost`
   member whose current intent policy does not already match the port-channel mode (issues #536/#537)
 
-Member ethernet interfaces are not managed by this orchestrator — the port-channel policy is the
-single source of truth for member configuration via the `ports` list. Member field restrictions
-on standalone ethernet modules are enforced separately by the ethernet orchestrators.
+The port-channel policy is the single source of truth for member configuration via the `ports` list.
+On IOS-XE, a removed member can require its own exact-interface deploy to apply the detach.
+Member field restrictions on standalone ethernet modules are enforced separately by the ethernet orchestrators.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
-from typing import ClassVar
+from collections.abc import Mapping, Sequence
+from typing import Any, ClassVar
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesGet,
     EpManageInterfacesListGet,
@@ -47,9 +49,22 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesPut,
     EpManageInterfacesRemove,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_vpc_pair import (
+    EpVpcPairGet,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.interface_membership import (
+    EthernetMembershipIndex,
+    MemberPolicyDescriptor,
+    MembershipValidationError,
+    get_member_policy_descriptor_for_parent,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
+    NDBaseInterfaceOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    ResponseType,
+)
 
 ModelType = NDBaseModel
 
@@ -91,6 +106,8 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     """
 
     supports_bulk_create: ClassVar[bool] = True
+    supports_bulk_full_modify: ClassVar[bool] = True
+    supports_bulk_modify_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
     xe_removal_requires_discovery: ClassVar[bool] = True
 
@@ -102,14 +119,49 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesRemove
 
-    # For each IOS-XE port-channel policy type: the member policy type ND requires BEFORE the create, the member type ND provisions once
-    # joined, and the cisco.nd module that converts a member (lab-verified 2026-09-15 on 4.2.1.10 and 4.3.1.175; the routed row
-    # 2026-09-18 on both, where the joined member reads `iosXeL3PoMember`, not the spec's `iosXeInternalPoMember`).
-    XE_MEMBER_HOST_POLICY: ClassVar[dict[str, tuple[str, str, str]]] = {
-        "iosXeAccessPoHost": ("iosXeAccess", "iosXeAccessPoMember", "nd_interface_ethernet_access"),
-        "iosXeTrunkPoHost": ("iosXeTrunkHost", "iosXeTrunkPoMember", "nd_interface_ethernet_trunk_host"),
-        "iosXeL3PortChannel": ("iosXeRoutedHost", "iosXeL3PoMember", "nd_interface_ethernet_routed"),
-    }
+    def model_post_init(self, __context) -> None:
+        """Initialize request-local ownership and authoritative vPC-pair caches."""
+
+        super().model_post_init(__context)
+        self._member_owners_cache: dict[str, dict[str, str]] = {}
+        self._membership_peer_cache: dict[str, str] = {}
+        self._accepted_post_write_model: ModelType | None = None
+
+    def _resolve_membership_peer_switch_id(self, switch_id: str) -> str:
+        """Return the reciprocal authoritative vPC peer used to orient ownership."""
+
+        cached = self._membership_peer_cache.get(switch_id)
+        if cached is not None:
+            return cached
+
+        def fetch(source_switch_id: str) -> str:
+            cached_peer = self._membership_peer_cache.get(source_switch_id)
+            if cached_peer is not None:
+                return cached_peer
+            api_endpoint = EpVpcPairGet(fabric_name=self.fabric_name, switch_id=source_switch_id)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+            returned_switch_id = result.get("switchId") if isinstance(result, dict) else None
+            if returned_switch_id not in (None, "", source_switch_id):
+                raise RuntimeError(f"Cannot validate member ownership on switch {source_switch_id!r}: " f"vpcPair returned switchId {returned_switch_id!r}")
+            peer_switch_id = result.get("peerSwitchId") if isinstance(result, dict) else None
+            if not isinstance(peer_switch_id, str) or not peer_switch_id.strip():
+                raise RuntimeError(
+                    f"Cannot validate member ownership on switch {source_switch_id!r}: " "authoritative vpcPair record is absent or missing peerSwitchId"
+                )
+            peer_switch_id = peer_switch_id.strip()
+            if peer_switch_id == source_switch_id:
+                raise RuntimeError(f"Cannot validate member ownership on switch {source_switch_id!r}: authoritative vpcPair identifies itself as its peer")
+            self._membership_peer_cache[source_switch_id] = peer_switch_id
+            return peer_switch_id
+
+        peer_switch_id = fetch(switch_id)
+        reciprocal_switch_id = fetch(peer_switch_id)
+        if reciprocal_switch_id != switch_id:
+            raise RuntimeError(
+                f"Cannot validate member ownership for vPC pair {switch_id!r}/{peer_switch_id!r}: "
+                f"peer reports {reciprocal_switch_id!r} instead of {switch_id!r}"
+            )
+        return peer_switch_id
 
     def _managed_policy_types(self) -> set[str]:
         """
@@ -125,6 +177,145 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         - Always, if not overridden by a subclass.
         """
         raise NotImplementedError("Subclasses must implement _managed_policy_types()")
+
+    def _prepare_deploy_context(self, model_instance: ModelType, switch_id: str) -> None:
+        """Retain exact members even when a workflow defers the eventual deploy."""
+
+        derived = [(member_name, switch_id) for member_name in self._proposed_members(model_instance)]
+        match = _XE_PORT_CHANNEL_NAME_RE.match(model_instance.interface_name.lower())
+        if match:
+            derived.extend(self._operational_port_channel_members(switch_id, int(match.group(1))))
+        self._register_deploy_derived_identities(
+            model_instance.interface_name,
+            switch_id,
+            derived,
+        )
+
+    def _prepare_no_diff_deploy_context(self, model_instance: ModelType, switch_id: str) -> None:
+        """Discover pending former members even when unchanged intent still has other members."""
+
+        if self.deploy:
+            self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
+
+    def _removed_xe_members(self, model_instance: ModelType, switch_id: str, previous_model: ModelType | None = None) -> list[str]:
+        """Find only this IOS-XE parent's former members, including staged removals still on the switch."""
+
+        network_os = getattr(getattr(model_instance, "config_data", None), "network_os", None)
+        if getattr(network_os, "network_os_type", None) != "ios-xe":
+            return []
+        match = _XE_PORT_CHANNEL_NAME_RE.fullmatch(model_instance.interface_name.lower())
+        if match is None:
+            return []
+
+        inventory = self._switch_interfaces_cache.get(switch_id)
+        if inventory is None and previous_model is None:
+            inventory = self._switch_interfaces(switch_id)
+        before: list[str] = []
+        if previous_model is not None:
+            previous_os = getattr(getattr(previous_model, "config_data", None), "network_os", None)
+            if (
+                previous_model.interface_name.casefold() != model_instance.interface_name.casefold()
+                or previous_model.switch_ip != model_instance.switch_ip
+                or getattr(previous_os, "network_os_type", None) != "ios-xe"
+            ):
+                raise RuntimeError(f"Cannot establish previous IOS-XE membership for {model_instance.interface_name}")
+            before = self._proposed_members(previous_model)
+        elif inventory is not None:
+            record = inventory.get(model_instance.interface_name.casefold())
+            record_os = ((record or {}).get("configData") or {}).get("networkOS") or {}
+            policy = record_os.get("policy") or {}
+            if (
+                record
+                and record.get("interfaceType") == "portChannel"
+                and record_os.get("networkOSType") == "ios-xe"
+                and policy.get("policyType") in self._managed_policy_types()
+            ):
+                raw_ports = policy.get("ports") or []
+                if not isinstance(raw_ports, list) or any(not isinstance(name, str) or not name for name in raw_ports):
+                    raise RuntimeError(f"Cannot establish previous IOS-XE membership for {model_instance.interface_name}: invalid ports")
+                before = raw_ports
+
+        desired = {name.casefold() for name in self._proposed_members(model_instance)}
+        operational = [name for name, _sid in self._operational_port_channel_members(switch_id, int(match.group(1)))]
+        removed: dict[str, str] = {}
+        for name in (*before, *operational):
+            if name.casefold() not in desired:
+                removed[name.casefold()] = name
+        return list(removed.values())
+
+    def _preview_and_queue_removed_xe_members(self, model_instance: ModelType, switch_id: str, members: Sequence[str]) -> bool:
+        """Deploy a detached physical member only when its exact preview contains this parent's removal."""
+
+        # Workflow source orchestrators stage intent with deploy=False; their
+        # accepted queues are deployed later by the consolidated executor.
+        if not members:
+            return False
+        pairs = [(name, switch_id) for name in members]
+        payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name in members]}
+        preview = self._preview_interfaces(payload)
+        pending, error = self._pending_preview_pairs(preview, pairs)
+        if error is not None:
+            raise RuntimeError(f"Cannot safely preview removed port-channel members {pairs}: {error}")
+
+        match = _XE_PORT_CHANNEL_NAME_RE.fullmatch(model_instance.interface_name.lower())
+        if match is None:
+            raise RuntimeError(f"Cannot identify IOS-XE port-channel {model_instance.interface_name}")
+        removal = re.compile(rf"no channel-group[ \t]+{match.group(1)}(?:[ \t]+mode[ \t]+(?:active|passive|on))?", re.IGNORECASE)
+        for row in preview["configurationDiffs"]:
+            pair = self._normalized_interface_pair(row["interfaceName"], row["switchId"])
+            if pair not in pending:
+                continue
+            pending_config = next(item for item in row["combinedConfigs"] if item["configType"].strip().lower() == "pending").get("config")
+            if not isinstance(pending_config, str):
+                raise RuntimeError(f"Pending config for removed member {pair!r} does not prove channel-group {match.group(1)} removal")
+            lines = [line.strip() for line in pending_config.splitlines() if line.strip() and line.strip() not in {"!", "end", "exit"}]
+            headers = [line.removeprefix("interface ").strip() for line in lines if line.lower().startswith("interface ")]
+            commands = [line for line in lines if not line.lower().startswith("interface ")]
+            if len(headers) != 1 or headers[0].casefold() != pair[0]:
+                raise RuntimeError(f"Pending config for removed member {pair!r} includes another interface or no exact interface header")
+            # ND can also clear the former member's description while detaching
+            # it. Never deploy unrelated pending CLI (for example shutdown)
+            # merely because the same preview contains a valid detach line.
+            detach = [line for line in commands if removal.fullmatch(line)]
+            description_clears = [line for line in commands if re.fullmatch(r"no description(?:[ \t]+[^\r\n]+)?", line, re.IGNORECASE)]
+            if len(detach) != 1 or len(description_clears) > 1 or len(commands) != len(detach) + len(description_clears):
+                raise RuntimeError(f"Pending config for removed member {pair!r} does not prove channel-group {match.group(1)} removal without unrelated CLI")
+
+        if not self.rest_send.check_mode:
+            for name, sid in pairs:
+                if self._normalized_interface_pair(name, sid) in pending:
+                    self._queue_deploy(name, sid)
+        return bool(pending)
+
+    def reconcile_no_diff(self, model_instances: Sequence[ModelType]) -> bool:
+        """Recover a staged IOS-XE detach even when the parent preview is already converged."""
+
+        parent_pending = super().reconcile_no_diff(model_instances)
+        member_pending = False
+        if self.deploy:
+            for model_instance in model_instances:
+                switch_id = self._resolve_switch_id(model_instance.switch_ip)
+                removed = self._removed_xe_members(model_instance, switch_id)
+                member_pending = self._preview_and_queue_removed_xe_members(model_instance, switch_id, removed) or member_pending
+        return parent_pending or member_pending
+
+    def _prepare_bulk_item(self, model_instance: ModelType, switch_id: str, **kwargs) -> None:  # pylint: disable=unused-argument
+        """Retain exact parent/member context before a grouped create is sent."""
+
+        self._prepare_deploy_context(model_instance, switch_id)
+
+    def _bulk_full_modify_guard(self, model_instance: ModelType, current: dict[str, Any]) -> bool:
+        """Keep member-bearing port-channel updates on singular PUT."""
+        current_policy = ((current.get("configData") or {}).get("networkOS") or {}).get("policy") or {}
+        desired_policy = ((model_instance.to_payload().get("configData") or {}).get("networkOS") or {}).get("policy") or {}
+
+        def members(policy: dict[str, Any]) -> tuple[str, ...] | None:
+            ports = policy.get("ports") or []
+            if not isinstance(ports, list) or any(not isinstance(port, str) or not port for port in ports):
+                return None
+            return tuple(sorted(port.casefold() for port in ports))
+
+        return members(current_policy) == members(desired_policy) == ()
 
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         """
@@ -146,6 +337,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             payload["switchId"] = switch_id
             request_body = {"interfaces": [payload]}
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
+            self._prepare_deploy_context(model_instance, switch_id)
             self._queue_deploy(model_instance.interface_name, switch_id)
             return result
         except Exception as e:
@@ -156,7 +348,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         # Summary
 
         Update a port-channel interface configuration. Resolves `switch_ip` from the model instance, injects `switchId`
-        into the payload. Queues a deploy for later bulk execution via `deploy_pending`.
+        into the payload. Queues the parent and any proven IOS-XE member detach for later bulk execution via `deploy_pending`.
 
         ## Raises
 
@@ -164,17 +356,60 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         - If the update API request fails.
         """
+        self._accepted_post_write_model = None
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            previous_model = kwargs.get("previous_model")
+            removed_members = self._removed_xe_members(model_instance, switch_id, previous_model)
+            if previous_model is not None:
+                self._prepare_deploy_context(previous_model, switch_id)
+                if not self._proposed_members(previous_model) and not self._proposed_members(model_instance):
+                    self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
             api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
             api_endpoint.set_identifiers(model_instance.interface_name)
             payload = model_instance.to_payload()
             payload["switchId"] = switch_id
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+            # The PUT is accepted before the optional member preview. Preserve
+            # that evidence even if the later read-only preview fails.
+            self._accepted_post_write_model = model_instance
+            self._prepare_deploy_context(model_instance, switch_id)
             self._queue_deploy(model_instance.interface_name, switch_id)
+            if self.deploy or getattr(self, "workflow_deploy_requested", False):
+                try:
+                    self._preview_and_queue_removed_xe_members(model_instance, switch_id, removed_members)
+                except Exception as preview_error:
+                    try:
+                        observed = self.query_one(model_instance)
+                        if (
+                            not isinstance(observed, Mapping)
+                            or str(observed.get("interfaceName") or "").casefold() != model_instance.interface_name.casefold()
+                        ):
+                            raise RuntimeError("exact interface identity was not returned")
+                        if observed.get("switchId") not in (None, switch_id):
+                            raise RuntimeError("exact switch identity was not returned")
+                        self._accepted_post_write_model = self.model_class.from_response(
+                            {**observed, "interfaceName": model_instance.interface_name, "switchIp": model_instance.switch_ip}
+                        )
+                    except Exception as readback_error:
+                        raise RuntimeError(
+                            f"Member preview failed after the port-channel PUT was accepted: {preview_error}; "
+                            f"authoritative readback failed: {readback_error}"
+                        ) from preview_error
+                    raise RuntimeError("Member preview failed after the port-channel PUT was accepted; current ND intent was read back.") from preview_error
+            self._accepted_post_write_model = None
             return result
         except Exception as e:
             raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
+
+    def prepare_bulk_modify_context(self, model_instance: ModelType, previous_model: ModelType | None = None) -> None:
+        """Retain the same parent/member deployment scope as a singular update."""
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        if previous_model is not None:
+            self._prepare_deploy_context(previous_model, switch_id)
+            if not self._proposed_members(previous_model) and not self._proposed_members(model_instance):
+                self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
+        self._prepare_deploy_context(model_instance, switch_id)
 
     def delete(self, model_instance: ModelType, **kwargs) -> None:
         """
@@ -194,6 +429,9 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         switch_id = self._resolve_switch_id(model_instance.switch_ip)
         name = self._delete_side_name(model_instance)
+        self._prepare_deploy_context(model_instance, switch_id)
+        if not self._proposed_members(model_instance):
+            self._queue_preview_derived_discovery(name, switch_id)
         self._queue_remove(name, switch_id)
         self._queue_deploy(name, switch_id)
 
@@ -237,6 +475,9 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             name = self._delete_side_name(model_instance)
+            self._prepare_deploy_context(model_instance, switch_id)
+            if not self._proposed_members(model_instance):
+                self._queue_preview_derived_discovery(name, switch_id)
             self._queue_remove(name, switch_id)
             self._queue_deploy(name, switch_id)
 
@@ -267,6 +508,12 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         match = _XE_PORT_CHANNEL_NAME_RE.match(name)
         return f"Port-channel{match.group(1)}" if match else name
 
+    def preflight_safety(self, model_instances: Sequence[ModelType]) -> None:
+        """Run local platform and member-ownership safety without capability API calls."""
+        super().preflight_safety(model_instances)
+        self._validate_members_available(model_instances)
+        self._validate_xe_member_modes(model_instances)
+
     def preflight(self, model_instances: Sequence[ModelType]) -> None:
         """
         # Summary
@@ -285,8 +532,6 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         - Via `_validate_xe_member_modes` if any proposed IOS-XE member's current policy mode does not match.
         """
         super().preflight(model_instances)
-        self._validate_members_available(model_instances)
-        self._validate_xe_member_modes(model_instances)
 
     @staticmethod
     def _policy_of(iface: dict) -> dict:
@@ -306,11 +551,10 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         # Summary
 
-        Return `{member_name_lower: owning_port_channel_name}` for every member ethernet on `switch_id`, derived from the
-        `ports` list of every `portChannel` record in the switch's unfiltered inventory -- regardless of policy type, so a
-        member of an unmanaged port-channel flavor (e.g. `vpcPeerlinkPo`) is still seen as owned. A member whose own intent
-        `policyType` ends in `Member` but that no port-channel record lists is mapped to its policy type (e.g.
-        `accessPoMember`) so it is still treated as owned, with the owner reported as unknown.
+        Return `{member_name_lower: owning_parent_name}` for every owned ethernet on `switch_id`. Ownership is indexed from
+        all supported and protected member-policy descriptors plus every standalone port-channel or pair-aware vPC parent
+        member list in the unfiltered inventory. This catches protected policies whose names do not end in ``Member`` and
+        temporarily host-shaped physical records that remain claimed by a vPC parent during a controller transition.
 
         Membership is read from ND intent, not `operData.portChannelId`: ND rejects a conflicting create against intent even
         when the owning port-channel has never been deployed (`operData.portChannelId` is still `-1`).
@@ -321,22 +565,86 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         - Via `_switch_interfaces` if the interface-list API request fails with a non-404 status.
         """
+        cached = self._member_owners_cache.get(switch_id)
+        if cached is not None:
+            return cached
+
         inventory = self._switch_interfaces(switch_id)
+        inventories = {switch_id: inventory}
+        has_vpc_parent = False
+        declared_peers: set[str] = set()
+        for iface in inventory.values():
+            if iface.get("interfaceType") != "vpc":
+                continue
+            has_vpc_parent = True
+            raw_peer = self._policy_of(iface).get("peerSwitchId")
+            if raw_peer in (None, ""):
+                continue
+            if not isinstance(raw_peer, str) or not raw_peer.strip():
+                raise RuntimeError(
+                    f"Cannot validate member ownership on switch {switch_id!r}: " f"vPC {iface.get('interfaceName')!r} has invalid peerSwitchId {raw_peer!r}"
+                )
+            peer_switch_id = raw_peer.strip()
+            if peer_switch_id == switch_id:
+                raise RuntimeError(
+                    f"Cannot validate member ownership on switch {switch_id!r}: " f"vPC {iface.get('interfaceName')!r} identifies itself as its peer"
+                )
+            declared_peers.add(peer_switch_id)
+        if len(declared_peers) > 1:
+            raise RuntimeError(
+                f"Cannot validate member ownership on switch {switch_id!r}: " f"vPC records declare conflicting peers {sorted(declared_peers)!r}"
+            )
+
+        peer_switch_ids: dict[str, str] = {}
+        if has_vpc_parent:
+            peer_switch_id = next(iter(declared_peers)) if declared_peers else self._resolve_membership_peer_switch_id(switch_id)
+            peer_inventory = self._switch_interfaces(peer_switch_id)
+            inventories[peer_switch_id] = peer_inventory
+            reciprocal_peers: set[str] = set()
+            for iface in peer_inventory.values():
+                if iface.get("interfaceType") != "vpc":
+                    continue
+                raw_peer = self._policy_of(iface).get("peerSwitchId")
+                if raw_peer in (None, ""):
+                    continue
+                if not isinstance(raw_peer, str) or not raw_peer.strip():
+                    raise RuntimeError(
+                        f"Cannot validate member ownership on switch {peer_switch_id!r}: "
+                        f"vPC {iface.get('interfaceName')!r} has invalid peerSwitchId {raw_peer!r}"
+                    )
+                reciprocal_peers.add(raw_peer.strip())
+            if reciprocal_peers and reciprocal_peers != {switch_id}:
+                raise RuntimeError(
+                    f"Cannot validate member ownership for pair {switch_id!r}/{peer_switch_id!r}: " f"peer inventory declares {sorted(reciprocal_peers)!r}"
+                )
+            peer_switch_ids = {
+                switch_id: peer_switch_id,
+                peer_switch_id: switch_id,
+            }
+
+        try:
+            membership_index = EthernetMembershipIndex(
+                inventories,
+                peer_switch_ids=peer_switch_ids,
+            )
+        except MembershipValidationError as exc:
+            raise RuntimeError(f"Cannot validate existing member ownership on switch {switch_id!r}: {exc}") from exc
+
         owners: dict[str, str] = {}
+        for (member_switch_id, member_name), member in membership_index.members.items():
+            if member_switch_id != switch_id:
+                continue
+            owners[member_name] = f"unknown parent (member policyType {member.policy_type})"
+
         for name, iface in inventory.items():
-            policy = self._policy_of(iface)
-            policy_type = policy.get("policyType")
-
-            # A member-typed ethernet defaults to an unknown owner; setdefault never overwrites an explicit owner already
-            # recorded from a port-channel seen earlier in the inventory.
-            if isinstance(policy_type, str) and policy_type.endswith("Member"):
-                owners.setdefault(name, f"unknown port-channel (member policyType {policy_type})")
-
-            # A port-channel's `ports` list names the explicit owner, replacing any unknown default recorded above or later.
-            if iface.get("interfaceType") == "portChannel":
-                for member in policy.get("ports") or []:
-                    if isinstance(member, str) and member:
-                        owners[member.lower()] = iface.get("interfaceName", "")
+            if iface.get("interfaceType") != "ethernet":
+                continue
+            claims = membership_index.claiming_parents(switch_id, name)
+            if not claims:
+                continue
+            parent_names = sorted({claim.interface_name for claim in claims})
+            owners[name] = parent_names[0] if len(parent_names) == 1 else f"multiple parents ({', '.join(parent_names)})"
+        self._member_owners_cache[switch_id] = owners
         return owners
 
     def _validate_members_available(self, model_instances: Sequence[ModelType]) -> None:
@@ -402,7 +710,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         Fail fast when an IOS-XE port-channel names a member whose current intent policy does not match the port-channel mode. Unlike
         NX-OS, where the port-channel policy re-homes its members, ND requires an `iosXeAccessPoHost` member to already be `iosXeAccess`
         an `iosXeTrunkPoHost` member to be `iosXeTrunkHost` (the fabric default) and an `iosXeL3PortChannel` member to be `iosXeRoutedHost`
-        (`XE_MEMBER_HOST_POLICY`), and rejects the create otherwise: ND 4.2.1 with a flat
+        (from the shared membership registry), and rejects the create otherwise: ND 4.2.1 with a flat
         HTTP 500 that masquerades as a transient error, 4.3.1 with a 207 failed item. A member ND already lists as this port-channel's own
         member type (`portChannelId` naming this port-channel) passes so an idempotent re-apply is accepted. A member absent from the
         switch inventory is refused too (ND would otherwise create a phantom record). NX-OS models are skipped. Reads the same cached
@@ -433,7 +741,8 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         Return one formatted mismatch string per proposed member of `model_instance` whose current intent policy does not match the
         IOS-XE host policy required by `model_instance`'s desired policy type. Returns `[]` when the model is not an IOS-XE host
-        port-channel type in `XE_MEMBER_HOST_POLICY` (including every NX-OS model), when it claims no members, or when every claimed
+        port-channel type with IOS-XE pre-attach guidance in the shared membership registry (including every NX-OS model), when it claims
+        no members, or when every claimed
         member already matches. Helper for `_validate_xe_member_modes`, split out (with `_xe_member_mismatch`) to keep every method
         under the local-variable limit.
 
@@ -444,8 +753,8 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         - Via `_resolve_switch_id` if a `switch_ip` does not match any switch in the fabric.
         - Via `_switch_interfaces` if the interface-list API request fails.
         """
-        requirement = self.XE_MEMBER_HOST_POLICY.get(self._desired_policy_type(model_instance) or "")
-        if requirement is None:
+        requirement = get_member_policy_descriptor_for_parent(self._desired_policy_type(model_instance) or "")
+        if requirement is None or requirement.required_host_policy_type is None or requirement.conversion_module is None:
             return []
         ports = self._proposed_members(model_instance)
         if not ports:
@@ -456,12 +765,18 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         return [mismatch for mismatch in mismatches if mismatch is not None]
 
     @staticmethod
-    def _xe_member_mismatch(model_instance: ModelType, requirement: tuple[str, str, str], inventory: dict[str, dict], po_name: str, member: str) -> str | None:
+    def _xe_member_mismatch(
+        model_instance: ModelType,
+        requirement: MemberPolicyDescriptor,
+        inventory: dict[str, dict],
+        po_name: str,
+        member: str,
+    ) -> str | None:
         """
         # Summary
 
-        Compare one proposed member's current intent policy (from the cached `inventory`) against the `(host_type, member_type,
-        module_name)` `requirement` for `model_instance`'s desired IOS-XE host policy type, returning a formatted mismatch string when
+        Compare one proposed member's current intent policy (from the cached `inventory`) against the shared relationship descriptor
+        for `model_instance`'s desired IOS-XE parent policy type, returning a formatted mismatch string when
         it does not match, or `None` when the member is already the required host-side type, or is already this port-channel's own
         member type (`portChannelId` naming `po_name`). Helper for `_xe_member_mode_mismatches`.
 
@@ -469,7 +784,11 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         None
         """
-        host_type, member_type, module_name = requirement
+        host_type = requirement.required_host_policy_type
+        member_type = requirement.policy_type
+        module_name = requirement.conversion_module
+        if host_type is None or module_name is None:  # Defensive: the caller filters relationships without pre-attach guidance.
+            return None
         record = inventory.get(member.lower())
         policy = PortChannelBaseOrchestrator._policy_of(record) if record else {}
         current = policy.get("policyType")
@@ -536,6 +855,217 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             record["configData"] = {key: value for key, value in iface["configData"].items() if key != "mode"}
             records.append(record)
         return records
+
+    def _can_replay_absent_delete(self, existing_data: dict | None) -> bool:
+        """A discovered deletion echo is not a competing port-channel policy.
+
+        After a staged remove, NDFC may rediscover the switch-side Po under its
+        canonical spelling with either no policy or the internal
+        ``interface_delete`` policy. The managed-policy query does not return
+        either echo, but its presence must not suppress an explicit,
+        exact-target deploy replay. All other raw records retain the base
+        class's foreign-policy protection.
+        """
+
+        if existing_data is None:
+            return True
+        if existing_data.get("interfaceType") != "portChannel":
+            return False
+        policy = self._policy_of(existing_data)
+        if not policy:
+            network_os = (existing_data.get("configData") or {}).get("networkOS") or {}
+            return network_os.get("networkOSType") == "nx-os"
+        return policy.get("policyType") == "userDefined" and policy.get("templateName") == "interface_delete"
+
+    @staticmethod
+    def _staged_remove_needs_reissue(preview: Mapping[str, Any], interface_name: str) -> bool:
+        """Recognize ND's no-pending echo of a deployed, now-unowned Po.
+
+        An exact preview can report zero pending lines even though its running
+        configuration still contains the Po and expected configuration is
+        empty.  A second exact remove makes ND generate the missing pending
+        ``no interface`` command; an empty preview alone is not convergence.
+        """
+
+        rows = preview.get("configurationDiffs")
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], Mapping):
+            raise RuntimeError(f"Cannot classify absent port-channel delete preview for {interface_name!r}.")
+        configs = rows[0].get("combinedConfigs")
+        if not isinstance(configs, list):
+            raise RuntimeError(f"Absent port-channel delete preview lacks combinedConfigs for {interface_name!r}.")
+        by_type: dict[str, list[Mapping[str, Any]]] = {}
+        for config in configs:
+            if isinstance(config, Mapping):
+                by_type.setdefault(str(config.get("configType") or "").strip().lower(), []).append(config)
+        running = by_type.get("running", [])
+        expected = by_type.get("expected", [])
+        if len(running) != 1 or len(expected) != 1:
+            raise RuntimeError(f"Absent port-channel delete preview lacks unique running/expected config for {interface_name!r}.")
+        running_lines = running[0].get("lines")
+        expected_lines = expected[0].get("lines")
+        if any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in (running_lines, expected_lines)):
+            raise RuntimeError(f"Absent port-channel delete preview has invalid line counts for {interface_name!r}.")
+        if running_lines and expected_lines == 0:
+            running_config = running[0].get("config")
+            # ND represents a truly absent, undiscovered interface with this
+            # one-line message in the "running" slot. It is not switch CLI.
+            if running_lines == 1 and running_config == "Interface is not discovered. Current configuration is not available":
+                return False
+            first_line = running_config.splitlines()[0].strip().casefold() if isinstance(running_config, str) and running_config.splitlines() else ""
+            if first_line != f"interface {interface_name}".casefold():
+                raise RuntimeError(f"Absent port-channel delete preview does not prove the running identity {interface_name!r}.")
+            return True
+        return False
+
+    def _reissue_absent_remove(self, interface_name: str, switch_id: str) -> None:
+        """Require exact 207 success for one repeat remove before deployment."""
+
+        endpoint = EpManageInterfacesRemove(fabric_name=self.fabric_name)
+        recorded = self.rest_send.response_count
+        result = self._request(
+            path=endpoint.path,
+            verb=endpoint.verb,
+            data={"interfaces": [{"interfaceName": interface_name, "switchId": switch_id}]},
+        )
+        rows = result.get("results") if isinstance(result, Mapping) else None
+        if self.rest_send.response_count <= recorded or not isinstance(rows, list) or len(rows) != 1:
+            raise RuntimeError(f"Repeat remove did not return one exact result for {(interface_name, switch_id)!r}.")
+        row = rows[0]
+        if (
+            not isinstance(row, Mapping)
+            or self._normalized_interface_pair(row.get("interfaceName"), row.get("switchId")) != self._normalized_interface_pair(interface_name, switch_id)
+            or str(row.get("status") or "").strip().lower() != "success"
+        ):
+            raise RuntimeError(f"Repeat remove did not prove exact success for {(interface_name, switch_id)!r}.")
+
+    def _validate_pending_absent_delete(self, preview: Mapping[str, Any], interface_name: str, switch_id: str) -> None:
+        """Require a parent delete and only proven member resets before replay."""
+
+        match = _XE_PORT_CHANNEL_NAME_RE.fullmatch(interface_name.lower())
+        if match is None:
+            raise RuntimeError(f"Cannot classify absent port-channel delete identity {interface_name!r}.")
+        po_id = match.group(1)
+        rows = preview.get("configurationDiffs")
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], Mapping):
+            raise RuntimeError(f"Absent port-channel delete preview lacks one exact row for {interface_name!r}.")
+        if self._normalized_interface_pair(rows[0].get("interfaceName"), rows[0].get("switchId")) != self._normalized_interface_pair(
+            interface_name, switch_id
+        ):
+            raise RuntimeError(f"Absent port-channel delete preview has the wrong identity for {interface_name!r}.")
+        configs = rows[0].get("combinedConfigs")
+        if not isinstance(configs, list):
+            raise RuntimeError(f"Absent port-channel delete preview lacks combinedConfigs for {interface_name!r}.")
+        running = [item.get("config") for item in configs if isinstance(item, Mapping) and str(item.get("configType") or "").strip().lower() == "running"]
+        pending = [item.get("config") for item in configs if isinstance(item, Mapping) and str(item.get("configType") or "").strip().lower() == "pending"]
+        if len(running) != 1 or len(pending) != 1 or not isinstance(running[0], str) or not isinstance(pending[0], str):
+            raise RuntimeError(f"Absent port-channel delete preview lacks unique running/pending CLI for {interface_name!r}.")
+        running_lines = [line.strip().casefold() for line in running[0].splitlines() if line.strip()]
+        pending_lines = [line.strip().casefold() for line in pending[0].splitlines() if line.strip()]
+        parent_header = f"interface {interface_name.casefold()}"
+        if not running_lines or running_lines[0] != parent_header or not pending_lines or pending_lines[0] != f"no {parent_header}":
+            raise RuntimeError(f"Absent port-channel delete preview does not prove removal of {interface_name!r}.")
+
+        running_members: set[str] = set()
+        bare_on_members: set[str] = set()
+        running_member = None
+        for line in running_lines[1:]:
+            if (header := re.fullmatch(r"interface (ethernet[0-9/]+)", line)) is not None:
+                running_member = header.group(1)
+            elif line.startswith("interface "):
+                running_member = None
+            elif running_member is not None and re.fullmatch(rf"channel-group {po_id} (?:force )?mode (?:active|passive|on)", line):
+                running_members.add(running_member)
+            elif running_member is not None and line == f"channel-group {po_id}":
+                # NX-OS renders a deployed static (mode on) membership without
+                # the mode suffix. Its exact on-mode detach must still be proven.
+                running_members.add(running_member)
+                bare_on_members.add(running_member)
+
+        allowed_member_command = (
+            r"no (?:storm-control (?:action .+|(?:broadcast|multicast|unicast) level .+)"
+            r"|switchport (?:access vlan|trunk native vlan) [0-9]+|switchport monitor"
+            r"|lacp (?:rate fast|port-priority [0-9]+)|description .+"
+            r"|duplex (?:full|half|auto)|speed [0-9]+"
+            r"|spanning-tree (?:bpdufilter|bpduguard) (?:enable|disable)"
+            r"|load-interval counter [0-9]+ [0-9]+)"
+        )
+        touched_members: set[str] = set()
+        detached_members: set[str] = set()
+        current_member = None
+        for index, line in enumerate(pending_lines[1:], 1):
+            if line == "configure terminal" and index == len(pending_lines) - 1:
+                continue
+            if (header := re.fullmatch(r"interface (ethernet[0-9/]+)", line)) is not None:
+                current_member = header.group(1)
+                if current_member not in running_members:
+                    raise RuntimeError(f"Absent port-channel delete preview touches an unproven member {current_member!r}.")
+                touched_members.add(current_member)
+                continue
+            if current_member is None:
+                raise RuntimeError(f"Absent port-channel delete preview includes an unproven command {line!r}.")
+            if current_member in bare_on_members and line == f"no channel-group {po_id} force":
+                # ND renders the corresponding static detach without a mode
+                # suffix, matching the bare running channel-group command.
+                detached_members.add(current_member)
+                continue
+            detach = re.fullmatch(rf"no channel-group {po_id} force mode (active|passive|on)", line)
+            if detach:
+                if current_member in bare_on_members and detach.group(1) != "on":
+                    raise RuntimeError(f"Absent port-channel delete preview lacks an on-mode detach for {current_member!r}.")
+                detached_members.add(current_member)
+                continue
+            if not (
+                re.fullmatch(allowed_member_command, line)
+                or re.fullmatch(r"switchport(?: mode trunk| trunk allowed vlan none)?", line)
+                or re.fullmatch(r"mtu [0-9]+", line)
+                or line in {"spanning-tree port type edge trunk", "no shutdown", "cdp enable"}
+            ):
+                raise RuntimeError(f"Absent port-channel delete preview includes an unproven member command {line!r}.")
+        if touched_members != detached_members:
+            raise RuntimeError(f"Absent port-channel delete preview lacks a proven detach for {interface_name!r} members.")
+
+    def reconcile_absent_deletes(self, model_instances: Sequence[ModelType]) -> bool:
+        """Recover both pending and no-pending staged NX-OS Po removals."""
+
+        if not self.deploy or not model_instances:
+            return False
+        would_reissue = False
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            existing_data = self._switch_interfaces(switch_id).get(model_instance.interface_name.strip().lower())
+            if not self._can_replay_absent_delete(existing_data):
+                continue
+            name = self._delete_side_name(model_instance)
+            pair = (name, switch_id)
+            payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id}]}
+            preview = self._preview_interfaces(payload)
+            if isinstance(preview, Mapping) and preview.get("configurationDiffs") == []:
+                # A fully removed interface has no exact preview row. The
+                # shared absent-delete reconciler treats this as converged.
+                continue
+            pending_pairs, error = self._pending_preview_pairs(preview, [pair])
+            if error is not None:
+                raise RuntimeError(f"Cannot safely replay absent port-channel delete for {pair!r}: {error}")
+            if pending_pairs:
+                self._validate_pending_absent_delete(preview, name, switch_id)
+                continue
+            if not self._staged_remove_needs_reissue(preview, name):
+                continue
+            # Keep the IOS-XE canonical-name/discovery workaround separate until
+            # the no-pending replay behavior has been qualified on that platform.
+            network_os = (existing_data or {}).get("configData", {}).get("networkOS", {})
+            if network_os.get("networkOSType") not in (None, "nx-os"):
+                raise RuntimeError(f"Cannot safely replay an unqualified IOS-XE no-pending delete for {pair!r}.")
+            if self.rest_send.check_mode:
+                would_reissue = True
+                continue
+            self._reissue_absent_remove(name, switch_id)
+            refreshed = self._preview_interfaces(payload)
+            confirmed, error = self._pending_preview_pairs(refreshed, [pair])
+            if error is not None or self._normalized_interface_pair(*pair) not in confirmed:
+                raise RuntimeError(f"Repeat remove did not produce exact pending deletion for {pair!r}: {error or 'no pending lines'}.")
+            self._validate_pending_absent_delete(refreshed, name, switch_id)
+        return super().reconcile_absent_deletes(model_instances) or would_reissue
 
     def query_one(self, model_instance: ModelType, **kwargs) -> ResponseType:
         """

@@ -292,6 +292,40 @@
         "DATA": {"message": "boom"}
     },
 
+    "test_vpc_interface_base_00720a": {
+        "TEST_NOTES": ["create_bulk mixed 207 recovery: switches list."],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+    "test_vpc_interface_base_00720b": {
+        "TEST_NOTES": ["create_bulk mixed 207 recovery: vpcPair GET."],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/vpcPair",
+        "MESSAGE": "OK",
+        "DATA": {"peerSwitchId": "FDO22222BBB"}
+    },
+    "test_vpc_interface_base_00720c": {
+        "TEST_NOTES": ["create_bulk mixed 207 recovery: first vPC accepted, second rejected."],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "vpc501", "status": "success", "message": "Interface added successfully"},
+                {"name": "vpc502", "status": "failed", "message": "simulated rejection"}
+            ]
+        }
+    },
+
     "test_vpc_interface_base_00800a": {
         "TEST_NOTES": ["query_one happy path: switches list."],
         "RETURN_CODE": 200,

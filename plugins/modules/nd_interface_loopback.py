@@ -84,7 +84,8 @@ options:
                     - Use V(iosXeLoopbackShutNoshut) to manage only the admin state of an IOS-XE loopback.
                     - Use V(iosXeUnderlayLoopback) for an IOS-XE underlay (NVE source) loopback.
                     - Use V(iosXeInternalLoopback) for an IOS-XE internal loopback (IPv4/IPv6 and PIM options).
-                    - Use V(csrLoopback) for a CSR loopback.
+                    - Use V(csrLoopback) for a CSR loopback. Supported on Nexus Dashboard releases before 4.3.1; on 4.3.1 and later
+                      the module fails before writing.
                     - Use V(csr1kvLoopback) for a CSR1kv loopback (admin state and freeform config only).
                     type: str
                     required: true
@@ -132,8 +133,9 @@ options:
                     description:
                     - The route-map tag associated with the interface IP address.
                     - The ND default is V(12345).
+                    - Decimal strings from older playbooks are accepted and sent to ND as integers.
                     - Applies when policy_type is C(loopback).
-                    type: str
+                    type: int
                   advertise_loopback:
                     description:
                     - Whether to advertise the loopback address via OSPF/IS-IS.
@@ -208,7 +210,8 @@ options:
         description:
         - Whether to deploy interface changes after mutations are complete.
         - When V(true), all queued interface changes are deployed in a single bulk API call at the end of module
-          execution via the C(interfaceActions/deploy) API. Only the interfaces modified by this task are deployed.
+          execution via the C(interfaceActions/deploy) API. An explicitly named interface can also be deployed when this task
+          makes no ND intent change, but only if its preview shows pending switch configuration (possibly staged by another task or operator).
         - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
         - When V(true) and the module fails after the controller has already accepted a subset of the requested changes, that
           accepted subset is still deployed and is named in the failure message, so a failed task does not leave accepted
@@ -291,7 +294,7 @@ EXAMPLES = r"""
               policy_type: loopback
               ip: 10.2.1.1
               description: VTEP loopback
-              route_map_tag: "12345"
+              route_map_tag: 12345
       - switch_ip: 192.168.1.2
         interface_name: loopback0
         config_data:
@@ -514,6 +517,7 @@ EXAMPLES = r"""
       deploy: true
     state: deleted
 
+# csrLoopback is supported on Nexus Dashboard releases before 4.3.1; on 4.3.1 and later the module fails before writing.
 - name: Merge a CSR loopback
   cisco.nd.nd_interface_loopback:
     fabric_name: fabric-xe
