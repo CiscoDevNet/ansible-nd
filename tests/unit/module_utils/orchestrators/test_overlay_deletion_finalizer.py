@@ -1,7 +1,7 @@
 # Copyright: (c) 2026, Mike Wiebe (@mikewiebe)
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-"""Finalization requires observed completed detach and never deploys."""
+"""Definition-only deletion trusts completed caller deployment without extra reads."""
 
 from __future__ import annotations
 
@@ -48,6 +48,10 @@ class _Coordinator:
         self.read_failure_after_delete = False
         self.attachments = SimpleNamespace(_attachments_query_endpoint_cls=lambda _strategy: _Attachments)
         self.loaded_names = None
+        self.params_restored = False
+        self.crud_error = None
+        self.result_failure = False
+        self.dependency_error = None
 
     def _factory(self, _args, _strategy):
         return self, None
@@ -78,6 +82,8 @@ class _Coordinator:
 
     def _ensure(self, _args, _strategy, names):
         self.calls.append(("dependency_guard", names))
+        if self.dependency_error:
+            raise ValueError(self.dependency_error)
 
     _ensure_networks_have_no_networks = _ensure
     _ensure_vrfs_have_no_networks = _ensure
@@ -88,17 +94,18 @@ class _Coordinator:
 
         def manage_state():
             self.calls.append(("definition_crud", strategy.fabric_name))
+            if self.crud_error:
+                raise RuntimeError(self.crud_error)
             if not self.module.check_mode:
                 self.deleted = True
 
         return SimpleNamespace(existing=existing, manage_state=manage_state), [], "deleted"
 
-    @staticmethod
-    def _restore_state_machine_params(_config, _state):
-        pass
+    def _restore_state_machine_params(self, _config, _state):
+        self.params_restored = True
 
     def _format_state_machine_output(self, _sm):
-        return {"changed": bool(self.definitions), "before": deepcopy(self.definitions), "after": []}
+        return {"changed": bool(self.definitions), "failed": self.result_failure, "before": deepcopy(self.definitions), "after": []}
 
     @staticmethod
     def _finalize_api_trace(_results):
@@ -127,14 +134,18 @@ def _strategy():
 
 
 @pytest.mark.parametrize("resource", ["network", "vrf"])
-def test_terminal_detach_finalizes_with_only_queries_and_definition_crud(resource):
+def test_finalize_uses_loaded_crud_scope_without_extra_queries(resource):
     coordinator = _Coordinator(resource)
     result = OverlayDeletionFinalizer(coordinator, resource).run(_args(resource), _strategy())
     assert coordinator.calls == [("dependency_guard", ["BLUE"]), ("definition_crud", "fab1")]
-    assert [verb for _path, verb, _data in coordinator.requests] == ["GET", "POST", "GET"]
-    assert coordinator.requests[1][2] == {resource + "Names": ["BLUE"]}
+    assert coordinator.requests == []
+    assert coordinator.params_restored is True
     proof = result["deletion_finalization"]
-    assert proof["definition_absence_verified"] is True
+    assert proof["version"] == 1
+    assert proof["proof"] == "definition_only_overlay_deletion_v1"
+    assert proof["deletion_operations_succeeded"] is True
+    assert "definition_absence_verified" not in proof
+    assert "attachments_verified_detached" not in proof
     assert proof["detach_attempts"] == proof["deployment_attempts"] == 0
     assert proof["existing_before"] == proof["names"] == ["BLUE"]
     assert len(proof["request_sha256"]) == 64
@@ -143,51 +154,47 @@ def test_terminal_detach_finalizes_with_only_queries_and_definition_crud(resourc
 
 
 @pytest.mark.parametrize("resource", ["network", "vrf"])
-def test_check_mode_reads_and_plans_without_deleting_or_claiming_absence(resource):
+def test_check_mode_plans_without_deleting_or_claiming_operation_success(resource):
     coordinator = _Coordinator(resource, check_mode=True)
     result = OverlayDeletionFinalizer(coordinator, resource).run(_args(resource), _strategy())
     assert coordinator.deleted is False
-    assert len(coordinator.requests) == 2
-    assert result["deletion_finalization"]["definition_absence_verified"] is None
+    assert coordinator.requests == []
+    assert coordinator.params_restored is True
+    assert result["deletion_finalization"]["deletion_operations_succeeded"] is None
 
 
 @pytest.mark.parametrize("status", ["pending", "failed", "outOfSync", "deployed", "inSync", None, ""])
 @pytest.mark.parametrize("resource", ["network", "vrf"])
-def test_definition_not_proven_undeployed_rejects_before_crud(resource, status):
+def test_finalize_does_not_add_readiness_gate_to_caller_completed_deployment(resource, status):
     coordinator = _Coordinator(resource)
     coordinator.definitions[0][resource + "Status"] = status
-    with pytest.raises(ValueError, match="not detached"):
-        OverlayDeletionFinalizer(coordinator, resource).run(_args(resource), _strategy())
-    assert coordinator.calls == []
-    assert coordinator.deleted is False
+    result = OverlayDeletionFinalizer(coordinator, resource).run(_args(resource), _strategy())
+    assert coordinator.deleted is True
+    assert coordinator.requests == []
+    assert result["deletion_finalization"]["deletion_operations_succeeded"] is True
+    assert "definition_absence_verified" not in result["deletion_finalization"]
 
 
-@pytest.mark.parametrize(
-    "change",
-    [
-        {"attach": True},
-        {"attach": "false"},
-        {"status": "pending"},
-        {"status": "failed"},
-        {"status": "outOfSync"},
-        {"status": None},
-        {"status": "inSync"},
-        {"configStatus": "pending"},
-    ],
-)
-def test_attachment_unsafe_or_unknown_rejects_before_crud(change):
+@pytest.mark.parametrize("change", [{"attach": True}, {"attach": "false"}, {"status": "pending"}, {"status": "failed"}, {"status": None}])
+def test_finalize_never_queries_or_changes_attachments(change):
     coordinator = _Coordinator()
     coordinator.attachment_rows[0].update(change)
-    with pytest.raises(ValueError, match="not explicitly detached"):
-        OverlayDeletionFinalizer(coordinator, "network").run(_args(), _strategy())
-    assert coordinator.calls == []
-
-
-def test_complete_empty_attachment_collection_allows_never_attached_definition():
-    coordinator = _Coordinator()
-    coordinator.attachment_rows = []
     result = OverlayDeletionFinalizer(coordinator, "network").run(_args(), _strategy())
-    assert result["deletion_finalization"]["definition_absence_verified"] is True
+    assert coordinator.requests == []
+    assert result["deletion_finalization"]["detach_attempts"] == 0
+    assert result["deletion_finalization"]["deployment_attempts"] == 0
+
+
+@pytest.mark.parametrize("resource", ["network", "vrf"])
+def test_already_absent_target_succeeds_without_extra_absence_query(resource):
+    coordinator = _Coordinator(resource)
+    coordinator.definitions = []
+    result = OverlayDeletionFinalizer(coordinator, resource).run(_args(resource), _strategy())
+    assert result["changed"] is False
+    assert result["deletion_finalization"]["existing_before"] == []
+    assert result["deletion_finalization"]["names"] == ["BLUE"]
+    assert result["deletion_finalization"]["deletion_operations_succeeded"] is True
+    assert coordinator.requests == []
 
 
 @pytest.mark.parametrize(
@@ -199,13 +206,14 @@ def test_complete_empty_attachment_collection_allows_never_attached_definition()
         [{"network_name": " BLUE"}],
         [{"network_name": "BLUE"}, {"network_name": "BLUE"}],
         [{"network_name": "BLUE", "attach": [{"switch_id": "SERIAL1"}]}],
+        [{"network_name": "BLUE", "detach": [{"switch_id": "SERIAL1"}]}],
+        [{"network_name": "BLUE", "child_fabric_config": [{"name": "child"}]}],
     ],
 )
 def test_implicit_ambiguous_or_attachment_scope_rejects_without_requests(config):
     coordinator = _Coordinator()
-    args = dict(_args(), config=config)
     with pytest.raises(ValueError):
-        OverlayDeletionFinalizer(coordinator, "network").run(args, _strategy())
+        OverlayDeletionFinalizer(coordinator, "network").run(dict(_args(), config=config), _strategy())
     assert coordinator.requests == coordinator.calls == []
 
 
@@ -226,66 +234,60 @@ def test_wrong_state_rejects_without_requests():
     assert coordinator.requests == []
 
 
-def test_failed_post_delete_observation_preserves_truthful_failure_receipt():
-    coordinator = _Coordinator()
-    coordinator.read_failure_after_delete = True
-    result = OverlayDeletionFinalizer(coordinator, "network").run(_args(), _strategy())
-    assert coordinator.deleted is True
-    assert result["changed"] is True
+@pytest.mark.parametrize("resource", ["network", "vrf"])
+def test_definition_api_error_propagates_and_restores_module_parameters(resource):
+    coordinator = _Coordinator(resource)
+    coordinator.crud_error = "ND rejected definition deletion"
+    with pytest.raises(RuntimeError, match="ND rejected"):
+        OverlayDeletionFinalizer(coordinator, resource).run(_args(resource), _strategy())
+    assert coordinator.params_restored is True
+    assert coordinator.requests == []
+
+
+@pytest.mark.parametrize("resource", ["network", "vrf"])
+def test_failed_crud_result_does_not_claim_success_or_retry_deployment(resource):
+    coordinator = _Coordinator(resource)
+    coordinator.result_failure = True
+    result = OverlayDeletionFinalizer(coordinator, resource).run(_args(resource), _strategy())
     assert result["failed"] is True
-    assert result["deletion_finalization"]["definition_absence_verified"] is False
-    assert "lost observation" in result["msg"]
+    assert result["deletion_finalization"]["deletion_operations_succeeded"] is False
+    assert result["deletion_finalization"]["detach_attempts"] == result["deletion_finalization"]["deployment_attempts"] == 0
+    assert coordinator.requests == []
 
 
-def test_controller_acceptance_without_definition_absence_is_failure():
+def test_dependency_failure_prevents_definition_crud_and_restores_params():
+    coordinator = _Coordinator("vrf")
+    coordinator.dependency_error = "Network still references BLUE"
+    with pytest.raises(ValueError, match="Network still references"):
+        OverlayDeletionFinalizer(coordinator, "vrf").run(_args("vrf"), _strategy())
+    assert coordinator.deleted is False
+    assert coordinator.calls == [("dependency_guard", ["BLUE"])]
+    assert coordinator.params_restored is True
+
+
+def test_duplicate_loaded_targets_reject_before_definition_crud():
     coordinator = _Coordinator()
-    coordinator.after = deepcopy(coordinator.definitions)
-    result = OverlayDeletionFinalizer(coordinator, "network").run(_args(), _strategy())
-    assert result["failed"] is True
-    assert result["deletion_finalization"]["definition_absence_verified"] is False
-
-
-def test_new_definition_after_crud_discovery_is_not_unconditionally_deleted():
-    coordinator = _Coordinator()
-    coordinator.loaded_names = []
-    with pytest.raises(ValueError, match="target set changed"):
+    coordinator.loaded_names = ["BLUE", "BLUE"]
+    with pytest.raises(ValueError, match="duplicate target"):
         OverlayDeletionFinalizer(coordinator, "network").run(_args(), _strategy())
     assert coordinator.calls == []
-    assert coordinator.deleted is False
+    assert coordinator.params_restored is True
 
 
-@pytest.mark.parametrize(
-    "response",
-    [
-        {},
-        {"networks": None},
-        {"networks": [], "items": []},
-        {"networks": [], "meta": None},
-        {"networks": [], "meta": {"counts": {"remaining": 1}}},
-        {"networks": [{"networkName": "BLUE"}], "meta": {"counts": {"total": 2, "remaining": 0}}},
-        {"networks": [{"networkName": "BLUE"}, {"networkName": "BLUE"}]},
-    ],
-)
-def test_malformed_or_incomplete_collection_is_not_empty_success(response):
-    finalizer = OverlayDeletionFinalizer(_Coordinator(), "network")
-    with pytest.raises(ValueError):
-        finalizer._collect(lambda _offset, _size: response, "networks", finalizer._definition_identity)
+def test_only_requested_loaded_names_are_used_for_dependency_checks():
+    coordinator = _Coordinator()
+    coordinator.loaded_names = ["FOREIGN", "BLUE"]
+    result = OverlayDeletionFinalizer(coordinator, "network").run(_args(), _strategy())
+    assert coordinator.calls[0] == ("dependency_guard", ["BLUE"])
+    assert result["deletion_finalization"]["existing_before"] == ["BLUE"]
 
 
-def test_pagination_uses_actual_rows_and_rejects_repeated_scope():
-    finalizer = OverlayDeletionFinalizer(_Coordinator(), "network")
-    pages = [
-        {"networks": [{"networkName": "BLUE"}], "meta": {"counts": {"total": 2, "remaining": 1}}},
-        {"networks": [{"networkName": "GREEN"}], "meta": {"counts": {"total": 2, "remaining": 0}}},
-    ]
-    calls = []
-
-    def fetch(offset, size):
-        calls.append((offset, size))
-        return pages.pop(0)
-
-    assert [row["networkName"] for row in finalizer._collect(fetch, "networks", finalizer._definition_identity)] == ["BLUE", "GREEN"]
-    assert calls == [(0, 500), (1, 500)]
+def test_request_receipt_changes_with_exact_requested_scope():
+    coordinator = _Coordinator()
+    first = OverlayDeletionFinalizer(coordinator, "network").run(_args(), _strategy())
+    coordinator = _Coordinator()
+    second = OverlayDeletionFinalizer(coordinator, "network").run(dict(_args(), config=[{"network_name": "GREEN"}]), _strategy())
+    assert first["deletion_finalization"]["request_sha256"] != second["deletion_finalization"]["request_sha256"]
 
 
 def test_network_finalize_dispatch_does_not_enter_normal_detach_or_deploy():

@@ -56,10 +56,12 @@ options:
   deletion_mode:
     description:
       - V(standard) retains the ordinary detach, optional deployment, and VRF deletion workflow.
-      - V(finalize) deletes only explicitly named, already detached and undeployed VRF definitions on a standalone Manage fabric.
-      - Finalization requires fresh controller evidence that each existing VRF and attachment has reached a known detached terminal state.
-      - Finalization performs no attachment or deployment request and verifies definition absence after deletion.
-      - Only valid with O(state=deleted) and a nonempty O(config); attached, pending, failed, unknown, or unsupported state is rejected.
+      - V(finalize) deletes only explicitly named VRF definitions on a standalone Manage fabric without attachment or deployment requests.
+      - The caller is responsible for completing detachment and deployment before selecting finalization.
+      - Normal definition discovery, input validation, Network dependency checks and deletion error handling still apply.
+      - Finalization does not perform additional attachment-readiness or post-delete absence queries.
+        A successful result confirms definition operations succeeded; it is not an independent resource or switch audit.
+      - Only valid with O(state=deleted) and a nonempty O(config).
     type: str
     choices: [ standard, finalize ]
     default: standard
@@ -825,10 +827,12 @@ changed:
   sample: true
 deletion_finalization:
   description:
-    - Request-bound evidence for O(deletion_mode=finalize), including exact names and verified detached attachments.
+    - Version-1 operation result for O(deletion_mode=finalize), including resource, fabric name,
+      requested names, request digest, and existing definitions from normal CRUD discovery.
     - C(detach_attempts) and C(deployment_attempts) are zero for this workflow.
-    - C(definition_absence_verified) is V(true) after a successful fresh absence check, V(false) if post-deletion observation fails,
-      and V(null) in check mode or when the deletion did not complete successfully.
+    - C(deletion_operations_succeeded) is V(null) in check mode, V(true) when definition processing succeeds,
+      and V(false) when the returned definition result reports failure. Already absent targets can succeed without a DELETE request.
+    - This result does not claim verified attachment readiness, definition absence, or final device convergence.
   returned: when finalization validation succeeds and the definition state machine returns
   type: dict
 output_level:

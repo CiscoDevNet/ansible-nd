@@ -96,13 +96,14 @@ def _run(coordinator):
 
 
 @pytest.mark.parametrize("names", [["BLUE_NET"], ["BLUE_NET", "GREEN_NET"]])
-def test_real_typed_crud_and_fresh_finalization_use_compatible_exact_scope(names):
+def test_real_typed_crud_finalization_preserves_exact_scope_without_extra_reads(names):
     coordinator = _TypedCoordinator(names)
     result = _run(coordinator)
     assert set(coordinator.removed) == set(names)
     assert set(coordinator.rows) == {"FOREIGN_NET"}
     assert set(coordinator.state_machine.removed.keys()) == set(names)
-    assert result["deletion_finalization"]["definition_absence_verified"] is True
+    assert result["deletion_finalization"]["deletion_operations_succeeded"] is True
+    assert coordinator.get_count == 1
     assert result["deletion_finalization"]["deployment_attempts"] == 0
     filters = [parse_qs(urlsplit(path).query).get("filter", [None])[0] for _verb, path, _data in coordinator.paths if "/networks" in path]
     expected = NDNetworkOrchestrator._network_names_unfielded_filter(names) if len(names) > 1 else NDNetworkOrchestrator._network_name_filter(names)
@@ -110,9 +111,10 @@ def test_real_typed_crud_and_fresh_finalization_use_compatible_exact_scope(names
     assert not any("deploy" in path.lower() for _verb, path, _data in coordinator.paths)
 
 
-def test_fresh_target_change_still_rejects_before_actual_definition_crud():
+def test_finalization_reuses_loaded_snapshot_instead_of_querying_changed_readiness_again():
     coordinator = _TypedCoordinator(["BLUE_NET", "GREEN_NET"], missing_fresh=True)
-    with pytest.raises(ValueError, match="target set changed"):
-        _run(coordinator)
-    assert coordinator.removed == []
-    assert set(coordinator.rows) == {"BLUE_NET", "GREEN_NET", "FOREIGN_NET"}
+    result = _run(coordinator)
+    assert set(coordinator.removed) == {"BLUE_NET", "GREEN_NET"}
+    assert coordinator.get_count == 1
+    assert set(coordinator.rows) == {"FOREIGN_NET"}
+    assert result["deletion_finalization"]["deletion_operations_succeeded"] is True

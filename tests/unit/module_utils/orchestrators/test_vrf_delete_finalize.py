@@ -23,7 +23,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_workflo
 from ansible_collections.cisco.nd.plugins.modules import nd_manage_vrfs
 
 
-def test_vrf_delete_finalize_uses_only_guarded_finalizer():
+def test_vrf_delete_finalize_uses_only_definition_finalizer():
     coordinator = Mock()
     strategy = Mock()
     args = {
@@ -146,7 +146,7 @@ class _FinalizationCoordinator:
 
     def _ensure_vrfs_have_no_networks(self, _args, _strategy, names):
         self.calls.append("dependency_check")
-        assert names == ["BLUE"]
+        assert names in (["BLUE"], [])
         if self.dependency_error:
             raise ValueError("Network still references BLUE")
 
@@ -183,34 +183,37 @@ def _finalize_args():
     return {"state": "deleted", "deletion_mode": "finalize", "config": [{"vrf_name": "BLUE"}]}
 
 
-def test_vrf_finalize_requires_detached_intent_and_verifies_actual_absence():
+def test_vrf_finalize_reuses_crud_state_and_reports_operations_without_extra_reads():
     coordinator = _FinalizationCoordinator()
     result = OverlayDeletionFinalizer(coordinator, "vrf").run(_finalize_args(), StandaloneVrfStrategy("fab1"))
-    assert coordinator.calls == ["definition_query", "attachment_query", "dependency_check", "definition_delete", "definition_query"]
+    assert coordinator.calls == ["dependency_check", "definition_delete"]
     receipt = result["deletion_finalization"]
-    assert receipt["definition_absence_verified"] is True
+    assert receipt["version"] == 1
+    assert receipt["deletion_operations_succeeded"] is True
+    assert "definition_absence_verified" not in receipt
+    assert "attachments_verified_detached" not in receipt
     assert receipt["names"] == ["BLUE"]
     assert receipt["deployment_attempts"] == receipt["detach_attempts"] == 0
 
 
 @pytest.mark.parametrize("status", ["deployed", "pending", "failed", "outOfSync", "", None])
-def test_vrf_finalize_rejects_definition_without_detached_terminal_evidence(status):
+def test_vrf_finalize_does_not_repeat_caller_readiness_checks(status):
     coordinator = _FinalizationCoordinator(definition_status=status)
-    with pytest.raises(ValueError, match="fresh vrfStatus"):
-        OverlayDeletionFinalizer(coordinator, "vrf").run(_finalize_args(), StandaloneVrfStrategy("fab1"))
-    assert "definition_delete" not in coordinator.calls
+    result = OverlayDeletionFinalizer(coordinator, "vrf").run(_finalize_args(), StandaloneVrfStrategy("fab1"))
+    assert coordinator.calls == ["dependency_check", "definition_delete"]
+    assert result["deletion_finalization"]["deletion_operations_succeeded"] is True
 
 
 @pytest.mark.parametrize(
     "fields",
     [{"attach": True}, {"attach": "false"}, {"attach": None}, {"status": "pending"}, {"status": "failed"}, {"status": "outOfSync"}, {"status": None}],
 )
-def test_vrf_finalize_rejects_active_or_ambiguous_attachment_without_writes(fields):
+def test_vrf_finalize_does_not_query_or_modify_attachments(fields):
     attachment = {"vrfName": "BLUE", "switchId": "SERIAL1", "attach": False, "status": "notApplicable", **fields}
     coordinator = _FinalizationCoordinator(attachment=attachment)
-    with pytest.raises(ValueError, match="not explicitly detached"):
-        OverlayDeletionFinalizer(coordinator, "vrf").run(_finalize_args(), StandaloneVrfStrategy("fab1"))
-    assert "definition_delete" not in coordinator.calls
+    result = OverlayDeletionFinalizer(coordinator, "vrf").run(_finalize_args(), StandaloneVrfStrategy("fab1"))
+    assert coordinator.calls == ["dependency_check", "definition_delete"]
+    assert result["deletion_finalization"]["detach_attempts"] == 0
 
 
 def test_vrf_finalize_keeps_existing_network_dependency_guard():
@@ -221,26 +224,28 @@ def test_vrf_finalize_keeps_existing_network_dependency_guard():
     assert "definition_delete" not in coordinator.calls
 
 
-def test_vrf_finalize_rejects_changed_crud_target_set_and_restores_params():
+def test_vrf_finalize_treats_absent_crud_target_as_no_op_and_restores_params():
     coordinator = _FinalizationCoordinator()
     coordinator.loaded_names = []
-    with pytest.raises(ValueError, match="target set changed"):
-        OverlayDeletionFinalizer(coordinator, "vrf").run(_finalize_args(), StandaloneVrfStrategy("fab1"))
-    assert coordinator.calls == ["definition_query"]
+    result = OverlayDeletionFinalizer(coordinator, "vrf").run(_finalize_args(), StandaloneVrfStrategy("fab1"))
+    assert coordinator.calls == ["dependency_check", "definition_delete"]
+    assert result["deletion_finalization"]["existing_before"] == []
     assert coordinator.params_restored is True
 
 
-def test_vrf_finalize_check_mode_is_a_plan_not_an_absence_claim():
+def test_vrf_finalize_check_mode_is_a_plan_not_an_operation_success_claim():
     coordinator = _FinalizationCoordinator(check_mode=True)
     result = OverlayDeletionFinalizer(coordinator, "vrf").run(_finalize_args(), StandaloneVrfStrategy("fab1"))
-    assert coordinator.calls == ["definition_query", "attachment_query", "dependency_check", "delete_plan"]
+    assert coordinator.calls == ["dependency_check", "delete_plan"]
     assert coordinator.definitions
-    assert result["deletion_finalization"]["definition_absence_verified"] is None
+    assert result["deletion_finalization"]["deletion_operations_succeeded"] is None
 
 
-def test_vrf_finalize_reports_unverified_delete_without_an_extra_deployment():
+def test_vrf_finalize_trusts_delete_result_without_an_extra_absence_query_or_deployment():
     coordinator = _FinalizationCoordinator(remain_after_delete=True)
     result = OverlayDeletionFinalizer(coordinator, "vrf").run(_finalize_args(), StandaloneVrfStrategy("fab1"))
-    assert result["failed"] is True
-    assert result["deletion_finalization"]["definition_absence_verified"] is False
+    assert result["failed"] is False
+    assert result["deletion_finalization"]["deletion_operations_succeeded"] is True
+    assert coordinator.definitions
+    assert coordinator.calls == ["dependency_check", "definition_delete"]
     assert result["deletion_finalization"]["deployment_attempts"] == 0

@@ -30,11 +30,12 @@ options:
   deletion_mode:
     description:
       - V(standard) retains the normal detach, deploy and delete workflow.
-      - V(finalize) deletes only explicitly listed definitions after fresh controller reads prove that the Networks
-        and every remaining attachment are detached and deployed-terminal. It sends no attachment or deployment requests.
+      - V(finalize) deletes only explicitly listed definitions without attachment or deployment requests.
+        The caller is responsible for completing detachment and deployment before selecting this mode.
       - Finalization requires O(state=deleted), non-empty O(config), and a standalone Manage fabric.
-        Pending, failed, unknown or inconsistent observations stop before definition deletion.
-      - The caller must verify final device convergence after finalization; definition absence is not a switch configuration audit.
+        Normal definition discovery, input validation and deletion error handling still apply.
+      - Finalization does not perform additional attachment-readiness or post-delete absence queries.
+        A successful result confirms definition operations succeeded; it is not an independent resource or switch audit.
     type: str
     choices: [standard, finalize]
     default: standard
@@ -636,12 +637,12 @@ network_staging_effects:
   returned: when the standalone staged workflow returns a result
 deletion_finalization:
   description:
-    - Scoped continuation evidence returned by O(deletion_mode=finalize), including resource, fabric name,
-      requested names, request digest, observed existing definitions, and detached-attachment verification.
+    - Version-1 operation result returned by O(deletion_mode=finalize), including resource, fabric name,
+      requested names, request digest, and existing definitions from normal CRUD discovery.
     - C(detach_attempts) and C(deployment_attempts) are zero for this continuation.
-    - C(definition_absence_verified) is null in check mode, true after fresh absence readback, and false if deletion
-      returned but fresh absence was not verified. A false value accompanies a failed result.
-    - The proof covers controller definitions and attachment intent; callers must verify final device convergence.
+    - C(deletion_operations_succeeded) is null in check mode, true when definition processing succeeds,
+      and false when the returned definition result reports failure. Already absent targets can succeed without a DELETE request.
+    - This result does not claim verified attachment readiness, definition absence, or final device convergence.
   returned: when O(deletion_mode=finalize) reaches definition planning
   type: dict
 changed:

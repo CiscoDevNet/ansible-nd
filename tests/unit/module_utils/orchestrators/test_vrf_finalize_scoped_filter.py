@@ -135,54 +135,37 @@ def _run(coordinator):
     return OverlayDeletionFinalizer(coordinator, "vrf").run(args, coordinator.strategy)
 
 
-@pytest.mark.parametrize(
-    "names,page_size",
-    [(["BLUE"], 500), (["BLUE", "GREEN"], 500), (["BLUE", "GREEN"], 1)],
-)
-def test_real_typed_vrf_crud_and_fresh_finalization_use_compatible_exact_scope(names, page_size, monkeypatch):
-    monkeypatch.setattr(OverlayDeletionFinalizer, "page_size", page_size)
+@pytest.mark.parametrize("names", [["BLUE"], ["BLUE", "GREEN"]])
+def test_real_typed_vrf_crud_finalization_preserves_exact_scope_without_extra_reads(names):
     coordinator = _TypedCoordinator(names)
     result = _run(coordinator)
     assert set(coordinator.removed) == set(names)
     assert set(coordinator.rows) == {"FOREIGN_VRF"}
     assert {key[0] for key in coordinator.state_machine.removed.keys()} == set(names)
     receipt = result["deletion_finalization"]
-    assert receipt["definition_absence_verified"] is True
+    assert receipt["deletion_operations_succeeded"] is True
     assert receipt["detach_attempts"] == receipt["deployment_attempts"] == 0
     queries = [parse_qs(urlsplit(path).query) for _verb, path, _data in coordinator.paths if "/vrfs" in path]
     expected = None if len(names) > 1 else vrf_name_filter(names)
     assert all(query.get("filter", [None])[0] == expected for query in queries)
-    if page_size == 1:
-        assert {int(query.get("offset", [0])[0]) for query in queries} >= {0, 1, 2}
+    assert coordinator.get_count == 1
     assert not any("deploy" in path.lower() or "detach" in path.lower() for _verb, path, _data in coordinator.paths)
 
 
-def test_real_fresh_vrf_target_change_still_rejects_before_definition_crud():
+def test_finalization_reuses_loaded_vrf_scope_instead_of_a_second_fresh_query():
     coordinator = _TypedCoordinator(["BLUE", "GREEN"], missing_fresh=True)
-    with pytest.raises(ValueError, match="target set changed"):
-        _run(coordinator)
-    assert coordinator.removed == []
-    assert set(coordinator.rows) == {"BLUE", "GREEN", "FOREIGN_VRF"}
+    result = _run(coordinator)
+    assert set(coordinator.removed) == {"BLUE", "GREEN"}
+    assert set(coordinator.rows) == {"FOREIGN_VRF"}
+    assert coordinator.get_count == 1
+    assert result["deletion_finalization"]["deletion_operations_succeeded"] is True
 
 
-def test_controller_fielded_or_regression_rejects_the_previous_discovery_path(
-    monkeypatch,
-):
-    def previous_definitions(finalizer, orchestrator, strategy, names):
-        def fetch(offset, size):
-            endpoint = orchestrator._make_endpoint(strategy.vrfs_get_cls())
-            endpoint.endpoint_params.filter = vrf_name_filter(names)
-            endpoint.endpoint_params.max = size
-            endpoint.endpoint_params.offset = offset
-            return orchestrator._request(path=endpoint.path, verb=endpoint.verb, not_found_ok=False)
-
-        return [row for row in finalizer._collect(fetch, "vrfs", finalizer._definition_identity) if row["vrfName"] in names]
-
-    # Genuine CRUD discovers both targets, but the old finalizer's fielded OR
-    # sees neither. The same safety guard prevents any delete from that mismatch.
-    monkeypatch.setattr(OverlayDeletionFinalizer, "_definitions", previous_definitions)
+def test_multi_vrf_finalization_keeps_existing_crud_workaround_for_fielded_or():
     coordinator = _TypedCoordinator(["BLUE", "GREEN"])
-    with pytest.raises(ValueError, match="target set changed"):
-        _run(coordinator)
-    assert coordinator.removed == []
-    assert set(coordinator.rows) == {"BLUE", "GREEN", "FOREIGN_VRF"}
+    result = _run(coordinator)
+    query = parse_qs(urlsplit(coordinator.paths[0][1]).query)
+    assert "filter" not in query
+    assert set(coordinator.removed) == {"BLUE", "GREEN"}
+    assert result["deletion_finalization"]["existing_before"] == ["BLUE", "GREEN"]
+    assert set(coordinator.rows) == {"FOREIGN_VRF"}
