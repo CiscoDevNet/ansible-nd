@@ -1,0 +1,106 @@
+---
+- name: Define layer2Dci harness scenario data
+  ansible.builtin.set_fact:
+    nd4x_policy_name: layer2Dci
+    nd4x_fabric_name: "{{ test_fabric_l2dci_src }}"
+    nd4x_gathered_src_fabric_name: "{{ test_fabric_l2dci_src }}"
+    nd4x_gathered_dst_fabric_name: "{{ test_fabric_l2dci_dst }}"
+    nd4x_primary_interface: Ethernet1/30
+    nd4x_removed_interfaces: [Ethernet1/31]
+    nd4x_create_count: 2
+    nd4x_run_overridden: false
+    nd4x_run_selector_tests: false
+    nd4x_run_reversed: false
+    nd4x_run_secret: false
+    nd4x_common_args:
+      output_level: "{{ nd_output_level | default('debug') }}"
+      fabric_name: "{{ test_fabric_l2dci_src }}"
+      link_scope: manage
+    nd4x_module_args: {}
+    nd4x_snapshot_path: "/api/v1/manage/links?fabricName={{ test_fabric_l2dci_src }}&max={{ nd4x_links_page_size }}&offset=0"
+    nd4x_check_mode_queries:
+      - name: Snapshot all managed layer2Dci links
+        path: "/api/v1/manage/links?fabricName={{ test_fabric_l2dci_src }}&max={{ nd4x_links_page_size }}&offset=0"
+        expected_status: 200
+        pagination:
+          page_size: "{{ nd4x_links_page_size }}"
+          collection_key: links
+          max_pages: "{{ nd4x_links_max_pages }}"
+        unordered_paths: [/links]
+      - name: Snapshot destination-fabric layer2Dci links
+        path: "/api/v1/manage/links?fabricName={{ test_fabric_l2dci_dst }}&max={{ nd4x_links_page_size }}&offset=0"
+        expected_status: 200
+        pagination:
+          page_size: "{{ nd4x_links_page_size }}"
+          collection_key: links
+          max_pages: "{{ nd4x_links_max_pages }}"
+        unordered_paths: [/links]
+    nd4x_nd_queries:
+      - name: Validate managed layer2Dci links
+        path: "/api/v1/manage/links?fabricName={{ test_fabric_l2dci_src }}&max={{ nd4x_links_page_size }}&offset=0"
+        method: get
+        expected_status: 200
+      - name: Validate destination-fabric layer2Dci links
+        path: "/api/v1/manage/links?fabricName={{ test_fabric_l2dci_dst }}&max={{ nd4x_links_page_size }}&offset=0"
+        method: get
+        expected_status: 200
+    nd4x_create_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.configData.policyType == 'layer2Dci')]"
+        exists: true
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.configData.policyType == 'layer2Dci')].configData.templateInputs.trunkAllowedVlans"
+        equals: 100,200,300
+    nd4x_update_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.configData.policyType == 'layer2Dci')].configData.templateInputs.trunkAllowedVlans"
+        equals: 100-150
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.configData.policyType == 'layer2Dci')].configData.templateInputs.nativeVlan"
+        equals: 10
+    nd4x_replace_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.configData.policyType == 'layer2Dci')].configData.templateInputs.trunkAllowedVlans"
+        equals: all
+    nd4x_override_expectations: []
+    nd4x_recreate_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/31' & @.configData.policyType == 'layer2Dci')]"
+        exists: true
+    nd4x_delete_one_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.configData.policyType == 'layer2Dci')]"
+        exists: false
+    nd4x_delete_bulk_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/31' & @.configData.policyType == 'layer2Dci')]"
+        exists: false
+    nd4x_cleanup_config:
+      - {src_fabric_name: "{{ test_fabric_l2dci_src }}", dst_fabric_name: "{{ test_fabric_l2dci_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/30, dst_interface_name: Ethernet1/30}
+      - {src_fabric_name: "{{ test_fabric_l2dci_src }}", dst_fabric_name: "{{ test_fabric_l2dci_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/31, dst_interface_name: Ethernet1/31}
+    nd4x_create_config:
+      - {src_fabric_name: "{{ test_fabric_l2dci_src }}", dst_fabric_name: "{{ test_fabric_l2dci_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/30, dst_interface_name: Ethernet1/30, config_data: {policy_type: layer2Dci, template_inputs: {trunk_allowed_vlans: "100,200,300", native_vlan: 1, port_type_fast: true, mtu_type: jumbo, speed: auto, src_interface_description: "ansible l2dci 30 source", dst_interface_description: "ansible l2dci 30 destination"}}}
+      - {src_fabric_name: "{{ test_fabric_l2dci_src }}", dst_fabric_name: "{{ test_fabric_l2dci_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/31, dst_interface_name: Ethernet1/31, config_data: {policy_type: layer2Dci, template_inputs: {trunk_allowed_vlans: all, native_vlan: 1, mtu_type: jumbo, speed: auto}}}
+    nd4x_update_config:
+      - {src_fabric_name: "{{ test_fabric_l2dci_src }}", dst_fabric_name: "{{ test_fabric_l2dci_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/30, dst_interface_name: Ethernet1/30, config_data: {policy_type: layer2Dci, template_inputs: {trunk_allowed_vlans: "100-150", native_vlan: 10, src_interface_description: "updated l2dci source", speed: auto}}}
+    nd4x_replace_config:
+      - {src_fabric_name: "{{ test_fabric_l2dci_src }}", dst_fabric_name: "{{ test_fabric_l2dci_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/30, dst_interface_name: Ethernet1/30, config_data: {policy_type: layer2Dci, template_inputs: {trunk_allowed_vlans: all, native_vlan: 1, mtu_type: jumbo, speed: auto}}}
+    nd4x_override_config: []
+    nd4x_recreate_config:
+      - {src_fabric_name: "{{ test_fabric_l2dci_src }}", dst_fabric_name: "{{ test_fabric_l2dci_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/31, dst_interface_name: Ethernet1/31, config_data: {policy_type: layer2Dci, template_inputs: {trunk_allowed_vlans: all, native_vlan: 1, mtu_type: jumbo, speed: auto}}}
+    nd4x_delete_one_config:
+      - {src_fabric_name: "{{ test_fabric_l2dci_src }}", dst_fabric_name: "{{ test_fabric_l2dci_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/30, dst_interface_name: Ethernet1/30}
+    nd4x_delete_bulk_config:
+      - {src_fabric_name: "{{ test_fabric_l2dci_src }}", dst_fabric_name: "{{ test_fabric_l2dci_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/31, dst_interface_name: Ethernet1/31}
+
+- name: Run layer2Dci harness lifecycle
+  ansible.builtin.include_tasks: nd4x_demo_link_lifecycle.yml
+
+- name: Verify layer2Dci policy-specific returned values
+  ansible.builtin.assert:
+    that:
+      - >-
+        (nd4x_create.first_run_result.after
+        | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+        | first).config_data.template_inputs.trunk_allowed_vlans
+        == '100,200,300'
+      - >-
+        (nd4x_update.first_run_result.after
+        | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+        | first).config_data.template_inputs.native_vlan == 10
+      - >-
+        (nd4x_replace.first_run_result.after
+        | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+        | first).config_data.template_inputs.trunk_allowed_vlans == 'all'

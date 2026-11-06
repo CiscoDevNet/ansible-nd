@@ -1,0 +1,175 @@
+---
+- name: "{{ nd4x_assert_label }}: Build exact expected scoped identities"
+  ansible.builtin.set_fact:
+    nd4x_assert_expected_identity_keys: >-
+      {%- set keys = [] -%}
+      {%- for link in nd4x_expected_links -%}
+        {%- set _ = keys.append([
+          link.src_cluster_name | default('', true),
+          link.dst_cluster_name | default('', true),
+          link.src_fabric_name,
+          link.dst_fabric_name,
+          link.src_switch_name,
+          link.dst_switch_name,
+          link.src_interface_name,
+          link.dst_interface_name
+        ] | to_json) -%}
+      {%- endfor -%}
+      {{ keys }}
+    nd4x_assert_scope_endpoint_keys: >-
+      {%- set keys = [] -%}
+      {%- for link in nd4x_assert_scope_links | default(nd4x_expected_links) -%}
+        {%- set source_key = [
+          link.src_cluster_name | default('', true),
+          link.src_fabric_name,
+          link.src_switch_name,
+          link.src_interface_name
+        ] | to_json -%}
+        {%- set destination_key = [
+          link.dst_cluster_name | default('', true),
+          link.dst_fabric_name,
+          link.dst_switch_name,
+          link.dst_interface_name
+        ] | to_json -%}
+        {%- if source_key not in keys -%}
+          {%- set _ = keys.append(source_key) -%}
+        {%- endif -%}
+        {%- if destination_key not in keys -%}
+          {%- set _ = keys.append(destination_key) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ keys }}
+
+- name: "{{ nd4x_assert_label }}: Collect actual scoped links"
+  ansible.builtin.set_fact:
+    nd4x_assert_actual_scoped_links: >-
+      {%- set links = [] -%}
+      {%- for link in nd4x_assert_collection -%}
+        {%- set source_key = [
+          link.src_cluster_name | default('', true),
+          link.src_fabric_name,
+          link.src_switch_name,
+          link.src_interface_name
+        ] | to_json -%}
+        {%- set destination_key = [
+          link.dst_cluster_name | default('', true),
+          link.dst_fabric_name,
+          link.dst_switch_name,
+          link.dst_interface_name
+        ] | to_json -%}
+        {%- if source_key in nd4x_assert_scope_endpoint_keys
+              or destination_key in nd4x_assert_scope_endpoint_keys -%}
+          {%- set _ = links.append(link) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ links }}
+
+- name: "{{ nd4x_assert_label }}: Build actual scoped identities"
+  ansible.builtin.set_fact:
+    nd4x_assert_actual_identity_keys: >-
+      {%- set keys = [] -%}
+      {%- for link in nd4x_assert_actual_scoped_links -%}
+        {%- set _ = keys.append([
+          link.src_cluster_name | default('', true),
+          link.dst_cluster_name | default('', true),
+          link.src_fabric_name,
+          link.dst_fabric_name,
+          link.src_switch_name,
+          link.dst_switch_name,
+          link.src_interface_name,
+          link.dst_interface_name
+        ] | to_json) -%}
+      {%- endfor -%}
+      {{ keys }}
+
+- name: "{{ nd4x_assert_label }}: Reject unexpected scoped identities"
+  ansible.builtin.assert:
+    that:
+      - nd4x_assert_actual_scoped_links | length == nd4x_expected_links | length
+      - >-
+        (nd4x_assert_actual_identity_keys | difference(nd4x_assert_expected_identity_keys) | length) == 0
+      - >-
+        (nd4x_assert_expected_identity_keys | difference(nd4x_assert_actual_identity_keys) | length) == 0
+    fail_msg: >-
+      {{ nd4x_assert_label }} returned an unexpected scoped link collection.
+      Expected exactly {{ nd4x_expected_links | length }} link(s), got
+      {{ nd4x_assert_actual_scoped_links | length }}. Expected identities:
+      {{ nd4x_assert_expected_identity_keys }}; actual identities:
+      {{ nd4x_assert_actual_identity_keys }}.
+
+- name: "{{ nd4x_assert_label }}: Assert every expected link is returned"
+  ansible.builtin.assert:
+    that:
+      - nd4x_assert_matches | length == 1
+      - nd4x_assert_matches.0.src_fabric_name == nd4x_expected_link.src_fabric_name
+      - nd4x_assert_matches.0.dst_fabric_name == nd4x_expected_link.dst_fabric_name
+      - nd4x_assert_matches.0.src_switch_name == nd4x_expected_link.src_switch_name
+      - nd4x_assert_matches.0.dst_switch_name == nd4x_expected_link.dst_switch_name
+      - nd4x_assert_matches.0.src_interface_name == nd4x_expected_link.src_interface_name
+      - nd4x_assert_matches.0.dst_interface_name == nd4x_expected_link.dst_interface_name
+      - >-
+        nd4x_expected_link.src_cluster_name is not defined or
+        nd4x_assert_matches.0.src_cluster_name == nd4x_expected_link.src_cluster_name
+      - >-
+        nd4x_expected_link.dst_cluster_name is not defined or
+        nd4x_assert_matches.0.dst_cluster_name == nd4x_expected_link.dst_cluster_name
+      - >-
+        nd4x_expected_link.config_data is not defined or
+        nd4x_assert_matches.0.config_data.policy_type == nd4x_expected_link.config_data.policy_type
+      - >-
+        nd4x_expected_link.config_data.template_name is not defined or
+        nd4x_assert_matches.0.config_data.template_name == nd4x_expected_link.config_data.template_name
+    fail_msg: >-
+      {{ nd4x_assert_label }} did not return exactly one matching link for
+      {{ nd4x_expected_link.src_interface_name }} -> {{ nd4x_expected_link.dst_interface_name }}.
+  vars:
+    nd4x_assert_matches: >-
+      {{ nd4x_assert_collection
+        | selectattr('src_fabric_name', 'equalto', nd4x_expected_link.src_fabric_name)
+        | selectattr('dst_fabric_name', 'equalto', nd4x_expected_link.dst_fabric_name)
+        | selectattr('src_switch_name', 'equalto', nd4x_expected_link.src_switch_name)
+        | selectattr('dst_switch_name', 'equalto', nd4x_expected_link.dst_switch_name)
+        | selectattr('src_interface_name', 'equalto', nd4x_expected_link.src_interface_name)
+        | selectattr('dst_interface_name', 'equalto', nd4x_expected_link.dst_interface_name)
+        | list }}
+  loop: "{{ nd4x_expected_links }}"
+  loop_control:
+    loop_var: nd4x_expected_link
+
+- name: "{{ nd4x_assert_label }}: Build template-input assertions"
+  ansible.builtin.set_fact:
+    nd4x_expected_template_inputs: >-
+      {%- set expectations = [] -%}
+      {%- for link in nd4x_expected_links -%}
+        {%- for template_input in link.config_data.template_inputs | default({}) | dict2items -%}
+          {%- set _ = expectations.append({'link': link, 'input': template_input}) -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ expectations }}
+
+- name: "{{ nd4x_assert_label }}: Assert every returned template input"
+  ansible.builtin.assert:
+    that:
+      - nd4x_assert_matches | length == 1
+      - nd4x_assert_matches.0.config_data.template_inputs[nd4x_template_expectation.input.key] is defined
+      - >-
+        nd4x_assert_matches.0.config_data.template_inputs[nd4x_template_expectation.input.key]
+        == nd4x_template_expectation.input.value
+    fail_msg: >-
+      {{ nd4x_assert_label }} returned an unexpected
+      {{ nd4x_template_expectation.input.key }} for
+      {{ nd4x_template_expectation.link.src_interface_name }}.
+  vars:
+    nd4x_expected_link: "{{ nd4x_template_expectation.link }}"
+    nd4x_assert_matches: >-
+      {{ nd4x_assert_collection
+        | selectattr('src_fabric_name', 'equalto', nd4x_expected_link.src_fabric_name)
+        | selectattr('dst_fabric_name', 'equalto', nd4x_expected_link.dst_fabric_name)
+        | selectattr('src_switch_name', 'equalto', nd4x_expected_link.src_switch_name)
+        | selectattr('dst_switch_name', 'equalto', nd4x_expected_link.dst_switch_name)
+        | selectattr('src_interface_name', 'equalto', nd4x_expected_link.src_interface_name)
+        | selectattr('dst_interface_name', 'equalto', nd4x_expected_link.dst_interface_name)
+        | list }}
+  loop: "{{ nd4x_expected_template_inputs }}"
+  loop_control:
+    loop_var: nd4x_template_expectation
