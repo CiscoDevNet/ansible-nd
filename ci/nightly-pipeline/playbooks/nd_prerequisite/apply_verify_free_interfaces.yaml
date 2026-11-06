@@ -1,0 +1,87 @@
+---
+# Verify the current target ports without enabling them, and persist their exact
+# before-images. Authored interface targets may normalize a deleted port back to
+# admin-up; the forced restore handler must return it to its captured state.
+- name: "verify_free_interfaces guard {{ _ndp_operation.switch_ref }}"
+  ansible.builtin.assert:
+    that:
+      - _ndp_operation.interfaces | length > 0
+      - _ndp_operation.interfaces | unique | list | length == _ndp_operation.interfaces | length
+      - _ndp_operation.constraints | sort == ['exists', 'not_fabric_link', 'not_port_channel_member']
+      - >-
+        (_ndp_operation.interfaces
+         | difference(_ndp_registry.lab.interface_allowlist[_ndp_operation.switch_ref]))
+        | length == 0
+    fail_msg: >-
+      The planner emitted an invalid free-interface verification operation for
+      {{ _ndp_operation.switch_ref }}.
+    success_msg: >-
+      Reserved interfaces are present, outside fabric links, and free of
+      port-channel membership: {{ _ndp_operation.interfaces | join(', ') }}.
+  run_once: true
+
+- name: Require a restore journal before releasing physical ports to a target
+  ansible.builtin.assert:
+    that:
+      - _ndp_restore_file is defined
+      - _ndp_operation.serial == _ndp_registry.lab.switches[_ndp_operation.switch_ref].serial
+    fail_msg: "NDP_INTERFACE_SNAPSHOT_REQUIRED: no target may change a port without its restore journal."
+  run_once: true
+
+- name: Capture the exact configuration of only this target's physical ports
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ _ndp_registry.lab.fabrics[_ndp_registry.lab.switches[_ndp_operation.switch_ref].baseline_fabric_ref].name }}/switches/{{
+        _ndp_operation.serial }}/interfaces/{{ _ndp_free_port | replace('/', '%2F') }}
+    method: get
+  loop: "{{ _ndp_operation.interfaces }}"
+  loop_control:
+    loop_var: _ndp_free_port
+  register: _ndp_free_before
+  no_log: true
+  run_once: true
+
+- name: Require exact identities and typed before-images for every released port
+  ansible.builtin.assert:
+    that:
+      - _ndp_free_result.current.switchId == _ndp_operation.serial
+      - _ndp_free_result.current.interfaceName == _ndp_free_result._ndp_free_port
+      - _ndp_free_result.current.interfaceType == 'ethernet'
+      - _ndp_free_result.current.configData.mode in ['trunk', 'access', 'routed']
+      - _ndp_free_result.current.configData.networkOS.networkOSType == 'nx-os'
+      - _ndp_free_result.current.configData.networkOS.policy.adminState is boolean
+    fail_msg: "NDP_INTERFACE_SNAPSHOT_UNVERIFIED: the target has not started."
+  loop: "{{ _ndp_free_before.results }}"
+  loop_control:
+    loop_var: _ndp_free_result
+  no_log: true
+  run_once: true
+
+- name: Append exact before-images before the authored target can change the ports
+  ansible.builtin.set_fact:
+    _ndp_prerequisite_restore_operations: >-
+      {{ (_ndp_prerequisite_restore_operations | default([])) + [{
+        'action': 'restore_ethernet', 'switch_ref': _ndp_operation.switch_ref,
+        'serial': _ndp_operation.serial,
+        'switch_ip': _ndp_registry.lab.switches[_ndp_operation.switch_ref].seed_ip,
+        'fabric_name': _ndp_registry.lab.fabrics[_ndp_registry.lab.switches[_ndp_operation.switch_ref].baseline_fabric_ref].name,
+        'interface': _ndp_free_result._ndp_free_port,
+        'pre_change_intent_exists': true,
+        'pre_change_config_data': _ndp_free_result.current.configData}] }}
+  loop: "{{ _ndp_free_before.results }}"
+  loop_control:
+    loop_var: _ndp_free_result
+  no_log: true
+  run_once: true
+
+- name: Persist target-port before-images before the integration target starts
+  ansible.builtin.copy:
+    dest: "{{ _ndp_restore_file }}"
+    content: >-
+      {{ {'schema_version': 1, 'run_id': _ndp_run_id, 'execution_id': _ndp_execution_id,
+          'operations': _ndp_prerequisite_restore_operations} | to_nice_yaml }}
+    mode: "0600"
+  delegate_to: localhost
+  no_log: true
+  run_once: true
+  check_mode: false

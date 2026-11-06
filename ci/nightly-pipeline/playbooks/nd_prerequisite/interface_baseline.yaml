@@ -1,0 +1,64 @@
+---
+- name: Resolve the complete interface reservation registry
+  ansible.builtin.set_fact:
+    _nd_interface_baseline_registry_path: >-
+      {{ lookup('ansible.builtin.first_found', {
+           'files': [nd_interface_baseline_registry_file | default(''),
+                     playbook_dir ~ '/nd_prerequisite_profiles.yaml',
+                     playbook_dir ~ '/../tests/nd_prerequisite_profiles.yaml'], 'skip': false}) }}
+
+- name: Load the interface reservation registry without exposing its contents
+  ansible.builtin.include_vars:
+    file: "{{ _nd_interface_baseline_registry_path }}"
+    name: _nd_interface_baseline_registry
+  no_log: true
+
+- name: Create a private baseline checkpoint directory
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: nd_interface_baseline_
+  delegate_to: localhost
+  connection: local
+  register: _nd_interface_baseline_checkpoint
+  check_mode: false
+
+- name: Plan or apply the bounded interface baseline
+  nd_interface_baseline:
+    registry: "{{ _nd_interface_baseline_registry }}"
+    fabrics: >-
+      {{ (((nd_test_fabric_switches | default({})).keys() | list)
+          + (nd_switch_rehome_fabrics | default([]))
+          + [nd_fabric_name | default(''), nd_external_fabric_name | default('')])
+         | reject('equalto', '') | unique | list }}
+    switch_refs: "{{ _nd_interface_baseline_registry.lab.switches.keys() | list }}"
+    journal_path: "{{ _nd_interface_baseline_checkpoint.path }}/mutations.jsonl"
+    ensure_host_admin_down_default: true
+    # This include runs only at lifecycle boundaries or after reset, when the
+    # target has finished cleanup. Future reservations are not active port use.
+    idle_reserved_ports: true
+    apply: >-
+      {{ (nd_interface_baseline_apply | default(lookup('env', 'ND_INTERFACE_BASELINE_APPLY') | default(false, true)) | bool)
+          and (nd_switch_apply | default(true) | bool)
+          and not (nd_prerequisite_only | default(false) | bool) }}
+    timeout_seconds: >-
+      {{ [nd_interface_baseline_timeout_seconds | default(900) | int,
+           ((nd_switch_guard_timeout_seconds | default(3600) | float)
+             - ((_nd_switch_clock | float) - (_nd_switch_guard_started | float)) - 60)
+           if _nd_switch_guard_started is defined else 900] | min | int }}
+    call_timeout_seconds: 30
+    poll_seconds: "{{ nd_interface_baseline_poll_seconds | default(5) | int }}"
+  register: _nd_interface_baseline_result
+  no_log: true
+  failed_when: false
+
+- name: Report interface baseline decisions without raw controller payloads
+  ansible.builtin.debug:
+    msg:
+      - "NDP_INTERFACE_BASELINE reason={{ _nd_interface_baseline_result.reason | default('UNVERIFIED') }} apply={{ _nd_interface_baseline_result.apply | default(false) }} inspected={{ _nd_interface_baseline_result.inspected | default(0) }} candidates={{ _nd_interface_baseline_result.candidates | default(0) }} verified={{ _nd_interface_baseline_result.verified | default(0) }}"
+      - "{{ _nd_interface_baseline_result.decisions | default([]) }}"
+
+- name: Require accepted operations and fresh verification for interface baseline changes
+  ansible.builtin.assert:
+    that:
+      - (_nd_interface_baseline_result.baseline_failed | default(true)) is sameas false
+    fail_msg: "NDP_INTERFACE_BASELINE_BLOCKED: inventory, safety, deployment or verification could not be established; no membership transfer is permitted."
