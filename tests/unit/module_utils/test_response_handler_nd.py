@@ -3410,3 +3410,84 @@ def test_response_handler_nd_01790():
 
     assert instance.result["success"] is False
     assert instance.error_message == "ND Error: SN2: deploy timeout"
+
+
+def test_response_handler_nd_01800():
+    """
+    # Summary
+
+    Verify a top-level code/message keeps the nested errors[] detail.
+
+    ## Test
+
+    - DATA carries code, message and a list of field errors; error_message names each field after the generic message
+
+    ## Classes and Methods
+
+    - ResponseHandler.error_message
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 400,
+        "MESSAGE": "Bad Request",
+        "DATA": {
+            "code": 400,
+            "message": "Request validation failed",
+            "errors": [
+                {"field": "dhcpStartAddress", "description": "should match format 'ip'"},
+                {"field": "scheduledBackupTime", "description": "should match pattern"},
+                "plain string error",
+            ],
+        },
+    }
+    instance.verb = HttpVerbEnum.POST
+    instance.commit()
+    assert instance.error_message == (
+        "ND Error 400: Request validation failed: dhcpStartAddress: should match format 'ip'; "
+        "scheduledBackupTime: should match pattern; plain string error"
+    )
+
+
+def test_response_handler_nd_01810():
+    """
+    # Summary
+
+    Verify the nested errors[] detail is capped.
+
+    ## Test
+
+    - With more entries than the cap, only the first ones are shown followed by the omitted count
+
+    ## Classes and Methods
+
+    - ResponseHandler.error_message
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 400,
+        "MESSAGE": "Bad Request",
+        "DATA": {"code": 400, "message": "Request validation failed", "errors": [f"e{i}" for i in range(25)]},
+    }
+    instance.verb = HttpVerbEnum.POST
+    instance.commit()
+    assert instance.error_message.startswith("ND Error 400: Request validation failed: e0; e1;")
+    assert "e19; ... and 5 more" in instance.error_message
+    assert "e20" not in instance.error_message
+
+
+def test_response_handler_nd_01820():
+    """
+    # Summary
+
+    Verify code/message without errors[] (or with null errors) is unchanged.
+
+    ## Classes and Methods
+
+    - ResponseHandler.error_message
+    """
+    for data in ({"code": 400, "message": "Bad value"}, {"code": 400, "message": "Bad value", "errors": None}):
+        instance = ResponseHandler()
+        instance.response = {"RETURN_CODE": 400, "MESSAGE": "Bad Request", "DATA": data}
+        instance.verb = HttpVerbEnum.POST
+        instance.commit()
+        assert instance.error_message == "ND Error 400: Bad value"

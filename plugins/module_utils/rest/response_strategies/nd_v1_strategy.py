@@ -39,6 +39,9 @@ T = TypeVar("T")
 # codes ND is not expected to send. RFC 9110 calls for retrying 421 on a *different* connection; connection lifecycle belongs
 # to Ansible's persistent httpapi transport (which re-establishes a dropped connection transparently), so the retry rides
 # whatever connection that layer provides.
+# Cap on errors[] entries appended to a top-level code/message so large validation failures stay readable.
+_MAX_NESTED_ERRORS = 20
+
 _TRANSIENT_CLIENT_ERROR_CODES = frozenset({408, 421, 425, 429})
 
 # 4xx codes that are additionally transient for GET. The ND 4.2.1 OpenAPI documents 409 Conflict on safe GETs (manage v1.1.411:
@@ -698,6 +701,40 @@ class NdV1Strategy:
 
         return msg
 
+    @staticmethod
+    def _format_nested_errors(errors: list) -> str:
+        """
+        # Summary
+
+        Format the entries of an `errors[]` array that accompanies a top-level `code`/`message`.
+
+        ## Description
+
+        Dict entries are rendered as `field: description` when those keys are present, otherwise as `str()`.
+        At most `_MAX_NESTED_ERRORS` entries are shown, followed by a count of the omitted ones.
+
+        ## Returns
+
+        - The joined detail string, or an empty string when there are no entries
+        """
+        parts = []
+        for entry in errors[:_MAX_NESTED_ERRORS]:
+            if isinstance(entry, dict):
+                field = next((entry[k] for k in ("field", "path", "name") if entry.get(k) not in (None, "")), None)
+                text = next((entry[k] for k in ("description", "message", "reason", "detail") if entry.get(k) not in (None, "")), None)
+                if field is not None and text is not None:
+                    parts.append(f"{field}: {text}")
+                elif text is not None:
+                    parts.append(str(text))
+                else:
+                    parts.append(str(entry))
+            else:
+                parts.append(str(entry))
+        omitted = len(errors) - _MAX_NESTED_ERRORS
+        if omitted > 0:
+            parts.append(f"... and {omitted} more")
+        return "; ".join(parts)
+
     def _extract_dict_error_message(self, data_dict: dict[str, Any], response: dict, return_code: int) -> str:
         """
         # Summary
@@ -733,6 +770,10 @@ class NdV1Strategy:
         # code/message format
         elif "code" in data_dict and "message" in data_dict:
             msg = f"ND Error {data_dict['code']}: {data_dict['message']}"
+            # ND can send a generic top-level message together with per-field detail in errors[]; keep the detail.
+            detail = self._format_nested_errors(_get_typed_value(data_dict, "errors", list, []))
+            if detail:
+                msg = f"{msg}: {detail}"
 
         # Scalar error key. `is_success()` already classifies a response carrying DATA.error as a
         # failure; without this branch the error ND actually sent is dropped and the user is shown
