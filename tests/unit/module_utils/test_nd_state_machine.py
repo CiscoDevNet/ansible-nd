@@ -1859,7 +1859,7 @@ def _build_gathered_state_machine(monkeypatch, model_class, state, config, serve
     return machine, orchestrator
 
 
-def test_nd_state_machine_00300(monkeypatch) -> None:
+def test_nd_state_machine_00500(monkeypatch) -> None:
     """
     # Summary
 
@@ -1929,7 +1929,7 @@ def test_gathered_mixed_valid_and_empty_filter_fails_before_query(monkeypatch) -
         {"vrf": "v" * 33},
     ],
 )
-def test_nd_state_machine_00310(
+def test_nd_state_machine_00510(
     monkeypatch,
     policy_filter,
 ) -> None:
@@ -1980,7 +1980,7 @@ def test_nd_state_machine_00310(
     assert orchestrator.query_calls == []
 
 
-def test_nd_state_machine_00320(
+def test_nd_state_machine_00520(
     monkeypatch,
 ) -> None:
     """
@@ -2064,7 +2064,7 @@ def test_nd_state_machine_00320(
     assert machine.output.format()["gathered"][0]["interface_name"] == ("loopback10")
 
 
-def test_nd_state_machine_00330(monkeypatch) -> None:
+def test_nd_state_machine_00530(monkeypatch) -> None:
     """
     # Summary
 
@@ -2097,7 +2097,7 @@ def test_nd_state_machine_00330(monkeypatch) -> None:
     assert orchestrator.query_calls == [{}]
 
 
-def test_nd_state_machine_00340(monkeypatch) -> None:
+def test_nd_state_machine_00540(monkeypatch) -> None:
     """
     # Summary
 
@@ -2129,7 +2129,7 @@ def test_nd_state_machine_00340(monkeypatch) -> None:
     assert orchestrator.query_calls == [{}]
 
 
-def test_nd_state_machine_00350(monkeypatch) -> None:
+def test_nd_state_machine_00550(monkeypatch) -> None:
     """
     # Summary
 
@@ -2161,7 +2161,7 @@ def test_nd_state_machine_00350(monkeypatch) -> None:
     assert machine.proposed.to_ansible_config() == []
 
 
-def test_nd_state_machine_00360(monkeypatch) -> None:
+def test_nd_state_machine_00560(monkeypatch) -> None:
     """
     # Summary
 
@@ -2193,7 +2193,7 @@ def test_nd_state_machine_00360(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "deleted"])
-def test_nd_state_machine_00370(monkeypatch, state) -> None:
+def test_nd_state_machine_00570(monkeypatch, state) -> None:
     """
     # Summary
 
@@ -2220,7 +2220,7 @@ def test_nd_state_machine_00370(monkeypatch, state) -> None:
     assert orchestrator.query_calls == [{}]
 
 
-def test_nd_state_machine_00380(monkeypatch) -> None:
+def test_nd_state_machine_00580(monkeypatch) -> None:
     """
     # Summary
 

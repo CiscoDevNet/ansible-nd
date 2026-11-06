@@ -141,15 +141,15 @@ class NDStateMachine:
         # double-transform non-idempotent orchestrators (e.g. nd_vrf/nd_network),
         # reverting user-supplied fields to their hardcoded defaults.
         proposed_config = [] if self.gathered_filtering_enabled else raw_config
-        self.proposed = NDConfigCollection.from_ansible_config(
-            data=proposed_config,
-            model_class=self.model_class,
-            context={"state": self.state},
-        )
-
-        # Query ND and build state collections.
 
         try:
+            self.proposed = NDConfigCollection.from_ansible_config(
+                data=proposed_config,
+                model_class=self.model_class,
+                context={"state": self.state},
+            )
+
+            # Query ND and build state collections.
             response_data = self._query_existing(raw_config)
             # State of configuration objects in ND before change execution
             if self.gathered_filtering_enabled:
