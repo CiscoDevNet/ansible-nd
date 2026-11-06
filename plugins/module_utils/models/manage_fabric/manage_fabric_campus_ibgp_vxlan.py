@@ -734,6 +734,13 @@ class FabricCampusIbgpVxlanModel(FabricBaseModel):
     # Core Management Configuration
     management: CampusIbgpVxlanManagementModel | None = Field(description="Campus iBGP VXLAN management configuration", default=None)
 
+    @classmethod
+    def get_argument_spec(cls) -> dict:
+        """Expose gather-all without enabling gathered filtering."""
+        argument_spec = super().get_argument_spec()
+        argument_spec["state"]["choices"].append("gathered")
+        return argument_spec
+
     def _post_validate_consistency(self) -> None:
         """Default the Campus site ID to the fabric BGP ASN."""
         super()._post_validate_consistency()

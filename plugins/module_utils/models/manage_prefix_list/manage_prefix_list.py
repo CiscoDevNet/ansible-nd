@@ -153,6 +153,20 @@ class PrefixListEntryModel(NDNestedModel):
             raise ValueError(f"mask '{value}' is not a valid IP address.")
 
 
+class PrefixListGatheredFilterModel(NDNestedModel):
+    """Validate scalar fields supported by partial gathered filters."""
+
+    ip_version: IpVersionEnum | None = Field(default=None)
+    name: str | None = Field(default=None, min_length=1, max_length=115)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str | None) -> str | None:
+        if value is not None and not _NAME_RE.match(value):
+            raise ValueError(f"Prefix list name '{value}' is invalid. Only alphanumeric characters and '~', '_', '-' are allowed.")
+        return value
+
+
 class PrefixListModel(NDBaseModel):
     """
     Prefix list configuration (IPv4 or IPv6) for a Nexus Dashboard fabric.
@@ -182,6 +196,27 @@ class PrefixListModel(NDBaseModel):
     exclude_from_diff: ClassVar[set[str]] = {"last_update_timestamp"}
     payload_exclude_fields: ClassVar[set[str]] = {"ip_version", "last_update_timestamp"}
     unwanted_keys: ClassVar[list] = []
+
+    # --- Gathered Filtering Configuration ---
+    supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "ip_version",
+        "name",
+    )
+
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """Validate and normalize one partial gathered-state filter."""
+        validated = PrefixListGatheredFilterModel.model_validate(
+            filter_item,
+            by_name=True,
+            context={"mode": "config", "state": "gathered"},
+        )
+        return validated.model_dump(
+            by_alias=False,
+            exclude_none=True,
+            context={"mode": "config"},
+        )
 
     # --- Fields ---
 
@@ -381,17 +416,17 @@ class PrefixListModel(NDBaseModel):
             config=dict(
                 type="list",
                 elements="dict",
-                required=True,
+                required=False,
                 options=dict(
                     ip_version=dict(
                         type="str",
-                        required=True,
+                        required=False,
                         choices=["ipv4", "ipv6"],
                         aliases=["ipVersion"],
                     ),
                     name=dict(
                         type="str",
-                        required=True,
+                        required=False,
                     ),
                     description=dict(
                         type="str",
@@ -441,6 +476,6 @@ class PrefixListModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
         )

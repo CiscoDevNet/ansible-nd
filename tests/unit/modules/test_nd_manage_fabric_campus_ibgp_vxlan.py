@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
+from ansible.module_utils.common.arg_spec import ModuleArgumentSpecValidator
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_campus_ibgp_vxlan import (
     FabricCampusIbgpVxlanModel,
 )
@@ -134,3 +135,142 @@ def test_nd_manage_fabric_campus_ibgp_vxlan_00030(monkeypatch, state: str, sent:
         campus_module.main()
 
     assert recorder.calls == []
+
+
+@pytest.mark.parametrize("config", (None, []), ids=("omitted", "empty"))
+@pytest.mark.parametrize("check_mode", (False, True))
+def test_nd_manage_fabric_campus_ibgp_vxlan_00040(
+    monkeypatch,
+    config,
+    check_mode,
+) -> None:
+    """Gathered accepts omitted/empty config and skips fabric actions."""
+    module = _FakeModule("gathered", None)
+    module.params["config"] = config
+    module.check_mode = check_mode
+
+    recorder = _ActionRecorder()
+    events = []
+
+    state_machine = SimpleNamespace(
+        sent=[],
+        model_orchestrator=recorder,
+        output=_FakeOutput(),
+        results=SimpleNamespace(),
+        manage_state=lambda: events.append("manage_state"),
+    )
+
+    def initialize_state_machine(**kwargs):
+        assert kwargs["module"] is module
+        events.append("initialize")
+        return state_machine
+
+    def initialize_ansible_module(**kwargs):
+        assert kwargs["required_if"] == FabricCampusIbgpVxlanModel.get_required_if()
+
+        supplied_args = {"state": "gathered"}
+        if config is not None:
+            supplied_args["config"] = config
+
+        validation = ModuleArgumentSpecValidator(
+            kwargs["argument_spec"],
+            required_if=kwargs["required_if"],
+        ).validate(supplied_args)
+
+        assert validation.error_messages == []
+        return module
+
+    monkeypatch.setattr(campus_module, "AnsibleModule", initialize_ansible_module)
+    monkeypatch.setattr(campus_module, "require_pydantic", lambda value: None)
+    monkeypatch.setattr(campus_module, "get_raw_module_args", lambda: {})
+    monkeypatch.setattr(campus_module, "NDStateMachine", initialize_state_machine)
+
+    with pytest.raises(_ExitJson):
+        campus_module.main()
+
+    assert events == ["initialize", "manage_state"]
+    assert recorder.calls == []
+
+
+def test_nd_manage_fabric_campus_ibgp_vxlan_00050(
+    monkeypatch,
+) -> None:
+    """Nonempty gathered config fails before state-machine initialization."""
+    module = _FakeModule("gathered", None)
+    # The existing fake supplies nonempty Campus configuration.
+
+    def must_not_initialize(**kwargs):
+        pytest.fail("NDStateMachine must not initialize for invalid gathered config")
+
+    monkeypatch.setattr(campus_module, "AnsibleModule", lambda **kwargs: module)
+    monkeypatch.setattr(campus_module, "require_pydantic", lambda value: None)
+    monkeypatch.setattr(campus_module, "NDStateMachine", must_not_initialize)
+
+    with pytest.raises(AssertionError, match="gather-all only"):
+        campus_module.main()
+
+
+@pytest.mark.parametrize(
+    "requested",
+    (
+        {"save": True},
+        {"save": True, "deploy": True},
+    ),
+    ids=("save", "save_and_deploy"),
+)
+def test_nd_manage_fabric_campus_ibgp_vxlan_00060(
+    monkeypatch,
+    requested,
+) -> None:
+    """Enabled fabric actions fail before gathered controller queries."""
+    module = _FakeModule("gathered", requested)
+    module.params["config"] = []
+
+    def must_not_initialize(**kwargs):
+        pytest.fail("NDStateMachine must not initialize for invalid gathered actions")
+
+    monkeypatch.setattr(campus_module, "AnsibleModule", lambda **kwargs: module)
+    monkeypatch.setattr(campus_module, "require_pydantic", lambda value: None)
+    monkeypatch.setattr(
+        campus_module,
+        "get_raw_module_args",
+        lambda: {"config_actions": requested},
+    )
+    monkeypatch.setattr(campus_module, "NDStateMachine", must_not_initialize)
+
+    with pytest.raises(
+        AssertionError,
+        match="not allowed for state='gathered'",
+    ):
+        campus_module.main()
+
+
+@pytest.mark.parametrize(
+    "state",
+    ("merged", "replaced", "overridden", "deleted"),
+)
+def test_nd_manage_fabric_campus_ibgp_vxlan_00070(
+    monkeypatch,
+    state,
+) -> None:
+    """Write states reject omitted config before state-machine initialization."""
+    module = _FakeModule(state, None)
+    module.params["config"] = None
+
+    def initialize_ansible_module(**kwargs):
+        validation = ModuleArgumentSpecValidator(
+            kwargs["argument_spec"],
+            required_if=kwargs.get("required_if", []),
+        ).validate({"state": state})
+
+        assert validation.error_messages
+        module.fail_json(msg="; ".join(validation.error_messages))
+
+    def must_not_initialize(**kwargs):
+        pytest.fail("Missing write-state config must not initialize NDStateMachine")
+
+    monkeypatch.setattr(campus_module, "AnsibleModule", initialize_ansible_module)
+    monkeypatch.setattr(campus_module, "NDStateMachine", must_not_initialize)
+
+    with pytest.raises(AssertionError, match="missing.*config"):
+        campus_module.main()

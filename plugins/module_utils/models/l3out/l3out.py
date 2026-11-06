@@ -490,7 +490,7 @@ class L3OutModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "deleted"],
+                choices=["merged", "replaced", "deleted", "gathered"],
             ),
-            config=dict(type="list", elements="dict", required=True, options=l3out_spec),
+            config=dict(type="list", elements="dict", required=False, options=l3out_spec),
         )
