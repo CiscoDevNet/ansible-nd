@@ -619,6 +619,397 @@ options:
             type: int
             default: 60
 
+          bfd_min_rx_interval:
+            description:
+            - BFD minimum receive interval in milliseconds (10 to 999).
+            - Available in ND 4.3.1 or later.
+            type: int
+          bfd_multiplier:
+            description:
+            - BFD detection multiplier (1 to 50).
+            - Available in ND 4.3.1 or later.
+            type: int
+          bfd_tx_interval:
+            description:
+            - BFD transmit interval in milliseconds (10 to 999).
+            - Available in ND 4.3.1 or later.
+            type: int
+          # Authentication
+          isis_auth_use_key_entries:
+            description:
+            - Use the configured IS-IS key entries for authentication.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          isis_border_level12:
+            description:
+            - Apply IS-IS level 1-2 to border devices.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          isis_keys:
+            description:
+            - IS-IS keychain entries.
+            - Available in ND 4.3.1 or later.
+            type: list
+            elements: dict
+            options:
+              key_id:
+                description:
+                - Key identifier (0 to 65535).
+                - Available in ND 4.3.1 or later.
+                type: int
+                required: true
+              key_type:
+                description:
+                - Key type: 6 or 7.
+                - Available in ND 4.3.1 or later.
+                type: str
+                required: true
+              key_string:
+                description:
+                - Key material.
+                - Available in ND 4.3.1 or later.
+                type: str
+                required: true
+                no_log: true
+              crypto_algorithm:
+                description:
+                - Cryptographic algorithm.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_start:
+                description:
+                - Accept lifetime start time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_start_date:
+                description:
+                - Accept lifetime start date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_end_mode:
+                description:
+                - Accept lifetime end mode.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_duration:
+                description:
+                - Accept lifetime duration in seconds.
+                - Available in ND 4.3.1 or later.
+                type: int
+              accept_lifetime_end:
+                description:
+                - Accept lifetime end time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_end_date:
+                description:
+                - Accept lifetime end date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_local:
+                description:
+                - Interpret the accept lifetime in local time.
+                - Available in ND 4.3.1 or later.
+                type: bool
+              send_lifetime_start:
+                description:
+                - Send lifetime start time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_start_date:
+                description:
+                - Send lifetime start date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_end_mode:
+                description:
+                - Send lifetime end mode.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_duration:
+                description:
+                - Send lifetime duration in seconds.
+                - Available in ND 4.3.1 or later.
+                type: int
+              send_lifetime_end:
+                description:
+                - Send lifetime end time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_end_date:
+                description:
+                - Send lifetime end date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_local:
+                description:
+                - Interpret the send lifetime in local time.
+                - Available in ND 4.3.1 or later.
+                type: bool
+          ntp_auth_algorithm:
+            description:
+            - NTP authentication algorithm.
+            - Available in ND 4.3.1 or later.
+            type: str
+          ntp_auth_enable:
+            description:
+            - Enable NTP authentication.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          ntp_auth_key:
+            description:
+            - NTP authentication key.
+            - Available in ND 4.3.1 or later.
+            type: str
+            no_log: true
+          ntp_auth_key_id:
+            description:
+            - NTP authentication key identifier (1 to 65535).
+            - Available in ND 4.3.1 or later.
+            type: int
+          ntp_auth_key_type:
+            description:
+            - NTP authentication key type.
+            - Available in ND 4.3.1 or later.
+            type: str
+          ospf_auth_keychain_name:
+            description:
+            - OSPF authentication keychain name.
+            - Available in ND 4.3.1 or later.
+            type: str
+          ospf_auth_use_keychain:
+            description:
+            - Use an OSPF authentication keychain.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          ospf_auto_cost_ref_bw:
+            description:
+            - OSPF auto-cost reference bandwidth (1 to 4000).
+            - Available in ND 4.3.1 or later.
+            type: int
+          ospf_keys:
+            description:
+            - OSPF keychain entries.
+            - Available in ND 4.3.1 or later.
+            type: list
+            elements: dict
+            options:
+              key_id:
+                description:
+                - Key identifier (0 to 65535).
+                - Available in ND 4.3.1 or later.
+                type: int
+                required: true
+              key_type:
+                description:
+                - Key type: 6 or 7.
+                - Available in ND 4.3.1 or later.
+                type: str
+                required: true
+              key_string:
+                description:
+                - Key material.
+                - Available in ND 4.3.1 or later.
+                type: str
+                required: true
+                no_log: true
+              crypto_algorithm:
+                description:
+                - Cryptographic algorithm.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_start:
+                description:
+                - Accept lifetime start time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_start_date:
+                description:
+                - Accept lifetime start date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_end_mode:
+                description:
+                - Accept lifetime end mode.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_duration:
+                description:
+                - Accept lifetime duration in seconds.
+                - Available in ND 4.3.1 or later.
+                type: int
+              accept_lifetime_end:
+                description:
+                - Accept lifetime end time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_end_date:
+                description:
+                - Accept lifetime end date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_local:
+                description:
+                - Interpret the accept lifetime in local time.
+                - Available in ND 4.3.1 or later.
+                type: bool
+              send_lifetime_start:
+                description:
+                - Send lifetime start time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_start_date:
+                description:
+                - Send lifetime start date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_end_mode:
+                description:
+                - Send lifetime end mode.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_duration:
+                description:
+                - Send lifetime duration in seconds.
+                - Available in ND 4.3.1 or later.
+                type: int
+              send_lifetime_end:
+                description:
+                - Send lifetime end time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_end_date:
+                description:
+                - Send lifetime end date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_local:
+                description:
+                - Interpret the send lifetime in local time.
+                - Available in ND 4.3.1 or later.
+                type: bool
+          ospf_log_adj_changes:
+            description:
+            - Log OSPF adjacency changes.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          ospf_max_metric_startup_wait:
+            description:
+            - Maximum OSPF metric startup wait in seconds (1 to 65535).
+            - Available in ND 4.3.1 or later.
+            type: int
+          pim_auth_keychain_name:
+            description:
+            - PIM authentication keychain name.
+            - Available in ND 4.3.1 or later.
+            type: str
+          pim_auth_use_keychain:
+            description:
+            - Use a PIM authentication keychain.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          pim_keys:
+            description:
+            - PIM keychain entries.
+            - Available in ND 4.3.1 or later.
+            type: list
+            elements: dict
+            options:
+              key_id:
+                description:
+                - Key identifier (0 to 65535).
+                - Available in ND 4.3.1 or later.
+                type: int
+                required: true
+              key_type:
+                description:
+                - Key type: 6 or 7.
+                - Available in ND 4.3.1 or later.
+                type: str
+                required: true
+              key_string:
+                description:
+                - Key material.
+                - Available in ND 4.3.1 or later.
+                type: str
+                required: true
+                no_log: true
+              crypto_algorithm:
+                description:
+                - Cryptographic algorithm.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_start:
+                description:
+                - Accept lifetime start time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_start_date:
+                description:
+                - Accept lifetime start date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_end_mode:
+                description:
+                - Accept lifetime end mode.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_duration:
+                description:
+                - Accept lifetime duration in seconds.
+                - Available in ND 4.3.1 or later.
+                type: int
+              accept_lifetime_end:
+                description:
+                - Accept lifetime end time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_end_date:
+                description:
+                - Accept lifetime end date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_local:
+                description:
+                - Interpret the accept lifetime in local time.
+                - Available in ND 4.3.1 or later.
+                type: bool
+              send_lifetime_start:
+                description:
+                - Send lifetime start time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_start_date:
+                description:
+                - Send lifetime start date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_end_mode:
+                description:
+                - Send lifetime end mode.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_duration:
+                description:
+                - Send lifetime duration in seconds.
+                - Available in ND 4.3.1 or later.
+                type: int
+              send_lifetime_end:
+                description:
+                - Send lifetime end time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_end_date:
+                description:
+                - Send lifetime end date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_local:
+                description:
+                - Interpret the send lifetime in local time.
+                - Available in ND 4.3.1 or later.
+                type: bool
+
           # Security
           security_group_tag:
             description:
@@ -1155,6 +1546,32 @@ options:
             type: bool
             default: false
 
+          ai_load_sharing_opcode:
+            description:
+            - Use the RoCEv2 opcode for AI load-sharing hash selection.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          ai_load_sharing_packet_sequence_number:
+            description:
+            - Use the RoCEv2 packet sequence number for AI load-sharing hash selection; may cause packet reordering.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          ai_load_sharing_queuepair:
+            description:
+            - Use the RoCEv2 source and receiver queue pair for AI load-sharing hash selection.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          dlb_all_interfaces:
+            description:
+            - Apply dynamic load balancing to all supported interfaces.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          system_qos_classification:
+            description:
+            - Enable system QoS classification.
+            - Available in ND 4.3.1 or later.
+            type: bool
+
           # Freeform
           extra_config_leaf:
             description:
@@ -1487,6 +1904,47 @@ options:
             - Applies to smart switches onboarded using O(config.management.allow_smart_switch_onboarding=true).
             - Loopback interface on smart switch for communication with Hypershield.
             type: str
+
+          allow_smart_switch_ha:
+            description:
+            - Enable Hypershield high availability for smart switches.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          auto_smart_switch_vpc_pair_ha:
+            description:
+            - Automatically configure high availability for smart-switch vPC pairs.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          hypershield_ha_peer_link_subnet:
+            description:
+            - IPv4 subnet pool for Hypershield HA peer-link connectivity.
+            - Available in ND 4.3.1 or later.
+            type: str
+          hypershield_ha_peer_link_subnet_granularity:
+            description:
+            - Hypershield HA peer-link subnet prefix size.
+            - Available in ND 4.3.1 or later.
+            type: str
+          hypershield_ha_source_intf:
+            description:
+            - Loopback interface used as the Hypershield HA source interface.
+            - Available in ND 4.3.1 or later.
+            type: str
+          hypershield_ha_source_subnet:
+            description:
+            - IPv4 subnet pool for the Hypershield HA source loopback.
+            - Available in ND 4.3.1 or later.
+            type: str
+          hypershield_ha_vlan:
+            description:
+            - VLAN used for Hypershield high availability (2 to 4094).
+            - Available in ND 4.3.1 or later.
+            type: int
+          use_hypershield_source_loopback_for_ha:
+            description:
+            - Reuse the Hypershield source loopback for high availability.
+            - Available in ND 4.3.1 or later.
+            type: bool
 
           # Bootstrap
           day0_bootstrap:

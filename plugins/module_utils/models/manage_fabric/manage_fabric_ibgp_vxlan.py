@@ -55,6 +55,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     FabricIPv4Address,
     FabricIPv4CIDR,
     FabricInterfaceName,
+    KeychainKeyEntryModel,
     MulticastGroupSubnet,
     NetflowSettingsModel,
     normalize_anycast_gateway_mac,
@@ -120,58 +121,19 @@ class VxlanIbgpManagementModel(NDNestedModel):
         "vrfLiteIpv6SubnetTargetMask": 126,
     }
 
-    # Fabric Designer and newer controller settings remain intentionally
-    # unsupported as module parameters. They are writable state, so preserve
-    # them across full replacement and omit them from normal module output.
+    # Fabric Designer settings remain intentionally unsupported as module
+    # parameters. Preserve that writable state across full replacement.
     _opaque_replacement_fields: ClassVar[set[str]] = {
-        "aiLoadSharingOpcode",
-        "aiLoadSharingPacketSequenceNumber",
-        "aiLoadSharingQueuepair",
-        "allowSmartSwitchHA",
-        "autoSmartSwitchVpcPairHA",
-        "bfdMinRxInterval",
-        "bfdMultiplier",
-        "bfdTxInterval",
         "borderCount",
         "breakoutSpineInterfaces",
         "designerUseRobotPassword",
-        "dlbAllInterfaces",
         "fabricDesignSettings",
         "fabricDesigner",
-        "hypershieldHAPeerLinkSubnet",
-        "hypershieldHAPeerLinkSubnetGranularity",
-        "hypershieldHASourceIntf",
-        "hypershieldHASourceSubnet",
-        "hypershieldHAVlan",
-        "isisAuthUseKeyEntries",
-        "isisBorderLevel12",
-        "isisKeys",
         "leafCount",
-        "ntpAuthAlgorithm",
-        "ntpAuthEnable",
-        "ntpAuthKey",
-        "ntpAuthKeyId",
-        "ntpAuthKeyType",
-        "ospfAuthKeychainName",
-        "ospfAuthUseKeychain",
-        "ospfAutoCostRefBw",
-        "ospfKeys",
-        "ospfLogAdjChanges",
-        "ospfMaxMetricStartupWait",
-        "pimAuthKeychainName",
-        "pimAuthUseKeychain",
-        "pimKeys",
         "spineCount",
-        "systemQosClassification",
-        "useHypershieldSourceLoopbackForHA",
     }
     replacement_preserve_fields: ClassVar[set[str]] = _opaque_replacement_fields
-    replacement_preserve_secret_fields: ClassVar[set[str]] = {
-        "isisKeys",
-        "ntpAuthKey",
-        "ospfKeys",
-        "pimKeys",
-    }
+    replacement_preserve_secret_fields: ClassVar[set[str]] = set()
     config_exclude_fields: ClassVar[set[str]] = _opaque_replacement_fields
 
     empty_string_means_unset: ClassVar[bool] = True
@@ -416,7 +378,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     management_gateway: FabricDhcpGatewayAddress = Field(
         alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default=None
     )
-    management_ipv4_prefix: int = Field(alias="managementIpv4Prefix", description="Switch Mgmt IP Subnet Prefix if ipv4", default=24)
+    management_ipv4_prefix: int = Field(alias="managementIpv4Prefix", description="Switch Mgmt IP Subnet Prefix if ipv4", ge=8, le=30, default=24)
     management_ipv6_prefix: int = Field(alias="managementIpv6Prefix", description="Switch Management IP Subnet Prefix if ipv6", default=64)
     extra_config_nxos_bootstrap: str = Field(
         alias="extraConfigNxosBootstrap", description="Additional CLIs required during device bootup/login e.g. AAA/Radius", default=""
@@ -631,7 +593,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
 
     # Authentication — BFD
     bfd_authentication: bool = Field(alias="bfdAuthentication", description="Enable BFD Authentication.  Valid for P2P Interfaces only", default=False)
-    bfd_authentication_key_id: int = Field(alias="bfdAuthenticationKeyId", description="BFD Authentication Key ID", default=100)
+    bfd_authentication_key_id: int = Field(alias="bfdAuthenticationKeyId", description="BFD Authentication Key ID", ge=1, le=255, default=100)
     bfd_authentication_key: SecretStr | None = Field(
         alias="bfdAuthenticationKey", description="Encrypted SHA1 secret value", default=None, json_schema_extra={"secret": True}
     )
@@ -650,6 +612,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     isis_level: IsisLevelEnum = Field(alias="isisLevel", description="IS-IS Level", default=IsisLevelEnum.LEVEL_2)
     isis_area_number: str = Field(
         alias="isisAreaNumber",
+        pattern=r"^[a-fA-F0-9]{4}$",
         description=(
             "NET in form of XX.<4-hex-digit Custom Area Number>.XXXX.XXXX.XXXX.00, default Area Number "
             "is 0001. If area number in existing NETs matches the previous area number set in fabric "
@@ -673,7 +636,11 @@ class VxlanIbgpManagementModel(NDNestedModel):
         alias="isisOverload", description="Set IS-IS Overload Bit.  When enabled, set the overload bit for an elapsed time after a reload", default=True
     )
     isis_overload_elapse_time: int = Field(
-        alias="isisOverloadElapseTime", description="IS-IS Overload Bit Elapsed Time. Clear the overload bit after an elapsed time in seconds", default=60
+        alias="isisOverloadElapseTime",
+        description="IS-IS Overload Bit Elapsed Time. Clear the overload bit after an elapsed time in seconds",
+        ge=5,
+        le=86400,
+        default=60,
     )
 
     # MACsec
@@ -845,7 +812,13 @@ class VxlanIbgpManagementModel(NDNestedModel):
     wred_max: int = Field(alias="wredMax", description="WRED maximum threshold (in kbytes)", default=3000)
     wred_drop_probability: int = Field(alias="wredDropProbability", description="Drop probability %", default=7)
     wred_weight: int = Field(alias="wredWeight", description="Influences how quickly WRED reacts to queue depth changes", default=0)
-    bandwidth_remaining: int = Field(alias="bandwidthRemaining", description="Percentage of remaining bandwidth allocated to AI traffic queues", default=50)
+    bandwidth_remaining: int = Field(
+        alias="bandwidthRemaining",
+        description="Percentage of remaining bandwidth allocated to AI traffic queues",
+        ge=0,
+        le=100,
+        default=50,
+    )
     dlb: bool = Field(
         description=("Enables fabric-level Dynamic Load Balancing (DLB) configuration. Note: Inter-Switch-Links (ISL) will be configured as DLB Interfaces"),
         default=False,
@@ -896,8 +869,8 @@ class VxlanIbgpManagementModel(NDNestedModel):
 
     # PTP
     ptp: bool = Field(description="Enable Precision Time Protocol (PTP)", default=False)
-    ptp_loopback_id: int = Field(alias="ptpLoopbackId", description="Precision Time Protocol Source Loopback Id", default=0)
-    ptp_domain_id: int = Field(alias="ptpDomainId", description="Multiple Independent PTP Clocking Subdomains on a Single Network", default=0)
+    ptp_loopback_id: int = Field(alias="ptpLoopbackId", description="Precision Time Protocol Source Loopback Id", ge=0, le=1023, default=0)
+    ptp_domain_id: int = Field(alias="ptpDomainId", description="Multiple Independent PTP Clocking Subdomains on a Single Network", ge=0, le=127, default=0)
     ptp_vlan_id: int = Field(alias="ptpVlanId", description="Precision Time Protocol (PTP) Source VLAN ID.  SVI used for ptp source on ToRs", default=2)
 
     # STP
@@ -1048,7 +1021,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
         default=GreenfieldDebugFlagEnum.DISABLE,
     )
     interface_statistics_load_interval: int = Field(
-        alias="interfaceStatisticsLoadInterval", description="Interface Statistics Load Interval. Time in seconds", default=10
+        alias="interfaceStatisticsLoadInterval", description="Interface Statistics Load Interval. Time in seconds", ge=5, le=300, default=10
     )
     nve_hold_down_timer: int = Field(alias="nveHoldDownTimer", description="NVE Source Inteface HoldDown Time in seconds", default=180)
     next_generation_oam: bool = Field(
@@ -1122,6 +1095,41 @@ class VxlanIbgpManagementModel(NDNestedModel):
     hypershield_connectivity_source_intf: str | None = Field(
         alias="hypershieldConnectivitySourceIntf", description="Loopback interface on smart switch for communication with Hypershield", default=None
     )
+
+    # Additional controls exposed by the ND 4.3.1 iBGP VXLAN native template.
+    ai_load_sharing_opcode: bool | None = Field(alias="aiLoadSharingOpcode", description="Use the RoCEv2 opcode for AI load-sharing hash selection.", default=None)
+    ai_load_sharing_packet_sequence_number: bool | None = Field(alias="aiLoadSharingPacketSequenceNumber", description="Use the RoCEv2 packet sequence number for AI load-sharing hash selection.", default=None)
+    ai_load_sharing_queuepair: bool | None = Field(alias="aiLoadSharingQueuepair", description="Use the RoCEv2 source and receiver queue pair for AI load-sharing hash selection.", default=None)
+    allow_smart_switch_ha: bool | None = Field(alias="allowSmartSwitchHA", description="Enable Hypershield high availability for smart switches.", default=None)
+    auto_smart_switch_vpc_pair_ha: bool | None = Field(alias="autoSmartSwitchVpcPairHA", description="Automatically configure high availability for smart-switch vPC pairs.", default=None)
+    bfd_min_rx_interval: int | None = Field(alias="bfdMinRxInterval", description="BFD minimum receive interval in milliseconds.", ge=10, le=999, default=None)
+    bfd_multiplier: int | None = Field(alias="bfdMultiplier", description="BFD detection multiplier.", ge=1, le=50, default=None)
+    bfd_tx_interval: int | None = Field(alias="bfdTxInterval", description="BFD transmit interval in milliseconds.", ge=10, le=999, default=None)
+    dlb_all_interfaces: bool | None = Field(alias="dlbAllInterfaces", description="Apply dynamic load balancing to all supported interfaces.", default=None)
+    hypershield_ha_peer_link_subnet: str | None = Field(alias="hypershieldHAPeerLinkSubnet", description="IPv4 subnet pool for Hypershield HA peer-link connectivity.", default=None)
+    hypershield_ha_peer_link_subnet_granularity: Literal["/30", "/31"] | None = Field(alias="hypershieldHAPeerLinkSubnetGranularity", description="Hypershield HA peer-link subnet prefix size.", default=None)
+    hypershield_ha_source_intf: str | None = Field(alias="hypershieldHASourceIntf", description="Loopback interface used as the Hypershield HA source interface.", min_length=3, max_length=40, default=None)
+    hypershield_ha_source_subnet: str | None = Field(alias="hypershieldHASourceSubnet", description="IPv4 subnet pool for the Hypershield HA source loopback.", default=None)
+    hypershield_ha_vlan: int | None = Field(alias="hypershieldHAVlan", description="VLAN used for Hypershield high availability.", ge=2, le=4094, default=None)
+    use_hypershield_source_loopback_for_ha: bool | None = Field(alias="useHypershieldSourceLoopbackForHA", description="Reuse the Hypershield source loopback for high availability.", default=None)
+    isis_auth_use_key_entries: bool | None = Field(alias="isisAuthUseKeyEntries", description="Use the configured IS-IS key entries for authentication.", default=None)
+    isis_border_level12: bool | None = Field(alias="isisBorderLevel12", description="Apply IS-IS level 1-2 to border devices.", default=None)
+    isis_keys: list[KeychainKeyEntryModel] | None = Field(alias="isisKeys", description="IS-IS keychain entries.", default=None)
+    ntp_auth_algorithm: Literal["aes128cmac", "md5"] | None = Field(alias="ntpAuthAlgorithm", description="NTP authentication algorithm.", default=None)
+    ntp_auth_enable: bool | None = Field(alias="ntpAuthEnable", description="Enable NTP authentication.", default=None)
+    ntp_auth_key: SecretStr | None = Field(alias="ntpAuthKey", description="NTP authentication key.", min_length=1, max_length=128, pattern=r"^\S+$", default=None, json_schema_extra={"secret": True})
+    ntp_auth_key_id: int | None = Field(alias="ntpAuthKeyId", description="NTP authentication key identifier.", ge=1, le=65535, default=None)
+    ntp_auth_key_type: Literal["6", "7"] | None = Field(alias="ntpAuthKeyType", description="NTP authentication key type.", default=None)
+    ospf_auth_keychain_name: str | None = Field(alias="ospfAuthKeychainName", description="OSPF authentication keychain name.", min_length=1, max_length=63, pattern=r"^\S+$", default=None)
+    ospf_auth_use_keychain: bool | None = Field(alias="ospfAuthUseKeychain", description="Use an OSPF authentication keychain.", default=None)
+    ospf_auto_cost_ref_bw: int | None = Field(alias="ospfAutoCostRefBw", description="OSPF auto-cost reference bandwidth.", ge=1, le=4000, default=None)
+    ospf_keys: list[KeychainKeyEntryModel] | None = Field(alias="ospfKeys", description="OSPF keychain entries.", default=None)
+    ospf_log_adj_changes: bool | None = Field(alias="ospfLogAdjChanges", description="Log OSPF adjacency changes.", default=None)
+    ospf_max_metric_startup_wait: int | None = Field(alias="ospfMaxMetricStartupWait", description="Maximum OSPF metric startup wait in seconds.", ge=1, le=65535, default=None)
+    pim_auth_keychain_name: str | None = Field(alias="pimAuthKeychainName", description="PIM authentication keychain name.", min_length=1, max_length=63, pattern=r"^\S+$", default=None)
+    pim_auth_use_keychain: bool | None = Field(alias="pimAuthUseKeychain", description="Use a PIM authentication keychain.", default=None)
+    pim_keys: list[KeychainKeyEntryModel] | None = Field(alias="pimKeys", description="PIM keychain entries.", default=None)
+    system_qos_classification: bool | None = Field(alias="systemQosClassification", description="Enable system QoS classification.", default=None)
 
     @field_validator("overlay_mode", mode="before")
     @classmethod
@@ -1214,6 +1222,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
         "macsec_fallback_key_string",
         "vrf_lite_macsec_key_string",
         "vrf_lite_macsec_fallback_key_string",
+        "ntp_auth_key",
     )
     def _serialize_secret_keys(self, value: SecretStr | None, info: FieldSerializationInfo) -> str | None:
         """Real value only for the API payload; masked in config/diff/gathered/error output."""
