@@ -49,6 +49,7 @@ if TYPE_CHECKING:
         PydanticExperimentalWarning,
         SecretStr,
         SerializationInfo,
+        StringConstraints,
         StrictBool,
         ValidationError,
         ValidationInfo,
@@ -76,6 +77,7 @@ else:
             PydanticExperimentalWarning,
             SecretStr,
             SerializationInfo,
+            StringConstraints,
             StrictBool,
             ValidationError,
             ValidationInfo,
@@ -114,6 +116,12 @@ else:
                         continue
                     result[key] = value
                 return result
+
+        class StringConstraints:
+            """Fallback metadata for field-specific string constraints."""
+
+            def __init__(self, **kwargs):  # pylint: disable=unused-argument
+                pass
 
         # Fallback: ConfigDict that does nothing
         def ConfigDict(**kwargs) -> dict:  # pylint: disable=unused-argument,invalid-name

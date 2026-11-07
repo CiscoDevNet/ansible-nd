@@ -401,6 +401,10 @@ playbooks/
 
 # Local documentation and OpenAPI specs
 docs/
+!docs/
+docs/*
+!docs/fabric_module_config_params.md
+!docs/fabric_parameter_release_availability.md
 
 # Local AI agent configuration. Keep the release-audit skill as the one
 # version-controlled canonical skill; all other local agent state stays ignored.

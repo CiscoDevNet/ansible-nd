@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import re
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -18,6 +18,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     ValidationInfo,
     field_serializer,
     field_validator,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
     AimlQosPolicyEnum,
@@ -52,6 +53,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     NetflowSettingsModel,
     ScheduledBackupTime,
     default_site_id_from_bgp_asn,
+    normalize_anycast_gateway_mac,
     validate_bgp_asn_value,
     validate_site_id_value,
 )
@@ -157,6 +159,21 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     empty_string_means_unset: ClassVar[bool] = True
 
+    @model_validator(mode="before")
+    @classmethod
+    def omit_bgp_asn_auto_allocation_for_same_tier_as(cls, data: Any) -> Any:
+        """ND omits this Multi-AS-only setting from Same-Tier-AS reads and writes."""
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        mode = normalized.get("bgpAsMode", normalized.get("bgp_as_mode", BgpAsModeEnum.MULTI_AS))
+        if mode in (BgpAsModeEnum.SAME_TIER_AS, BgpAsModeEnum.SAME_TIER_AS.value):
+            if "bgpAsnAutoAllocation" in normalized:
+                normalized["bgpAsnAutoAllocation"] = None
+            else:
+                normalized["bgp_asn_auto_allocation"] = None
+        return normalized
+
     # Fabric Type (required for discriminated union)
     type: Literal[FabricTypeEnum.VXLAN_EBGP] = Field(description="Type of the fabric", default=FabricTypeEnum.VXLAN_EBGP)
 
@@ -175,16 +192,16 @@ class VxlanEbgpManagementModel(NDNestedModel):
         ),
         default=BgpAsModeEnum.MULTI_AS,
     )
-    bgp_asn_auto_allocation: bool = Field(
+    bgp_asn_auto_allocation: bool | None = Field(
         alias="bgpAsnAutoAllocation",
-        description=("Automatically allocate and track BGP ASN for leafs, borders and border gateways in Multi-AS mode"),
+        description=("Automatically allocate and track BGP ASN for leafs, borders and border gateways. Applies only in Multi-AS mode."),
         default=True,
     )
     bgp_asn_range: str | None = Field(
         alias="bgpAsnRange", description=("BGP ASN range for auto-allocation (minimum: 1 or 1.0, maximum: 4294967295 or 65535.65535)"), default=None
     )
-    bgp_allow_as_in_num: int = Field(alias="bgpAllowAsInNum", description="Number of occurrences of ASN allowed in the BGP AS-path", default=1)
-    bgp_max_path: int = Field(alias="bgpMaxPath", description="BGP Maximum Paths", default=4)
+    bgp_allow_as_in_num: int = Field(alias="bgpAllowAsInNum", description="Number of occurrences of ASN allowed in the BGP AS-path", ge=1, le=10, default=1)
+    bgp_max_path: int = Field(alias="bgpMaxPath", description="BGP Maximum Paths", ge=1, le=64, default=4)
     bgp_underlay_failure_protect: bool = Field(alias="bgpUnderlayFailureProtect", description="Enable BGP underlay failure protection", default=False)
     auto_configure_ebgp_evpn_peering: bool = Field(
         alias="autoConfigureEbgpEvpnPeering", description=("Automatically configure eBGP EVPN overlay peering between leaf and spine switches"), default=True
@@ -198,7 +215,13 @@ class VxlanEbgpManagementModel(NDNestedModel):
         default=True,
     )
     evpn: Literal[True] = Field(description="Enable BGP EVPN as the control plane and VXLAN as the data plane for this fabric", default=True, frozen=True)
-    route_map_tag: int = Field(alias="routeMapTag", description="Tag for Route Map FABRIC-RMAP-REDIST-SUBNET. (Min:0, Max:4294967295)", default=12345)
+    route_map_tag: int = Field(
+        alias="routeMapTag",
+        description="Tag for Route Map FABRIC-RMAP-REDIST-SUBNET. (Min:0, Max:4294967295)",
+        ge=0,
+        le=4294967295,
+        default=12345,
+    )
     disable_route_map_tag: bool = Field(alias="disableRouteMapTag", description="No match tag for Route Map FABRIC-RMAP-REDIST-SUBNET", default=False)
     leaf_bgp_as: str | None = Field(alias="leafBgpAs", description="BGP Autonomous System Number for Leafs 1-4294967295 | 1-65535[.0-65535]", default=None)
     border_bgp_as: str | None = Field(
@@ -447,7 +470,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
     bfd: bool = Field(description="Enable BFD.  Valid for IPv4 Underlay only", default=False)
     bfd_ibgp: bool = Field(alias="bfdIbgp", description="Enable BFD For iBGP", default=False)
     bfd_authentication: bool = Field(alias="bfdAuthentication", description="Enable BFD Authentication.  Valid for P2P Interfaces only", default=False)
-    bfd_authentication_key_id: int = Field(alias="bfdAuthenticationKeyId", description="BFD Authentication Key ID", default=100)
+    bfd_authentication_key_id: int = Field(alias="bfdAuthenticationKeyId", description="BFD Authentication Key ID", ge=1, le=255, default=100)
     bfd_authentication_key: SecretStr | None = Field(
         alias="bfdAuthenticationKey", description="Encrypted SHA1 secret value", default=None, json_schema_extra={"secret": True}
     )
@@ -478,7 +501,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
     management_gateway: FabricDhcpGatewayAddress = Field(
         alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default=None
     )
-    management_ipv4_prefix: int = Field(alias="managementIpv4Prefix", description="Switch Mgmt IP Subnet Prefix if ipv4", default=24)
+    management_ipv4_prefix: int = Field(alias="managementIpv4Prefix", description="Switch Mgmt IP Subnet Prefix if ipv4", ge=8, le=30, default=24)
     management_ipv6_prefix: int = Field(alias="managementIpv6Prefix", description="Switch Management IP Subnet Prefix if ipv6", default=64)
 
     # Netflow Settings
@@ -623,7 +646,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
         default=GreenfieldDebugFlagEnum.DISABLE,
     )
     interface_statistics_load_interval: int = Field(
-        alias="interfaceStatisticsLoadInterval", description="Interface Statistics Load Interval. Time in seconds", default=10
+        alias="interfaceStatisticsLoadInterval", description="Interface Statistics Load Interval. Time in seconds", ge=5, le=300, default=10
     )
     nve_hold_down_timer: int = Field(alias="nveHoldDownTimer", description="NVE Source Inteface HoldDown Time in seconds", default=180)
     next_generation_oam: bool = Field(
@@ -718,7 +741,13 @@ class VxlanEbgpManagementModel(NDNestedModel):
     wred_max: int = Field(alias="wredMax", description="WRED maximum threshold (in kbytes)", default=3000)
     wred_drop_probability: int = Field(alias="wredDropProbability", description="Drop probability %", default=7)
     wred_weight: int = Field(alias="wredWeight", description="Influences how quickly WRED reacts to queue depth changes", default=0)
-    bandwidth_remaining: int = Field(alias="bandwidthRemaining", description="Percentage of remaining bandwidth allocated to AI traffic queues", default=50)
+    bandwidth_remaining: int = Field(
+        alias="bandwidthRemaining",
+        description="Percentage of remaining bandwidth allocated to AI traffic queues",
+        ge=0,
+        le=100,
+        default=50,
+    )
     dlb: bool = Field(
         description=("Enables fabric-level Dynamic Load Balancing (DLB) configuration. Note: Inter-Switch-Links (ISL) will be configured as DLB Interfaces"),
         default=False,
@@ -771,8 +800,8 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     # PTP
     ptp: bool = Field(description="Enable Precision Time Protocol (PTP)", default=False)
-    ptp_loopback_id: int = Field(alias="ptpLoopbackId", description="Precision Time Protocol Source Loopback Id", default=0)
-    ptp_domain_id: int = Field(alias="ptpDomainId", description="Multiple Independent PTP Clocking Subdomains on a Single Network", default=0)
+    ptp_loopback_id: int = Field(alias="ptpLoopbackId", description="Precision Time Protocol Source Loopback Id", ge=0, le=1023, default=0)
+    ptp_domain_id: int = Field(alias="ptpDomainId", description="Multiple Independent PTP Clocking Subdomains on a Single Network", ge=0, le=127, default=0)
 
     # Private VLAN
     private_vlan: bool = Field(alias="privateVlan", description="Enable PVLAN on switches except spines and super spines", default=False)
@@ -888,10 +917,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
         - `ValueError` - If MAC address format is invalid
         """
-        mac_pattern = re.compile(r"^([0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}$")
-        if not mac_pattern.match(value):
-            raise ValueError(f"Invalid MAC address format, expected xxxx.xxxx.xxxx, got: {value}")
-        return value.lower()
+        return normalize_anycast_gateway_mac(value)
 
     @field_serializer(
         "bgp_authentication_key",

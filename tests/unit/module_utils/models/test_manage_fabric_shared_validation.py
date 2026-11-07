@@ -48,6 +48,14 @@ VXLAN_FAMILIES = (
     FabricCampusIbgpVxlanModel,
 )
 
+ANYCAST_MAC_FAMILIES = (
+    (FabricIbgpModel, "vxlanIbgp"),
+    (FabricEbgpModel, "vxlanEbgp"),
+    (FabricAiIbgpVxlanModel, "aimlVxlanIbgp"),
+    (FabricAiEbgpVxlanModel, "aimlVxlanEbgp"),
+    (FabricCampusIbgpVxlanModel, "vxlanCampus"),
+)
+
 IBGP_FAMILIES = (FabricIbgpModel, FabricAiIbgpVxlanModel, FabricCampusIbgpVxlanModel)
 UNNUMBERED_IBGP_FAMILIES = (FabricIbgpModel, FabricAiIbgpVxlanModel)
 
@@ -71,6 +79,33 @@ UNNUMBERED_DHCP_IPV4_FIELDS = (
 
 def _config(**management) -> dict:
     return {"fabric_name": "fabric1", "management": {"bgp_asn": "65001", **management}}
+
+
+@pytest.mark.parametrize("model_class,fabric_type", ANYCAST_MAC_FAMILIES)
+@pytest.mark.parametrize("mac", ("2020.0000.00aa", "20:20:00:00:00:aa", "20-20-00-00-00-aa", "2020000000aa"))
+def test_anycast_mac_normalizes_across_vxlan_families(model_class, fabric_type: str, mac: str) -> None:
+    """Every VXLAN fabric family emits equivalent anycast MAC inputs identically."""
+    model = model_class.from_config(_config(anycast_gateway_mac=mac))
+    response = model_class.from_response(
+        {
+            "name": "fabric1",
+            "category": "fabric",
+            "management": {"type": fabric_type, "bgpAsn": "65001", "anycastGatewayMac": mac},
+        }
+    )
+
+    assert model.management.anycast_gateway_mac == "2020.0000.00aa"
+    assert model.to_payload()["management"]["anycastGatewayMac"] == "2020.0000.00aa"
+    assert response.management.anycast_gateway_mac == "2020.0000.00aa"
+    assert model.get_diff(response) is True
+
+
+@pytest.mark.parametrize("model_class,_fabric_type", ANYCAST_MAC_FAMILIES)
+@pytest.mark.parametrize("invalid", ("20:20:00:00:00:zz", "2020.0000.00a", "2020.0000.00aa.0000", "20:20-00:00:00:aa"))
+def test_anycast_mac_rejects_invalid_formats(model_class, _fabric_type: str, invalid: str) -> None:
+    """MAC normalization rejects malformed, mixed-separator, and incomplete values."""
+    with pytest.raises(ValidationError, match="MAC address"):
+        model_class.from_config(_config(anycast_gateway_mac=invalid))
 
 
 @pytest.mark.parametrize("model_class", FABRIC_FAMILIES)

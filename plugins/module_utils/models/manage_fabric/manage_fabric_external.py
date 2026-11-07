@@ -201,7 +201,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
 
     # Interface Statistics
     interface_statistics_load_interval: int = Field(
-        alias="interfaceStatisticsLoadInterval", description="Interface Statistics Load Interval Time in seconds", default=10
+        alias="interfaceStatisticsLoadInterval", description="Interface Statistics Load Interval Time in seconds", ge=5, le=300, default=10
     )
 
     # Local DHCP Server
@@ -211,7 +211,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     management_gateway: FabricDhcpGatewayAddress = Field(
         alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default=None
     )
-    management_ipv4_prefix: int = Field(alias="managementIpv4Prefix", description="Switch Mgmt IP Subnet Prefix if ipv4", default=24)
+    management_ipv4_prefix: int = Field(alias="managementIpv4Prefix", description="Switch Mgmt IP Subnet Prefix if ipv4", ge=8, le=30, default=24)
     management_ipv6_prefix: int = Field(alias="managementIpv6Prefix", description="Switch Management IP Subnet Prefix if ipv6", default=64)
 
     # Monitored Mode
@@ -247,8 +247,8 @@ class ExternalConnectivityManagementModel(NDNestedModel):
 
     # PTP
     ptp: bool = Field(description="Enable Precision Time Protocol (PTP)", default=False)
-    ptp_domain_id: int = Field(alias="ptpDomainId", description="Multiple Independent PTP Clocking Subdomains on a Single Network", default=0)
-    ptp_loopback_id: int = Field(alias="ptpLoopbackId", description="Precision Time Protocol Source Loopback Id", default=0)
+    ptp_domain_id: int = Field(alias="ptpDomainId", description="Multiple Independent PTP Clocking Subdomains on a Single Network", ge=0, le=127, default=0)
+    ptp_loopback_id: int = Field(alias="ptpLoopbackId", description="Precision Time Protocol Source Loopback Id", ge=0, le=1023, default=0)
 
     # Backup / Restore
     real_time_backup: bool | None = Field(

@@ -32,7 +32,7 @@ from __future__ import annotations
 import ipaddress
 import re
 from copy import deepcopy
-from typing import Annotated, Any, ClassVar, Optional
+from typing import Annotated, Any, ClassVar, Literal, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
@@ -46,8 +46,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BeforeValidator,
     ConfigDict,
+    FieldSerializationInfo,
     Field,
+    SecretStr,
     ValidationInfo,
+    field_serializer,
     model_validator,
 )
 
@@ -66,6 +69,8 @@ SITE_ID_MAX_ND_4_2 = 4294967295
 SITE_ID_MAX_ND_4_3_1 = 281474976710655
 
 SCHEDULED_BACKUP_TIME_RE = r"^([01]\d|2[0-3]):([0-5]\d)$"
+KEYCHAIN_LIFETIME_TIME_RE = r"^([01][0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9])$"
+KEYCHAIN_LIFETIME_DATE_RE = r"^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(0[1-9]|[12][0-9]|3[01])\s+(199[3-9]|20[0-2][0-9]|203[0-5])$"
 FABRIC_INTERFACE_RE = (
     r"^(([Ee]([Tt][Hh][Ee][Rr][Nn][Ee][Tt])?|[Ee][Tt][Hh])\d+/\d+(-\d+)?|" + r"([Pp][Oo]|[Pp][Oo][Rr][Tt][-]?[Cc][Hh][Aa][Nn][Nn][Ee][Ll])\d+(-\d+)?)$"
 )
@@ -83,6 +88,20 @@ def validate_fabric_ip_address(value: str | None) -> str | None:
     except ValueError as err:
         raise ValueError(f"{value!r} is not a valid IPv4 or IPv6 address") from err
     return value
+
+
+def normalize_anycast_gateway_mac(value: str) -> str:
+    """Validate a complete 48-bit MAC address and return lowercase dotted notation."""
+    patterns = (
+        r"(?:[0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}",
+        r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}",
+        r"(?:[0-9a-fA-F]{2}-){5}[0-9a-fA-F]{2}",
+        r"[0-9a-fA-F]{12}",
+    )
+    if not any(re.fullmatch(pattern, value) for pattern in patterns):
+        raise ValueError(f"Invalid MAC address format, expected a 48-bit MAC address, got: {value}")
+    digits = re.sub(r"[.:-]", "", value).lower()
+    return f"{digits[:4]}.{digits[4:8]}.{digits[8:]}"
 
 
 def validate_fabric_ipv4_address(value: str | None) -> str | None:
@@ -189,6 +208,42 @@ def default_site_id_from_bgp_asn(management: Any) -> None:
     management.site_id = bgp_asn_to_site_id(management.bgp_asn)
     if not site_id_was_supplied:
         management.model_fields_set.discard("site_id")
+
+
+class KeychainKeyEntryModel(NDNestedModel):
+    """Shared IS-IS, OSPF, and PIM keychain entry."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
+
+    key_id: int = Field(alias="keyId", description="Key identifier (0 to 65535).", ge=0, le=65535)
+    key_type: Literal["6", "7"] = Field(alias="keyType", description="Key type: 6 or 7.")
+    key_string: SecretStr = Field(
+        alias="keyString", description="Key material.", min_length=1, max_length=255, pattern=r"^\S+$", json_schema_extra={"secret": True}
+    )
+    crypto_algorithm: Literal["3des", "aes", "hmac-sha-1", "hmac-sha-256", "hmac-sha-384", "hmac-sha-512", "md5"] | None = Field(
+        alias="cryptoAlgorithm", description="Cryptographic algorithm.", default=None
+    )
+    accept_lifetime_start: str | None = Field(alias="acceptLifetimeStart", description="Accept lifetime start time.", pattern=KEYCHAIN_LIFETIME_TIME_RE, default=None)
+    accept_lifetime_start_date: str | None = Field(alias="acceptLifetimeStartDate", description="Accept lifetime start date.", pattern=KEYCHAIN_LIFETIME_DATE_RE, default=None)
+    accept_lifetime_end_mode: Literal["duration", "infinite", "endTime"] | None = Field(alias="acceptLifetimeEndMode", description="Accept lifetime end mode.", default=None)
+    accept_lifetime_duration: int | None = Field(alias="acceptLifetimeDuration", description="Accept lifetime duration in seconds.", ge=1, le=2147483646, default=None)
+    accept_lifetime_end: str | None = Field(alias="acceptLifetimeEnd", description="Accept lifetime end time.", pattern=KEYCHAIN_LIFETIME_TIME_RE, default=None)
+    accept_lifetime_end_date: str | None = Field(alias="acceptLifetimeEndDate", description="Accept lifetime end date.", pattern=KEYCHAIN_LIFETIME_DATE_RE, default=None)
+    accept_lifetime_local: bool | None = Field(alias="acceptLifetimeLocal", description="Interpret the accept lifetime in local time.", default=None)
+    send_lifetime_start: str | None = Field(alias="sendLifetimeStart", description="Send lifetime start time.", pattern=KEYCHAIN_LIFETIME_TIME_RE, default=None)
+    send_lifetime_start_date: str | None = Field(alias="sendLifetimeStartDate", description="Send lifetime start date.", pattern=KEYCHAIN_LIFETIME_DATE_RE, default=None)
+    send_lifetime_end_mode: Literal["duration", "infinite", "endTime"] | None = Field(alias="sendLifetimeEndMode", description="Send lifetime end mode.", default=None)
+    send_lifetime_duration: int | None = Field(alias="sendLifetimeDuration", description="Send lifetime duration in seconds.", ge=1, le=2147483646, default=None)
+    send_lifetime_end: str | None = Field(alias="sendLifetimeEnd", description="Send lifetime end time.", pattern=KEYCHAIN_LIFETIME_TIME_RE, default=None)
+    send_lifetime_end_date: str | None = Field(alias="sendLifetimeEndDate", description="Send lifetime end date.", pattern=KEYCHAIN_LIFETIME_DATE_RE, default=None)
+    send_lifetime_local: bool | None = Field(alias="sendLifetimeLocal", description="Interpret the send lifetime in local time.", default=None)
+
+    @field_serializer("key_string")
+    def serialize_key_string(self, value: SecretStr, info: FieldSerializationInfo) -> str:
+        """Reveal key material only in an API payload."""
+        if (info.context or {}).get("mode") == "payload":
+            return value.get_secret_value()
+        return "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
 
 
 class BootstrapSubnetModel(NDNestedModel):
