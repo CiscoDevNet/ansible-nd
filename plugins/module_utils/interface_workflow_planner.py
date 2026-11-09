@@ -619,6 +619,24 @@ class InterfaceWorkflowPlanner:
         proposed: NDConfigCollection,
     ) -> NDConfigCollection:
         """Select pair-scoped vPC state without name-global query deduplication."""
+        if adapter.resource_type == "ethernet_dot1q_tunnel_host":
+            # Identifier-only deletes have no network OS in their input. Check
+            # the cached switch and interface records before treating one as
+            # an already-reset port or building another platform's reset.
+            inventory = self._inventory()
+            for desired in proposed:
+                switch_ip = getattr(desired, "switch_ip")
+                switch_id = self.fabric_context.get_switch_id(switch_ip)
+                name = getattr(desired, "interface_name")
+                raw = inventory.get((switch_id, name.casefold())) or {}
+                platform = self.fabric_context.get_platform_type(switch_ip)
+                platform_type = getattr(platform, "value", None)
+                current_network_os = self._wire_network_os_type(raw)
+                if any(value not in (None, "nx-os") for value in (platform_type, current_network_os)):
+                    raise InterfaceWorkflowValidationError(
+                        f"Type '{adapter.resource_type}' supports NX-OS only; {switch_ip}/{name} reports "
+                        f"switch platformType {platform_type!r} and interface networkOSType {current_network_os!r}."
+                    )
         if adapter.ownership_domain == "ethernet" and orchestrator.rest_send.params.get("state") == "deleted":
             # A filtered default must not manufacture a successful reset after
             # model parsing silently omits an unmodeled controller field.

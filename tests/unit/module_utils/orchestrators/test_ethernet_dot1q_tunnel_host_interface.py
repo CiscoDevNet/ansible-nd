@@ -153,3 +153,17 @@ def test_dot1q_deploy_pending_uses_only_queued_exact_target(monkeypatch) -> None
     assert orchestrator.deploy_pending() == {"ok": True}
     assert requests == [[("Ethernet1/40", "SERIAL11")]]
     assert orchestrator._pending_deploys == []
+
+
+@pytest.mark.parametrize("description", ["new description", ""])
+def test_description_updates_decline_unqualified_bulk_without_state_reads(monkeypatch, description) -> None:
+    orchestrator = _orchestrator()
+    model = EthernetDot1qTunnelHostInterfaceModel.from_config(
+        {"switch_ip": "192.0.2.11", "interface_name": "Ethernet1/40", "config_data": {"network_os": {"policy": {"description": description}}}}
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "_resolve_switch_id",
+        lambda *_args: pytest.fail("Declining unqualified dot1q bulk modify must not add discovery reads"),
+    )
+    assert orchestrator.prepare_bulk_description_update(model, model) is None

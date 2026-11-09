@@ -39,6 +39,18 @@ class EthernetDot1qTunnelHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         """Select host policies, never dot1q port-channel or vPC members."""
         return {"dot1qTunnelHost"}
 
+    def prepare_bulk_description_update(self, model_instance: NDBaseModel, previous_model: NDBaseModel | None = None) -> dict | None:
+        """Keep description writes on the dot1q-specific request path.
+
+        Bulk modify has not been qualified for this policy. A singular PUT
+        retains its empty-description retry and avoids replaying read-only
+        fields from controller inventory.
+        """
+        profile = getattr(self.rest_send, "performance_profile", None)
+        if profile is not None:
+            profile.record_bulk_update_decision("dot1q_description_bulk_unqualified")
+        return None
+
     def _prepare_member_intent(self, model_instance: NDBaseModel, existing_data: dict | None) -> bool:
         """Refuse every member policy with a dot1q-host-specific explanation."""
         policy_type = self._existing_policy_type(existing_data)

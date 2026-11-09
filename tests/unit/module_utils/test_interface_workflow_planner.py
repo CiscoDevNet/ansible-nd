@@ -184,7 +184,11 @@ def _wire_interface(
         "interfaceName": name,
         "interfaceType": interface_type,
         "configData": {
-            "mode": mode if mode is not None else ("trunk" if policy_type in {"trunkHost", "iosXeTrunkHost"} else "access"),
+            "mode": (
+                mode
+                if mode is not None
+                else ("dot1qTunnel" if policy_type == "dot1qTunnelHost" else "trunk" if policy_type in {"trunkHost", "iosXeTrunkHost"} else "access")
+            ),
             "networkOS": {
                 "networkOSType": network_os_type,
                 "policy": {"policyType": policy_type, **policy},
@@ -219,10 +223,11 @@ def _summary_row(
     return row
 
 
-def test_registry_is_the_exact_twelve_family_scope_and_delegates_model_ownership() -> None:
+def test_registry_is_the_exact_thirteen_family_scope_and_delegates_model_ownership() -> None:
     """The authoritative registry excludes flow-rules and derives every model from its orchestrator."""
     assert set(INTERFACE_FAMILY_ADAPTERS) == {
         "ethernet_access",
+        "ethernet_dot1q_tunnel_host",
         "ethernet_routed",
         "ethernet_trunk_host",
         "loopback",
@@ -239,6 +244,7 @@ def test_registry_is_the_exact_twelve_family_scope_and_delegates_model_ownership
     assert all(adapter.model_class is adapter.orchestrator_class.model_class for adapter in INTERFACE_FAMILY_ADAPTERS.values())
     assert all(adapter.supported_states == frozenset({"merged", "replaced", "overridden", "deleted"}) for adapter in INTERFACE_FAMILY_ADAPTERS.values())
     assert INTERFACE_FAMILY_ADAPTERS["ethernet_access"].policy_types == frozenset({"accessHost", "iosXeAccess"})
+    assert INTERFACE_FAMILY_ADAPTERS["ethernet_dot1q_tunnel_host"].policy_types == frozenset({"dot1qTunnelHost"})
     assert INTERFACE_FAMILY_ADAPTERS["ethernet_trunk_host"].policy_types == frozenset({"trunkHost", "iosXeTrunkHost"})
     assert INTERFACE_FAMILY_ADAPTERS["port_channel_access"].policy_types == frozenset({"accessPoHost", "iosXeAccessPoHost"})
     assert INTERFACE_FAMILY_ADAPTERS["port_channel_trunk_host"].policy_types == frozenset({"trunkPoHost", "iosXeTrunkPoHost"})
@@ -259,6 +265,7 @@ def test_adapter_policy_sets_match_standalone_orchestrator_contracts() -> None:
 
     assert checked == {
         "ethernet_access",
+        "ethernet_dot1q_tunnel_host",
         "ethernet_routed",
         "ethernet_trunk_host",
         "port_channel_access",
@@ -296,6 +303,7 @@ def test_registry_declares_generic_transition_delete_and_structural_safety_metad
     """Every adapter advertises its mutation strategy and structural dependency guards."""
     expected = {
         "ethernet_access": (InterfaceDeleteStrategy.NORMALIZE, False, False, True),
+        "ethernet_dot1q_tunnel_host": (InterfaceDeleteStrategy.NORMALIZE, False, False, True),
         "ethernet_routed": (InterfaceDeleteStrategy.NORMALIZE, False, False, True),
         "ethernet_trunk_host": (InterfaceDeleteStrategy.NORMALIZE, False, False, True),
         "loopback": (InterfaceDeleteStrategy.REMOVE, False, False, False),
@@ -2232,6 +2240,7 @@ def test_same_family_ethernet_member_update_preserves_standalone_whitelist() -> 
     ("resource_type", "parent", "interface_type", "policy_type"),
     [
         ("ethernet_access", "Ethernet1/1", "ethernet", "accessHost"),
+        ("ethernet_dot1q_tunnel_host", "Ethernet1/1", "ethernet", "dot1qTunnelHost"),
         ("port_channel_access", "port-channel10", "portChannel", "accessPoHost"),
     ],
 )
@@ -2256,6 +2265,7 @@ def test_overridden_parent_delete_rejects_existing_child_subinterface(
     ("resource_type", "config", "parent", "interface_type"),
     [
         ("ethernet_access", _ethernet("192.0.2.1"), "Ethernet1/1", "ethernet"),
+        ("ethernet_dot1q_tunnel_host", _ethernet("192.0.2.1"), "Ethernet1/1", "ethernet"),
         ("port_channel_access", _port_channel("192.0.2.1"), "port-channel10", "portChannel"),
     ],
 )
@@ -2308,6 +2318,13 @@ def test_parent_transition_conflicts_with_planned_child_create() -> None:
             "Ethernet1/1",
             "ethernet",
             "accessHost",
+            _ethernet("192.0.2.1"),
+        ),
+        (
+            "ethernet_dot1q_tunnel_host",
+            "Ethernet1/1",
+            "ethernet",
+            "dot1qTunnelHost",
             _ethernet("192.0.2.1"),
         ),
         (
@@ -3580,3 +3597,190 @@ def test_overridden_still_rejects_an_unknown_configured_switch_before_inventory(
         planner.plan([{"type": "loopback", "state": "overridden", "config": [_loopback("192.0.2.99")]}])
 
     assert recorder.calls == []
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "deleted"])
+def test_dot1q_empty_interface_group_fails_before_inventory(state: str) -> None:
+    """An accidental empty group cannot turn into a fabric-wide override."""
+    planner, recorder = _planner()
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="must name at least one interface"):
+        planner.plan(
+            [
+                {
+                    "type": "ethernet_dot1q_tunnel_host",
+                    "state": state,
+                    "config": [{"switch_ip": "192.0.2.1", "interface_names": []}],
+                }
+            ]
+        )
+
+    assert recorder.calls == []
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced"])
+@pytest.mark.parametrize("source_policy,mode", [("accessHost", "access"), ("trunkHost", "trunk"), ("routedHost", "routed")])
+def test_dot1q_transition_accepts_existing_nx_host_policies(state: str, source_policy: str, mode: str) -> None:
+    """Dot1q uses the same guarded destination-family transition as other hosts."""
+    current = _wire_interface("Ethernet1/1", "ethernet", source_policy, mode=mode, description="configured host")
+    planner, recorder = _planner(
+        responses=[{"interfaces": [current]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
+    )
+
+    plan = planner.plan([{"type": "ethernet_dot1q_tunnel_host", "state": state, "config": [_ethernet("192.0.2.1")]}])
+
+    transition = plan.resources[0].transitions[0]
+    assert transition.from_policy_type == source_policy
+    assert transition.to_policy_type == "dot1qTunnelHost"
+    assert plan.mutation_count == 1
+    assert plan.request_stats["interface_inventory_gets"] == 1
+    assert plan.request_stats["interface_summary_gets"] == 1
+    assert all(call["verb"] == HttpVerbEnum.GET for call in recorder.calls)
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced"])
+@pytest.mark.parametrize(
+    "resource_type,policy_type",
+    [
+        ("ethernet_access", "accessHost"),
+        ("ethernet_trunk_host", "trunkHost"),
+        ("ethernet_routed", "routedHost"),
+    ],
+)
+def test_existing_ethernet_families_transition_out_of_dot1q(state: str, resource_type: str, policy_type: str) -> None:
+    """Registering dot1q does not remove existing host transition paths."""
+    current = _wire_interface("Ethernet1/1", "ethernet", "dot1qTunnelHost", mode="dot1qTunnel", accessVlan=150)
+    planner, recorder = _planner(
+        responses=[{"interfaces": [current]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
+    )
+    if resource_type == "ethernet_routed":
+        config = {
+            "switch_ip": "192.0.2.1",
+            "interface_name": "Ethernet1/1",
+            "config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"ip": "198.51.100.1", "prefix": 30}}},
+        }
+    else:
+        config = _ethernet("192.0.2.1", trunk=resource_type == "ethernet_trunk_host")
+
+    plan = planner.plan([{"type": resource_type, "state": state, "config": [config]}])
+
+    transition = plan.resources[0].transitions[0]
+    assert transition.from_policy_type == "dot1qTunnelHost"
+    assert transition.to_policy_type == policy_type
+    assert plan.mutation_count == 1
+    assert all(call["verb"] == HttpVerbEnum.GET for call in recorder.calls)
+
+
+@pytest.mark.parametrize(
+    "policy_type,network_os_type",
+    [
+        ("iosXeTrunkHost", "ios-xe"),
+        ("iosXeRoutedHost", "ios-xe"),
+        ("foreignHost", "ios-xr"),
+        ("foreignHost", "sonic"),
+        ("foreignHost", "apic"),
+        ("foreignHost", "other"),
+    ],
+)
+@pytest.mark.parametrize("state", ["merged", "replaced", "deleted"])
+def test_dot1q_rejects_observed_non_nx_os_interfaces_before_policy_rewrite(policy_type: str, network_os_type: str, state: str) -> None:
+    """Identifier-only deletes must not enter another platform's reset path."""
+    current = _wire_interface("Ethernet1/1", "ethernet", policy_type, network_os_type=network_os_type, adminState=True, speed="auto")
+    planner, recorder = _planner(responses=[{"interfaces": [current]}])
+    config = {"switch_ip": "192.0.2.1", "interface_names": ["Ethernet1/1"]} if state == "deleted" else _ethernet("192.0.2.1")
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="supports NX-OS only"):
+        planner.plan([{"type": "ethernet_dot1q_tunnel_host", "state": state, "config": [config]}])
+
+    assert len(recorder.calls) == 1
+    assert recorder.calls[0]["verb"] == HttpVerbEnum.GET
+
+
+@pytest.mark.parametrize("platform", [PlatformType.IOS_XE, PlatformType.IOS_XR, PlatformType.SONIC, PlatformType.APIC, PlatformType.OTHER])
+@pytest.mark.parametrize("state", ["merged", "replaced", "deleted"])
+def test_dot1q_rejects_non_nx_os_switch_when_interface_is_absent(platform: PlatformType, state: str) -> None:
+    """Cached platform evidence also protects an absent identifier-only target."""
+    planner, recorder = _planner(responses=[{"interfaces": []}])
+    planner.fabric_context._platform_map = {"192.0.2.1": platform, "192.0.2.2": PlatformType.NX_OS}
+    config = {"switch_ip": "192.0.2.1", "interface_names": ["Ethernet1/1"]} if state == "deleted" else _ethernet("192.0.2.1")
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="supports NX-OS only"):
+        planner.plan([{"type": "ethernet_dot1q_tunnel_host", "state": state, "config": [config]}])
+
+    assert len(recorder.calls) == 1
+
+
+@pytest.mark.parametrize("member_policy", ["dot1qTunnelPoMember", "dot1qTunnelVpcMember", "dot1qTunnelVpcPoMember"])
+def test_dot1q_refuses_member_policy_transitions_before_summary(member_policy: str) -> None:
+    """The new family owns Ethernet hosts, not dot1q aggregate members."""
+    current = _wire_interface("Ethernet1/1", "ethernet", member_policy, portChannelId=10)
+    current["operData"] = {"portChannelId": 10}
+    planner, recorder = _planner(responses=[{"interfaces": [current]}])
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="member of port-channel 10"):
+        planner.plan([{"type": "ethernet_dot1q_tunnel_host", "state": "replaced", "config": [_ethernet("192.0.2.1")]}])
+
+    assert len(recorder.calls) == 1
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "deleted"])
+def test_dot1q_refuses_fabric_owned_ethernet_policy(state: str) -> None:
+    """A physical dot1q request cannot overwrite or reset an underlay link."""
+    current = _wire_interface("Ethernet1/1", "ethernet", "numbered", mode="routed", ip="198.51.100.1", prefix=30)
+    planner, recorder = _planner(
+        responses=[{"interfaces": [current]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
+    )
+    config = {"switch_ip": "192.0.2.1", "interface_names": ["Ethernet1/1"]} if state == "deleted" else _ethernet("192.0.2.1")
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="system policy 'numbered'"):
+        planner.plan([{"type": "ethernet_dot1q_tunnel_host", "state": state, "config": [config]}])
+
+    assert all(call["verb"] == HttpVerbEnum.GET for call in recorder.calls)
+
+
+def test_dot1q_override_resets_only_omitted_host_policies(monkeypatch) -> None:
+    """A fabric-wide dot1q override leaves other hosts and member policies alone."""
+    dot1q = _wire_interface("Ethernet1/1", "ethernet", "dot1qTunnelHost", mode="dot1qTunnel", accessVlan=150)
+    unrelated = [
+        _wire_interface("Ethernet1/2", "ethernet", "accessHost", accessVlan=10),
+        _wire_interface("Ethernet1/3", "ethernet", "trunkHost", allowedVlans="10-20"),
+        _wire_interface("Ethernet1/4", "ethernet", "dot1qTunnelPoMember", portChannelId=10),
+        _wire_interface("Ethernet1/5", "ethernet", "dot1qTunnelVpcMember", portChannelId=20),
+        _wire_interface("Ethernet1/6", "ethernet", "dot1qTunnelVpcPoMember", portChannelId=30),
+    ]
+    planner, recorder = _planner(
+        switches={"192.0.2.1": "SERIAL1", "192.0.2.2": "SERIAL2"},
+        responses=[{"interfaces": [dot1q, *unrelated]}, {"interfaces": []}],
+    )
+    monkeypatch.setattr(EthernetBaseOrchestrator, "_fabric_link_endpoints", lambda _self: {})
+
+    plan = planner.plan([{"type": "ethernet_dot1q_tunnel_host", "state": "overridden", "config": []}])
+
+    assert plan.target_switch_ids == ("SERIAL1", "SERIAL2")
+    assert [model.interface_name for model in plan.resources[0].operations.deletes] == ["Ethernet1/1"]
+    assert len(plan.resources[0].before) == 1
+    assert plan.request_stats["interface_inventory_gets"] == 2
+    assert len(recorder.calls) == 2
+
+
+def test_dot1q_absent_delete_keeps_unknown_platform_metadata_tolerance() -> None:
+    """Missing platform metadata alone does not turn a safe no-op into a failure."""
+    planner, recorder = _planner(responses=[{"interfaces": []}])
+    planner.fabric_context._platform_map = {"192.0.2.1": None, "192.0.2.2": None}
+
+    plan = planner.plan(
+        [
+            {
+                "type": "ethernet_dot1q_tunnel_host",
+                "state": "deleted",
+                "config": [{"switch_ip": "192.0.2.1", "interface_names": ["Ethernet1/1"]}],
+            }
+        ]
+    )
+
+    assert plan.changed is False
+    assert plan.mutation_count == 0
+    assert len(recorder.calls) == 1

@@ -327,7 +327,7 @@ import logging
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
-from ansible_collections.cisco.nd.plugins.module_utils.interface_config_normalizer import expand_ethernet_config
+from ansible_collections.cisco.nd.plugins.module_utils.interface_config_normalizer import expand_ethernet_dot1q_tunnel_host_config
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_dot1q_tunnel_host_interface import (
     EthernetDot1qTunnelHostInterfaceModel,
 )
@@ -341,14 +341,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_do
 
 
 def expand_config(config_list: list[dict]) -> list[dict]:
-    """Reject accidental empty groups without changing other Ethernet families."""
-    for index, group in enumerate(config_list):
-        if isinstance(group, dict) and group.get("interface_names") == []:
-            raise ValueError(
-                f"interface_names for dot1q config item {index} must name at least one interface. "
-                "Use top-level config: [] with state: overridden for an intentional fabric-wide reset."
-            )
-    return expand_ethernet_config(config_list)
+    """Use the same named-group validation as the interface workflow."""
+    return expand_ethernet_dot1q_tunnel_host_config(config_list)
 
 
 def main() -> None:

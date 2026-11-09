@@ -3038,3 +3038,72 @@ def test_workflow_bulk_partial_207_preserves_exact_success() -> None:
         "loopback2": "failed",
     }
     assert orchestrator.pending_deploys == (("loopback1", "SERIAL1"),)
+
+
+@pytest.mark.parametrize("description", ["Customer tunnel", ""])
+@pytest.mark.parametrize("deploy", [False, True])
+def test_dot1q_update_keeps_singular_request_without_disabling_other_family_bulk(description, deploy):
+    from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_dot1q_tunnel_host_interface import (
+        EthernetDot1qTunnelHostInterfaceModel,
+    )
+    from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_dot1q_tunnel_host_interface import (
+        EthernetDot1qTunnelHostInterfaceOrchestrator,
+    )
+
+    class Dot1qOrchestrator(FakeOrchestrator):
+        supports_bulk_full_modify = False
+        prepare_bulk_description_update = EthernetDot1qTunnelHostInterfaceOrchestrator.prepare_bulk_description_update
+        prepare_bulk_full_update = EthernetDot1qTunnelHostInterfaceOrchestrator.prepare_bulk_full_update
+
+    class BatchedLoopback(BulkUpdateOrchestrator, FakeOrchestrator):
+        pass
+
+    events = []
+    dot1q = Dot1qOrchestrator("dot1q", events)
+    loopback = BatchedLoopback("loopback", events)
+    desired = EthernetDot1qTunnelHostInterfaceModel(
+        switch_ip="192.0.2.1",
+        interface_name="Ethernet1/40",
+        config_data={"network_os": {"policy": {"access_vlan": 150, "description": description}}},
+    )
+    workflow_plan = plan(
+        resource(0, dot1q, updates=[desired], resource_type="ethernet_dot1q_tunnel_host"),
+        resource(1, loopback, updates=[FakeModel("loopback10"), FakeModel("loopback11")]),
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=deploy).execute(workflow_plan)
+
+    assert result.failed is False
+    assert ("update", "dot1q", "Ethernet1/40") in events
+    assert [event for event in events if event[0] == "bulk_modify"] == [("bulk_modify", "loopback", ("loopback10", "loopback11"))]
+    assert result.mutation_requests == 2
+    assert result.deploy_requests == int(deploy)
+    assert not any(event[0] == "refresh" for event in events)
+    if deploy:
+        assert set(next(event[2] for event in events if event[0] == "deploy")) == {
+            ("Ethernet1/40", "SERIAL1"),
+            ("loopback10", "SERIAL1"),
+            ("loopback11", "SERIAL1"),
+        }
+
+
+def test_dot1q_partial_create_deploys_only_the_accepted_port():
+    events = []
+    orchestrator = FakeOrchestrator("dot1q", events, fail_create=True)
+    workflow_plan = plan(
+        resource(
+            0,
+            orchestrator,
+            creates=[FakeModel("Ethernet1/40"), FakeModel("Ethernet1/41")],
+            resource_type="ethernet_dot1q_tunnel_host",
+        )
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=True).execute(workflow_plan)
+
+    assert result.failed is True
+    assert result.status == "partial_failure"
+    assert {item.interface_name: item.status for item in result.items} == {"Ethernet1/40": "succeeded", "Ethernet1/41": "failed"}
+    assert result.mutation_requests == 1
+    assert result.deploy_requests == 1
+    assert result.deployment["targets"] == [{"interface_name": "Ethernet1/40", "switch_id": "SERIAL1", "status": "succeeded"}]
