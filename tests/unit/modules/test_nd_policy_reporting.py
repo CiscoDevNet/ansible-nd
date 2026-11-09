@@ -189,7 +189,7 @@ def invoke(monkeypatch):
                 }
                 raise
             self.rest_send.response_current = {
-                "RETURN_CODE": 200,
+                "RETURN_CODE": getattr(self.controller, "delete_return_code", 200) if method == "DELETE" else 200,
                 "METHOD": method,
                 "REQUEST_PATH": path,
                 "MESSAGE": "OK",
@@ -833,3 +833,172 @@ def test_policy_id_validation_caches_schema_and_preserves_valid_batch_progress(i
     assert len([call for call in controller.calls if "/parameters" in call[1]]) == 1
     assert controller.policies[SECOND_ID] == original
     assert [call[1].rsplit("/", 1)[-1] for call in controller.writes()] == ([] if check_mode else [POLICY_ID])
+
+
+class MarkDeleteResponseController(Controller):
+    """Keep actual accepted effects independent of an injected acknowledgement."""
+
+    def __init__(self, policies, response, *, accepted_ids=(), failed_direct_ids=()):
+        super().__init__(policies)
+        self.mark_delete_response = response
+        self.accepted_ids = set(accepted_ids)
+        self.failed_direct_ids = set(failed_direct_ids)
+        self.delete_return_code = 204
+
+    def request(self, verb, path, payload=None):
+        resource = urlsplit(path).path
+        if verb == "POST" and resource.endswith("/markDelete"):
+            self.calls.append((verb, path, deepcopy(payload)))
+            for pid in self.accepted_ids.intersection(payload["policyIds"]):
+                self.policies[pid]["markDeleted"] = True
+            return deepcopy(self.mark_delete_response)
+        if verb == "DELETE" and resource.rsplit("/", 1)[-1] in self.failed_direct_ids:
+            self.calls.append((verb, path, deepcopy(payload)))
+            raise NDModuleError(msg="simulated direct deletion rejection", status=400, response_payload={"message": "direct rejection"})
+        return super().request(verb, path, payload)
+
+
+@pytest.mark.parametrize("deploy", [False, True])
+@pytest.mark.parametrize("response", [None, [], {}, {"policies": []}, {"policies": None}, {"policies": {}}, {"policies": [None]}])
+def test_delete_acknowledgement_rejects_unconfirmed_batch_without_followup(invoke, deploy, response):
+    """An unconfirmed request cannot erase snapshots or trigger fallback/deployment."""
+    originals = [policy(), policy(SECOND_ID, description="second feature")]
+    controller = MarkDeleteResponseController(originals, response)
+
+    result = invoke(controller, [config(), config(SECOND_ID)], state="deleted", deploy=deploy, verbosity=3)
+
+    assert result.get("failed") is True
+    assert result["changed"] is False
+    assert "unconfirmed" in result["msg"]
+    assert result["before"] == result["after"] == originals
+    assert controller.policies == {entry["policyId"]: entry for entry in originals}
+    assert [call[1].rsplit("/", 1)[-1] for call in controller.writes()] == ["markDelete"]
+
+
+@pytest.mark.parametrize("deploy", [False, True])
+@pytest.mark.parametrize("replacement", [False, True])
+@pytest.mark.parametrize("bad_case", ["missing", "missing_id", "foreign", "python_and_missing", "conflicting"])
+def test_delete_acknowledgement_preserves_confirmed_progress_and_blocks_replacement(invoke, deploy, replacement, bad_case):
+    """Accepted A remains removed; unconfirmed B/C retain their original values."""
+    third_id = "POLICY-103"
+    originals = [policy(), policy(SECOND_ID, description="second feature"), policy(third_id, description="third feature")]
+    rows = [{"policyId": POLICY_ID, "status": "success"}]
+    rows.extend(
+        {
+            "missing": [],
+            "missing_id": [{"status": "failed", "message": "content type PYTHON"}],
+            "foreign": [{"policyId": "POLICY-FOREIGN", "status": "failed", "message": "content type PYTHON"}],
+            "python_and_missing": [{"policyId": SECOND_ID, "status": "failed", "message": "content type PYTHON"}],
+            "conflicting": [{"policyId": SECOND_ID, "status": "success"}, {"policyId": SECOND_ID, "status": "failed"}],
+        }[bad_case]
+    )
+    controller = MarkDeleteResponseController(originals, {"policies": rows}, accepted_ids=[POLICY_ID])
+    entries = (
+        [config("feature_disable", description=entry["description"]) for entry in originals]
+        if replacement
+        else [config(entry["policyId"]) for entry in originals]
+    )
+
+    result = invoke(controller, entries, state="merged" if replacement else "deleted", deploy=deploy, use_description_as_key=replacement, verbosity=3)
+
+    assert result.get("failed") is True
+    assert result["changed"] is True
+    assert "unconfirmed" in result["msg"]
+    assert result["before"] == originals
+    assert result["after"] == originals[1:]
+    assert controller.policies[POLICY_ID]["markDeleted"] is True
+    assert controller.policies[SECOND_ID] == originals[1]
+    assert controller.policies[third_id] == originals[2]
+    assert [call[1].rsplit("/", 1)[-1] for call in controller.writes()] == ["markDelete"]
+
+
+@pytest.mark.parametrize("deploy", [False, True])
+@pytest.mark.parametrize("acknowledge_requested", [False, True])
+def test_delete_acknowledgement_never_deletes_a_foreign_python_failure(invoke, deploy, acknowledge_requested):
+    """An unexpected response ID must never become a direct-DELETE target."""
+    originals = [policy(), policy(SECOND_ID, description="unrelated policy")]
+    rows = [{"policyId": SECOND_ID, "status": "failed", "message": "content type PYTHON"}]
+    if acknowledge_requested:
+        rows.append({"policyId": POLICY_ID, "status": "success"})
+    controller = MarkDeleteResponseController(originals, {"policies": rows}, accepted_ids=[POLICY_ID] if acknowledge_requested else [])
+
+    result = invoke(controller, [config()], state="deleted", deploy=deploy)
+
+    assert result.get("failed") is True
+    assert result["changed"] is acknowledge_requested
+    assert result["before"] == originals[:1]
+    assert result["after"] == ([] if acknowledge_requested else originals[:1])
+    assert controller.policies[SECOND_ID] == originals[1]
+    assert [call[1].rsplit("/", 1)[-1] for call in controller.writes()] == ["markDelete"]
+
+
+@pytest.mark.parametrize("deploy", [False, True])
+def test_delete_acknowledgement_preserves_explicit_warning_and_consistent_success_echo(invoke, deploy):
+    rows = [
+        {"policyId": POLICY_ID, "status": " WARNING ", "message": "already in markDeleted state"},
+        {"policyId": POLICY_ID, "status": "success"},
+    ]
+    controller = MarkDeleteResponseController([policy()], {"policies": rows}, accepted_ids=[POLICY_ID])
+
+    result = invoke(controller, [config()], state="deleted", deploy=deploy)
+
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    assert result["after"] == []
+    assert len(result["warnings_nd"]) == 1
+    assert "already in markDeleted state" in result["warnings_nd"][0]
+    assert [call[1].rsplit("/", 1)[-1] for call in controller.writes()] == ["markDelete", *(["deploy"] if deploy else [])]
+
+
+@pytest.mark.parametrize("deploy", [False, True])
+def test_delete_acknowledgement_coalesces_valid_python_fallback_and_accepts_empty_204(invoke, deploy):
+    rows = [
+        {"policyId": POLICY_ID, "status": "success"},
+        {"policyId": SECOND_ID, "status": "failed", "message": "content type PYTHON"},
+    ]
+    controller = MarkDeleteResponseController(
+        [policy(), policy(SECOND_ID, description="second feature")], {"policies": [*rows, *rows]}, accepted_ids=[POLICY_ID]
+    )
+
+    result = invoke(controller, [config(), config(SECOND_ID)], state="deleted", deploy=deploy, verbosity=3)
+
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    assert result["after"] == []
+    assert SECOND_ID not in controller.policies
+    assert controller.policies[POLICY_ID]["markDeleted"] is True
+    assert [call[1].rsplit("/", 1)[-1] for call in controller.writes()] == ["markDelete", SECOND_ID, *(["deploy"] if deploy else [])]
+
+
+@pytest.mark.parametrize("deploy", [False, True])
+def test_delete_acknowledgement_keeps_accepted_sibling_when_python_fallback_fails(invoke, deploy):
+    originals = [policy(), policy(SECOND_ID, description="second feature")]
+    rows = [
+        {"policyId": POLICY_ID, "status": "success"},
+        {"policyId": SECOND_ID, "status": "failed", "message": "content type PYTHON"},
+    ]
+    controller = MarkDeleteResponseController(originals, {"policies": rows}, accepted_ids=[POLICY_ID], failed_direct_ids=[SECOND_ID])
+
+    result = invoke(controller, [config(), config(SECOND_ID)], state="deleted", deploy=deploy)
+
+    assert result.get("failed") is True
+    assert result["changed"] is True
+    assert result["before"] == originals
+    assert result["after"] == originals[1:]
+    assert controller.policies[SECOND_ID] == originals[1]
+    assert [call[1].rsplit("/", 1)[-1] for call in controller.writes()] == ["markDelete", SECOND_ID, *(["deploy"] if deploy else [])]
+
+
+@pytest.mark.parametrize("deploy", [False, True])
+@pytest.mark.parametrize("replacement", [False, True])
+def test_delete_acknowledgement_validation_leaves_check_mode_read_only(invoke, deploy, replacement):
+    originals = [policy()]
+    controller = MarkDeleteResponseController(originals, {"policies": []})
+    entries = [config("feature_disable", description="feature intent")] if replacement else [config()]
+
+    result = invoke(controller, entries, state="merged" if replacement else "deleted", deploy=deploy, check_mode=True, use_description_as_key=replacement)
+
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    assert controller.writes() == []
+    assert controller.policies == {entry["policyId"]: entry for entry in originals}

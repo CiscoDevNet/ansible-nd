@@ -3413,89 +3413,96 @@ class NDPolicyModule:
         requested_ids: list[str],
         *,
         context_label: str,
-    ) -> tuple[list[str], list[str], list[str]]:
-        """Classify a markDelete 207 response into success / python-fallback / other-fail.
+    ) -> tuple[list[str], list[str], list[str], list[str]]:
+        """Classify complete, identified markDelete outcomes before follow-up writes.
 
-        Centralises the per-entry classification logic that was previously
-        duplicated between ``_execute_merged`` Phase 3 (``delete_and_create``
-        removals) and ``_execute_deleted`` Phase B.
+        Only explicitly acknowledged requested IDs can be accepted. Existing
+        ``warning`` outcomes remain soft successes and are surfaced to the
+        operator. Consistent repeated outcomes are processed once; success and
+        warning both mean accepted. Conflicting, unknown, foreign, malformed or
+        missing outcomes invalidate the batch, without discarding distinct
+        unambiguous successes needed for accepted-progress reporting.
 
-        Behaviour preserved from the duplicated implementations:
-
-        - **Non-dict response** → log warning, treat ALL ``requested_ids``
-          as succeeded (returns ``(list(requested_ids), [], [])``).  This
-          matches ND's known behaviour of occasionally returning a non-dict
-          body on success.
-        - **Empty ``policies`` list in the dict** → log warning, treat ALL
-          ``requested_ids`` as succeeded.  Same rationale.
-        - **status == ``"warning"``** → emit a warning message via
-          ``self.log.warning`` and ``self._warnings``, but DO NOT add the
-          policy to any failure bucket.  Warning entries are soft-successes
-          (the policy is in the desired ND state).
-        - **status == ``"success"``** → succeeded bucket (implicitly: not in
-          ``failed_ids`` set).
-        - **Other non-success status** with message containing
-          ``"content type PYTHON"`` → ``mark_failed_python`` bucket
-          (caller should retry these via direct DELETE).
-        - **Other non-success status** otherwise → ``mark_failed_other``
-          bucket (terminal failure).
-
-        ``mark_succeeded`` is derived as ``[pid for pid in requested_ids
-        if pid not in failed_ids]`` so request order is preserved.
+        A validated ``failed`` outcome containing ``content type PYTHON`` uses
+        the existing direct-DELETE fallback. Other explicit failures remain
+        terminal failures. Classification is linear in requests plus responses
+        and preserves unique request order in all result buckets.
 
         Args:
-            mark_delete_data: Raw response DATA from ``_api_mark_delete``
-                (may be ``None``, a non-dict, an empty dict, or a dict
-                with a ``policies`` list).
-            requested_ids: The exact list of policy IDs that was sent.
-                Used to derive ``mark_succeeded`` and for the
-                ambiguous-response fallback.
-            context_label: Short label included in the warning-message
-                prefix so each caller's warnings are distinguishable
-                (e.g. ``"markDelete"`` vs.
-                ``"markDelete (delete_and_create)"``).
+            mark_delete_data: Raw response DATA containing a ``policies`` list.
+            requested_ids: The exact policy IDs submitted to markDelete.
+            context_label: Label used for surfaced controller warnings.
 
         Returns:
             Tuple of ``(mark_succeeded, mark_failed_python,
-            mark_failed_other)``.
+            mark_failed_other, validation_errors)``. Callers retain confirmed
+            successes, then stop before fallback, deployment or replacement
+            creation when validation errors are present.
         """
-        mark_failed_python: list[str] = []
-        mark_failed_other: list[str] = []
+        requested = dict.fromkeys(requested_ids)
+        outcomes: dict[str, str | None] = {}
+        messages: dict[str, str] = {}
+        warning_messages: dict[str, str] = {}
+        validation_errors: list[str] = []
+        if not isinstance(mark_delete_data, dict) or not isinstance(mark_delete_data.get("policies"), list):
+            validation_errors.append("expected an object containing a policies list")
+            policies_response = []
+        else:
+            policies_response = mark_delete_data["policies"]
 
-        if not isinstance(mark_delete_data, dict):
-            self.log.warning("markDelete returned non-dict response — " "treating all as succeeded")
-            return list(requested_ids), mark_failed_python, mark_failed_other
+        for index, item in enumerate(policies_response):
+            if not isinstance(item, dict):
+                validation_errors.append(f"policies[{index}] must be an object")
+                continue
+            pid = item.get("policyId")
+            if not isinstance(pid, str) or not pid.strip():
+                validation_errors.append(f"policies[{index}] has no usable policyId")
+                continue
+            if pid not in requested:
+                validation_errors.append(f"policies[{index}] contains unrequested policyId {pid!r}")
+                continue
+            raw_status = item.get("status")
+            status = raw_status.strip().lower() if isinstance(raw_status, str) else None
+            if status not in ("success", "warning", "failed"):
+                outcomes[pid] = None
+                validation_errors.append(f"policies[{index}] has unrecognized status {raw_status!r} for {pid!r}")
+                continue
 
-        policies_response = mark_delete_data.get("policies", [])
+            raw_message = item.get("message")
+            message = str(raw_message or "")
+            if status in ("success", "warning"):
+                outcome = "accepted"
+                if status == "warning":
+                    warning_messages.setdefault(pid, message)
+            else:
+                outcome = "failed_python" if isinstance(raw_message, str) and "content type PYTHON" in raw_message else "failed_other"
+            if pid not in outcomes:
+                outcomes[pid] = outcome
+                messages[pid] = message
+            elif outcomes[pid] is not None and outcomes[pid] != outcome:
+                outcomes[pid] = None
+                validation_errors.append(f"conflicting outcomes for policyId {pid!r}")
 
-        if not policies_response and requested_ids:
-            self.log.warning(
-                "markDelete returned empty 'policies' list for " f"{len(requested_ids)} policy IDs — " "treating all as succeeded (ambiguous response)"
-            )
-            return list(requested_ids), mark_failed_python, mark_failed_other
+        missing = [pid for pid in requested if pid not in outcomes]
+        if missing:
+            validation_errors.append(f"missing acknowledgements for policy IDs {missing!r}")
+        unconfirmed = [pid for pid in requested if outcomes.get(pid) is None]
+        if unconfirmed:
+            validation_errors.append(f"unconfirmed policy IDs {unconfirmed!r}")
 
-        failed_ids: set = set()
-        for p in policies_response:
-            pid = p.get("policyId", "")
-            status = str(p.get("status", "")).lower()
-            msg = p.get("message", "")
-            if status == "warning":
-                # Non-fatal: treat as success (pid stays out of
-                # failed_ids set) and surface for operator audit.
-                wmsg = f"{context_label}: ND warning for {pid}: {msg}"
+        mark_succeeded = [pid for pid in requested if outcomes.get(pid) == "accepted"]
+        mark_failed_python = [pid for pid in requested if outcomes.get(pid) == "failed_python"]
+        mark_failed_other = [pid for pid in requested if outcomes.get(pid) == "failed_other"]
+        for pid in mark_succeeded:
+            if pid in warning_messages:
+                wmsg = f"{context_label}: ND warning for {pid}: {warning_messages[pid]}"
                 self.log.warning(wmsg)
                 self._warnings.append(wmsg)
-            elif status != "success":
-                failed_ids.add(pid)
-                if "content type PYTHON" in msg:
-                    mark_failed_python.append(pid)
-                    self.log.info(f"markDelete failed for {pid} (PYTHON content type) " "— will retry via direct DELETE")
-                else:
-                    mark_failed_other.append(pid)
-                    self.log.error(f"markDelete failed for {pid} " f"(status={p.get('status')!r}): {msg}")
-
-        mark_succeeded = [pid for pid in requested_ids if pid not in failed_ids]
-        return mark_succeeded, mark_failed_python, mark_failed_other
+        for pid in mark_failed_python:
+            self.log.info(f"markDelete failed for {pid} (PYTHON content type) " "— will retry via direct DELETE")
+        for pid in mark_failed_other:
+            self.log.error(f"markDelete failed for {pid}: {messages[pid]}")
+        return mark_succeeded, mark_failed_python, mark_failed_other, validation_errors
 
     def _direct_delete_policies(
         self,
@@ -3598,9 +3605,11 @@ class NDPolicyModule:
         Steps:
 
         1. ``markDelete`` all ``policy_ids`` via ``_api_mark_delete``.
-        2. Classify the 207 response into succeeded /
-           failed-PYTHON / failed-other buckets via
-           ``_parse_mark_delete_response``.
+        2. Validate complete per-request-ID outcomes and classify the response
+           into succeeded / failed-PYTHON / failed-other buckets via
+           ``_parse_mark_delete_response``. Retain explicit accepted outcomes,
+           but stop before further writes when any acknowledgement is invalid
+           or missing.
         3. If any failed-PYTHON: direct ``DELETE /policies/<id>``
            via ``_direct_delete_policies``.
         4. If ``self.deploy`` and any markDelete-succeeded, direct-deleted,
@@ -3680,12 +3689,24 @@ class NDPolicyModule:
         self.log.info(f"{context_label}: Step 1 - markDelete for {len(policy_ids)} policy(ies)")
         mark_delete_data = self._api_mark_delete(policy_ids)
 
-        mark_succeeded, mark_failed_python, mark_failed_other = self._parse_mark_delete_response(
+        mark_succeeded, mark_failed_python, mark_failed_other, validation_errors = self._parse_mark_delete_response(
             mark_delete_data,
             policy_ids,
             context_label=context_label,
         )
         self._accept_policy_removals(mark_succeeded)
+        if validation_errors:
+            raise NDModuleError(
+                msg=(
+                    "Invalid markDelete response: "
+                    + "; ".join(validation_errors)
+                    + ". Outcomes are unconfirmed except for explicitly acknowledged requested successes; "
+                    "the controller may have applied the request. No fallback, deployment or replacement creation was sent for this batch."
+                ),
+                status=207,
+                response_payload=mark_delete_data if isinstance(mark_delete_data, dict) else None,
+                raw=mark_delete_data if not isinstance(mark_delete_data, dict) else None,
+            )
 
         self.log.info(
             f"{context_label}: markDelete results: {len(mark_succeeded)} succeeded, "

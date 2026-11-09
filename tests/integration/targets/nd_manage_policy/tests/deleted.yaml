@@ -178,6 +178,10 @@
       ansible.builtin.assert:
         that:
           - result.changed == true
+          - result.before | length == 4
+          - result.before | map(attribute='policyId') | unique | list | length == 4
+          - result.before | map(attribute='templateName') | unique | sort == ['clock_summertime', 'switch_freeform']
+          - result.after == []
       tags: deleted
 
     # TC-4: Verify switch1 is clean via gathered
