@@ -1257,65 +1257,58 @@ def test_nd_policy_resources_module_00400() -> None:
     """
     # Summary
 
-    Verify ``_parse_mark_delete_response`` treats a non-dict response as
-    "all succeeded" (matches ND's known behaviour of occasionally
-    returning a non-dict body on success). Also logs a warning.
+    Verify a non-dict acknowledgement cannot confirm any requested deletion.
 
     ## Test
 
-    - Non-dict input -> ``(requested_ids, [], [])``.
-    - A warning is logged.
+    - Non-dict input leaves all outcome buckets empty and reports validation errors.
 
     ## Classes and Methods
 
     - ``NDPolicyModule._parse_mark_delete_response``
     """
-    module, _nd, log = _make_module()
+    module, _nd, _log = _make_module()
     requested = ["POLICY-1", "POLICY-2"]
 
-    succeeded, py_fail, other_fail = module._parse_mark_delete_response(
+    succeeded, py_fail, other_fail, errors = module._parse_mark_delete_response(
         None,
         requested,
         context_label="markDelete",
     )
 
-    assert succeeded == requested
+    assert succeeded == []
     assert py_fail == []
     assert other_fail == []
-    assert any("non-dict" in m for m in log.warning_msgs)
+    assert errors
 
 
 def test_nd_policy_resources_module_00410() -> None:
     """
     # Summary
 
-    Verify ``_parse_mark_delete_response`` treats an empty ``policies``
-    list as "all succeeded" (ambiguous-response fallback) and logs a
-    warning.
+    Verify an empty policy list does not imply successful deletion.
 
     ## Test
 
-    - ``{"policies": []}`` with non-empty requested IDs ->
-      ``(requested_ids, [], [])``.
-    - A warning mentioning "ambiguous" / "empty" is logged.
+    - Non-empty requested IDs with an empty response produce validation errors.
 
     ## Classes and Methods
 
     - ``NDPolicyModule._parse_mark_delete_response``
     """
-    module, _nd, log = _make_module()
+    module, _nd, _log = _make_module()
     requested = ["POLICY-1", "POLICY-2"]
 
-    succeeded, py_fail, other_fail = module._parse_mark_delete_response(
+    succeeded, py_fail, other_fail, errors = module._parse_mark_delete_response(
         {"policies": []},
         requested,
         context_label="markDelete",
     )
 
-    assert succeeded == requested
+    assert succeeded == []
     assert py_fail == []
     assert other_fail == []
-    assert any("empty" in m for m in log.warning_msgs)
+    assert errors
 
 
 def test_nd_policy_resources_module_00420() -> None:
@@ -1332,8 +1325,8 @@ def test_nd_policy_resources_module_00420() -> None:
     ## Test
 
     - 4 IDs requested, 1 success / 1 PYTHON-fail / 1 generic-fail / 1
-      missing-from-response -> the missing one is reported as succeeded
-      (its ID is not in the failed set).
+      missing-from-response -> only the explicit success is accepted and
+      the missing ID causes validation errors.
 
     ## Classes and Methods
 
@@ -1358,16 +1351,17 @@ def test_nd_policy_resources_module_00420() -> None:
         ]
     }
 
-    succeeded, py_fail, other_fail = module._parse_mark_delete_response(
+    succeeded, py_fail, other_fail, errors = module._parse_mark_delete_response(
         response,
         requested,
         context_label="markDelete",
     )
 
     # Order-preserved against requested
-    assert succeeded == ["P-S", "P-MISSING"]
+    assert succeeded == ["P-S"]
     assert py_fail == ["P-PY"]
     assert other_fail == ["P-OTHER"]
+    assert any("P-MISSING" in error for error in errors)
 
 
 def test_nd_policy_resources_module_00430() -> None:
@@ -1401,7 +1395,7 @@ def test_nd_policy_resources_module_00430() -> None:
         ]
     }
 
-    succeeded, py_fail, other_fail = module._parse_mark_delete_response(
+    succeeded, py_fail, other_fail, errors = module._parse_mark_delete_response(
         response,
         requested,
         context_label="markDelete (delete_and_create)",
@@ -1410,6 +1404,7 @@ def test_nd_policy_resources_module_00430() -> None:
     assert succeeded == ["P-WARN"]
     assert py_fail == []
     assert other_fail == []
+    assert errors == []
     # Warning was surfaced both to log and to _warnings accumulator
     assert any("P-WARN" in m for m in log.warning_msgs)
     assert any("markDelete (delete_and_create)" in m for m in module._warnings)
@@ -1423,13 +1418,12 @@ def test_nd_policy_resources_module_00440() -> None:
     Verify ``_parse_mark_delete_response`` treats an empty
     ``requested_ids`` + empty ``policies`` list correctly:
 
-    - ``requested_ids == []`` AND ``policies == []`` -> all three
-      buckets empty (no ambiguous-response fallback because there is
-      nothing to claim as succeeded).
+    - ``requested_ids == []`` AND ``policies == []`` -> all outcome
+      buckets and validation errors are empty.
 
     ## Test
 
-    - Empty requested + empty response -> ``([], [], [])``.
+    - Empty requested + empty response -> ``([], [], [], [])``.
 
     ## Classes and Methods
 
@@ -1437,7 +1431,7 @@ def test_nd_policy_resources_module_00440() -> None:
     """
     module, _nd, _log = _make_module()
 
-    succeeded, py_fail, other_fail = module._parse_mark_delete_response(
+    succeeded, py_fail, other_fail, errors = module._parse_mark_delete_response(
         {"policies": []},
         [],
         context_label="markDelete",
@@ -1446,6 +1440,7 @@ def test_nd_policy_resources_module_00440() -> None:
     assert succeeded == []
     assert py_fail == []
     assert other_fail == []
+    assert errors == []
 
 
 def test_nd_policy_resources_module_00450() -> None:
@@ -1468,12 +1463,12 @@ def test_nd_policy_resources_module_00450() -> None:
     requested = ["P-S", "P-W"]
     response = {
         "policies": [
-            {"policyId": "P-S", "status": "SUCCESS"},
-            {"policyId": "P-W", "status": "Warning", "message": "soft"},
+            {"policyId": "P-S", "status": " SUCCESS "},
+            {"policyId": "P-W", "status": " Warning ", "message": "soft"},
         ]
     }
 
-    succeeded, py_fail, other_fail = module._parse_mark_delete_response(
+    succeeded, py_fail, other_fail, errors = module._parse_mark_delete_response(
         response,
         requested,
         context_label="markDelete",
@@ -1483,6 +1478,84 @@ def test_nd_policy_resources_module_00450() -> None:
     assert succeeded == ["P-S", "P-W"]
     assert py_fail == []
     assert other_fail == []
+    assert errors == []
+
+
+@pytest.mark.parametrize("body", [{}, {"policies": None}, {"policies": {}}, {"policies": "invalid"}, [], "invalid", True])
+def test_mark_delete_acknowledgement_requires_a_policy_list(body):
+    """Envelope corruption never turns requested IDs into inferred successes."""
+    module, _nd, _log = _make_module()
+    succeeded, py_fail, other_fail, errors = module._parse_mark_delete_response(body, ["P1"], context_label="markDelete")
+
+    assert succeeded == py_fail == other_fail == []
+    assert errors
+
+
+@pytest.mark.parametrize(
+    "extra_rows,expected_successes",
+    [
+        ([], ["P1"]),
+        ([None], ["P1"]),
+        (["invalid"], ["P1"]),
+        ([{"status": "failed", "message": "content type PYTHON"}], ["P1"]),
+        ([{"policyId": " ", "status": "success"}], ["P1"]),
+        ([{"policyId": ["P2"], "status": "success"}], ["P1"]),
+        ([{"policyId": "FOREIGN", "status": "success"}], ["P1"]),
+        ([{"policyId": "FOREIGN", "status": "failed", "message": "content type PYTHON"}], ["P1"]),
+        ([{"policyId": "P2", "status": "notExecuted", "message": "content type PYTHON"}], ["P1"]),
+        ([{"policyId": "P2"}], ["P1"]),
+        ([{"policyId": "P2", "status": None}], ["P1"]),
+        ([{"policyId": "P2", "status": True}], ["P1"]),
+        ([{"policyId": "P1", "status": "failed"}, {"policyId": "P2", "status": "success"}], ["P2"]),
+        (
+            [
+                {"policyId": "P2", "status": "failed", "message": "content type PYTHON"},
+                {"policyId": "P2", "status": "failed", "message": "permission denied"},
+            ],
+            ["P1"],
+        ),
+    ],
+)
+def test_mark_delete_acknowledgement_excludes_unconfirmed_and_foreign_ids(extra_rows, expected_successes):
+    """Distinct confirmed successes survive, while suspect IDs cannot drive fallback."""
+    module, _nd, _log = _make_module()
+    body = {"policies": [{"policyId": "P1", "status": "success"}, *extra_rows]}
+
+    succeeded, py_fail, other_fail, errors = module._parse_mark_delete_response(body, ["P1", "P2"], context_label="markDelete")
+
+    assert succeeded == expected_successes
+    assert py_fail == other_fail == []
+    assert errors
+
+
+def test_mark_delete_acknowledgement_coalesces_consistent_echoes_in_request_order():
+    """Repeated successes or warning echoes agree; a fallback ID is emitted once."""
+    module, _nd, _log = _make_module()
+    body = {
+        "policies": [
+            {"policyId": "P1", "status": "success"},
+            {"policyId": "P2", "status": "failed", "message": "content type PYTHON"},
+            {"policyId": "P1", "status": "warning", "message": "already in markDeleted state"},
+            {"policyId": "P2", "status": "failed", "message": "content type PYTHON"},
+        ]
+    }
+
+    succeeded, py_fail, other_fail, errors = module._parse_mark_delete_response(body, ["P2", "P1", "P2"], context_label="markDelete")
+
+    assert succeeded == ["P1"]
+    assert py_fail == ["P2"]
+    assert other_fail == errors == []
+    assert len(module._warnings) == 1
+
+
+def test_mark_delete_acknowledgement_returns_explicit_successes_in_request_order():
+    module, _nd, _log = _make_module()
+    body = {"policies": [{"policyId": "P1", "status": "success"}, {"policyId": "P2", "status": "success"}]}
+
+    succeeded, py_fail, other_fail, errors = module._parse_mark_delete_response(body, ["P2", "P1", "P2"], context_label="markDelete")
+
+    assert succeeded == ["P2", "P1"]
+    assert py_fail == other_fail == errors == []
 
 
 def test_nd_policy_resources_module_00460() -> None:
