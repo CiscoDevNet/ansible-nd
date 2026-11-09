@@ -790,7 +790,7 @@ def test_policy_id_validation_preserves_sparse_inputs_and_metadata(invoke, separ
 
     assert not result.get("failed"), result
     assert result["changed"] is (feature_name != "lacp")
-    assert len([call for call in controller.calls if "/parameters" in call[1]]) == 1
+    assert len([call for call in controller.calls if "/parameters" in call[1]]) == int(feature_name != "lacp")
     expected_inputs = {**inputs, "featureName": feature_name}
     assert result["after"][0]["templateInputs"] == expected_inputs
     assert result["after"][0]["priority"] == 725
@@ -1002,3 +1002,195 @@ def test_delete_acknowledgement_validation_leaves_check_mode_read_only(invoke, d
     assert result["changed"] is True
     assert controller.writes() == []
     assert controller.policies == {entry["policyId"]: entry for entry in originals}
+
+
+# Policy-ID no-ops must not validate a PUT payload that will never be sent.
+
+
+def _stored_template_inputs_for_validation(kind):
+    """Build stored inputs with the selected schema defect, or valid inputs."""
+    inputs = {"featureName": "lacp", "EXISTING_REQUIRED": "retained", "FABRIC_NAME": "FABRIC_A", "POLICY_ID": POLICY_ID}
+    if kind == "unknown":
+        inputs["LEGACY_KEY"] = "controller-value"
+    elif kind == "missing_required":
+        inputs.pop("EXISTING_REQUIRED")
+    elif kind == "invalid_integer":
+        inputs["RETRIES"] = "not-a-number"
+    return inputs
+
+
+def _policy_id_entry(pid, separate_id, **overrides):
+    """Build either supported policy-ID selector with the desired fields."""
+    entry = config(pid, **overrides)
+    if separate_id:
+        entry.update(name="feature_enable", policy_id=pid)
+    return entry
+
+
+@pytest.mark.parametrize("separate_id", [False, True])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("deploy", [False, True])
+@pytest.mark.parametrize("stored_kind", ["unknown", "missing_required", "invalid_integer"])
+def test_policy_id_noop_ignores_invalid_stored_inputs(invoke, separate_id, check_mode, deploy, stored_kind):
+    controller = TemplateValidationController([policy(templateInputs=_stored_template_inputs_for_validation(stored_kind))])
+    original = deepcopy(controller.policies)
+    entry = _policy_id_entry(POLICY_ID, separate_id, template_inputs={"featureName": "lacp"})
+    result = invoke(controller, [entry], check_mode=check_mode, deploy=deploy)
+    assert not result.get("failed"), result
+    assert result["changed"] is False
+    assert result["before"] == result["after"] == list(original.values())
+    assert controller.policies == original
+    assert not any("/parameters" in call[1] for call in controller.calls)
+    assert len(controller.writes()) == int(deploy and not check_mode)
+    assert all(verb == "POST" and path.endswith("/pushConfig") for verb, path, _payload in controller.writes())
+
+
+@pytest.mark.parametrize("separate_id", [False, True])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("change", ["priority", "input"])
+@pytest.mark.parametrize(
+    "stored_kind,expected_error",
+    [
+        ("unknown", "Unknown templateInput key 'LEGACY_KEY'"),
+        ("missing_required", "Required templateInput 'EXISTING_REQUIRED'"),
+        ("invalid_integer", "expects integer"),
+    ],
+)
+def test_policy_id_update_rejects_invalid_effective_inputs(invoke, caplog, separate_id, check_mode, change, stored_kind, expected_error):
+    controller = TemplateValidationController([policy(templateInputs=_stored_template_inputs_for_validation(stored_kind))])
+    original = deepcopy(controller.policies)
+    desired = {"template_inputs": {"featureName": "lldp" if change == "input" else "lacp"}}
+    if change == "priority":
+        desired["priority"] = 600
+    entry = _policy_id_entry(POLICY_ID, separate_id, **desired)
+    result = invoke(controller, [entry], check_mode=check_mode)
+    assert result.get("failed") is True
+    assert result["changed"] is False
+    assert expected_error in caplog.text
+    assert controller.writes() == []
+    assert controller.policies == original
+    assert result["before"] == result["after"] == list(original.values())
+    assert len([call for call in controller.calls if "/parameters" in call[1]]) == 1
+
+
+@pytest.mark.parametrize("separate_id", [False, True])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("deploy", [False, True])
+def test_policy_id_noop_and_valid_update_preserve_progress(invoke, separate_id, check_mode, deploy):
+    bad = policy(templateInputs=_stored_template_inputs_for_validation("unknown"))
+    good = policy(SECOND_ID, description="second feature", templateInputs={"featureName": "lacp", "EXISTING_REQUIRED": "retained", "FABRIC_NAME": "FABRIC_A"})
+    controller = TemplateValidationController([bad, good])
+    original = deepcopy(controller.policies)
+    result = invoke(
+        controller,
+        [
+            _policy_id_entry(POLICY_ID, separate_id, template_inputs={"featureName": "lacp"}),
+            _policy_id_entry(SECOND_ID, separate_id, template_inputs={"featureName": "lldp"}),
+        ],
+        check_mode=check_mode,
+        deploy=deploy,
+    )
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    assert controller.policies[POLICY_ID] == original[POLICY_ID]
+    after = {row["policyId"]: row for row in result["after"]}
+    assert after[POLICY_ID] == original[POLICY_ID]
+    assert after[SECOND_ID]["templateInputs"]["featureName"] == "lldp"
+    assert after[SECOND_ID]["templateInputs"]["EXISTING_REQUIRED"] == "retained"
+    assert after[SECOND_ID]["priority"] == 725
+    assert len([call for call in controller.calls if "/parameters" in call[1]]) == 1
+    puts = [call for call in controller.writes() if call[0] == "PUT"]
+    pushes = [call for call in controller.writes() if call[1].endswith("/pushConfig")]
+    assert [path.rsplit("/", 1)[-1] for _verb, path, _payload in puts] == ([] if check_mode else [SECOND_ID])
+    assert len(pushes) == int(deploy and not check_mode)
+    if pushes:
+        assert set(pushes[0][2]["policyIds"]) == {POLICY_ID, SECOND_ID}
+    if check_mode:
+        assert controller.writes() == []
+        assert controller.policies == original
+
+
+@pytest.mark.parametrize("separate_id", [False, True])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("deploy", [False, True])
+def test_policy_id_failed_sibling_preserves_noop_deployment(invoke, separate_id, check_mode, deploy):
+    controller = TemplateValidationController([policy(templateInputs=_stored_template_inputs_for_validation("unknown"))])
+    original = deepcopy(controller.policies)
+    result = invoke(
+        controller,
+        [_policy_id_entry(POLICY_ID, separate_id, template_inputs={"featureName": "lacp"}), _policy_id_entry("POLICY-999", separate_id)],
+        check_mode=check_mode,
+        deploy=deploy,
+        verbosity=3,
+    )
+    assert result.get("failed") is True
+    assert result["changed"] is False
+    assert result["before"] == result["after"] == list(original.values())
+    assert controller.policies == original
+    assert "POLICY-999" in str(result)
+    assert not any("/parameters" in call[1] for call in controller.calls)
+    assert len(controller.writes()) == int(deploy and not check_mode)
+    assert all(verb == "POST" and path.endswith("/pushConfig") for verb, path, _payload in controller.writes())
+
+
+@pytest.mark.parametrize("separate_id", [False, True])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_policy_id_validation_preserves_original_classification_error(invoke, monkeypatch, separate_id, check_mode):
+    controller = TemplateValidationController([policy(templateInputs=_stored_template_inputs_for_validation("unknown"))])
+    original = deepcopy(controller.policies)
+    original_diff = nd_manage_policy.NDPolicyModule._get_diff_merged_single
+    sentinel = "original classification rejection"
+
+    def classify_failure(self, want, have_list):
+        entry = original_diff(self, want, have_list)
+        if entry.get("have"):
+            entry.update(action="fail", error_msg=sentinel)
+        return entry
+
+    monkeypatch.setattr(nd_manage_policy.NDPolicyModule, "_get_diff_merged_single", classify_failure)
+    result = invoke(controller, [_policy_id_entry(POLICY_ID, separate_id, template_inputs={"featureName": "lacp"})], check_mode=check_mode, verbosity=3)
+    assert result.get("failed") is True
+    assert result["changed"] is False
+    assert sentinel in str(result)
+    assert not any("/parameters" in call[1] for call in controller.calls)
+    assert controller.writes() == []
+    assert controller.policies == original
+
+
+@pytest.mark.parametrize("separate_id", [False, True])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize(
+    "stored_kind,supplied",
+    [
+        pytest.param("valid", {"NEW_UNKNOWN": ""}, id="unknown-blank-missing"),
+        pytest.param("valid", {"NEW_UNKNOWN": "   "}, id="unknown-whitespace-missing"),
+        pytest.param("unknown", {"LEGACY_KEY": "controller-value"}, id="unknown-matching-stored"),
+        pytest.param("invalid_integer", {"RETRIES": "not-a-number"}, id="invalid-integer-matching-stored"),
+    ],
+)
+def test_policy_id_noop_skips_schema_validation_for_equal_inputs(invoke, separate_id, check_mode, stored_kind, supplied):
+    controller = TemplateValidationController([policy(templateInputs=_stored_template_inputs_for_validation(stored_kind))])
+    original = deepcopy(controller.policies)
+    result = invoke(controller, [_policy_id_entry(POLICY_ID, separate_id, template_inputs=supplied)], check_mode=check_mode)
+    assert not result.get("failed"), result
+    assert result["changed"] is False
+    assert result["before"] == result["after"] == list(original.values())
+    assert controller.policies == original
+    assert controller.writes() == []
+    assert not any("/parameters" in call[1] for call in controller.calls)
+
+
+@pytest.mark.parametrize("separate_id", [False, True])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_policy_id_noop_deployment_failure_preserves_unchanged_state(invoke, separate_id, check_mode):
+    controller = TemplateValidationController([policy(templateInputs=_stored_template_inputs_for_validation("unknown"))])
+    controller.reject_push.add(POLICY_ID)
+    original = deepcopy(controller.policies)
+    result = invoke(controller, [_policy_id_entry(POLICY_ID, separate_id, template_inputs={"featureName": "lacp"})], check_mode=check_mode, deploy=True)
+    assert bool(result.get("failed")) is (not check_mode)
+    assert result["changed"] is False
+    assert result["before"] == result["after"] == list(original.values())
+    assert controller.policies == original
+    assert not any("/parameters" in call[1] for call in controller.calls)
+    assert len(controller.writes()) == int(not check_mode)
+    assert all(verb == "POST" and path.endswith("/pushConfig") for verb, path, _payload in controller.writes())

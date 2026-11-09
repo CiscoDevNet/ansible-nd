@@ -1042,7 +1042,7 @@ class NDPolicyModule:
 
             # Phase 2: Compute diff
             diff_entry = self._get_diff_merged_single(want, have_list)
-            if want.get("policyId") and template_inputs and diff_entry.get("have"):
+            if diff_entry.get("action") == "update" and want.get("policyId") and template_inputs and diff_entry.get("have"):
                 # ID resolution supplies the real template only after the
                 # template-name validation above. Validate the effective PUT
                 # inputs so sparse updates retain existing required values.
