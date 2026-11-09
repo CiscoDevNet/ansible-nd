@@ -18,7 +18,7 @@ from urllib.parse import urlencode
 import pytest
 import yaml
 from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar, trust_as_template
+from ansible import template as ansible_template
 
 TARGET = Path(__file__).resolve().parents[2] / "integration" / "targets" / "nd_manage_breakout_interfaces"
 BASE = "/api/v1/manage/fabrics/fab1"
@@ -32,12 +32,13 @@ def render(value, variables):
     if isinstance(value, list):
         return [render(item, variables) for item in value]
     if isinstance(value, str):
-        return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(value))
+        trust = getattr(ansible_template, "trust_as_template", lambda item: item)
+        return ansible_template.Templar(loader=DataLoader(), variables=variables).template(trust(value))
     return value
 
 
 def condition(expression, variables):
-    return Templar(loader=DataLoader(), variables=variables)._engine.evaluate_conditional(trust_as_template(expression))
+    return render("{{ " + expression + " }}", variables) is True
 
 
 def trusted_source_variables(value):
@@ -46,7 +47,8 @@ def trusted_source_variables(value):
         return {key: trusted_source_variables(item) for key, item in value.items()}
     if isinstance(value, list):
         return [trusted_source_variables(item) for item in value]
-    return trust_as_template(value) if isinstance(value, str) else value
+    trust = getattr(ansible_template, "trust_as_template", lambda item: item)
+    return trust(value) if isinstance(value, str) else value
 
 
 def execute_tasks(tasks, variables):
@@ -121,7 +123,7 @@ def variables(extra=0, *, opt_in=False):
         summary(),
         {"method": "POST", "path": BASE + "/interfaceActions/breakout", "http_status": 207},
         summary(),
-        *[summary() for _ in range(extra)],
+        *[summary() for _unused_index in range(extra)],
     ]
     result = {
         "failed": False,
@@ -145,7 +147,7 @@ def variables(extra=0, *, opt_in=False):
             None,
             None,
             {"interfaces": [{"switchId": SERIAL, "interfaceName": "Ethernet1/53", "breakoutMap": "25g-4x"}]},
-            *[None for _ in range(extra + 1)],
+            *[None for _unused_index in range(extra + 1)],
         ],
     }
     values = {
@@ -308,7 +310,7 @@ def test_two_mutated_switches_can_each_have_their_own_bounded_guard_rounds():
     result["proposed"].append({"switch_id": OTHER, "interface_names": ["Ethernet1/53"], "breakout_map": "25g-4x"})
     result["api_calls"].insert(1, {"method": "GET", "path": BASE + "/switches/" + OTHER, "purpose": "switch_metadata", "http_status": 200})
     result["api_calls"].insert(3, summary(switch=OTHER))
-    result["api_calls"].extend(summary(switch=OTHER) for _ in range(6))
+    result["api_calls"].extend(summary(switch=OTHER) for _unused_index in range(6))
     result["api_payload"] = [
         (
             None
@@ -358,7 +360,7 @@ def test_one_switch_cannot_exceed_its_round_cap_even_with_unused_other_switch_al
     values = fabric_clear_variables()
     # Nine total summary starts are below 3 + 5*2, but the second switch has
     # seven post-action starts. The aggregate cap alone must not authorize it.
-    values["breakout_result"]["api_calls"].extend(summary(switch=OTHER) for _ in range(5))
+    values["breakout_result"]["api_calls"].extend(summary(switch=OTHER) for _unused_index in range(5))
     assert not accepted(values)[0]
 
 

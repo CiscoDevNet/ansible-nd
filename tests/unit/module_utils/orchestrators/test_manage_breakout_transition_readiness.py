@@ -23,7 +23,7 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.orchestrators.test_man
     VERIFY,
     action,
     assert_targeted_read,
-    clock,
+    clock as shared_clock_fixture,
     group,
     implementation,
     intent_topology,
@@ -34,6 +34,8 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.orchestrators.test_man
     topology,
     writes,
 )
+
+clock = shared_clock_fixture
 
 
 def test_stale_removed_family_is_settled_before_inverse_breakout(clock):
@@ -91,7 +93,7 @@ def test_rediscovered_original_family_is_not_recreated_when_it_remains_broken(cl
 def test_unresolved_removed_family_preserves_changes_without_guessing_inverse(clock, failure):
     pending = intent_topology(P21)
     failed_reads = (
-        [deepcopy(pending) for _ in range(60)]
+        [deepcopy(pending) for _unused_attempt in range(60)]
         if failure == "timeout"
         else [response({"interfaces": None})] if failure == "malformed" else [ValueError("Transition GET connection interrupted")]
     )

@@ -211,7 +211,7 @@ def test_missing_parent_is_queried_narrowly_before_inverse_breakout(clock):
 def test_unready_or_unreadable_inverse_target_never_causes_a_mutation_replay(clock, failure):
     pending = intent_topology(P21)
     failed_reads = (
-        [deepcopy(pending) for _ in range(60)]
+        [deepcopy(pending) for _unused_attempt in range(60)]
         if failure == "timeout"
         else [response({"interfaces": None})] if failure == "malformed" else [ValueError("Readiness GET connection interrupted")]
     )

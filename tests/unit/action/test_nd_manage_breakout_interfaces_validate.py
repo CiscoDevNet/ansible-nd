@@ -142,7 +142,7 @@ def run(replies=None, check_mode=False, **changes):
 
 
 def snapshot(raw_fixture=None, profile="native"):
-    result, _ = run(fixture=raw_fixture or fixture(), expected_profile=profile, observe_only=True)
+    result, _unused_calls = run(fixture=raw_fixture or fixture(), expected_profile=profile, observe_only=True)
     assert not result["failed"]
     return result["snapshot"]
 
@@ -165,7 +165,7 @@ def test_same_suite_matches_independent_and_quad_profiles(quad, profile):
 
 
 def test_quad_absent_native_collateral_parents_are_not_missing_resource_errors():
-    result, _ = run(fixture=fixture(True), expected_profile="map_a")
+    result, _unused_calls = run(fixture=fixture(True), expected_profile="map_a")
     assert result["failed"] is False
     assert result["snapshot"]["families"]["Ethernet1/22"] == {
         "native": False,
@@ -181,7 +181,7 @@ def test_quad_absent_native_collateral_parents_are_not_missing_resource_errors()
 def test_quad_under_declared_single_family_expectation_does_not_silently_pass():
     declared = fixture(True)
     del declared["profiles"]["map_a"]["child_lanes"]["Ethernet1/23"]
-    result, _ = run(live(fixture(True), "map_a"), fixture=declared, expected_profile="map_a")
+    result, _unused_calls = run(live(fixture(True), "map_a"), fixture=declared, expected_profile="map_a")
     assert result["failed"] is True
     assert {item["check"] for item in result["differences"]} == {
         "topology",
@@ -190,7 +190,7 @@ def test_quad_under_declared_single_family_expectation_does_not_silently_pass():
 
 
 def test_physical_children_and_active_map_pass_with_ghost_parent():
-    result, _ = run(live(profile="map_a", ghost=True), expected_profile="map_a")
+    result, _unused_calls = run(live(profile="map_a", ghost=True), expected_profile="map_a")
     assert result["failed"] is False
 
 
@@ -199,7 +199,7 @@ def test_ghost_parent_does_not_prove_native_restoration():
         response("interfaces", [interface(physicalInterface=False)]),
         response("policies", []),
     ]
-    result, _ = run(replies)
+    result, _unused_calls = run(replies)
     assert result["failed"] is True and result["differences"][0]["check"] == "topology"
 
 
@@ -236,7 +236,7 @@ def test_incorrect_topology_or_intent_fails(mode):
         ):
             if rows is not None:
                 reply["current"]["meta"]["counts"]["total"] = len(rows)
-    result, _ = run(replies, expected_profile=profile)
+    result, _unused_calls = run(replies, expected_profile=profile)
     assert result["failed"] is True and result["differences"]
 
 
@@ -255,7 +255,7 @@ def test_order_case_map_and_unrelated_prefixes_are_normalized_without_false_memb
     )
     replies[0]["current"]["meta"]["counts"]["total"] = 8
     replies[1]["current"]["policies"][0]["templateInputs"] = {"map": " 25G-4X "}
-    result, _ = run(replies, expected_profile="map_a")
+    result, _unused_calls = run(replies, expected_profile="map_a")
     assert result["failed"] is False
     assert result["snapshot"]["policy_maps"] == {PARENT: MAP_A}
     assert len(result["snapshot"]["families"][PARENT]["children"]) == 4
@@ -273,7 +273,7 @@ def test_order_case_map_and_unrelated_prefixes_are_normalized_without_false_memb
 )
 def test_ambiguous_physical_or_switch_evidence_fails_even_observe_only(change):
     replies = [response("interfaces", [interface(**change)]), response("policies", [])]
-    result, _ = run(replies, observe_only=True)
+    result, _unused_calls = run(replies, observe_only=True)
     assert result["failed"] is True
     assert result["differences"] == []  # Invalid evidence fails immediately, not after settling.
 
@@ -283,7 +283,7 @@ def test_duplicate_identity_including_ghost_and_physical_is_rejected():
         response("interfaces", [interface(), interface(physicalInterface=False)]),
         response("policies", []),
     ]
-    result, _ = run(replies, observe_only=True)
+    result, _unused_calls = run(replies, observe_only=True)
     assert result["failed"] is True and "Duplicate interface" in result["msg"]
 
 
@@ -292,7 +292,7 @@ def test_native_and_children_are_ambiguous_even_observe_only():
         response("interfaces", [interface(), interface(PARENT + "/1")]),
         response("policies", [policy()]),
     ]
-    result, _ = run(replies, observe_only=True)
+    result, _unused_calls = run(replies, observe_only=True)
     assert result["failed"] is True and "Ambiguous native" in result["msg"]
 
 
@@ -315,7 +315,7 @@ def test_native_and_children_are_ambiguous_even_observe_only():
 def test_policy_identity_active_status_and_map_are_strict(change):
     replies = live(profile="map_a")
     replies[1]["current"]["policies"][0].update(change)
-    result, _ = run(replies, expected_profile="map_a", observe_only=True)
+    result, _unused_calls = run(replies, expected_profile="map_a", observe_only=True)
     assert result["failed"] is True
 
 
@@ -323,28 +323,28 @@ def test_policy_identity_active_status_and_map_are_strict(change):
 def test_malformed_policy_rows_do_not_prove_native_policy_absence(field):
     malformed = policy()
     del malformed[field]
-    result, _ = run([response("interfaces", [interface()]), response("policies", [malformed])])
+    result, _unused_calls = run([response("interfaces", [interface()]), response("policies", [malformed])])
     assert result["failed"] is True and "explicit" in result["msg"]
 
 
 def test_multiple_active_parent_policies_cannot_pass():
     replies = live(profile="map_a")
     replies[1] = response("policies", [policy(), policy(policyId="POLICY-OTHER")])
-    result, _ = run(replies, expected_profile="map_a")
+    result, _unused_calls = run(replies, expected_profile="map_a")
     assert result["failed"] is True and "Multiple active" in result["msg"]
 
 
 def test_mark_deleted_policy_is_not_active_intent():
     replies = live()
     replies[1] = response("policies", [policy(markDeleted=True)])
-    result, _ = run(replies)
+    result, _unused_calls = run(replies)
     assert result["failed"] is False and result["snapshot"]["policy_maps"] == {}
 
 
 def test_mark_deleted_only_policy_does_not_prove_broken_map():
     replies = live(profile="map_a")
     replies[1]["current"]["policies"][0]["markDeleted"] = True
-    result, _ = run(replies, expected_profile="map_a")
+    result, _unused_calls = run(replies, expected_profile="map_a")
     assert result["failed"] is True
     assert result["differences"][0]["check"] == "policy_maps"
 
@@ -352,7 +352,7 @@ def test_mark_deleted_only_policy_does_not_prove_broken_map():
 def test_duplicate_policy_ids_even_mark_deleted_are_rejected():
     replies = live(profile="map_a")
     replies[1] = response("policies", [policy(), policy(markDeleted=True)])
-    result, _ = run(replies, expected_profile="map_a")
+    result, _unused_calls = run(replies, expected_profile="map_a")
     assert result["failed"] is True and "duplicate breakout policy identity" in result["msg"]
 
 
@@ -392,7 +392,7 @@ def test_bad_get_evidence_fails_immediately_without_retry(bad):
 def test_invalid_pagination_counts_rejected(counts):
     reply = response("interfaces", [interface()])
     reply["current"]["meta"]["counts"] = counts
-    result, _ = run([reply])
+    result, _unused_calls = run([reply])
     assert result["failed"] is True and ("pagination" in result["msg"] or "declared total" in result["msg"])
 
 
@@ -416,14 +416,14 @@ def test_filtered_pagination_fetches_all_rows_and_offsets_are_correct():
 def test_empty_incomplete_page_cannot_be_an_absence_success():
     reply = response("interfaces", [])
     reply["current"]["meta"]["counts"] = {"remaining": 1, "total": 1}
-    result, _ = run([reply], observe_only=True)
+    result, _unused_calls = run([reply], observe_only=True)
     assert result["failed"] is True and "ended before" in result["msg"]
 
 
 def test_repeated_page_cannot_be_an_absence_success():
     reply = response("interfaces", [interface()])
     reply["current"]["meta"]["counts"] = {"remaining": 1}
-    result, _ = run([reply, reply], observe_only=True)
+    result, _unused_calls = run([reply, reply], observe_only=True)
     assert result["failed"] is True and "repeated a page" in result["msg"]
 
 
@@ -432,7 +432,7 @@ def test_duplicate_interface_across_distinct_pages_fails():
     second = response("interfaces", [interface(), interface("Ethernet1/500")])
     first["current"]["meta"]["counts"] = {"total": 3, "remaining": 2}
     second["current"]["meta"]["counts"] = {"total": 3, "remaining": 0}
-    result, _ = run([first, second, response("policies", [])], observe_only=True)
+    result, _unused_calls = run([first, second, response("policies", [])], observe_only=True)
     assert result["failed"] is True and "Duplicate interface" in result["msg"]
 
 
@@ -440,14 +440,14 @@ def test_pagination_safety_cap_cannot_return_a_partial_snapshot(monkeypatch):
     monkeypatch.setattr(validator, "_MAX_PAGES", 1)
     reply = response("interfaces", [interface()])
     reply["current"]["meta"]["counts"] = {"remaining": 1}
-    result, _ = run([reply], observe_only=True)
+    result, _unused_calls = run([reply], observe_only=True)
     assert result["failed"] is True and "safety limit" in result["msg"]
 
 
 def test_malformed_policy_collection_not_equivalent_to_no_policies():
     replies = live()
     replies[1]["current"] = {"policies": None}
-    result, _ = run(replies)
+    result, _unused_calls = run(replies)
     assert result["failed"] is True and "array of objects" in result["msg"]
 
 
@@ -457,7 +457,7 @@ def test_initial_explicit_zero_counts_allow_omitted_collection(collection, numbe
     replies = live()
     index = 0 if collection == "interfaces" else 1
     replies[index]["current"] = {"meta": {"counts": {"total": number(0), "remaining": number(0)}}}
-    result, _ = run(replies, observe_only=(collection == "interfaces"))
+    result, _unused_calls = run(replies, observe_only=(collection == "interfaces"))
     assert result["failed"] is False
     if collection == "interfaces":
         assert result["snapshot"]["families"][PARENT] == {
@@ -471,7 +471,7 @@ def test_initial_explicit_zero_counts_allow_omitted_collection(collection, numbe
 def test_zero_count_omitted_interfaces_still_cannot_prove_native_restoration():
     replies = live()
     replies[0]["current"] = {"meta": {"counts": {"total": 0, "remaining": 0}}}
-    result, _ = run(replies)
+    result, _unused_calls = run(replies)
     assert result["failed"] is True and result["differences"][0]["check"] == "topology"
 
 
@@ -495,7 +495,7 @@ def test_missing_collection_requires_both_valid_explicit_zero_counts(collection,
     replies = live()
     index = 0 if collection == "interfaces" else 1
     replies[index]["current"] = {"meta": {"counts": counts}}
-    result, _ = run(replies, observe_only=True)
+    result, _unused_calls = run(replies, observe_only=True)
     assert result["failed"] is True
 
 
@@ -508,7 +508,7 @@ def test_explicit_null_or_bad_collection_is_not_empty_even_with_zero_counts(coll
         collection: value,
         "meta": {"counts": {"total": 0, "remaining": 0}},
     }
-    result, _ = run(replies, observe_only=True)
+    result, _unused_calls = run(replies, observe_only=True)
     assert result["failed"] is True and "array of objects" in result["msg"]
 
 
@@ -522,7 +522,7 @@ def test_later_omitted_page_is_not_accepted_as_zero_count_absence(collection):
         "current": {"meta": {"counts": {"total": 0, "remaining": 0}}},
     }
     replies = [first, omitted] if collection == "interfaces" else [live()[0], first, omitted]
-    result, _ = run(replies, observe_only=True)
+    result, _unused_calls = run(replies, observe_only=True)
     assert result["failed"] is True and "array of objects" in result["msg"]
 
 
@@ -557,9 +557,9 @@ def test_unsatisfied_profile_reports_differences_after_bounded_attempts():
 
 def test_unchanged_compares_fresh_snapshot_not_module_claims():
     baseline = snapshot(profile="map_a")
-    result, _ = run(expected_profile="map_a", baseline=baseline, unchanged=True)
+    result, _unused_calls = run(expected_profile="map_a", baseline=baseline, unchanged=True)
     assert result["failed"] is False and "unchanged" in result["checks"]
-    result, _ = run(expected_profile="map_b", baseline=baseline, unchanged=True)
+    result, _unused_calls = run(expected_profile="map_b", baseline=baseline, unchanged=True)
     assert result["failed"] is True
     assert result["differences"][0]["check"] == "unchanged"
 
@@ -567,11 +567,11 @@ def test_unchanged_compares_fresh_snapshot_not_module_claims():
 def test_guards_compared_even_when_reserved_state_changes_as_expected():
     declared = fixture(guards=True)
     baseline = snapshot(declared)
-    result, _ = run(fixture=declared, expected_profile="map_a", baseline=baseline)
+    result, _unused_calls = run(fixture=declared, expected_profile="map_a", baseline=baseline)
     assert result["failed"] is False and "guards" in result["checks"]
     replies = live(declared, "map_a")
     replies[1]["current"]["interfaces"][-1]["physicalInterface"] = False
-    result, _ = run(replies, fixture=declared, expected_profile="map_a", baseline=baseline)
+    result, _unused_calls = run(replies, fixture=declared, expected_profile="map_a", baseline=baseline)
     assert result["failed"] is True and result["differences"][0]["check"] == "guard_topology"
 
 
@@ -581,7 +581,7 @@ def test_guard_policy_drift_is_detected():
     replies = live(declared, "map_a")
     replies[-1]["current"]["policies"].append(policy("Ethernet1/60"))
     replies[-1]["current"]["meta"]["counts"]["total"] += 1
-    result, _ = run(replies, fixture=declared, expected_profile="map_a", baseline=baseline)
+    result, _unused_calls = run(replies, fixture=declared, expected_profile="map_a", baseline=baseline)
     assert result["failed"] is True and result["differences"][0]["check"] == "guard_policy"
 
 
@@ -590,7 +590,7 @@ def test_explicit_policy_expectations_and_retained_native_ports_are_supported():
     config = declared["profiles"]["map_a"]
     config["native_interfaces"] = ["Ethernet1/22", "Ethernet1/24"]
     config["policy_maps"] = {"Ethernet1/21": MAP_A}
-    result, _ = run(fixture=declared, expected_profile="map_a")
+    result, _unused_calls = run(fixture=declared, expected_profile="map_a")
     assert result["failed"] is False
 
 
@@ -662,7 +662,7 @@ def test_multiple_interfaces_have_independent_declared_policy_maps():
     profile = declared["profiles"]["map_a"]
     profile["child_lanes"]["Ethernet1/51"] = [1, 2]
     profile["policy_maps"] = {PARENT: MAP_A, "Ethernet1/51": MAP_B}
-    result, _ = run(fixture=declared, expected_profile="map_a")
+    result, _unused_calls = run(fixture=declared, expected_profile="map_a")
     assert result["failed"] is False
     assert result["snapshot"]["policy_maps"] == {PARENT: MAP_A, "Ethernet1/51": MAP_B}
 
@@ -752,7 +752,7 @@ def test_tagged_pagination_numbers_remain_complete_read_evidence():
     for reply in replies:
         reply["status"] = TaggedInt(200)
         reply["current"]["meta"]["counts"] = {key: TaggedInt(value) for key, value in reply["current"]["meta"]["counts"].items()}
-    result, _ = run(replies, expected_profile="map_a", retries=TaggedInt(1), interval=TaggedFloat(0))
+    result, _unused_calls = run(replies, expected_profile="map_a", retries=TaggedInt(1), interval=TaggedFloat(0))
     assert result["failed"] is False
 
 
@@ -904,7 +904,7 @@ def test_complete_switch_speed_profiles_are_independently_validated(profile, qua
 def test_whole_switch_overrides_scoped_custom_filter_and_exposes_only_outside_breakouts():
     declared = fixture()
     declared["interface_filter"] = "interfaceName:Ethernet1/50"
-    result, _ = run(enhanced_live(outside=True), fixture=declared, whole_switch=True, include_speeds=True)
+    result, _unused_calls = run(enhanced_live(outside=True), fixture=declared, whole_switch=True, include_speeds=True)
     assert result["failed"] is False
     assert result["snapshot"]["outside_families"] == {
         "Ethernet1/40": {"native": False, "children": ["Ethernet1/40/1", "Ethernet1/40/2"], "child_speeds": {"Ethernet1/40/1": 50, "Ethernet1/40/2": 50}}
@@ -914,7 +914,7 @@ def test_whole_switch_overrides_scoped_custom_filter_and_exposes_only_outside_br
 
 @pytest.mark.parametrize("change", ["appear", "disappear", "children", "speed", "policy"])
 def test_whole_switch_baseline_protects_outside_families_and_intent(change):
-    prior, _ = run(enhanced_live(outside=change != "appear"), whole_switch=True, include_speeds=True, observe_only=True)
+    prior, _unused_calls = run(enhanced_live(outside=change != "appear"), whole_switch=True, include_speeds=True, observe_only=True)
     replies = enhanced_live(profile="map_a", outside=change != "disappear")
     if change == "children":
         replies[0]["current"]["interfaces"][-3]["interfaceName"] = "Ethernet1/40/3"
@@ -922,7 +922,7 @@ def test_whole_switch_baseline_protects_outside_families_and_intent(change):
         replies[0]["current"]["interfaces"][-3]["speed"] = "25Gb"
     elif change == "policy":
         replies[1]["current"]["policies"][-1]["templateInputs"]["MAP"] = MAP_A
-    result, _ = run(replies, expected_profile="map_a", whole_switch=True, include_speeds=True, baseline=prior["snapshot"])
+    result, _unused_calls = run(replies, expected_profile="map_a", whole_switch=True, include_speeds=True, baseline=prior["snapshot"])
     assert result["failed"] is True
     expected = "outside_policy_maps" if change == "policy" else "outside_families"
     assert expected in {item["check"] for item in result["differences"]}
@@ -930,8 +930,10 @@ def test_whole_switch_baseline_protects_outside_families_and_intent(change):
 
 def test_whole_switch_guard_families_are_not_misclassified_as_outside():
     declared = fixture(guards=True)
-    prior, _ = run(enhanced_live(declared, outside=True), fixture=declared, whole_switch=True, observe_only=True)
-    result, _ = run(enhanced_live(declared, "map_a", outside=True), fixture=declared, expected_profile="map_a", whole_switch=True, baseline=prior["snapshot"])
+    prior, _unused_calls = run(enhanced_live(declared, outside=True), fixture=declared, whole_switch=True, observe_only=True)
+    result, _unused_calls = run(
+        enhanced_live(declared, "map_a", outside=True), fixture=declared, expected_profile="map_a", whole_switch=True, baseline=prior["snapshot"]
+    )
     assert result["failed"] is False
     assert "Ethernet1/60" in result["snapshot"]["families"]
     assert "Ethernet1/60" not in result["snapshot"]["outside_families"]
@@ -943,7 +945,7 @@ def test_controller_child_speeds_normalize_to_numeric_gbps(speed):
     replies = enhanced_live(profile="map_a")
     for row in replies[0]["current"]["interfaces"]:
         row["speed"] = speed
-    result, _ = run(replies, expected_profile="map_a", include_speeds=True)
+    result, _unused_calls = run(replies, expected_profile="map_a", include_speeds=True)
     assert result["failed"] is False
     assert set(result["snapshot"]["families"][PARENT]["child_speeds"].values()) == {25}
 
@@ -952,14 +954,14 @@ def test_controller_child_speeds_normalize_to_numeric_gbps(speed):
 def test_missing_or_ambiguous_child_speed_never_proves_recovery(speed):
     replies = enhanced_live(profile="map_a")
     replies[0]["current"]["interfaces"][0]["speed"] = speed
-    result, _ = run(replies, expected_profile="map_a", include_speeds=True, observe_only=True)
+    result, _unused_calls = run(replies, expected_profile="map_a", include_speeds=True, observe_only=True)
     assert result["failed"] is True and "speed" in result["msg"]
 
 
 def test_correct_child_count_with_wrong_or_mixed_speed_fails():
     replies = enhanced_live(profile="map_a")
     replies[0]["current"]["interfaces"][0]["speed"] = "10Gb"
-    result, _ = run(replies, expected_profile="map_a", include_speeds=True)
+    result, _unused_calls = run(replies, expected_profile="map_a", include_speeds=True)
     assert result["failed"] is True and result["differences"][0]["check"] == "topology"
 
 
@@ -969,7 +971,7 @@ def test_explicit_per_parent_speed_supports_mixed_maps_and_topology_only_recover
     profile["child_lanes"]["Ethernet1/23"] = [1, 2]
     profile["child_speeds"] = {"Ethernet1/21": 25, "Ethernet1/23": 50}
     profile["policy_maps"] = {"Ethernet1/21": MAP_A, "Ethernet1/23": MAP_B}
-    result, _ = run(enhanced_live(declared, "map_a"), fixture=declared, expected_profile="map_a", include_speeds=True)
+    result, _unused_calls = run(enhanced_live(declared, "map_a"), fixture=declared, expected_profile="map_a", include_speeds=True)
     assert result["failed"] is False
     assert set(result["snapshot"]["families"]["Ethernet1/23"]["child_speeds"].values()) == {50}
 
@@ -988,7 +990,7 @@ def test_unrecognized_map_needs_explicit_speed_when_speed_validation_enabled():
     result, plugin = run([], fixture=declared, include_speeds=True, validate_only=True)
     assert result["failed"] is True and plugin._execute_module.call_count == 0
     declared["profiles"]["map_a"]["child_speeds"] = {PARENT: 25}
-    result, _ = run([], fixture=declared, include_speeds=True, validate_only=True)
+    result, _unused_calls = run([], fixture=declared, include_speeds=True, validate_only=True)
     assert result["failed"] is False
 
 
@@ -996,11 +998,11 @@ def test_unrecognized_map_needs_explicit_speed_when_speed_validation_enabled():
 def test_topology_only_retains_but_does_not_assert_reserved_policy_maps(profile):
     replies = enhanced_live(profile=profile)
     replies[1] = response("policies", [policy(breakout_map=MAP_B)])
-    result, _ = run(replies, expected_profile=profile, include_speeds=True, topology_only=True)
+    result, _unused_calls = run(replies, expected_profile=profile, include_speeds=True, topology_only=True)
     assert result["failed"] is False
     assert result["snapshot"]["policy_maps"] == {PARENT: MAP_B}
     assert "policy_maps" not in result["checks"]
-    normal, _ = run(replies, expected_profile=profile, include_speeds=True)
+    normal, _unused_calls = run(replies, expected_profile=profile, include_speeds=True)
     assert normal["failed"] is True
 
 
@@ -1008,10 +1010,10 @@ def test_topology_only_unchanged_allows_reserved_policy_ownership_change():
     declared = fixture(True)
     prior_replies = enhanced_live(declared, "map_a")
     prior_replies[1] = response("policies", [policy("Ethernet1/21")])
-    prior, _ = run(prior_replies, fixture=declared, expected_profile="map_a", observe_only=True, whole_switch=True, include_speeds=True)
+    prior, _unused_calls = run(prior_replies, fixture=declared, expected_profile="map_a", observe_only=True, whole_switch=True, include_speeds=True)
     current = enhanced_live(declared, "map_a")
     current[1] = response("policies", [policy("Ethernet1/23", policyId="RECREATED-ID")])
-    result, _ = run(
+    result, _unused_calls = run(
         current,
         fixture=declared,
         expected_profile="map_a",
@@ -1022,21 +1024,23 @@ def test_topology_only_unchanged_allows_reserved_policy_ownership_change():
         baseline=prior["snapshot"],
     )
     assert result["failed"] is False
-    strict, _ = run(current, fixture=declared, expected_profile="map_a", whole_switch=True, include_speeds=True, unchanged=True, baseline=prior["snapshot"])
+    strict, _unused_calls = run(
+        current, fixture=declared, expected_profile="map_a", whole_switch=True, include_speeds=True, unchanged=True, baseline=prior["snapshot"]
+    )
     assert strict["failed"] is True
 
 
 @pytest.mark.parametrize("scope", ["guard", "outside"])
 def test_topology_only_never_ignores_guard_or_outside_policy_drift(scope):
     declared = fixture(guards=True)
-    prior, _ = run(enhanced_live(declared, outside=True), fixture=declared, whole_switch=True, observe_only=True)
+    prior, _unused_calls = run(enhanced_live(declared, outside=True), fixture=declared, whole_switch=True, observe_only=True)
     replies = enhanced_live(declared, "map_a", outside=True)
     if scope == "guard":
         replies[1]["current"]["policies"].append(policy("Ethernet1/60"))
         replies[1]["current"]["meta"]["counts"]["total"] += 1
     else:
         replies[1]["current"]["policies"][-1]["templateInputs"]["MAP"] = MAP_A
-    result, _ = run(replies, fixture=declared, expected_profile="map_a", whole_switch=True, topology_only=True, baseline=prior["snapshot"])
+    result, _unused_calls = run(replies, fixture=declared, expected_profile="map_a", whole_switch=True, topology_only=True, baseline=prior["snapshot"])
     assert result["failed"] is True
     assert ("guard_policy" if scope == "guard" else "outside_policy_maps") in {item["check"] for item in result["differences"]}
 
@@ -1044,7 +1048,7 @@ def test_topology_only_never_ignores_guard_or_outside_policy_drift(scope):
 def test_topology_only_does_not_accept_malformed_policy_evidence():
     replies = enhanced_live(profile="map_a")
     replies[1]["current"]["policies"][0]["markDeleted"] = None
-    result, _ = run(replies, expected_profile="map_a", topology_only=True)
+    result, _unused_calls = run(replies, expected_profile="map_a", topology_only=True)
     assert result["failed"] is True
 
 
@@ -1061,7 +1065,7 @@ def test_outside_physical_evidence_is_strict(kind):
     else:
         replies[0]["current"]["interfaces"].append(deepcopy(row))
         replies[0]["current"]["meta"]["counts"]["total"] += 1
-    result, _ = run(replies, whole_switch=True, include_speeds=True, observe_only=True)
+    result, _unused_calls = run(replies, whole_switch=True, include_speeds=True, observe_only=True)
     assert result["failed"] is True
 
 
@@ -1076,7 +1080,7 @@ def test_fex_subinterfaces_and_config_only_rows_are_not_outside_families():
         ]
     )
     replies[0]["current"]["meta"]["counts"]["total"] += 4
-    result, _ = run(replies, whole_switch=True, include_speeds=True)
+    result, _unused_calls = run(replies, whole_switch=True, include_speeds=True)
     assert result["failed"] is False and result["snapshot"]["outside_families"] == {}
 
 
@@ -1106,13 +1110,13 @@ def test_declared_pagination_total_cannot_change_between_pages():
     first["current"]["meta"]["counts"] = {"total": 3, "remaining": 2}
     second = response("interfaces", [interface("Ethernet1/40")])
     second["current"]["meta"]["counts"] = {"total": 2, "remaining": 0}
-    result, _ = run([first, second], whole_switch=True, observe_only=True)
+    result, _unused_calls = run([first, second], whole_switch=True, observe_only=True)
     assert result["failed"] is True and "total changed" in result["msg"]
 
 
 @pytest.mark.parametrize("change", ["missing_outside", "overlap", "bad_speed", "missing_speed", "outside_native"])
 def test_enhanced_baseline_must_supply_complete_compatible_evidence(change):
-    prior, _ = run(enhanced_live(outside=True), whole_switch=True, include_speeds=True, observe_only=True)
+    prior, _unused_calls = run(enhanced_live(outside=True), whole_switch=True, include_speeds=True, observe_only=True)
     baseline = prior["snapshot"]
     if change == "missing_outside":
         del baseline["outside_families"]
@@ -1130,8 +1134,8 @@ def test_enhanced_baseline_must_supply_complete_compatible_evidence(change):
 
 def test_other_declared_owned_fixture_can_change_without_hiding_truly_outside_collateral():
     owned = ["Ethernet1/40"]
-    prior, _ = run(enhanced_live(), whole_switch=True, include_speeds=True, owned_interfaces=owned, observe_only=True)
-    result, _ = run(
+    prior, _unused_calls = run(enhanced_live(), whole_switch=True, include_speeds=True, owned_interfaces=owned, observe_only=True)
+    result, _unused_calls = run(
         enhanced_live(profile="map_a", outside=True),
         expected_profile="map_a",
         whole_switch=True,
@@ -1146,7 +1150,7 @@ def test_other_declared_owned_fixture_can_change_without_hiding_truly_outside_co
     replies = enhanced_live(profile="map_a", outside=True)
     replies[0]["current"]["interfaces"].append(interface("Ethernet1/42/1", speed="25Gb"))
     replies[0]["current"]["meta"]["counts"]["total"] += 1
-    result, _ = run(replies, expected_profile="map_a", whole_switch=True, include_speeds=True, owned_interfaces=owned, baseline=prior["snapshot"])
+    result, _unused_calls = run(replies, expected_profile="map_a", whole_switch=True, include_speeds=True, owned_interfaces=owned, baseline=prior["snapshot"])
     assert result["failed"] is True
     assert result["differences"][0]["check"] == "outside_families"
 
@@ -1161,7 +1165,7 @@ def test_other_owned_scope_must_be_explicit_unique_parent_names_and_not_guards(o
 
 
 def test_other_owned_scope_cannot_change_between_baseline_and_validation():
-    prior, _ = run(enhanced_live(), whole_switch=True, owned_interfaces=["Ethernet1/40"], observe_only=True)
+    prior, _unused_calls = run(enhanced_live(), whole_switch=True, owned_interfaces=["Ethernet1/40"], observe_only=True)
     result, plugin = run([], whole_switch=True, owned_interfaces=["Ethernet1/41"], baseline=prior["snapshot"])
     assert result["failed"] is True and "owned_interfaces" in result["msg"]
     assert plugin._execute_module.call_count == 0

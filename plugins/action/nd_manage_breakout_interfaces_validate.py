@@ -382,7 +382,7 @@ def _baseline(raw, switch_id, parents, include_speeds=False, whole_switch=False,
         if _parent(name) != name:
             raise ObservationError("baseline outside parents must be canonical native Ethernet names.")
     for parent, family in {**raw["families"], **outside}.items():
-        if not isinstance(family, dict) or type(family.get("native")) is not bool or not isinstance(family.get("children"), list):
+        if not isinstance(family, dict) or not isinstance(family.get("native"), bool) or not isinstance(family.get("children"), list):
             raise ObservationError("baseline family state is malformed for " + parent + ".")
         child_pattern = re.compile(re.escape(parent) + r"/[1-9]\d*$")
         children = family["children"]
@@ -414,7 +414,7 @@ class ActionModule(ActionBase):
         collected = []
         fingerprints = set()
         declared_total = None
-        for _ in range(_MAX_PAGES):
+        for _unused_page in range(_MAX_PAGES):
             url = path + "?" + urlencode({**query, "max": _PAGE_SIZE, "offset": offset})
             call = {"method": "GET", "path": url, "collection": collection}
             calls.append(call)
@@ -488,7 +488,9 @@ class ActionModule(ActionBase):
             for parent in parents:
                 slot, port = _PARENT.fullmatch(parent).groups()
                 buckets[(int(slot), port[0])].append(port)
-            interface_filters = ["interfaceName:*Ethernet" + str(slot) + "/" + commonprefix(ports) + "*" for (slot, _), ports in sorted(buckets.items())]
+            interface_filters = [
+                "interfaceName:*Ethernet" + str(slot) + "/" + commonprefix(ports) + "*" for (slot, _unused_prefix), ports in sorted(buckets.items())
+            ]
         interfaces = []
         for interface_filter in interface_filters:
             interfaces.extend(
@@ -576,7 +578,7 @@ class ActionModule(ActionBase):
             }:
                 raise ObservationError("expected_profile must be native or a configured profile label.")
             for flag in ("unchanged", "observe_only", "validate_only", "whole_switch", "include_speeds", "topology_only"):
-                if type(args.get(flag, False)) is not bool:
+                if not isinstance(args.get(flag, False), bool):
                     raise ObservationError(flag + " must be a boolean.")
             observe_only = args.get("observe_only", False)
             validate_only = args.get("validate_only", False)

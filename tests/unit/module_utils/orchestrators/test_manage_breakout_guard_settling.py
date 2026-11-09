@@ -41,10 +41,12 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.orchestrators.test_man
 from ansible_collections.cisco.nd.tests.unit.module_utils.orchestrators.test_manage_breakout_readiness import (
     FAST,
     VERIFY,
-    clock,
+    clock as shared_clock_fixture,
     implementation,
     intent_topology,
 )
+
+clock = shared_clock_fixture
 
 
 def assert_guard_queries(calls):
@@ -205,7 +207,7 @@ def test_collateral_appearing_during_settling_stops_wait_and_uses_existing_inver
 def test_exhaustion_preserves_confirmed_changes_last_snapshot_and_stops_cleanup(clock, state):
     pending = topology(P23, native=(P21,)) if state == "overridden" else topology(native=(P21,))
     report, calls = run(
-        [deepcopy(pending), action(item(P21)), *[deepcopy(pending) for _ in range(12)]],
+        [deepcopy(pending), action(item(P21)), *[deepcopy(pending) for _unused_attempt in range(12)]],
         state=state,
         config=[group(P21)],
         verify=VERIFY,
@@ -237,7 +239,7 @@ def test_get_latency_consumes_the_same_guard_budget(clock, monkeypatch):
 
     monkeypatch.setattr(implementation.ManageBreakoutInterfacesOrchestrator, "_topology_snapshot", slow_snapshot)
     pending = topology(native=(P21,))
-    report, calls = run([deepcopy(pending), action(item(P21)), *[deepcopy(pending) for _ in range(8)]], config=[group(P21)], verify=VERIFY)
+    report, calls = run([deepcopy(pending), action(item(P21)), *[deepcopy(pending) for _unused_attempt in range(8)]], config=[group(P21)], verify=VERIFY)
     assert report["failed"] is True and report["changed"] is True
     assert len(writes(calls)) == 1
     assert len(summary_calls(calls)) == 3
@@ -426,7 +428,7 @@ def test_guard_restores_original_attempt_limit_and_deadline_before_return_or_inv
     if scenario == "read_failure":
         scripted = [deepcopy(pending), action(item(P21)), deepcopy(pending), response({"interfaces": None})]
     elif scenario == "exhaustion":
-        scripted = [deepcopy(pending), action(item(P21)), *[deepcopy(pending) for _ in range(12)]]
+        scripted = [deepcopy(pending), action(item(P21)), *[deepcopy(pending) for _unused_attempt in range(12)]]
     else:
         scripted = [deepcopy(pending), action(item(P21)), deepcopy(pending), topology(P21, P23), action(item(P21 + "/1"))]
     report, calls = run(scripted, config=[group(P21)], verify=VERIFY)

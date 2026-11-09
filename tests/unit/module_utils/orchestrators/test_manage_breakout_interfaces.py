@@ -50,8 +50,7 @@ class RecordingSender(Sender):
         self.ansible_module = MockAnsibleModule()
 
         def scripted():
-            for response in responses:
-                yield response
+            yield from responses
             raise AssertionError("Unexpected REST call: fixture exhausted (possible retry/readback)")
 
         self.gen = ResponseGenerator(scripted())

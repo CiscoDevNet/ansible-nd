@@ -21,7 +21,7 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.orchestrators.test_man
     SERIAL,
     VERIFY,
     action,
-    clock,
+    clock as shared_clock_fixture,
     combined,
     group,
     intent_topology,
@@ -31,6 +31,8 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.orchestrators.test_man
     topology,
     writes,
 )
+
+clock = shared_clock_fixture
 
 
 @pytest.mark.parametrize("slot", [100, 101, 999])
