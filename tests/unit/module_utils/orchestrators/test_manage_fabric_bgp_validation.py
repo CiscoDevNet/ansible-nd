@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import get_args
+
 import pytest
 from ansible.module_utils.common.arg_spec import ModuleArgumentSpecValidator
 
@@ -26,6 +28,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import (
     FabricIbgpModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.release_metadata import (
+    NDMinimumVersion,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ebgp_vxlan import (
     ManageAiEbgpVxlanFabricOrchestrator,
@@ -66,6 +71,8 @@ DHCP_IPV6_FIELDS = (
     ("dhcp_end_address", "2001:db8::20"),
     ("management_gateway", "2001:db8::1"),
 )
+
+IBGP_RELEASE_GATE_PRESENCE_CASES = (("allow_smart_switch_ha", False), ("isis_keys", []))
 
 
 def _orchestrator(orchestrator_class, state: str, version: str | None = None):
@@ -130,6 +137,47 @@ def test_parse_controller_product_version_orders_lettered_bug_fixes(older, newer
     assert parse_controller_product_version(older) < parse_controller_product_version(newer)
 
 
+@pytest.mark.parametrize(
+    ("model_class", "orchestrator_class"),
+    (
+        (FabricIbgpModel, ManageIbgpFabricOrchestrator),
+        (FabricAiIbgpVxlanModel, ManageAiIbgpVxlanFabricOrchestrator),
+    ),
+)
+def test_ibgp_release_gate_rejects_explicit_false_and_empty_values_at_boundary(model_class, orchestrator_class) -> None:
+    for field, value in IBGP_RELEASE_GATE_PRESENCE_CASES:
+        management_class = next(
+            item for item in get_args(model_class.model_fields["management"].annotation) if isinstance(item, type) and hasattr(item, "model_fields")
+        )
+        field_info = management_class.model_fields[field]
+        assert NDMinimumVersion("4.3.1") in field_info.metadata
+        assert "NDMinimumVersion" not in str(management_class.model_json_schema())
+        model = model_class.from_config({"fabric_name": "fabric1", "management": {"bgp_asn": "65001", field: value}})
+        assert model.management is not None
+        assert field in model.management.model_fields_set
+        with pytest.raises(RuntimeError, match=rf"{field} \(requires ND 4\.3\.1 or later\)"):
+            _orchestrator(orchestrator_class, "merged", "4.2.1").preflight([model])
+        _orchestrator(orchestrator_class, "merged", "4.3.1").preflight([model])
+
+
+@pytest.mark.parametrize(("model_class", "orchestrator_class"), FABRIC_FAMILIES[:-1])
+def test_metadata_release_gate_covers_each_non_campus_fabric_family(model_class, orchestrator_class) -> None:
+    model = model_class.from_config({"fabric_name": "fabric1", "management": {"bgp_asn": "65001", "allow_smart_switch_ha": False}})
+    with pytest.raises(RuntimeError, match=r"allow_smart_switch_ha \(requires ND 4\.3\.1 or later\)"):
+        _orchestrator(orchestrator_class, "merged", "4.2.1").preflight([model])
+    _orchestrator(orchestrator_class, "merged", "4.3.1").preflight([model])
+
+
+def test_ibgp_field_minimum_can_be_a_lettered_bug_fix_release(monkeypatch) -> None:
+    model = FabricIbgpModel.from_config({"fabric_name": "fabric1", "management": {"bgp_asn": "65001", "allow_smart_switch_ha": False}})
+    assert model.management is not None
+    field_info = type(model.management).model_fields["allow_smart_switch_ha"]
+    monkeypatch.setattr(field_info, "metadata", [NDMinimumVersion("4.3.1a")])
+    with pytest.raises(RuntimeError, match=r"requires ND 4\.3\.1a or later"):
+        _orchestrator(ManageIbgpFabricOrchestrator, "merged", "4.3.1").preflight([model])
+    _orchestrator(ManageIbgpFabricOrchestrator, "merged", "4.3.1a").preflight([model])
+
+
 @pytest.mark.parametrize(("model_class", "orchestrator_class"), SITE_ID_FAMILIES)
 def test_extended_site_id_is_release_aware(model_class, orchestrator_class) -> None:
     model = model_class.from_config(
@@ -154,7 +202,7 @@ def test_extended_site_id_is_release_aware(model_class, orchestrator_class) -> N
 def test_campus_bgp_fast_convergence_rejects_supplied_value_before_4_3_1(value: bool, version: str | None) -> None:
     model = FabricCampusIbgpVxlanModel.from_config({"fabric_name": "fabric1", "management": {"bgp_asn": "65001", "bgp_fast_convergence": value}})
 
-    with pytest.raises(RuntimeError, match="bgp_fast_convergence requires ND 4.3.1 or later"):
+    with pytest.raises(RuntimeError, match=r"bgp_fast_convergence \(requires ND 4.3.1 or later\)"):
         _orchestrator(ManageCampusIbgpVxlanFabricOrchestrator, "merged", version).preflight([model])
 
 

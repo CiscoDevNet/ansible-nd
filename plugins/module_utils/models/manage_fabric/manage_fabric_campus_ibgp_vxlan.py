@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import re
 from enum import Enum
-from typing import ClassVar, Literal
+from typing import Annotated, ClassVar, Literal
+
+from ansible_collections.cisco.nd.plugins.module_utils.models.release_metadata import NDMinimumVersion
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -550,7 +552,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         description="Enable BGP IPv4 unicast session between RR and RR client",
         default=False,
     )
-    bgp_fast_convergence: bool | None = Field(
+    bgp_fast_convergence: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="bgpFastConvergence",
         description="Enable immediate BGP failure detection and undampened next-hop updates (ND 4.3.1+)",
         default=None,

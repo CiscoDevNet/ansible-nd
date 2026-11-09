@@ -663,6 +663,7 @@ options:
                 - Key type: 6 or 7.
                 - Available in ND 4.3.1 or later.
                 type: str
+                choices: [ '6', '7' ]
                 required: true
               key_string:
                 description:
@@ -676,6 +677,7 @@ options:
                 - Cryptographic algorithm.
                 - Available in ND 4.3.1 or later.
                 type: str
+                choices: [ '3des', 'aes', 'hmac-sha-1', 'hmac-sha-256', 'hmac-sha-384', 'hmac-sha-512', 'md5' ]
               accept_lifetime_start:
                 description:
                 - Accept lifetime start time in HH:MM:SS format.
@@ -691,6 +693,7 @@ options:
                 - Accept lifetime end mode.
                 - Available in ND 4.3.1 or later.
                 type: str
+                choices: [ duration, endTime, infinite ]
               accept_lifetime_duration:
                 description:
                 - Accept lifetime duration in seconds.
@@ -726,6 +729,7 @@ options:
                 - Send lifetime end mode.
                 - Available in ND 4.3.1 or later.
                 type: str
+                choices: [ duration, endTime, infinite ]
               send_lifetime_duration:
                 description:
                 - Send lifetime duration in seconds.
@@ -751,6 +755,7 @@ options:
             - NTP authentication algorithm.
             - Available in ND 4.3.1 or later.
             type: str
+            choices: [ aes128cmac, md5 ]
           ntp_auth_enable:
             description:
             - Enable NTP authentication.
@@ -772,6 +777,7 @@ options:
             - NTP authentication key type.
             - Available in ND 4.3.1 or later.
             type: str
+            choices: [ '6', '7' ]
           ospf_auth_keychain_name:
             description:
             - OSPF authentication keychain name.
@@ -805,6 +811,7 @@ options:
                 - Key type: 6 or 7.
                 - Available in ND 4.3.1 or later.
                 type: str
+                choices: [ '6', '7' ]
                 required: true
               key_string:
                 description:
@@ -818,6 +825,7 @@ options:
                 - Cryptographic algorithm.
                 - Available in ND 4.3.1 or later.
                 type: str
+                choices: [ '3des', 'aes', 'hmac-sha-1', 'hmac-sha-256', 'hmac-sha-384', 'hmac-sha-512', 'md5' ]
               accept_lifetime_start:
                 description:
                 - Accept lifetime start time in HH:MM:SS format.
@@ -833,6 +841,7 @@ options:
                 - Accept lifetime end mode.
                 - Available in ND 4.3.1 or later.
                 type: str
+                choices: [ duration, endTime, infinite ]
               accept_lifetime_duration:
                 description:
                 - Accept lifetime duration in seconds.
@@ -868,6 +877,7 @@ options:
                 - Send lifetime end mode.
                 - Available in ND 4.3.1 or later.
                 type: str
+                choices: [ duration, endTime, infinite ]
               send_lifetime_duration:
                 description:
                 - Send lifetime duration in seconds.
@@ -926,6 +936,7 @@ options:
                 - Key type: 6 or 7.
                 - Available in ND 4.3.1 or later.
                 type: str
+                choices: [ '6', '7' ]
                 required: true
               key_string:
                 description:
@@ -939,6 +950,7 @@ options:
                 - Cryptographic algorithm.
                 - Available in ND 4.3.1 or later.
                 type: str
+                choices: [ '3des', 'aes', 'hmac-sha-1', 'hmac-sha-256', 'hmac-sha-384', 'hmac-sha-512', 'md5' ]
               accept_lifetime_start:
                 description:
                 - Accept lifetime start time in HH:MM:SS format.
@@ -954,6 +966,7 @@ options:
                 - Accept lifetime end mode.
                 - Available in ND 4.3.1 or later.
                 type: str
+                choices: [ duration, endTime, infinite ]
               accept_lifetime_duration:
                 description:
                 - Accept lifetime duration in seconds.
@@ -989,6 +1002,7 @@ options:
                 - Send lifetime end mode.
                 - Available in ND 4.3.1 or later.
                 type: str
+                choices: [ duration, endTime, infinite ]
               send_lifetime_duration:
                 description:
                 - Send lifetime duration in seconds.
@@ -1915,6 +1929,7 @@ options:
             - Hypershield HA peer-link subnet prefix size.
             - Available in ND 4.3.1 or later.
             type: str
+            choices: [ '/30', '/31' ]
           hypershield_ha_source_intf:
             description:
             - Loopback interface used as the Hypershield HA source interface.

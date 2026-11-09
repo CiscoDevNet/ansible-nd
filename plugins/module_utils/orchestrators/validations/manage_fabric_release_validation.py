@@ -6,103 +6,15 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from typing import Any, ClassVar, Mapping
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.release_metadata import (
+    NDMinimumVersion,
+)
 
+ND_COLLECTION_MINIMUM_VERSION = (4, 2, 1, 0)
 ND_4_3_1 = (4, 3, 1, 0)
-
-IBGP_ND_4_3_FIELDS = frozenset(
-    {
-        "ai_load_sharing_opcode",
-        "ai_load_sharing_packet_sequence_number",
-        "ai_load_sharing_queuepair",
-        "allow_smart_switch_ha",
-        "auto_smart_switch_vpc_pair_ha",
-        "bfd_min_rx_interval",
-        "bfd_multiplier",
-        "bfd_tx_interval",
-        "dlb_all_interfaces",
-        "hypershield_ha_peer_link_subnet",
-        "hypershield_ha_peer_link_subnet_granularity",
-        "hypershield_ha_source_intf",
-        "hypershield_ha_source_subnet",
-        "hypershield_ha_vlan",
-        "use_hypershield_source_loopback_for_ha",
-        "isis_auth_use_key_entries",
-        "isis_border_level12",
-        "isis_keys",
-        "ntp_auth_algorithm",
-        "ntp_auth_enable",
-        "ntp_auth_key",
-        "ntp_auth_key_id",
-        "ntp_auth_key_type",
-        "ospf_auth_keychain_name",
-        "ospf_auth_use_keychain",
-        "ospf_auto_cost_ref_bw",
-        "ospf_keys",
-        "ospf_log_adj_changes",
-        "ospf_max_metric_startup_wait",
-        "pim_auth_keychain_name",
-        "pim_auth_use_keychain",
-        "pim_keys",
-        "system_qos_classification",
-    }
-)
-
-EBGP_ND_4_3_FIELDS = frozenset(
-    {
-        "ai_load_sharing_opcode",
-        "ai_load_sharing_packet_sequence_number",
-        "ai_load_sharing_queuepair",
-        "allow_smart_switch_ha",
-        "auto_smart_switch_vpc_pair_ha",
-        "bfd_min_rx_interval",
-        "bfd_multiplier",
-        "bfd_pim",
-        "bfd_tx_interval",
-        "bgp_allow_as_in",
-        "dlb_all_interfaces",
-        "enable_secure_default_vrf",
-        "hypershield_ha_peer_link_subnet",
-        "hypershield_ha_peer_link_subnet_granularity",
-        "hypershield_ha_source_intf",
-        "hypershield_ha_source_subnet",
-        "hypershield_ha_vlan",
-        "ntp_auth_algorithm",
-        "ntp_auth_enable",
-        "ntp_auth_key",
-        "ntp_auth_key_id",
-        "ntp_auth_key_type",
-        "per_vrf_unique_loopback_auto_provision",
-        "per_vrf_unique_loopback_auto_provision_v6",
-        "per_vrf_unique_loopback_ip_range",
-        "per_vrf_unique_loopback_ipv6_range",
-        "pim_auth_keychain_name",
-        "pim_auth_use_keychain",
-        "pim_keys",
-        "use_hypershield_source_loopback_for_ha",
-    }
-)
-
-EXTERNAL_ND_4_3_FIELDS = frozenset(
-    {
-        "ai_monitoring",
-        "allow_smart_switch_ha",
-        "auto_smart_switch_vpc_pair_ha",
-        "enable_remote_switch_backup",
-        "hypershield_ha_peer_link_subnet",
-        "hypershield_ha_peer_link_subnet_granularity",
-        "hypershield_ha_source_intf",
-        "hypershield_ha_source_subnet",
-        "hypershield_ha_vlan",
-        "ios_xe_tor_bootstrap_vlan",
-        "remote_storage_server",
-        "software_update_in_monitored_mode",
-        "strict_config_compliance_mode",
-        "use_hypershield_source_loopback_for_ha",
-    }
-)
 
 
 def parse_controller_product_version(value: object) -> tuple[int, int, int, int] | None:
@@ -118,42 +30,60 @@ def parse_controller_product_version(value: object) -> tuple[int, int, int, int]
 
 
 class ManageFabricReleaseValidationMixin:
-    """Apply ND release gates declared by each fabric orchestrator."""
+    """Apply ND release gates declared on supplied Pydantic model fields."""
 
     rest_send: Any
-    release_gated_fields: ClassVar[frozenset[str]] = frozenset()
     release_gate_family: ClassVar[str] = "fabric"
-    release_gate_minimum_version: ClassVar[tuple[int, int, int, int]] = ND_4_3_1
-    # Add per-field overrides only when ND confirms a field's later minimum release.
-    release_gate_minimum_versions: ClassVar[Mapping[str, tuple[int, int, int, int]]] = {}
+
+    @staticmethod
+    def _minimum_nd_version(management: NDBaseModel, field_name: str) -> tuple[tuple[int, int, int, int], str] | None:
+        """Return a field's declared minimum ND version, if it is later than the collection floor."""
+        field_info = type(management).model_fields.get(field_name)
+        field_metadata = getattr(field_info, "metadata", ()) if field_info is not None else ()
+        minimum_metadata = next(
+            (item for item in field_metadata if isinstance(item, NDMinimumVersion)),
+            None,
+        )
+        if minimum_metadata is None:
+            return None
+
+        minimum = parse_controller_product_version(minimum_metadata.value)
+        if minimum is None:
+            raise ValueError(f"Invalid ND minimum product version {minimum_metadata.value!r} on field {field_name!r}")
+        if minimum <= ND_COLLECTION_MINIMUM_VERSION:
+            return None
+        return minimum, minimum_metadata.value
 
     def preflight(self, model_instances: Sequence[NDBaseModel]) -> None:
-        """Reject explicitly supplied fields unsupported before ND 4.3.1."""
+        """Reject explicitly supplied fields before their declared minimum release."""
         affected = []
         raw_version = None
         version = None
+        version_resolved = False
         for item in model_instances:
             management = getattr(item, "management", None)
-            supplied_fields = management.model_fields_set & self.release_gated_fields if management is not None else set()
-            if not supplied_fields:
+            if management is None:
                 continue
-            if version is None:
-                raw_version = self.rest_send.controller_product_version
-                version = parse_controller_product_version(raw_version)
-            unsupported_fields = [
-                field
-                for field in supplied_fields
-                if version is None
-                or version < self.release_gate_minimum_versions.get(field, self.release_gate_minimum_version)
-            ]
+            unsupported_fields = []
+            for field in management.model_fields_set:
+                minimum_info = self._minimum_nd_version(management, field)
+                if minimum_info is None:
+                    continue
+                if not version_resolved:
+                    raw_version = self.rest_send.controller_product_version
+                    version = parse_controller_product_version(raw_version)
+                    version_resolved = True
+                minimum, minimum_text = minimum_info
+                if version is None or version < minimum:
+                    unsupported_fields.append(f"{field} (requires ND {minimum_text} or later)")
             if unsupported_fields:
                 affected.append(f"{item.get_identifier_value()} ({', '.join(sorted(unsupported_fields))})")
 
         if affected:
             reported = raw_version or "unknown"
             raise RuntimeError(
-                f"{self.release_gate_family} settings require ND 4.3.1 or later, with field-specific release "
-                f"thresholds where configured; controller product version is {reported!r} for fabric(s): "
+                f"{self.release_gate_family} settings require their declared minimum ND product versions; "
+                f"controller product version is {reported!r} for fabric(s): "
                 f"{', '.join(affected)}"
             )
 
@@ -161,21 +91,18 @@ class ManageFabricReleaseValidationMixin:
 
 
 class ManageFabricIbgpReleaseValidationMixin(ManageFabricReleaseValidationMixin):
-    """ND 4.3.1 field disposition for iBGP and AI iBGP VXLAN."""
+    """Release-validation error context for iBGP and AI iBGP VXLAN."""
 
-    release_gated_fields = IBGP_ND_4_3_FIELDS
     release_gate_family = "iBGP VXLAN"
 
 
 class ManageFabricEbgpReleaseValidationMixin(ManageFabricReleaseValidationMixin):
-    """ND 4.3.1 field disposition for eBGP and AI eBGP VXLAN."""
+    """Release-validation error context for eBGP and AI eBGP VXLAN."""
 
-    release_gated_fields = EBGP_ND_4_3_FIELDS
     release_gate_family = "eBGP VXLAN"
 
 
 class ManageFabricExternalReleaseValidationMixin(ManageFabricReleaseValidationMixin):
-    """ND 4.3.1 field disposition for External Connectivity fabrics."""
+    """Release-validation error context for External Connectivity fabrics."""
 
-    release_gated_fields = EXTERNAL_ND_4_3_FIELDS
     release_gate_family = "External Connectivity"

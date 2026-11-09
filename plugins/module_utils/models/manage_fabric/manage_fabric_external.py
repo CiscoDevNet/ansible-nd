@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
-from typing import ClassVar, Literal
+from typing import Annotated, ClassVar, Literal
+
+from ansible_collections.cisco.nd.plugins.module_utils.models.release_metadata import NDMinimumVersion
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -261,44 +263,48 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     )
 
     # Additional controls present in the ND 4.3.1 External_Fabric template.
-    ai_monitoring: bool | None = Field(alias="aiMonitoring", description="Enable AI monitoring features.", default=None)
-    allow_smart_switch_ha: bool | None = Field(
+    ai_monitoring: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(alias="aiMonitoring", description="Enable AI monitoring features.", default=None)
+    allow_smart_switch_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="allowSmartSwitchHA", description="Enable high availability configuration for smart switches.", default=None
     )
-    auto_smart_switch_vpc_pair_ha: bool | None = Field(
+    auto_smart_switch_vpc_pair_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="autoSmartSwitchVpcPairHA", description="Enable automatic high availability configuration for smart-switch vPC pairs.", default=None
     )
-    enable_remote_switch_backup: bool | None = Field(alias="enableRemoteSwitchBackup", description="Enable remote switch backup.", default=None)
-    hypershield_ha_peer_link_subnet: str | None = Field(
+    enable_remote_switch_backup: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="enableRemoteSwitchBackup", description="Enable remote switch backup.", default=None
+    )
+    hypershield_ha_peer_link_subnet: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
         alias="hypershieldHAPeerLinkSubnet", description="IPv4 subnet pool for HA peer-link connectivity.", default=None
     )
-    hypershield_ha_peer_link_subnet_granularity: Literal["/30", "/31"] | None = Field(
+    hypershield_ha_peer_link_subnet_granularity: Annotated[Literal["/30", "/31"] | None, NDMinimumVersion("4.3.1")] = Field(
         alias="hypershieldHAPeerLinkSubnetGranularity", description="Subnet prefix size for HA peer-link allocations.", default=None
     )
-    hypershield_ha_source_intf: str | None = Field(
+    hypershield_ha_source_intf: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
         alias="hypershieldHASourceIntf", description="Loopback interface used as the HA source.", min_length=3, max_length=40, default=None
     )
-    hypershield_ha_source_subnet: str | None = Field(
+    hypershield_ha_source_subnet: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
         alias="hypershieldHASourceSubnet", description="IPv4 subnet pool for the HA source loopback.", default=None
     )
-    hypershield_ha_vlan: int | None = Field(alias="hypershieldHAVlan", description="VLAN used for smart-switch HA communication.", ge=2, le=4094, default=None)
-    use_hypershield_source_loopback_for_ha: bool | None = Field(
+    hypershield_ha_vlan: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="hypershieldHAVlan", description="VLAN used for smart-switch HA communication.", ge=2, le=4094, default=None
+    )
+    use_hypershield_source_loopback_for_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="useHypershieldSourceLoopbackForHA", description="Reuse the Hypershield source loopback for HA.", default=None
     )
-    ios_xe_tor_bootstrap_vlan: int | None = Field(
+    ios_xe_tor_bootstrap_vlan: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
         alias="iosXeTorBootstrapVlan", description="Catalyst ToR bootstrap VLAN for inband PnP.", ge=1, le=4094, default=None
     )
-    remote_storage_server: str | None = Field(
+    remote_storage_server: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
         alias="remoteStorageServer",
         description="Name of the remote storage configured in Nexus Dashboard.",
         max_length=63,
         pattern=r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$",
         default=None,
     )
-    software_update_in_monitored_mode: bool | None = Field(
+    software_update_in_monitored_mode: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="softwareUpdateInMonitoredMode", description="Allow image management while the fabric is in monitored mode.", default=None
     )
-    strict_config_compliance_mode: bool | None = Field(
+    strict_config_compliance_mode: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="strictConfigComplianceMode", description="Enable bidirectional configuration compliance checks.", default=None
     )
 

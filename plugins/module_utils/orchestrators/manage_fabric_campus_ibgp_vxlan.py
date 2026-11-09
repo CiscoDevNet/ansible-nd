@@ -26,11 +26,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric.collection_query import (
     ManageFabricCollectionQueryMixin,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_campus_validation import (
-    ManageCampusFabricValidationMixin,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_dhcp_validation import (
     ManageFabricDhcpValidationMixin,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_bgp_validation import (
+    ManageFabricBgpValidationMixin,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_release_validation import (
+    ManageFabricReleaseValidationMixin,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.mixin import (
     ConfigActionsMixin,
@@ -38,12 +41,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_acti
 
 
 class ManageCampusIbgpVxlanFabricOrchestrator(
-    ManageCampusFabricValidationMixin,
+    ManageFabricReleaseValidationMixin,
+    ManageFabricBgpValidationMixin,
     ManageFabricDhcpValidationMixin,
     ManageFabricCollectionQueryMixin,
     ConfigActionsMixin,
     NDBaseOrchestrator,
 ):
+    release_gate_family: ClassVar[str] = "Campus iBGP VXLAN"
     model_class: ClassVar[type[NDBaseModel]] = FabricCampusIbgpVxlanModel
     fabric_inventory_category: ClassVar[str] = "fabric"
     fabric_inventory_management_type: ClassVar[str] = "vxlanCampus"

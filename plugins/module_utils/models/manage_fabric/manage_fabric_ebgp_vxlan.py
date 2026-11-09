@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import re
-from typing import Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal
+
+from ansible_collections.cisco.nd.plugins.module_utils.models.release_metadata import NDMinimumVersion
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -827,45 +829,63 @@ class VxlanEbgpManagementModel(NDNestedModel):
     )
 
     # Controls supported by the ND 4.3.1 eBGP VXLAN template.
-    ai_load_sharing_opcode: bool | None = Field(alias="aiLoadSharingOpcode", description="Use the RoCEv2 opcode for AI load-sharing hashing.", default=None)
-    ai_load_sharing_packet_sequence_number: bool | None = Field(
+    ai_load_sharing_opcode: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="aiLoadSharingOpcode", description="Use the RoCEv2 opcode for AI load-sharing hashing.", default=None
+    )
+    ai_load_sharing_packet_sequence_number: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="aiLoadSharingPacketSequenceNumber", description="Use the RoCEv2 packet sequence number for hashing.", default=None
     )
-    ai_load_sharing_queuepair: bool | None = Field(
+    ai_load_sharing_queuepair: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="aiLoadSharingQueuepair", description="Use the RoCEv2 queue pair for AI load-sharing hashing.", default=None
     )
-    allow_smart_switch_ha: bool | None = Field(alias="allowSmartSwitchHA", description="Enable smart-switch high availability.", default=None)
-    auto_smart_switch_vpc_pair_ha: bool | None = Field(
+    allow_smart_switch_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="allowSmartSwitchHA", description="Enable smart-switch high availability.", default=None
+    )
+    auto_smart_switch_vpc_pair_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="autoSmartSwitchVpcPairHA", description="Automatically configure HA for smart-switch vPC pairs.", default=None
     )
-    bfd_min_rx_interval: int | None = Field(alias="bfdMinRxInterval", description="BFD minimum receive interval in milliseconds.", ge=10, le=999, default=None)
-    bfd_multiplier: int | None = Field(alias="bfdMultiplier", description="BFD detection multiplier.", ge=1, le=50, default=None)
-    bfd_pim: bool | None = Field(alias="bfdPim", description="Enable BFD for PIM.", default=None)
-    bfd_tx_interval: int | None = Field(alias="bfdTxInterval", description="BFD transmit interval in milliseconds.", ge=10, le=999, default=None)
-    bgp_allow_as_in: bool | None = Field(alias="bgpAllowAsIn", description="Accept an AS path containing this border switch ASN.", default=None)
-    dlb_all_interfaces: bool | None = Field(alias="dlbAllInterfaces", description="Apply DLB to all supported interfaces.", default=None)
-    enable_secure_default_vrf: bool | None = Field(
+    bfd_min_rx_interval: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="bfdMinRxInterval", description="BFD minimum receive interval in milliseconds.", ge=10, le=999, default=None
+    )
+    bfd_multiplier: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="bfdMultiplier", description="BFD detection multiplier.", ge=1, le=50, default=None
+    )
+    bfd_pim: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(alias="bfdPim", description="Enable BFD for PIM.", default=None)
+    bfd_tx_interval: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="bfdTxInterval", description="BFD transmit interval in milliseconds.", ge=10, le=999, default=None
+    )
+    bgp_allow_as_in: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="bgpAllowAsIn", description="Accept an AS path containing this border switch ASN.", default=None
+    )
+    dlb_all_interfaces: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="dlbAllInterfaces", description="Apply DLB to all supported interfaces.", default=None
+    )
+    enable_secure_default_vrf: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="enableSecureDefaultVrf", description="Redirect default VRF traffic to a DPU for inspection.", default=None
     )
-    hypershield_ha_peer_link_subnet: str | None = Field(
+    hypershield_ha_peer_link_subnet: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
         alias="hypershieldHAPeerLinkSubnet", description="IPv4 subnet pool for HA peer-link connectivity.", default=None
     )
-    hypershield_ha_peer_link_subnet_granularity: Literal["/30", "/31"] | None = Field(
+    hypershield_ha_peer_link_subnet_granularity: Annotated[Literal["/30", "/31"] | None, NDMinimumVersion("4.3.1")] = Field(
         alias="hypershieldHAPeerLinkSubnetGranularity", description="Subnet prefix size for HA peer-link allocations.", default=None
     )
-    hypershield_ha_source_intf: str | None = Field(
+    hypershield_ha_source_intf: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
         alias="hypershieldHASourceIntf", description="Loopback interface used as the HA source.", min_length=3, max_length=40, default=None
     )
-    hypershield_ha_source_subnet: str | None = Field(
+    hypershield_ha_source_subnet: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
         alias="hypershieldHASourceSubnet", description="IPv4 subnet pool for the HA source loopback.", default=None
     )
-    hypershield_ha_vlan: int | None = Field(alias="hypershieldHAVlan", description="VLAN used for smart-switch HA communication.", ge=2, le=4094, default=None)
-    use_hypershield_source_loopback_for_ha: bool | None = Field(
+    hypershield_ha_vlan: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="hypershieldHAVlan", description="VLAN used for smart-switch HA communication.", ge=2, le=4094, default=None
+    )
+    use_hypershield_source_loopback_for_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="useHypershieldSourceLoopbackForHA", description="Reuse the Hypershield source loopback for HA.", default=None
     )
-    ntp_auth_algorithm: Literal["aes128cmac", "md5"] | None = Field(alias="ntpAuthAlgorithm", description="NTP authentication algorithm.", default=None)
-    ntp_auth_enable: bool | None = Field(alias="ntpAuthEnable", description="Enable NTP authentication.", default=None)
-    ntp_auth_key: SecretStr | None = Field(
+    ntp_auth_algorithm: Annotated[Literal["aes128cmac", "md5"] | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="ntpAuthAlgorithm", description="NTP authentication algorithm.", default=None
+    )
+    ntp_auth_enable: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(alias="ntpAuthEnable", description="Enable NTP authentication.", default=None)
+    ntp_auth_key: Annotated[SecretStr | None, NDMinimumVersion("4.3.1")] = Field(
         alias="ntpAuthKey",
         description="NTP authentication key.",
         min_length=1,
@@ -874,25 +894,33 @@ class VxlanEbgpManagementModel(NDNestedModel):
         default=None,
         json_schema_extra={"secret": True},
     )
-    ntp_auth_key_id: int | None = Field(alias="ntpAuthKeyId", description="NTP authentication key identifier.", ge=1, le=65535, default=None)
-    ntp_auth_key_type: Literal["6", "7"] | None = Field(alias="ntpAuthKeyType", description="NTP authentication key type.", default=None)
-    per_vrf_unique_loopback_auto_provision: bool | None = Field(
+    ntp_auth_key_id: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="ntpAuthKeyId", description="NTP authentication key identifier.", ge=1, le=65535, default=None
+    )
+    ntp_auth_key_type: Annotated[Literal["6", "7"] | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="ntpAuthKeyType", description="NTP authentication key type.", default=None
+    )
+    per_vrf_unique_loopback_auto_provision: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="perVrfUniqueLoopbackAutoProvision", description="Auto-provision a unique IPv4 loopback per VRF.", default=None
     )
-    per_vrf_unique_loopback_auto_provision_v6: bool | None = Field(
+    per_vrf_unique_loopback_auto_provision_v6: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="perVrfUniqueLoopbackAutoProvisionV6", description="Auto-provision a unique IPv6 loopback per VRF.", default=None
     )
-    per_vrf_unique_loopback_ip_range: FabricIPv4CIDR = Field(
+    per_vrf_unique_loopback_ip_range: Annotated[FabricIPv4CIDR, NDMinimumVersion("4.3.1")] = Field(
         alias="perVrfUniqueLoopbackIpRange", description="IPv4 prefix pool for per-VRF unique loopbacks.", default=None
     )
-    per_vrf_unique_loopback_ipv6_range: IPv6CIDR = Field(
+    per_vrf_unique_loopback_ipv6_range: Annotated[IPv6CIDR, NDMinimumVersion("4.3.1")] = Field(
         alias="perVrfUniqueLoopbackIpv6Range", description="IPv6 prefix pool for per-VRF unique loopbacks.", default=None
     )
-    pim_auth_keychain_name: str | None = Field(
+    pim_auth_keychain_name: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
         alias="pimAuthKeychainName", description="PIM authentication keychain name.", min_length=1, max_length=63, pattern=r"^\S+$", default=None
     )
-    pim_auth_use_keychain: bool | None = Field(alias="pimAuthUseKeychain", description="Use a PIM authentication keychain.", default=None)
-    pim_keys: list[KeychainKeyEntryModel] | None = Field(alias="pimKeys", description="PIM keychain entries.", default=None)
+    pim_auth_use_keychain: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="pimAuthUseKeychain", description="Use a PIM authentication keychain.", default=None
+    )
+    pim_keys: Annotated[list[KeychainKeyEntryModel] | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="pimKeys", description="PIM keychain entries.", default=None
+    )
 
     @field_validator("overlay_mode", mode="before")
     @classmethod
