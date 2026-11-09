@@ -3,15 +3,76 @@
   ansible.builtin.set_fact:
     _nd_interface_baseline_registry_path: >-
       {{ lookup('ansible.builtin.first_found', {
-           'files': [nd_interface_baseline_registry_file | default(''),
-                     playbook_dir ~ '/nd_prerequisite_profiles.yaml',
-                     playbook_dir ~ '/../tests/nd_prerequisite_profiles.yaml'], 'skip': false}) }}
+           'files': ([nd_interface_baseline_registry_file | default('')]
+                     + [playbook_dir ~ '/nd_prerequisite_profiles.yaml',
+                        playbook_dir ~ '/../tests/nd_prerequisite_profiles.yaml'])
+                    | select | list, 'skip': false}) }}
 
 - name: Load the interface reservation registry without exposing its contents
-  ansible.builtin.include_vars:
-    file: "{{ _nd_interface_baseline_registry_path }}"
-    name: _nd_interface_baseline_registry
-  no_log: true
+  block:
+    - name: Preflight registry readability and YAML structure without exposing contents
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "-c"
+          - |
+            import sys
+            try:
+                import yaml
+            except Exception:
+                raise SystemExit(30)
+            try:
+                with open(sys.argv[1], encoding="utf-8") as registry_file:
+                    registry = yaml.safe_load(registry_file)
+            except FileNotFoundError:
+                raise SystemExit(10)
+            except PermissionError:
+                raise SystemExit(11)
+            except yaml.YAMLError:
+                raise SystemExit(20)
+            except OSError:
+                raise SystemExit(12)
+            except Exception:
+                raise SystemExit(21)
+            if not isinstance(registry, dict):
+                raise SystemExit(22)
+          - "{{ _nd_interface_baseline_registry_path }}"
+      register: _nd_interface_baseline_registry_preflight
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Report and stop on a private registry preflight failure
+      when: _nd_interface_baseline_registry_preflight.rc != 0
+      block:
+        - name: Report only the sanitized registry preflight category
+          ansible.builtin.debug:
+            msg: >-
+              NDP_INTERFACE_REGISTRY_LOAD_FAILED: category={{ 'REGISTRY_FILE_UNAVAILABLE' if _nd_interface_baseline_registry_preflight.rc == 10 else
+              'REGISTRY_ACCESS_DENIED' if _nd_interface_baseline_registry_preflight.rc == 11 else
+              'REGISTRY_READ_FAILED' if _nd_interface_baseline_registry_preflight.rc == 12 else
+              'REGISTRY_CONTENT_PARSE_FAILED' if _nd_interface_baseline_registry_preflight.rc == 20 else
+              'REGISTRY_ROOT_NOT_MAPPING' if _nd_interface_baseline_registry_preflight.rc == 22 else
+              'REGISTRY_PARSER_UNAVAILABLE' if _nd_interface_baseline_registry_preflight.rc == 30 else
+              'REGISTRY_PREFLIGHT_FAILED' }}; path and contents withheld
+
+        - name: Stop when the private registry fails preflight
+          ansible.builtin.fail:
+            msg: "NDP_INTERFACE_REGISTRY_LOAD_FAILED: no baseline mutation or membership transfer is permitted"
+
+    - name: Include the private interface reservation registry
+      ansible.builtin.include_vars:
+        file: "{{ _nd_interface_baseline_registry_path }}"
+        name: _nd_interface_baseline_registry
+      no_log: true
+  rescue:
+    - name: Report an unexpected Ansible registry include failure
+      ansible.builtin.debug:
+        msg: "NDP_INTERFACE_REGISTRY_LOAD_FAILED: category=INCLUDE_VARS_FAILED_AFTER_PREFLIGHT; path and contents withheld"
+
+    - name: Stop when Ansible cannot include the private registry
+      ansible.builtin.fail:
+        msg: "NDP_INTERFACE_REGISTRY_LOAD_FAILED: no baseline mutation or membership transfer is permitted"
 
 - name: Create a private baseline checkpoint directory
   ansible.builtin.tempfile:

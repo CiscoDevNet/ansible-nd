@@ -660,12 +660,18 @@ def settle_unclosed(root, selected):
 
 def numeric_case_counts(activity):
     totals = activity.get("testcase_totals")
-    return (activity.get("validated") is True and activity.get("coverage") == "COMPLETE"
-        and isinstance(totals, dict)
-        and all(type(totals.get(name)) is int and totals[name] >= 0
-            for name in ("started", "passed", "failed", "skipped", "incomplete"))
-        and totals["incomplete"] == 0
-        and totals["started"] == totals["passed"] + totals["failed"])
+    if (activity.get("validated") is not True or not isinstance(totals, dict) or
+            any(type(totals.get(name)) is not int or totals[name] < 0
+                for name in ("started", "passed", "failed", "skipped", "incomplete"))):
+        return False
+    coverage = activity.get("coverage")
+    if coverage == "NOT_STARTED":
+        return all(totals[name] == 0 for name in ("started", "passed", "failed", "skipped", "incomplete"))
+    if coverage == "COMPLETE":
+        return totals["incomplete"] == 0 and totals["started"] == totals["passed"] + totals["failed"]
+    if coverage == "INCOMPLETE":
+        return totals["incomplete"] > 0 and totals["started"] == totals["passed"] + totals["failed"] + totals["incomplete"]
+    return False
 
 
 def ensure_summary(root, job, closed, timeout):

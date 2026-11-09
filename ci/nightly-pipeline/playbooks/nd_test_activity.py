@@ -60,6 +60,10 @@ MODULE_ALIASES = {
     "nd_manage_vpc_pair": "nd_vpc_pair",
     "nd_manage_resource_manager": "nd_resource_manager",
 }
+MODULE_ACTION_ALIASES = {
+    "nd_manage_fabric_ibgp_vxlan": "nd_manage_fabric",
+    "nd_manage_fabric_ebgp_vxlan": "nd_manage_fabric",
+}
 FAILURE_REASONS = (
     (re.compile(r"Unsupported module parameter:\s*timeout|Unsupported parameters for.{0,200}?module:\s*timeout\b", re.I), "Unsupported module parameter: timeout"),
     (re.compile(r"No Commands to execute", re.I), "No Commands to execute"),
@@ -181,7 +185,7 @@ def _verification_action(action):
 
 def _target_action(action, target):
     """Match module actions to their source role without changing event identity."""
-    return MODULE_ALIASES.get(action, action) == target
+    return MODULE_ALIASES.get(action, MODULE_ACTION_ALIASES.get(action, action)) == target
 
 
 def _section_state(name):
@@ -747,7 +751,18 @@ def _summarize_catalog(log, module, run_id, build, fabric, collection_root, test
 
     if not catalog["cases"]:
         if not untagged_seen:
-            result["notes"].append("source has no explicit authored TC identifiers and no authored module call was observed")
+            if catalog["errors"] or state["unmatched_case"]:
+                result["notes"].append("source has no explicit authored TC identifiers and no authored module call was observed")
+                return result
+            result["coverage"] = "NOT_STARTED"
+            result["count_unit"] = "authored module calls; no authored call was observed in this run"
+            result["counts"] = {name: 0 for name in STATES}
+            result["testcase_totals"] = {key: 0 for key in ("started", "passed", "failed", "skipped", "incomplete")}
+            result["identified_case_counts"] = dict(result["counts"])
+            result["identified_testcase_totals"] = dict(result["testcase_totals"])
+            result["other_cases"] = 0
+            result["identified_other_cases"] = 0
+            result["notes"].append("no authored integration test operation was reached; module preparation or setup ended first")
             return result
         # Targets without TC labels: each authored module call is one counted case.
         result["count_unit"] = "authored module calls (target has no TC identifiers)"

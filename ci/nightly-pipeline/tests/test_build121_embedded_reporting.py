@@ -163,6 +163,20 @@ assert new File(workspace, 'run_integration_module.yaml').text.startsWith('---\n
 ''')
 
 
+def test_nested_interface_helpers_install_exact_payloads_without_http(groovy_runner):
+    workspace, _ = groovy_runner(r'''
+script.EMBEDDED_INTERFACE_HELPERS.keySet().each { name ->
+    assert script.downloadFromConsul(name, 'collection/' + name) == true
+}
+assert requests.isEmpty()
+''')
+    for installed in (workspace / 'collection').rglob('*'):
+        if installed.is_file():
+            relative = installed.relative_to(workspace / 'collection')
+            source = ROOT / ('tests' if relative.name == 'nd_prerequisite_orchestrator.py' else 'playbooks') / relative
+            assert installed.read_bytes() == source.read_bytes()
+
+
 def test_bad_helper_digest_fails_closed_without_http_fallback(groovy_runner):
     groovy_runner(r'''
 script.EMBEDDED_REPORTING_HELPERS['nd_report.py'].sha256 = '0' * 64

@@ -250,7 +250,8 @@ class InterfaceBaseline:
                     validate(child, depth + 1)
 
         validate(body)
-        if method != "get" and reply["status"] == 207:
+        admin_update = path.endswith('/interfaceActions/updateAdminState')
+        if method != "get" and (reply["status"] == 207 or admin_update):
             results = body.get("results", body.get("items")) if isinstance(body, dict) else None
             requested = content.get("interfaces", [content])
             expected = {(row.get("switchId"), row.get("interfaceName")) for row in requested}
@@ -264,6 +265,8 @@ class InterfaceBaseline:
                 identity = (row.get("switchId"), row.get("interfaceName"))
                 if identity not in expected or identity in observed:
                     raise BaselineBlocked("OPERATION_IDENTITY_UNVERIFIED")
+                if admin_update and row.get('adminStatus') != 'down':
+                    raise BaselineBlocked('ADMIN_STATE_RESPONSE_UNVERIFIED')
                 observed.add(identity)
         return body
 
@@ -283,7 +286,7 @@ class InterfaceBaseline:
                 raise BaselineBlocked("INVENTORY_INCOMPLETE")
         return rows
 
-    def ready_switches(self, fabric):
+    def ready_switches(self, fabric, allow_pending=False):
         prefix = "/api/v1/manage/fabrics/" + quote(fabric, safe="")
         inventory = self.rows(self.call("get", prefix + "/switches"), "switches")
         identities = [row.get("switchId") for row in inventory]
@@ -308,17 +311,44 @@ class InterfaceBaseline:
             if target is None or self.switch_refs is not None and target["name"] not in self.switch_refs:
                 continue
             data = node.get("additionalData", {})
-            if (node.get("fabricManagementIp") == target.get("seed_ip") and isinstance(data, dict)
-                    and all(data.get(key) in ["normal", "Normal"] for key in ("systemMode", "intendedSystemMode", "discoveredSystemMode"))
-                    and data.get("configSyncStatus") == "inSync"
-                    and str(node.get("switchRole", "")).lower().replace("_", "") == str(target.get("baseline_role", "")).lower().replace("_", "")):
+            data = data if isinstance(data, dict) else {}
+            expected_ip = target.get("seed_ip")
+            expected_role = target.get("baseline_role")
+            observed_role = node.get("switchRole")
+            checks = {
+                "fabricManagementIp": isinstance(expected_ip, str) and bool(expected_ip.strip())
+                    and node.get("fabricManagementIp") == expected_ip,
+                "switchRole": isinstance(expected_role, str) and bool(expected_role.strip())
+                    and isinstance(observed_role, str) and bool(observed_role.strip())
+                    and observed_role.lower().replace("_", "") == expected_role.lower().replace("_", ""),
+                **{key: data.get(key) in ["normal", "Normal"]
+                   for key in ("systemMode", "intendedSystemMode", "discoveredSystemMode")},
+            }
+            identity_ready = all(checks.values())
+            if identity_ready and data.get("configSyncStatus") == "inSync":
                 ready.append(target)
+            elif allow_pending and identity_ready and data.get("configSyncStatus") == "pending":
+                # Only the verified fabric-default update uses this polling
+                # mode. Pending switches never become eligible for a write.
+                continue
             else:
                 self.readiness_incomplete = True
-                self.decisions.append({"switch": target["name"], "decision": "SWITCH_READINESS_OR_IDENTITY_UNVERIFIED"})
+                failed_checks = [key for key, accepted in checks.items() if not accepted]
+                if data.get("configSyncStatus") != "inSync":
+                    failed_checks.append("configSyncStatus")
+                self.decisions.append({"switch": target["name"], "decision": "SWITCH_READINESS_OR_IDENTITY_UNVERIFIED",
+                                       "failed_checks": failed_checks})
                 if self.apply:
                     raise BaselineBlocked("SWITCH_READINESS_OR_IDENTITY_UNVERIFIED")
         return prefix, ready
+
+    def wait_for_fabric_sync(self, fabric, expected_serials):
+        while self.clock() < self.deadline:
+            _, ready = self.ready_switches(fabric, allow_pending=True)
+            if {target['serial'] for target in ready} == expected_serials:
+                return
+            self.sleep(min(self.poll, max(0, self.deadline - self.clock())))
+        raise BaselineBlocked('FABRIC_DEFAULT_SYNC_DEADLINE')
 
     def linked_ports(self, fabric):
         managed = self.rows(self.call("get", "/api/v1/manage/links?fabricName=" + quote(fabric, safe="")), "links")
@@ -408,7 +438,7 @@ class InterfaceBaseline:
             offset = page * 200
             body = self.call("get", "/api/v1/analyze/anomalies/details?fabricName="
                              + quote(fabric, safe="") + "&max=200&offset=" + str(offset)
-                             + "&fabricStatus=all&includeSuspendedAlerts=true")
+                             + "&fabricStatus=all&includeSuspendedAlerts=true&includeAnomalies=all")
             batch = body.get("anomalies") if isinstance(body, dict) else None
             counts = body.get("meta", {}).get("counts") if isinstance(body, dict) else None
             if (not isinstance(batch, list) or len(batch) > 200
@@ -487,6 +517,125 @@ class InterfaceBaseline:
             self.sleep(min(self.poll, max(0, self.deadline - self.clock())))
         raise BaselineBlocked("VERIFICATION_DEADLINE")
 
+    def _current_batch_details(self, entries):
+        snapshots = {}
+        for fabric, target, name, expected in entries:
+            key = (fabric, target['serial'])
+            if key not in snapshots:
+                prefix = '/api/v1/manage/fabrics/' + quote(fabric, safe='')
+                snapshots[key] = self.interface_rows(prefix, target['serial'])
+        details = []
+        for fabric, target, name, expected in entries:
+            rows = snapshots[(fabric, target['serial'])]
+            matching = [row for row in rows if row['interfaceName'] == name]
+            if len(matching) != 1:
+                raise BaselineBlocked('INTERFACE_SCOPE_INCOMPLETE')
+            detail = matching[0]
+            if not isinstance(detail.get('configData'), dict) or not isinstance(detail.get('operData'), dict):
+                path = ('/api/v1/manage/fabrics/' + quote(fabric, safe='') + '/switches/'
+                        + quote(target['serial'], safe='') + '/interfaces/' + quote(name, safe=''))
+                detail = self.call('get', path)
+            details.append((fabric, target, name, expected, detail))
+        return details
+
+    @staticmethod
+    def _shutdown_is_observed(target, name, expected, detail):
+        return (isinstance(detail, dict) and detail.get('switchId') == target['serial']
+                and detail.get('interfaceName') == name and detail.get('interfaceType') == 'ethernet'
+                and detail.get('configData') == expected and isinstance(detail.get('operData'), dict)
+                and detail['operData'].get('adminStatus') == 'down'
+                and detail['operData'].get('operationalStatus') == 'down')
+
+    def _verify_batch_configuration(self, entries):
+        limit = min(self.deadline, self.clock() + 60)
+        while self.clock() < limit:
+            if all(self._shutdown_is_observed(target, name, expected, detail)
+                   for _, target, name, expected, detail in self._current_batch_details(entries)):
+                return
+            self.sleep(min(self.poll, max(0, limit - self.clock())))
+        raise BaselineBlocked('ADMIN_STATE_UPDATE_READBACK_UNVERIFIED')
+
+    def _verify_batch_clearance(self, entries):
+        fabrics = list(dict.fromkeys(row[0] for row in entries))
+        while self.clock() < self.deadline:
+            details = self._current_batch_details(entries)
+            configured = all(self._shutdown_is_observed(target, name, expected, detail)
+                             for _, target, name, expected, detail in details)
+            warnings = {fabric: self.anomaly_rows(fabric) for fabric in fabrics}
+            clear = not any(self.warning_matches(warning, target['serial'], name)
+                            for fabric, target, name, _ in entries for warning in warnings[fabric]
+                            if not warning['cleared'] and self.connectivity_warning(warning))
+            if configured and clear:
+                for fabric in fabrics:
+                    _, ready = self.ready_switches(fabric)
+                    serials = {target['serial'] for target in ready}
+                    if not {target['serial'] for f, target, _, _ in entries if f == fabric} <= serials:
+                        raise BaselineBlocked('SWITCH_CHANGED_DURING_VERIFICATION')
+                self.verified += len(entries)
+                return
+            self.sleep(min(self.poll, max(0, self.deadline - self.clock())))
+        raise BaselineBlocked('VERIFICATION_DEADLINE')
+
+    def apply_batches(self, plan):
+        grouped = {}
+        for fabric, target, name, original in plan:
+            grouped.setdefault(fabric, []).append((fabric, target, name, original))
+        applied = []
+        for fabric, selected in grouped.items():
+            # Prove the API preserves exact intent on one port before applying
+            # the remaining bounded batches. No alarm wait delays later ports.
+            # ND deploy waits for the selected interfaces and can exceed the
+            # bounded HTTP timeout on large requests. Keep each deploy small.
+            batches = [selected[:1]] + [selected[i:i + 8] for i in range(1, len(selected), 8)]
+            for batch in batches:
+                prefix, ready = self.ready_switches(fabric)
+                serials = {target['serial'] for target in ready}
+                snapshots = {}
+                for _, target, _, _ in batch:
+                    if target['serial'] not in snapshots:
+                        snapshots[target['serial']] = self.interface_rows(prefix, target['serial'])
+                linked = self.linked_ports(fabric)
+                expected_entries, before_images = [], []
+                for _, target, name, original in batch:
+                    if target['serial'] not in serials:
+                        raise BaselineBlocked('SWITCH_CHANGED_BEFORE_APPLY')
+                    rows = snapshots[target['serial']]
+                    matching = [row for row in rows if row['interfaceName'] == name]
+                    if len(matching) != 1:
+                        raise BaselineBlocked('INTERFACE_SCOPE_INCOMPLETE')
+                    row = matching[0]
+                    snapshot = row if isinstance(row.get('configData'), dict) and isinstance(row.get('operData'), dict) else None
+                    decision, detail, _ = self.observe(prefix, target, name, rows, linked, detail=snapshot)
+                    if decision != 'VERIFIED_UNUSED' or detail.get('configData') != original:
+                        raise BaselineBlocked('INTERFACE_CHANGED_BEFORE_APPLY')
+                    expected = copy.deepcopy(original)
+                    expected['networkOS']['policy']['adminState'] = False
+                    expected_entries.append((fabric, target, name, expected))
+                    before_images.append((target, name, detail))
+                # Recheck readiness and links immediately before the single
+                # scoped mutation, including planned/missing physical links.
+                _, ready = self.ready_switches(fabric)
+                serials = {target['serial'] for target in ready}
+                linked = self.linked_ports(fabric)
+                if any(target['serial'] not in serials or (target['serial'], physical_parent(name)) in linked
+                       for _, target, name, _ in expected_entries):
+                    raise BaselineBlocked('TOPOLOGY_CHANGED_BEFORE_BATCH_APPLY')
+                for target, name, detail in before_images:
+                    self.checkpoint({'phase': 'before_change', 'fabric': fabric, 'switchId': target['serial'],
+                                     'interfaceName': name, 'before': detail})
+                content = {'interfaces': [{'switchId': target['serial'], 'interfaceName': name, 'adminState': 'shut'}
+                                           for _, target, name, _ in expected_entries]}
+                self.changed = True
+                self.call('post', prefix + '/interfaceActions/updateAdminState', content)
+                # updateAdminState persists ND intent; it does not deploy that
+                # intent to the switch. Deploy exactly the approved identities.
+                self.call('post', prefix + '/interfaceActions/deploy', {
+                    'interfaces': [{'switchId': row['switchId'], 'interfaceName': row['interfaceName']}
+                                   for row in content['interfaces']]})
+                self._verify_batch_configuration(expected_entries)
+                applied.extend(expected_entries)
+        self._verify_batch_clearance(applied)
+
     def host_admin_default(self, fabric):
         path = "/api/v1/manage/fabrics/" + quote(fabric, safe="")
         current = self.call("get", path)
@@ -501,7 +650,7 @@ class InterfaceBaseline:
         if type(management.get("hostInterfaceAdminState")) is not bool:
             raise BaselineBlocked("FABRIC_DEFAULT_UNVERIFIED")
         if management["hostInterfaceAdminState"] and self.apply:
-            self.ready_switches(fabric)
+            _, before_targets = self.ready_switches(fabric)
             fresh = self.call("get", path)
             if fresh != current:
                 raise BaselineBlocked("FABRIC_CHANGED_BEFORE_APPLY")
@@ -514,6 +663,9 @@ class InterfaceBaseline:
             if verified != expected:
                 raise BaselineBlocked("FABRIC_DEFAULT_UPDATE_UNVERIFIED")
             management = verified["management"]
+            # ND temporarily marks compliance pending after the default-only
+            # update. Wait for normal/inSync without a fabric-wide deploy.
+            self.wait_for_fabric_sync(fabric, {target['serial'] for target in before_targets})
         self.fabric_defaults.append({"fabric": fabric, "hostInterfaceAdminState": management["hostInterfaceAdminState"]})
         if self.apply:
             self.ready_switches(fabric)
@@ -526,7 +678,25 @@ class InterfaceBaseline:
         try:
             seen = set()
             for fabric in self.fabrics:
-                prefix, targets = self.ready_switches(fabric)
+                for attempt in range(3):
+                    decision_start = len(self.decisions)
+                    previous_incomplete = self.readiness_incomplete
+                    readiness_error = None
+                    try:
+                        prefix, targets = self.ready_switches(fabric)
+                    except BaselineBlocked as error:
+                        if str(error) != "SWITCH_READINESS_OR_IDENTITY_UNVERIFIED":
+                            raise
+                        readiness_error = error
+                    failures = self.decisions[decision_start:]
+                    retryable = failures and all(row.get("failed_checks") == ["configSyncStatus"] for row in failures)
+                    if not retryable or attempt == 2 or self.deadline - self.clock() <= self.poll:
+                        if readiness_error is not None:
+                            raise readiness_error
+                        break
+                    del self.decisions[decision_start:]
+                    self.readiness_incomplete = previous_incomplete
+                    self.sleep(self.poll)
                 linked = self.linked_ports(fabric) if targets else set()
                 for target in targets:
                     if target["serial"] in seen:
@@ -570,7 +740,10 @@ class InterfaceBaseline:
             if self.apply and not self.inspected:
                 raise BaselineBlocked("INTERFACE_SCOPE_UNVERIFIED")
             self.candidates = len(plan)
-            for fabric, target, name, original in plan if self.apply else []:
+            batch_mode = self.apply and len(plan) > 1
+            if batch_mode:
+                self.apply_batches(plan)
+            for fabric, target, name, original in plan if self.apply and not batch_mode else []:
                 prefix, fresh_targets = self.ready_switches(fabric)
                 if not any(row["serial"] == target["serial"] for row in fresh_targets):
                     raise BaselineBlocked("SWITCH_CHANGED_BEFORE_APPLY")
@@ -599,6 +772,14 @@ class InterfaceBaseline:
             if self.ensure_host_admin_down_default:
                 for fabric in self.fabrics:
                     self.host_admin_default(fabric)
+                if self.apply:
+                    # Compliance polling can take several collector cycles;
+                    # require fresh alarm evidence after that wait too.
+                    self.remaining_connectivity_alerts = sum(
+                        not row['cleared'] and self.connectivity_warning(row)
+                        for fabric in self.fabrics for row in self.anomaly_rows(fabric))
+                    if self.remaining_connectivity_alerts:
+                        raise BaselineBlocked('CONNECTIVITY_INTERFACE_STATUS_ACTIVE')
         except BaselineBlocked as error:
             failed, reason = True, str(error)
         except Exception:

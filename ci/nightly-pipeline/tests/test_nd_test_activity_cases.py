@@ -415,6 +415,37 @@ def test_untagged_authored_module_calls_are_counted_without_pipeline_tasks(tmp_p
     assert result["base"] == result["cleanup"] == "Ran"
 
 
+def test_failed_module_setup_before_authored_calls_has_numeric_zero_case_counts(tmp_path):
+    collection, module = synthetic_collection(tmp_path, [
+        {"name": "Base - required setup", "ansible.builtin.debug": {"msg": "setup"}},
+        {"name": "MERGED CREATE: authored operation", "cisco.nd.nd_fixture": {"state": "merged"}},
+    ])
+    rows = records_for(collection, module, "tasks/main.yaml")
+    log, _, _ = emit_log(tmp_path, rows[:1], collection=collection, module=module,
+                         outcomes={rows[0]["key"]: "failed"})
+    result = REPORT.summarize(log, module, "current", "140", "iBGP", collection)
+    assert result["result"] == "FAIL"
+    assert result["coverage"] == "NOT_STARTED"
+    assert result["testcase_totals"] == {
+        "started": 0, "passed": 0, "failed": 0, "skipped": 0, "incomplete": 0,
+    }
+
+
+@pytest.mark.parametrize("action", ["nd_manage_fabric_ibgp_vxlan", "nd_manage_fabric_ebgp_vxlan"])
+def test_fabric_protocol_module_actions_count_as_authored_fabric_calls(tmp_path, action):
+    collection, module = synthetic_collection(tmp_path, [
+        {"name": "TEST 1 - create fabric", "cisco.nd." + action: {"state": "merged"}},
+        {"name": "TEST 1 - verify fabric", "ansible.builtin.assert": {"that": [True]}},
+    ], module="nd_manage_fabric")
+    rows = records_for(collection, module, "tasks/main.yaml")
+    log, _, _ = emit_log(tmp_path, rows, collection=collection, module=module)
+    result = REPORT.summarize(log, module, "current", "140", "iBGP", collection)
+    assert result["coverage"] == "COMPLETE"
+    assert result["testcase_totals"] == {
+        "started": 1, "passed": 1, "failed": 0, "skipped": 0, "incomplete": 0,
+    }
+
+
 @pytest.mark.parametrize("adapter", ["text", "events"])
 def test_mixed_authored_ids_and_independent_module_calls_have_numeric_totals(tmp_path, adapter):
     collection, module = synthetic_collection(tmp_path, [
