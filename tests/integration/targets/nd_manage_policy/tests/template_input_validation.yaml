@@ -437,14 +437,46 @@
       tags: template_input_validation
 
     - name: "TIV-TC8 - Repeat the same validated sparse update"
-      cisco.nd.nd_manage_policy: *tiv_sparse_id_update
+      cisco.nd.nd_manage_policy:
+        <<: *tiv_sparse_id_update
+        config:
+          - name: "{{ tiv_tc4_rt_entry.policy_id if item.0 == 'name' else tiv_tc4_rt_entry.name }}"
+            policy_id: "{{ tiv_tc4_rt_entry.policy_id if item.0 == 'policy_id' else omit }}"
+            switch: "{{ tiv_tc4_rt_entry.switch }}"
+            template_inputs:
+              HOUR_OFFSET: 2
+      check_mode: "{{ item.1 }}"
+      loop: "{{ ['name', 'policy_id'] | product([true, false]) | list }}"
+      loop_control:
+        label: "{{ item.0 }} check_mode={{ item.1 }}"
       register: tiv_tc8_repeat
+      tags: template_input_validation
+
+    - name: "TIV-TC8 - Independently gather after all identical replays"
+      cisco.nd.nd_manage_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: "{{ tiv_tc4_rt_entry.policy_id }}"
+            switch: "{{ tiv_tc4_rt_entry.switch }}"
+      register: tiv_tc8_after_replays
       tags: template_input_validation
 
     - name: "TIV-TC8 - Verify the repeated update is unchanged"
       ansible.builtin.assert:
         that:
-          - tiv_tc8_repeat.changed == false
+          - tiv_tc8_repeat.results | length == 4
+          - "tiv_tc8_repeat.results | map(attribute='item.0') | list == ['name', 'name', 'policy_id', 'policy_id']"
+          - "tiv_tc8_repeat.results | map(attribute='item.1') | list == [true, false, true, false]"
+          - item.failed | default(false) == false
+          - item.changed == false
+          - item.before | length == 1
+          - item.before[0].policyId == tiv_tc4_rt_entry.policy_id
+          - item.after == item.before
+          - tiv_tc8_after_replays.gathered == tiv_tc8_readback.gathered
+      loop: "{{ tiv_tc8_repeat.results }}"
+      loop_control:
+        label: "{{ item.item.0 }} check_mode={{ item.item.1 }}"
       tags: template_input_validation
 
   always:
