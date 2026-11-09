@@ -14,7 +14,7 @@ import pytest
 import yaml
 from ansible.errors import AnsibleError
 from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar, trust_as_template
+from ansible import template as ansible_template
 
 TARGET = Path(__file__).resolve().parents[2] / "integration" / "targets" / "nd_manage_breakout_interfaces"
 PAGE = "tasks/fabric_clear_page.yaml"
@@ -33,7 +33,7 @@ def task(path, prefix):
 
 
 def evaluate(expression, variables):
-    return Templar(loader=DataLoader(), variables=variables).evaluate_expression(trust_as_template(expression))
+    return render("{{ " + expression + " }}", variables)
 
 
 def render(value, variables):
@@ -41,7 +41,8 @@ def render(value, variables):
         return {key: render(item, variables) for key, item in value.items()}
     if isinstance(value, list):
         return [render(item, variables) for item in value]
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(value)) if isinstance(value, str) else value
+    trust = getattr(ansible_template, "trust_as_template", lambda item: item)
+    return ansible_template.Templar(loader=DataLoader(), variables=variables).template(trust(value)) if isinstance(value, str) else value
 
 
 def assertions(item, variables):
@@ -106,16 +107,22 @@ def test_missing_pagination_evidence_is_not_inferred_from_a_short_page(missing):
     assert not assertions(task(PAGE, "Require explicit successful"), values)
 
 
-def test_omitted_empty_array_requires_initial_explicit_zero_counts_and_null_remains_null():
+def test_omitted_empty_array_requires_initial_explicit_zero_counts_and_null_is_rejected():
     extract = task(PAGE, "Extract a page")["ansible.builtin.set_fact"]
     values = variables([])
     values["breakout_fabric_page"]["current"].pop("interfaces")
     assert render(extract, values)["breakout_fabric_page_rows"] == []
     values["breakout_fabric_page"]["current"]["interfaces"] = None
-    assert render(extract, values)["breakout_fabric_page_rows"] is None
+    # Older Ansible defaults stringify a null template result as an empty
+    # string. Neither form may pass the production page-structure guard.
+    values.update(render(extract, values))
+    assert values["breakout_fabric_page_rows"] in (None, "")
+    assert not assertions(task(PAGE, "Validate page structure"), values)
     values["breakout_fabric_page"]["current"].pop("interfaces")
     values["breakout_fabric_offset"] = 1000
-    assert render(extract, values)["breakout_fabric_page_rows"] is None
+    values.update(render(extract, values))
+    assert values["breakout_fabric_page_rows"] in (None, "")
+    assert not assertions(task(PAGE, "Validate page structure"), values)
 
 
 @pytest.mark.parametrize(
@@ -214,9 +221,12 @@ def test_global_classification_uses_physical_child_identity_not_native_ghost_fex
 def test_clear_and_empty_noop_have_distinct_pagination_safe_query_budgets(changed, rounds, metadata):
     values = {"breakout_fabric_case": {"changed": changed}, "breakout_fabric_switches": ["S1", "S2"], "breakout_fabric_fixtures": [{}, {}]}
     args = render(task(CASE, "Require complete identity-based")["vars"], values)
-    assert args["breakout_expected_discovery_rounds"] == rounds
-    assert args["breakout_expected_metadata_count"] == metadata
-    assert args["breakout_expected_outcome_count"] == (2 if changed else 0)
+    # The actual result assertions cast these counts with |int; older Ansible
+    # defaults retain numeric expression results as strings until that cast.
+    context = {**args, "expected_rounds": rounds, "expected_metadata": metadata, "expected_outcomes": 2 if changed else 0}
+    assert evaluate("breakout_expected_discovery_rounds | int == expected_rounds", context) is True
+    assert evaluate("breakout_expected_metadata_count | int == expected_metadata", context) is True
+    assert evaluate("breakout_expected_outcome_count | int == expected_outcomes", context) is True
 
 
 @pytest.mark.parametrize("explicit", [True, False])
@@ -322,7 +332,7 @@ def prediction_result(keys):
         "api_outcomes": [
             {"switch_id": key.split("/", 1)[0], "interface_name": key.split("/", 1)[1], "outcome": "planned", "action": "unbreakout"} for key in reversed(keys)
         ],
-        "after": [{"broken_out": False, "children": []} for _ in keys],
+        "after": [{"broken_out": False, "children": []} for _unused_index in keys],
         "recovery": [],
         "api_calls": [{"method": "GET", "path": "/interfacesSummary"}],
     }

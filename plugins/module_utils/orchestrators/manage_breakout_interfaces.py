@@ -331,7 +331,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
         offset = 0
         fingerprints = set()
         initial_total = None
-        for _ in range(_MAX_PAGES):
+        for _unused_page in range(_MAX_PAGES):
             endpoint = EpManageInterfacesSummaryGet(fabric_name=self.fabric_name)
             endpoint.endpoint_params.switch_id = switch_id
             endpoint.endpoint_params.include_all = True
@@ -448,7 +448,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
                 if key in requested:
                     families[key].append(row)
                     continue
-                parent, _, lane = key.rpartition("/")
+                parent, _unused_separator, lane = key.rpartition("/")
                 if parent in requested and re.fullmatch(r"[1-9]\d*", lane):
                     families[parent].append(row)
             for model in targets:
@@ -1021,7 +1021,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
                 ]
                 if pending_removals:
                     try:
-                        _, resolved_after = self._wait_for_inverse(pending_removals, "merged", switch_after, settle_removal=True)
+                        _unused_targets, resolved_after = self._wait_for_inverse(pending_removals, "merged", switch_after, settle_removal=True)
                         switch_after.update(resolved_after)
                     except Exception as error:
                         recovery["msg"] = f"Unbreakout observation remained unresolved: {error}"
@@ -1049,7 +1049,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
                 continue
             inverse_state = "deleted" if state == "merged" else "merged"
             try:
-                inverse, _ = self._wait_for_inverse(inverse, inverse_state, switch_after)
+                inverse, _unused_snapshot = self._wait_for_inverse(inverse, inverse_state, switch_after)
             except Exception as error:
                 recovery["msg"] = f"Inverse prerequisite could not be established: {error}"
                 continue
@@ -1124,7 +1124,9 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
             # usable remove target. Reuse this read and wait only when required.
             # Check mode predicts intent without waiting for device discovery.
             if guarded and removals and not check_mode:
-                _, current = self._wait_for_inverse([self._submitted(model, current, "deleted") for model in removals], "deleted", current, require_map=True)
+                _unused_targets, current = self._wait_for_inverse(
+                    [self._submitted(model, current, "deleted") for model in removals], "deleted", current, require_map=True
+                )
             # Only original unbreakout targets need a recovery MAP. An unrelated
             # family's unreadable speed must not block a merged breakout.
             if guarded and not check_mode:

@@ -17,7 +17,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 @pytest.mark.parametrize("endpoint", [EpManageInterfacesBreakout, EpManageInterfacesSummaryGet])
 def test_new_endpoints_require_fabric(endpoint):
     with pytest.raises(ValueError, match="fabric_name must be set"):
-        _ = endpoint().path
+        _unused_path = endpoint().path
 
 
 def test_breakout_action_encodes_fabric_and_uses_post():

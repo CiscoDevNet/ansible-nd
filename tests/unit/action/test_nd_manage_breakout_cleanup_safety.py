@@ -59,7 +59,7 @@ def test_lost_creation_result_blocks_cleanup_even_without_a_removal_marker(resul
 
 
 def test_uncertain_remove_is_blocked_even_when_a_later_assertion_has_no_pending_marker():
-    blocked, _ = _blocked({"api_outcomes": [{"action": "unbreakout", "outcome": "unknown"}]})
+    blocked, _unused_calls = _blocked({"api_outcomes": [{"action": "unbreakout", "outcome": "unknown"}]})
     assert blocked is True
 
 
@@ -74,12 +74,12 @@ def test_confirmed_original_remove_prevents_replay_without_relabeling_its_succes
 
 @pytest.mark.parametrize("status", ["noop", "planned", "not_executed"])
 def test_unexecuted_original_remove_does_not_block_normal_owned_cleanup(status):
-    blocked, _ = _blocked({"api_outcomes": [{"action": "unbreakout", "outcome": status}]})
+    blocked, _unused_calls = _blocked({"api_outcomes": [{"action": "unbreakout", "outcome": status}]})
     assert blocked is False
 
 
 def test_actual_delete_noop_releases_pending_marker_without_claiming_a_mutation():
-    blocked, _ = _blocked({"api_outcomes": [{"action": "unbreakout", "outcome": "noop"}]}, pending="deleted")
+    blocked, _unused_calls = _blocked({"api_outcomes": [{"action": "unbreakout", "outcome": "noop"}]}, pending="deleted")
     assert blocked is False
 
 
@@ -88,7 +88,7 @@ def test_failed_or_missing_removal_evidence_blocks_replay(status):
     row = {"action": "unbreakout"}
     if status is not None:
         row["outcome"] = status
-    blocked, _ = _blocked({"api_outcomes": [row]})
+    blocked, _unused_calls = _blocked({"api_outcomes": [row]})
     assert blocked is True
 
 
@@ -108,7 +108,7 @@ def test_uncertain_or_failed_automatic_inverse_blocks_cleanup(status):
         "api_outcomes": [{"action": "breakout", "outcome": "success"}],
         "recovery": [{"status": status, "api_outcomes": []}],
     }
-    blocked, _ = _blocked(result)
+    blocked, _unused_calls = _blocked(result)
     assert blocked is True
 
 
@@ -122,14 +122,14 @@ def test_inverse_remove_outcomes_participate_in_no_replay_barrier():
 
 
 def test_mixed_remove_results_are_not_released_by_one_successful_family():
-    blocked, _ = _blocked(
+    blocked, _unused_calls = _blocked(
         {"api_outcomes": [{"action": "unbreakout", "outcome": "success"}, {"action": "unbreakout", "outcome": "unknown"}]}, pending="deleted"
     )
     assert blocked is True
 
 
 def test_previously_blocked_footprint_cannot_be_reenabled_by_success_evidence():
-    blocked, _ = _blocked({"api_outcomes": [{"action": "unbreakout", "outcome": "success"}]}, already_blocked=True)
+    blocked, _unused_calls = _blocked({"api_outcomes": [{"action": "unbreakout", "outcome": "success"}]}, already_blocked=True)
     assert blocked is True
 
 

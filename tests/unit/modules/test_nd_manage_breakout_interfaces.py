@@ -120,7 +120,7 @@ def _harness(monkeypatch, params=None, output=None, check_mode=False, error=None
 
 
 def test_validation_happens_before_initializing_sender(monkeypatch):
-    _, captured = _harness(monkeypatch, _params(fabric_name=" "))
+    _unused_module, captured = _harness(monkeypatch, _params(fabric_name=" "))
     with pytest.raises(_Fail) as exc:
         module_under_test.main()
     assert exc.value.result["changed"] is False
@@ -134,7 +134,7 @@ def test_validation_happens_before_initializing_sender(monkeypatch):
 
 @pytest.mark.parametrize("state", ["merged", "deleted", "overridden"])
 def test_unsupported_config_actions_fail_before_initializing_sender(monkeypatch, state):
-    _, captured = _harness(monkeypatch, _params(state, config_actions={"deploy": True}))
+    _unused_module, captured = _harness(monkeypatch, _params(state, config_actions={"deploy": True}))
     with pytest.raises(_Fail) as exc:
         module_under_test.main()
     assert exc.value.result["changed"] is False
@@ -144,7 +144,7 @@ def test_unsupported_config_actions_fail_before_initializing_sender(monkeypatch,
 
 def test_merged_child_input_is_rejected_before_initializing_sender(monkeypatch):
     params = _params(config=[{"switch_id": "FDO222425SE", "interface_names": ["Ethernet1/50/2"], "breakout_map": "25g-4x"}])
-    _, captured = _harness(monkeypatch, params)
+    _unused_module, captured = _harness(monkeypatch, params)
     with pytest.raises(_Fail) as exc:
         module_under_test.main()
     assert exc.value.result["changed"] is False
@@ -154,7 +154,7 @@ def test_merged_child_input_is_rejected_before_initializing_sender(monkeypatch):
 @pytest.mark.parametrize("config", [None, [], [{"switch_id": "FDO222425SE", "interface_names": []}]])
 def test_overridden_empty_desired_scopes_pass_pre_connection_validation(monkeypatch, config):
     params = _params("overridden", config=config)
-    _, captured = _harness(monkeypatch, params)
+    _unused_module, captured = _harness(monkeypatch, params)
     with pytest.raises(_Exit):
         module_under_test.main()
     assert captured["run_called"] is True
@@ -165,7 +165,7 @@ def test_overridden_empty_desired_scopes_pass_pre_connection_validation(monkeypa
 @pytest.mark.parametrize("switch_id", [None, "", " ", 1, False])
 def test_overridden_clear_only_invalid_switch_fails_before_sender(monkeypatch, switch_id):
     params = _params("overridden", config=[{"switch_id": switch_id, "interface_names": []}])
-    _, captured = _harness(monkeypatch, params)
+    _unused_module, captured = _harness(monkeypatch, params)
     with pytest.raises(_Fail) as exc:
         module_under_test.main()
     assert "switch_id" in exc.value.result["msg"]
@@ -176,7 +176,7 @@ def test_overridden_clear_only_invalid_switch_fails_before_sender(monkeypatch, s
 @pytest.mark.parametrize("state", ["merged", "deleted"])
 @pytest.mark.parametrize("config", [None, []])
 def test_empty_or_omitted_config_is_rejected_for_non_override_states_before_sender(monkeypatch, state, config):
-    _, captured = _harness(monkeypatch, _params(state, config=config))
+    _unused_module, captured = _harness(monkeypatch, _params(state, config=config))
     with pytest.raises(_Fail) as exc:
         module_under_test.main()
     assert "config must be a non-empty list" in exc.value.result["msg"]
@@ -185,7 +185,7 @@ def test_empty_or_omitted_config_is_rejected_for_non_override_states_before_send
 
 def test_overridden_child_selector_is_rejected_before_sender(monkeypatch):
     params = _params("overridden", config=[{"switch_id": "FDO222425SE", "interface_names": ["Ethernet1/50/1"], "breakout_map": "25g-4x"}])
-    _, captured = _harness(monkeypatch, params)
+    _unused_module, captured = _harness(monkeypatch, params)
     with pytest.raises(_Fail):
         module_under_test.main()
     assert "sender_initialized" not in captured
@@ -234,7 +234,7 @@ def test_deleted_child_selector_preserves_parent_identity_wire_child_and_request
 
 
 def test_check_mode_keeps_real_discovery_transport_and_passes_prediction_flag(monkeypatch):
-    _, captured = _harness(monkeypatch, check_mode=True)
+    _unused_module, captured = _harness(monkeypatch, check_mode=True)
     with pytest.raises(_Exit):
         module_under_test.main()
     assert captured["rest_send"].params["check_mode"] is True
@@ -244,7 +244,7 @@ def test_check_mode_keeps_real_discovery_transport_and_passes_prediction_flag(mo
 
 @pytest.mark.parametrize("state", ["merged", "deleted", "overridden"])
 def test_supported_state_passes_through_shared_results_and_rest_send(monkeypatch, state):
-    _, captured = _harness(monkeypatch, _params(state))
+    _unused_module, captured = _harness(monkeypatch, _params(state))
     with pytest.raises(_Exit):
         module_under_test.main()
     assert captured["rest_send"].params["state"] == state
@@ -257,7 +257,7 @@ def test_supported_state_passes_through_shared_results_and_rest_send(monkeypatch
 def test_replaced_is_rejected_before_sender_and_workflow_with_standard_output(monkeypatch, check_mode, output_level, verbosity):
     params = _params(output_level=output_level)
     params["state"] = "replaced"
-    _, captured = _harness(monkeypatch, params, check_mode=check_mode, verbosity=verbosity)
+    _unused_module, captured = _harness(monkeypatch, params, check_mode=check_mode, verbosity=verbosity)
     with pytest.raises(_Fail) as exc:
         module_under_test.main()
     output = exc.value.result
@@ -364,7 +364,7 @@ def test_unexpected_workflow_exception_does_not_claim_native_or_confirmed_state(
 
 
 def test_initialization_failure_uses_standard_shape_without_claiming_a_write(monkeypatch):
-    _, captured = _harness(monkeypatch)
+    _unused_module, captured = _harness(monkeypatch)
 
     def sender_error():
         raise RuntimeError("sender initialization failure")
@@ -654,7 +654,7 @@ def test_real_main_keeps_partial_success_when_controller_error_message_is_not_te
     if verify:
         replies.append(topology(accepted, native=(rejected,)))
     params = _params(config=[group(accepted, rejected)], verify={"enabled": verify})
-    _, sender = _scripted_main(monkeypatch, replies, params, verbosity=verbosity)
+    _unused_module, sender = _scripted_main(monkeypatch, replies, params, verbosity=verbosity)
 
     with pytest.raises(_Fail) as caught:
         module_under_test.main()
@@ -709,7 +709,7 @@ def test_real_main_preserves_accumulated_report_when_unexpected_run_exception_es
     replies = [inventory(), topology(native=(parent,)), action(item(parent))]
     if observed_after:
         replies.append(topology(parent))
-    _, sender = _scripted_main(monkeypatch, replies, _params(config=[group(parent)], verify={"enabled": True}), verbosity=verbosity)
+    _unused_module, sender = _scripted_main(monkeypatch, replies, _params(config=[group(parent)], verify={"enabled": True}), verbosity=verbosity)
     real_orchestrator = module_under_test.ManageBreakoutInterfacesOrchestrator
     captured = {}
 
@@ -762,7 +762,7 @@ def test_unexpected_report_exception_after_read_only_workflow_does_not_imply_wri
     parent = "Ethernet1/21"
     check_mode = scenario == "check_mode"
     baseline = topology(native=(parent,)) if check_mode else topology(parent)
-    _, sender = _scripted_main(
+    _unused_module, sender = _scripted_main(
         monkeypatch,
         [inventory(), baseline],
         _params(config=[group(parent)], verify={"enabled": verify}),
@@ -794,7 +794,7 @@ def test_unexpected_report_exception_after_read_only_workflow_does_not_imply_wri
 
 @pytest.mark.parametrize("verbosity", [0, 3])
 def test_orchestrator_constructor_failure_has_no_mutation_uncertainty(monkeypatch, verbosity):
-    _, sender = _scripted_main(monkeypatch, [], _params(), verbosity=verbosity)
+    _unused_module, sender = _scripted_main(monkeypatch, [], _params(), verbosity=verbosity)
 
     def constructor_failure(**unused):
         raise RuntimeError("Orchestrator construction failed before discovery")
@@ -816,7 +816,7 @@ def test_orchestrator_constructor_failure_has_no_mutation_uncertainty(monkeypatc
 @pytest.mark.parametrize("verbosity", [0, 3])
 def test_parser_exception_after_post_preserves_baseline_without_fabricating_success(monkeypatch, verify, verbosity):
     existing, requested = "Ethernet1/21", "Ethernet1/23"
-    _, sender = _scripted_main(
+    _unused_module, sender = _scripted_main(
         monkeypatch,
         [inventory(), topology(existing, native=(requested,)), action(item(requested))],
         _params(config=[group(existing, requested)], verify={"enabled": verify}),
@@ -826,7 +826,7 @@ def test_parser_exception_after_post_preserves_baseline_without_fabricating_succ
 
     class ParserFailureWorkflow(real_orchestrator):
         @staticmethod
-        def match_action_results(response, submitted, action_name):
+        def match_action_results(response, submitted, action):
             raise RuntimeError("Unexpected parser failure before identified outcomes were established")
 
     monkeypatch.setattr(module_under_test, "ManageBreakoutInterfacesOrchestrator", ParserFailureWorkflow)

@@ -168,7 +168,7 @@ def test_missing_recovery_identity_is_unknown_without_replay_or_final_readback()
 
 def test_requested_creation_absence_fails_without_collateral_compensation(verification_clock):
     report, calls = run(
-        [topology(native=(P21,)), action(item(P21)), *[topology(native=(P21,)) for _ in range(6)]],
+        [topology(native=(P21,)), action(item(P21)), *[topology(native=(P21,)) for _unused_attempt in range(6)]],
         config=[group(P21)],
         verify=VERIFY,
     )
@@ -675,7 +675,7 @@ def test_unsettled_forward_request_never_compensates_even_if_guard_finds_collate
 
 def test_unbreakout_missing_children_and_missing_native_parent_is_not_success_or_collateral(verification_clock):
     report, calls = run(
-        [topology(P21, native=(P49,)), action(item(P21 + "/1")), *[topology(native=(P49,)) for _ in range(6)]],
+        [topology(P21, native=(P49,)), action(item(P21 + "/1")), *[topology(native=(P49,)) for _unused_attempt in range(6)]],
         state="deleted",
         config=[group(P21, breakout_map=None)],
         verify=VERIFY,

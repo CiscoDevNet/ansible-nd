@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar, trust_as_template
+from ansible import template as ansible_template
 
 from ansible_collections.cisco.nd.plugins.action import nd_manage_breakout_interfaces_validate as observer
 
@@ -36,11 +36,12 @@ def render(value, variables):
         return {key: render(item, variables) for key, item in value.items()}
     if isinstance(value, list):
         return [render(item, variables) for item in value]
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(value)) if isinstance(value, str) else value
+    trust = getattr(ansible_template, "trust_as_template", lambda item: item)
+    return ansible_template.Templar(loader=DataLoader(), variables=variables).template(trust(value)) if isinstance(value, str) else value
 
 
 def condition(expression, variables):
-    return Templar(loader=DataLoader(), variables=variables)._engine.evaluate_conditional(trust_as_template(expression))
+    return render("{{ " + expression + " }}", variables) is True
 
 
 def assertions(item, variables):

@@ -366,10 +366,9 @@ class FabricContext:
             if not page:
                 raise RuntimeError(f"Filtered switch lookup for '{switch_ip}' returned an empty page with more results remaining.")
             offset += len(page)
-        if not matches:
+        if not matches or matched_record is None:
             raise RuntimeError(f"No switch found with fabricManagementIp '{switch_ip}' in fabric '{self._fabric_name}'.")
         # Do not retain a record from an ambiguous or incomplete paginated read.
-        assert matched_record is not None
         serial = matches[0]
         known = self._cached_switch_records([serial])
         if serial in known:
