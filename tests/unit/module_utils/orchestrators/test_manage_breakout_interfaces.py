@@ -183,7 +183,7 @@ def assert_family_get(call, parent, switch=SERIAL):
     assert path.path == BASE + "/interfacesSummary"
     assert query["switchId"] == [switch]
     assert query["includeAll"] == ["true"]
-    assert query["filter"] == ["interfaceName:*" + parent + "*"]
+    assert query["filter"] == ["interfaceName:*" + parent + "* AND switchId:" + switch]
 
 
 def assert_ethernet_get(call, switch=SERIAL):
@@ -194,7 +194,7 @@ def assert_ethernet_get(call, switch=SERIAL):
     assert path.path == BASE + "/interfacesSummary"
     assert query["switchId"] == [switch]
     assert query["includeAll"] == ["true"]
-    assert query["filter"] == ["interfaceType:ethernet"]
+    assert query["filter"] == ["interfaceType:ethernet AND switchId:" + switch]
     assert query["max"] == ["1000"]
     assert query["offset"] == ["0"]
     assert call["payload"] is None

@@ -45,6 +45,16 @@ VERIFY = {"enabled": True}
 FAST = {"enabled": False}
 
 
+@pytest.fixture
+def verification_clock(monkeypatch):
+    from ansible_collections.cisco.nd.plugins.module_utils.orchestrators import manage_breakout_interfaces as implementation
+
+    clock = SimpleNamespace(now=0)
+    monkeypatch.setattr(implementation.time, "monotonic", lambda: clock.now)
+    monkeypatch.setattr(implementation.time, "sleep", lambda seconds: setattr(clock, "now", clock.now + seconds))
+    return clock
+
+
 def topology(*broken, native=(), switch=SERIAL, speed="25Gb", lanes=(1, 2, 3, 4)):
     """Give a complete switch snapshot with explicit physical classification."""
     rows = []
@@ -89,7 +99,7 @@ def summary_calls(calls):
 def assert_whole_ethernet(call, switch=SERIAL):
     query = parse_qs(urlsplit(call["path"]).query)
     assert call["verb"] == HttpVerbEnum.GET
-    assert query["filter"] == ["interfaceType:ethernet"]
+    assert query["filter"] == ["interfaceType:ethernet" if switch is None else "interfaceType:ethernet AND switchId:" + switch]
     assert query["includeAll"] == ["true"]
     if switch is None:
         assert "switchId" not in query
@@ -156,15 +166,17 @@ def test_missing_recovery_identity_is_unknown_without_replay_or_final_readback()
     assert report["recovery"][0]["topology_verified"] is False
 
 
-def test_requested_creation_absence_fails_without_collateral_compensation():
+def test_requested_creation_absence_fails_without_collateral_compensation(verification_clock):
     report, calls = run(
-        [topology(native=(P21,)), action(item(P21)), topology(native=(P21,))],
+        [topology(native=(P21,)), action(item(P21)), *[topology(native=(P21,)) for _ in range(6)]],
         config=[group(P21)],
         verify=VERIFY,
     )
     assert report["failed"] is True
     assert len(writes(calls)) == 1
     assert not report.get("recovery")
+    assert verification_clock.now == 30
+    assert "API reported success" in report["msg"]
 
 
 def test_empty_action_results_stay_failed_but_observed_creation_is_changed():
@@ -661,9 +673,9 @@ def test_unsettled_forward_request_never_compensates_even_if_guard_finds_collate
     assert report["recovery"][0]["api_outcomes"] == []
 
 
-def test_unbreakout_missing_children_and_missing_native_parent_is_not_success_or_collateral():
+def test_unbreakout_missing_children_and_missing_native_parent_is_not_success_or_collateral(verification_clock):
     report, calls = run(
-        [topology(P21, native=(P49,)), action(item(P21 + "/1")), topology(native=(P49,))],
+        [topology(P21, native=(P49,)), action(item(P21 + "/1")), *[topology(native=(P49,)) for _ in range(6)]],
         state="deleted",
         config=[group(P21, breakout_map=None)],
         verify=VERIFY,

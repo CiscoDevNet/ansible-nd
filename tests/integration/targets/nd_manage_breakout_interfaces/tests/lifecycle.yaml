@@ -38,6 +38,7 @@
         breakout_expected_write_actions: [breakout]
         breakout_expected_after_status: observed
         breakout_expected_discovery_rounds: 2
+        breakout_allow_guard_settling: true
 
     - name: MERGED - Validate map A and every reserved collateral interface
       ansible.builtin.include_tasks: ../tasks/observe.yaml
@@ -347,6 +348,7 @@
         breakout_expected_write_actions: [breakout]
         breakout_expected_after_status: observed
         breakout_expected_discovery_rounds: 2
+        breakout_allow_guard_settling: true
 
     - name: MERGED - Validate complete map A footprint independently
       ansible.builtin.include_tasks: ../tasks/observe.yaml

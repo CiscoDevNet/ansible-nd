@@ -55,6 +55,7 @@
     breakout_expected_after_status: "{{ 'observed' if breakout_fabric_case.changed else 'unchanged' }}"
     breakout_expected_discovery_rounds: "{{ 1 + breakout_fabric_switches | length if breakout_fabric_case.changed else 1 }}"
     breakout_expected_metadata_count: "{{ breakout_fabric_switches | length if breakout_fabric_case.changed else 0 }}"
+    breakout_allow_guard_settling: "{{ breakout_fabric_case.changed | bool }}"
 
 - name: Match every removed family by composite identity, never list position
   ansible.builtin.assert:

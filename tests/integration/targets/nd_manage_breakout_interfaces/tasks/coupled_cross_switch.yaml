@@ -67,14 +67,9 @@
         coupled_safe_observe_only: true
         coupled_safe_profile: map_a
 
-    - name: Freeze safe-switch evidence and release the write barrier only with confirmed recovery
+    - name: Freeze immediate safe-switch evidence while keeping the write barrier raised
       ansible.builtin.set_fact:
         coupled_cross_safe_observation: "{{ coupled_safe_observation }}"
-        coupled_cross_pending: >-
-          {{ coupled_cross_result.recovery | default([]) | length != 1 or
-             (coupled_cross_result.recovery | default([]) | map(attribute='status') | unique | list) != ['response_confirmed'] or
-             (coupled_cross_result.api_outcomes | default([]) | selectattr('outcome', 'equalto', 'unknown') | list | length > 0) or
-             coupled_cross_coupled_observation.snapshot.families != coupled_native_baseline.families }}
 
     - name: Require collateral failure with one confirmed inverse on the violating switch only
       ansible.builtin.assert:
@@ -133,6 +128,10 @@
       vars:
         coupled_safe_observe_only: false
         coupled_safe_profile: map_a
+
+    - name: Release the write barrier only after receipts and both strict observations pass
+      ansible.builtin.set_fact:
+        coupled_cross_pending: false
 
   rescue:
     - name: Preserve the original cross-switch test failure
