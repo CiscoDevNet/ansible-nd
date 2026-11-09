@@ -4592,7 +4592,14 @@ def test_network_attachment_query_chunks_large_network_name_sets():
     assert manager.queried_chunks == [["net-0", "net-1"], ["net-2", "net-3"], ["net-4"]]
 
 
-def test_network_attachment_query_missing_network_falls_back_to_unscoped_read():
+@pytest.mark.parametrize(
+    "missing_message",
+    [
+        "Network(s) [MISSING_NET] not found in fabric",
+        "Request failed (400): Bad Request - ND Error 400: Network 'MISSING_NET' doesn't exist in the fabric",
+    ],
+)
+def test_network_attachment_query_missing_network_falls_back_to_unscoped_read(missing_message):
     class RecordingManager(NetworkAttachmentManager):
         def __init__(self):
             super().__init__(coordinator=None)
@@ -4601,7 +4608,7 @@ def test_network_attachment_query_missing_network_falls_back_to_unscoped_read():
         def current_attachment_details(self, _module_args, _strategy, network_names=None):
             self.queried_names.append(network_names)
             if network_names == ["BLUE_NET", "MISSING_NET"]:
-                raise RuntimeError("Network(s) [MISSING_NET] not found in fabric")
+                raise RuntimeError(missing_message)
             return [
                 {"networkName": "BLUE_NET", "switchId": "SW1"},
                 {"networkName": "GREEN_NET", "switchId": "SW2"},
@@ -4613,6 +4620,44 @@ def test_network_attachment_query_missing_network_falls_back_to_unscoped_read():
         {"networkName": "BLUE_NET", "switchId": "SW1"}
     ]
     assert manager.queried_names == [["BLUE_NET", "MISSING_NET"], None]
+
+
+@pytest.mark.parametrize("network_names", [["NEW_NET"], ["NEW_NET_1", "NEW_NET_2"]])
+def test_network_attachment_query_new_networks_accept_nd43_missing_response(network_names):
+    class RecordingManager(NetworkAttachmentManager):
+        def __init__(self):
+            super().__init__(coordinator=None)
+            self.queried_names = []
+
+        def current_attachment_details(self, _module_args, _strategy, network_names=None):
+            self.queried_names.append(network_names)
+            if network_names:
+                details = "; ".join(f"Network '{name}' doesn't exist in the fabric" for name in network_names)
+                raise RuntimeError(f"Request failed (400): Bad Request - ND Error 400: {details}")
+            return []
+
+    manager = RecordingManager()
+    assert manager.current_attachment_details_ignore_missing({}, _orchestrator().strategy, network_names) == []
+    assert manager.queried_names == ([network_names] if len(network_names) == 1 else [network_names, None])
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Request failed (401): Unauthorized",
+        "Request failed (400): ND Error 400: Request validation failed",
+        "Switch 'SW1' doesn't exist in the fabric",
+        "Network template 'T' doesn't exist in the fabric",
+    ],
+)
+def test_network_attachment_query_other_errors_are_not_suppressed(message):
+    class FailingManager(NetworkAttachmentManager):
+        def current_attachment_details(self, _module_args, _strategy, network_names=None):
+            raise RuntimeError(message)
+
+    with pytest.raises(RuntimeError) as raised:
+        FailingManager(coordinator=None).current_attachment_details_ignore_missing({}, _orchestrator().strategy, ["NEW_NET"])
+    assert str(raised.value) == message
 
 
 def test_tor_is_modeled_as_normal_attachment_payload():
@@ -5602,7 +5647,6 @@ def test_network_attachment_post_validates_interfaces_before_attach():
             {
                 "networkName": "BLUE_NET",
                 "switchId": "SERIAL1",
-                "vlanId": -1,
                 "interfaces": [
                     {
                         "mode": "trunk",
@@ -5659,7 +5703,6 @@ def test_network_attachment_validation_batches_only_nonempty_interfaces():
         {
             "networkName": "WITH_INTERFACE",
             "switchId": "SERIAL3",
-            "vlanId": -1,
             "interfaces": [{"mode": "access", "interfaceRange": "Ethernet1/3", "nativeVlan": False}],
             "attach": True,
         }

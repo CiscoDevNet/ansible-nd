@@ -75,7 +75,12 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
     interface_mode: ClassVar[str] = "managed"
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_full_modify: ClassVar[bool] = True
-    supports_bulk_modify_create: ClassVar[bool] = True
+    # TODO(4.3.1) TBD
+    # Observed request-path limitation: modify-create can reject a removed SVI
+    # as an overlay-only edit even after its interface/VLAN are absent. Use the
+    # supported grouped POST creation path; existing SVI updates still qualify
+    # for bulk full modify.
+    supports_bulk_modify_create: ClassVar[bool] = False
     supports_bulk_delete: ClassVar[bool] = True
     xe_removal_requires_discovery: ClassVar[bool] = True
 

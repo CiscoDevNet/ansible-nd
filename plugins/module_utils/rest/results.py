@@ -27,6 +27,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     field_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.rest.read_history import compact_consumed_get_response
 
 
 class ApiCallResult(BaseModel):
@@ -458,6 +459,33 @@ class Results:
         msg = f"{self.class_name}.{method_name}: changed={has_diff_content} (from diff)"
         self.log.debug(msg)
         return has_diff_content
+
+    def compact_successful_read_history(self, sequence_start: int, *, path: str) -> None:
+        """Compact consumed internal read bodies while preserving call metadata.
+
+        This explicit workflow-only operation does not change Results defaults
+        or standalone-module diagnostic output.
+        """
+        # Exact controller/receipt types are part of the validation contract.
+        # pylint: disable=unidiomatic-typecheck
+        for index, task in enumerate(self._tasks):
+            response = task.response
+            if (
+                task.sequence_number > sequence_start
+                and task.path == path
+                and str(task.verb).upper() == "GET"
+                and not task.failed
+                and task.result.get("success") is True
+                and task.result.get("changed") is not True
+                and not task.changed
+                and type(response.get("RETURN_CODE")) is int
+                and response["RETURN_CODE"] == 200
+            ):
+                self._tasks[index] = task.model_copy(
+                    update={
+                        "response": compact_consumed_get_response(response, path=path),
+                    }
+                )
 
     def register_api_call(self) -> None:
         """

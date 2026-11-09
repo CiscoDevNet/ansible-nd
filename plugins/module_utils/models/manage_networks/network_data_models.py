@@ -428,6 +428,47 @@ class NetworkBaseModel(NetworkCommonModel):
                 return model_cls.from_config(ansible_config, **kwargs)
         return super().from_config(ansible_config, **kwargs)
 
+    # TODO(4.3.1) TBD
+    # Observed default-echo compatibility for normal L3 VXLAN iBGP Networks;
+    # the supporting note must describe this L3 scope rather than L2 behavior.
+    def _apply_reverse_diff_scope(self, data: dict[str, Any]) -> None:
+        """Ignore only observed deterministic normal L3 VXLAN iBGP defaults.
+
+        Repeated omit/PUT/readback on ND 4.3.1 retains these exact defaults.
+        Non-default expressible values remain removal differences. Canonical
+        multicast comparison preserves omitted controller values while explicit
+        group changes remain authoritative. VLAN IDs and VNIs have no default
+        exemption here.
+        Other layers, PVLANs and Network types retain their own comparison
+        contracts instead of inheriting defaults observed on a normal L3 VNI.
+        """
+        standard_l3_ibgp = (
+            self.network_type == NetworkType.VXLAN_IBGP.value
+            and self.layer == NetworkLayer.LAYER3.value
+            and self.vlan_network_type == VlanNetworkType.NORMAL.value
+        )
+        display_name = data.get("displayName")
+        super()._apply_reverse_diff_scope(data)
+        if not standard_l3_ibgp:
+            return
+        # Generic Network schemas preserve server labels. The qualified normal
+        # L3 scope still exposes custom labels as authoritative removal intent.
+        if display_name is not None and display_name != self.network_name:
+            data["displayName"] = display_name
+        defaults = {
+            ("vlanNetworkType",): "normal",
+            ("l2Data", "xConnect"): False,
+            ("l3Data", "fabricData", "gatewayOnBorder"): False,
+            ("l3Data", "fabricData", "igmpVersion"): 2,
+            ("l3Data", "fabricData", "ipv6Trm"): False,
+        }
+        for path, default in defaults.items():
+            parent = data
+            for key in path[:-1]:
+                parent = parent.get(key) if isinstance(parent, dict) else None
+            if isinstance(parent, dict) and parent.get(path[-1]) == default:
+                parent.pop(path[-1], None)
+
     @field_validator("network_id", "primary_network_id", "normal_network_id", mode="before")
     @classmethod
     def validate_network_id(cls, v: int | None) -> int | None:
