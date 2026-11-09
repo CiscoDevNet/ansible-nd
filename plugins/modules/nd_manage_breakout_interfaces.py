@@ -16,15 +16,11 @@ short_description: Break out and unbreak interfaces on Cisco Nexus Dashboard
 description:
 - Manage interface breakout on switches in a standalone fabric.
 - Use a native parent for breakout. Unbreakout accepts the native parent or a breakout child selector and removes the whole breakout family.
-- The module selects a verified existing child for the unbreakout API; a supplied child is a family alias, not a request to delete just one lane.
-- On some switch models, Nexus Dashboard applies breakout and unbreakout configuration internally without a separate deployment call.
+- Nexus Dashboard applies breakout and unbreakout configuration internally without a separate deployment call.
   These topology operations cannot be staged by this module.
 - Hardware may couple several breakout parents. With verification enabled, unexpected changes to other breakout families
-  fail the task and trigger an attempted direct inverse of the changed operation on the affected switch.
-- Known policy-backed breakout child identities are included in verification even when physical discovery is still pending.
-  Such controller intent is not proof that the corresponding physical interfaces have been discovered.
-- Only switches reporting C(additionalData.platformType=nx-os) are supported.
-  IOS-XE is rejected before mutation, including check mode.
+  fail the task and trigger an attempt to undo the affected changes.
+- Only NX-OS switches are supported. IOS-XE switches are rejected before changes, including in check mode.
 author:
 - L Nikhil Sri Krishna (@nisaikri)
 options:
@@ -35,7 +31,7 @@ options:
     required: true
   config:
     description:
-    - Grouped switch and interface selector inputs. A non-empty list is required for O(state=merged) and O(state=deleted).
+    - Switches and interfaces to manage. A non-empty list is required for O(state=merged) and O(state=deleted).
     - For O(state=overridden), a non-empty list scopes reconciliation to the named switches. Groups for the same switch
       contribute to one desired set of breakout parents.
     - For O(state=overridden), omitted config or an empty list selects the whole fabric and removes all existing breakouts.
@@ -47,23 +43,21 @@ options:
       switch_id:
         description:
         - Switch serial number or management IPv4 or IPv6 address.
-        - Serial numbers are sent directly to the controller. Management IP addresses use the collection's shared switch-identity resolver.
-        - Platform validation reuses management-IP lookup metadata.
-          Serial inputs require a targeted switch-metadata lookup, cached per distinct switch within the task.
+        - Management IP addresses are translated internally to switch serial numbers.
         type: str
         required: true
       interface_names:
         description:
         - List of native Ethernet parent names such as C(Ethernet1/50). O(state=merged) and O(state=overridden) accept parents only.
-        - An empty list is allowed only for O(state=overridden), to remove every breakout on that selected switch.
+        - An empty list is allowed only for O(state=overridden). Every breakout on a selected switch is removed
+          when its combined desired interface list across all config entries is empty.
         - O(state=deleted) also accepts children such as C(Ethernet1/50/2),
           as aliases for unbreaking the whole parent family.
         - When the family is broken out, a supplied child must be an observed member of that family.
-          With verification enabled, known active child-policy intent may identify a member before physical discovery completes.
+          With verification enabled, an active child recorded by Nexus Dashboard may be accepted before physical discovery finishes.
           When the parent is already native, deletion is a no-op even if the child no longer exists.
         - Repeating deletion with the former child, or alternating parent and child selectors across tasks, is a no-op once the parent is native.
           An entirely missing family is an error, not a no-op.
-        - The API child is selected from observed children and may differ from the supplied child. No separate child lookup is required.
         - Dotted subinterfaces, four-part names, FEX interfaces and duplicate switch/family inputs are not accepted.
           A parent and its child cannot both be specified.
         type: list
@@ -76,7 +70,7 @@ options:
           Must be omitted for O(state=deleted).
         - O(state=merged) and O(state=overridden) leave existing breakouts unchanged even if the map differs. To change an existing map,
           explicitly unbreak the family with O(state=deleted), then create the desired breakout with O(state=merged).
-        - Map capability is determined by Nexus Dashboard and the switch, not a module-specific hardware allowlist.
+        - Supported breakout maps depend on Nexus Dashboard and the switch.
         type: str
   state:
     description:
@@ -90,17 +84,20 @@ options:
     choices: [merged, deleted, overridden]
   verify:
     description:
-    - Optional whole-switch breakout topology checks after each executed action phase. Enabled by default.
-    - When enabled, compare breakout parent identities and retained child sets from discovered inventory and known active interface intent,
-      and attempt a direct inverse if unexpected collateral is observed.
-    - When disabled, skip post-action topology reads, collateral comparisons, readiness waiting, recovery-map inference and compensation.
-      Initial discovery, input and platform validation, idempotency and API response checks still apply.
-    - This option does not expose retry, polling or timeout settings.
+    - Check for unintended breakout changes after each operation. Enabled by default.
+    - Checks cover breakout parents and their child interfaces on each affected switch.
+      Unexpected changes fail the task and trigger an attempt to undo the affected operation.
+    - Nexus Dashboard may record active breakout interfaces before switch discovery finishes.
+      Verification uses these records without waiting for physical discovery to complete.
+    - When disabled, the module skips post-change interface checks, discovery waiting and automatic recovery.
+      It still reads current state, validates inputs and platforms, skips operations already satisfied and checks API results.
+    - No post-change verification runs when no changes are needed or in check mode.
     type: dict
     suboptions:
       enabled:
         description:
-        - Enable collateral topology checks and response-reported compensation. Disabling this option accepts unverified hardware-coupled side effects.
+        - Enable checks for unintended breakout changes and attempted recovery.
+          When disabled, hardware-coupled changes are not checked.
         type: bool
         default: true
 extends_documentation_fragment:
@@ -108,76 +105,43 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - Only standalone fabrics and the V(merged), V(deleted) and V(overridden) states are supported.
-- Platform eligibility is checked for explicitly selected switches before interface discovery.
-  A fabric-wide overridden clear discovers current breakout families first, then checks the switches containing those families before mutation.
-  Campus VXLAN fabrics are not rejected merely by fabric type; NX-OS switches remain eligible, while IOS-XE is unsupported.
-- Missing, unrecognized or conflicting platform metadata fails safely.
-  Multiple management-IP selectors resolving to the same switch must provide consistent platform evidence.
+- Campus VXLAN fabrics can contain supported NX-OS switches; IOS-XE switches are unsupported.
+- The module fails before making changes if it cannot reliably determine a switch's platform.
 - NX-OS eligibility does not guarantee that a particular hardware model, port or breakout map is supported; the controller validates those capabilities.
-- No C(config_actions), save/deploy controls, ticket or cluster parameters, or hardware-model-specific validation are exposed.
+- No C(config_actions), save/deploy controls, ticket or cluster parameters are supported.
 - Automatic map replacement and C(replaced) are not supported. Existing breakouts are not remapped, even when their requested map differs.
 - Some switch models couple several breakout parent families. With O(verify.enabled=true), include every parent family intended to change.
   For example, if creating C(Ethernet1/21) also creates C(Ethernet1/23), list both parents to permit that coupled creation.
   Individual child lanes and disappearing native siblings such as C(Ethernet1/22) or C(Ethernet1/24) are not additional breakout parents to declare.
 - For V(merged), unchanged unlisted breakout families are allowed. For V(overridden), include all coupled parents intended to remain broken out;
   unbreaking an omitted sibling must not remove or alter a retained desired family. For V(deleted), list every family intended to be unbroken.
-- Listing all intended parents permits their topology changes but does not guarantee controller success for redundant coupled bulk requests.
-  Complete API results are still required. Coupled ownership is not guessed from adjacent port numbers or switch models.
-- With verification enabled, the guard checks breakout parent identities and retained child sets, not existing profile maps,
+- Listing all intended parents does not guarantee controller acceptance of redundant coupled requests.
+- With verification enabled, the module checks breakout parents and child interface names, not existing profile maps,
   interface settings, link state or collateral native-port presence.
-- The baseline and post-action reads also include policy-backed child identities whose physical discovery is pending.
-  A child requires a non-empty policy identifier and an explicit non-deleted marker to establish this controller-intent evidence.
-  Existing intent-only families are part of the baseline, not newly created collateral.
-  Unowned or marked-deleted configuration-only children do not establish breakout intent.
-- An allowed breakout can therefore succeed without waiting for physical child discovery. Such records use
-  C(evidence=controller_intent), rather than claiming independent physical topology convergence.
-- On a collateral violation, compensation directly reverses changed entries of the violating action phase on the affected switch.
-  Earlier validated phases and safe changes on other switches remain; this is not task-wide atomic rollback.
-- The inverse of an unbreakout uses the original child count and uniform recognizable child speed to infer its profile locally.
-  A profile that cannot be inferred for a planned unbreakout fails recovery readiness before mutation when verification is enabled.
-  No policy, running-configuration or profile-discovery API is called to recover a map.
-- Compensation normally matches per-item switch and interface identities. For a single inverse target only,
-  one explicitly successful result from the expected switch may acknowledge recovery under a different interface name.
-  The outcome preserves the submitted C(api_interface_name), exposes C(reported_interface_name), and sets C(identity_matched=false).
-  Multiple-target recovery batches retain strict identity matching; one result cannot acknowledge several independent targets.
-  No additional topology read verifies recovery; API acknowledgement is not proof that the original topology or configuration was restored.
-- Before submitting an inverse, reuse the latest observation to check that its API target is usable.
-  An inverse unbreakout requires a discovered physical child; an already ready child is preferred without another GET.
-  An inverse breakout requires an explicit parent record, which may be controller-intent-only.
-- A normal unbreakout with verification enabled has the same discovered-child prerequisite.
-  If the initial family is intent-only, establish a usable child before sending the removal and inferring its recovery map.
-  Check mode predicts the removal without waiting for discovery or requiring discovery-derived recovery speeds.
-- Only when a required unbreakout or inverse target is not yet usable, perform targeted GET-only readiness checks for that original family.
-  The internal loop uses a 90-second budget and a two-second interval; individual requests retain the standard transport timeout.
-  Readiness failure leaves the pending unbreakout or inverse unattempted and the task failed.
-  Neither the forward mutation nor an inverse is replayed.
-  These checks occur before compensation, not after it, and do not verify recovery or wait for unrelated native siblings.
-- If a forward request times out or returns HTTP 500, no inverse request is submitted even when the guard observes collateral,
-  because the original operation may still be running. Recovery is reported as not attempted rather than verified restoration.
-- Partial or unknown API outcomes without observed collateral fail without compensation or further overridden deletion.
-  With verification disabled, no collateral compensation is attempted and final topology is not independently checked.
-- With O(verify.enabled=false), overridden deletion targets come only from the initial baseline.
-  Newly coupled families created during the task are not added to cleanup, even when they are absent from the desired config.
-- An explicit deleted-then-merged map change is disruptive and non-atomic. The controller validates the new map when breakout is requested;
-  failure may leave the family native. No automatic profile replacement or orchestrator-level write retry is performed.
-  Requests use the collection's standard transport retry behavior.
+- When unintended changes are found, the module attempts to undo changes from that operation on the affected switch.
+  Earlier successful operations and safe changes on other switches remain. Recovery does not undo the entire task.
+- With verification enabled, unbreakout requires a discovered child interface and a breakout map that can be used for recovery.
+  If the original breakout map cannot be determined, the task fails before unbreakout.
+- Recovery results report whether Nexus Dashboard accepted the recovery request.
+  Recovery is not independently verified; the module does not re-read interfaces to confirm restoration.
+- With verification enabled, an unbreakout or recovery action may wait up to 90 seconds for the required interfaces to become available.
+  An interface read already in progress may take longer. If the interfaces remain unavailable or an interface read fails,
+  that action is not submitted and the task fails. These checks occur before the action and do not verify recovery.
+- If a breakout or unbreakout request times out or returns HTTP 500, no recovery request is submitted,
+  because the original operation may still be running.
+- Partial or unknown API results without unintended changes fail the task without undoing accepted changes.
+  In O(state=overridden), the module does not continue with further unbreakout operations.
+- With O(verify.enabled=false), overridden only selects existing breakout families found before the task for removal.
+  Additional families created through hardware coupling during the task are not automatically selected for removal.
+- Changing a map requires unbreakout followed by breakout. This is disruptive, and failure may leave the family unbroken.
 - After unbreakout, interface-level configuration for restored or otherwise affected interfaces may remain pending
   even when the unbreakout itself has been applied.
 - Manage that interface-level configuration separately with the appropriate Ethernet interface module,
   such as M(cisco.nd.nd_interface_ethernet_routed), M(cisco.nd.nd_interface_ethernet_access), or M(cisco.nd.nd_interface_ethernet_trunk_host).
 - In those interface modules, C(config_actions.deploy=false) stages changes made by the task, while C(config_actions.deploy=true) deploys them.
   These controls do not stage the breakout or unbreakout itself and do not automatically deploy all previously pending interface intent.
-- Complete identified API successes confirm the operation response, not an independently observed interface inventory, running configuration or breakout map.
-- An uncertain or partial result is reported without a fabricated complete after-state.
-  Forward API results are matched by switch and interface identity, not list position.
-  The single-target recovery acknowledgement exception described above does not apply to forward requests.
-- Standard snapshots and planned diff are always returned. Recovery responses do not turn a pre-recovery observation into a verified final snapshot.
-  An empty C(after) with C(after_status=unknown) means that no reliable final snapshot is available,
-  not that the interfaces were removed or restored.
-- O(output_level=info) adds proposed intent. O(output_level=debug) adds proposed intent and logs.
-  Neither proposed intent nor planned diff proves successful controller mutation.
-- CLI verbosity C(-vv) adds write API paths and verbs; C(-vvv) adds full API diagnostics and the compact C(api_calls) trace.
 - Check mode reads current state and reports planned actions without breakout or unbreakout requests.
+  It does not wait for discovery or require a recovery map.
 - Duplicate aliases for one family are rejected before mutation, including parent/child inputs and IP/serial aliases that resolve to the same switch.
 """
 
@@ -242,7 +206,7 @@ EXAMPLES = r"""
     fabric_name: fab1
     state: overridden
 
-- name: Unbreak a native parent using the same parent-oriented input
+- name: Unbreak a family using its parent name
   cisco.nd.nd_manage_breakout_interfaces:
     fabric_name: fab1
     state: deleted
@@ -267,7 +231,7 @@ EXAMPLES = r"""
         interface_names: [Ethernet1/50]
         breakout_map: 50g-2x
 
-- name: Unbreak a native parent using an IPv6 switch management address
+- name: Unbreak a family using an IPv6 switch management address
   cisco.nd.nd_manage_breakout_interfaces:
     fabric_name: fab1
     state: deleted
@@ -309,6 +273,8 @@ after_status:
     An observation made before compensation is not verified final state after compensation.
   - C(partially_observed) combines fresh action-phase observations with initial-discovery evidence for switches not acted on.
   - C(observed) may include controller-intent records whose physical discovery is still pending; inspect each record's C(evidence).
+  - C(observed) identifies the snapshot's provenance, not successful desired-state convergence.
+    The task may still fail when a verification phase reports C(topology_matches=false).
   returned: always
   type: str
   sample: response_confirmed
@@ -339,6 +305,8 @@ api_outcomes:
   description:
   - Parent-oriented action outcomes with the switch identity and the actual parent or child API interface name.
   - For child inputs, C(requested_interface_name) preserves the normalized supplied selector while C(interface_name) remains the canonical parent.
+  - A successful API acknowledgement does not establish the requested topology. With verification enabled,
+    the task can fail if the requested changes cannot be confirmed.
   returned: always
   type: list
   elements: dict
@@ -347,16 +315,17 @@ may_have_changed:
   returned: always
   type: bool
 api_calls:
-  description: Method, path, HTTP status and timing for workflow API calls. Switch-resolution entries identify their purpose and may omit timing.
+  description:
+  - Method, path, HTTP status and timing for workflow API calls. Switch-resolution entries identify their purpose and may omit timing.
+  - CLI verbosity C(-vv) adds write API paths and verbs; C(-vvv) adds full API diagnostics and the compact C(api_calls) trace.
   returned: at CLI verbosity three or higher
   type: list
   elements: dict
 verification:
   description:
-  - Whether collateral verification is enabled, action-phase observation status and the protected breakout-family scope.
-  - This records forward-action topology checks, not verification of compensation. No-op parents retain their initial evidence,
-    including controller-intent evidence where applicable.
-  - Known active child-policy intent participates in identity comparisons even when discovery flags are false.
+  - Reports whether verification is enabled, whether requested changes were observed and whether unintended changes were found.
+  - Covers breakout and unbreakout checks. Recovery is reported separately under C(recovery).
+  - Checks may use active breakout records before discovery finishes. No-op parents retain their initial evidence.
   returned: after an action phase
   type: dict
 recovery:
@@ -367,14 +336,14 @@ recovery:
     Such an outcome includes C(reported_interface_name) and C(identity_matched=false); C(topology_verified) remains false.
     Forward actions and multiple-target inverse batches retain strict identity matching.
   - Empty when no compensation is attempted. Successful recovery responses do not erase the original task failure or prove full configuration restoration.
-  - If a required inverse target remains unusable or its readiness GET fails, report C(not_attempted) without submitting that inverse.
+  - C(not_attempted) means that no recovery request was submitted for that target.
   returned: always
   type: list
   elements: dict
 observed_before_recovery:
   description:
   - Last forward-action controller observation when collateral was detected, before any inverse request.
-  - May contain policy-backed intent-only child identities; readiness polling does not replace this historical guard snapshot.
+  - May include active breakout records whose physical discovery is still pending.
   - Contains scoped broken families and requested parents present in that observation, not every native Ethernet interface.
   - This is historical observation evidence, not the current topology after compensation. No recovery readback is performed.
   returned: when collateral topology is observed

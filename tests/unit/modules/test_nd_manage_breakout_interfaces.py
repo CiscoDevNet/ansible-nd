@@ -451,17 +451,17 @@ def test_argument_defaults_enable_verification_when_dict_is_omitted_or_empty(ver
 def test_documentation_describes_verification_boundary_coupled_parent_scope_and_response_only_recovery():
     docs = yaml.safe_load(module_under_test.DOCUMENTATION)
     verify_notes = " ".join(docs["options"]["verify"]["description"])
-    assert "Initial discovery, input and platform validation, idempotency and API response checks still apply" in verify_notes
-    assert "skip post-action topology reads" in verify_notes
+    assert "reads current state, validates inputs and platforms, skips operations already satisfied and checks API results" in verify_notes
+    assert "skips post-change interface checks, discovery waiting and automatic recovery" in verify_notes
     notes = " ".join(docs["notes"])
     assert "Individual child lanes and disappearing native siblings" in notes
     assert "unchanged unlisted breakout families are allowed" in notes
-    assert "Earlier validated phases and safe changes on other switches remain" in notes
-    assert "No additional topology read verifies recovery" in notes
-    assert "No policy, running-configuration or profile-discovery API" in notes
-    assert "times out or returns HTTP 500, no inverse request" in notes
-    assert "overridden deletion targets come only from the initial baseline" in notes
-    assert "Newly coupled families created during the task are not added to cleanup" in notes
+    assert "Earlier successful operations and safe changes on other switches remain" in notes
+    assert "Recovery is not independently verified" in notes
+    assert "If the original breakout map cannot be determined, the task fails before unbreakout" in notes
+    assert "times out or returns HTTP 500, no recovery request" in notes
+    assert "overridden only selects existing breakout families found before the task for removal" in notes
+    assert "Additional families created through hardware coupling during the task are not automatically selected for removal" in notes
     returned = yaml.safe_load(module_under_test.RETURN)
     assert "initial-discovery evidence for switches not acted on" in " ".join(returned["after_status"]["description"])
     assert "historical observation evidence, not the current topology after compensation" in " ".join(returned["observed_before_recovery"]["description"])
