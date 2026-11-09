@@ -239,27 +239,19 @@ def test_cross_switch_guard_baseline_is_observed_before_native_validation_or_mut
     assert tasks[strict]["vars"]["coupled_safe_observe_only"] is False
 
 
-@pytest.mark.parametrize(
-    "confirmed,restored,unknown_forward,expected",
-    [(True, True, False, False), (False, True, False, True), (True, False, False, True), (True, True, True, True)],
-)
-def test_cross_switch_barrier_requires_confirmed_inverse_and_restoration(confirmed, restored, unknown_forward, expected):
-    expression = next(
-        task["ansible.builtin.set_fact"]["coupled_cross_pending"]
-        for task in CROSS_SWITCH[0]["block"]
-        if isinstance(task.get("ansible.builtin.set_fact", {}).get("coupled_cross_pending"), str)
-    )
-    native = {"Ethernet1/21": {"native": True, "children": [], "child_speeds": {}}}
-    actual = native if restored else {"Ethernet1/21": {"native": False, "children": ["Ethernet1/21/1"], "child_speeds": {"Ethernet1/21/1": 25}}}
-    variables = {
-        "coupled_cross_result": {
-            "recovery": [{"status": "response_confirmed" if confirmed else "unknown"}],
-            "api_outcomes": [{"outcome": "unknown" if unknown_forward else "success"}],
-        },
-        "coupled_cross_coupled_observation": {"snapshot": {"families": actual}},
-        "coupled_native_baseline": {"families": native},
-    }
-    assert _environment().from_string(expression).render(**variables) is expected
+def test_cross_switch_barrier_releases_only_after_existing_receipt_and_strict_observation_gates():
+    tasks = CROSS_SWITCH[0]["block"]
+    receipt = next(index for index, task in enumerate(tasks) if task["name"].startswith("Require collateral failure"))
+    strict = [
+        index
+        for index, task in enumerate(tasks)
+        if task.get("ansible.builtin.include_tasks") in {"coupled_observe.yaml", "coupled_safe_observe.yaml"} and task["name"].startswith("Prove ")
+    ]
+    release = [index for index, task in enumerate(tasks) if task.get("ansible.builtin.set_fact", {}).get("coupled_cross_pending") is False and index > receipt]
+    assert len(strict) == 2 and release == [len(tasks) - 1]
+    assert receipt < min(strict) < max(strict) < release[0]
+    mutation = next(index for index, task in enumerate(tasks) if "cisco.nd.nd_manage_breakout_interfaces" in task)
+    assert all("coupled_cross_pending" not in task.get("ansible.builtin.set_fact", {}) for task in tasks[mutation + 1 : release[0]])
 
 
 def test_cross_switch_recovery_targets_only_violating_switch_and_keeps_safe_creation():

@@ -68,10 +68,11 @@
   ansible.builtin.assert:
     that:
       - >-
-        breakout_result.api_calls | selectattr('method', 'equalto', 'GET') |
-        selectattr('path', 'search', '/interfacesSummary[?]') |
-        selectattr('path', 'search', '[?&]offset=0(?:&|$)') | list | length
-        == (breakout_expected_discovery_rounds | int)
+        (breakout_allow_guard_settling | default(false) | bool) or
+        (breakout_result.api_calls | selectattr('method', 'equalto', 'GET') |
+         selectattr('path', 'search', '/interfacesSummary[?]') |
+         selectattr('path', 'search', '[?&]offset=0(?:&|$)') | list | length
+         == (breakout_expected_discovery_rounds | int))
       - >-
         breakout_result.api_calls | selectattr('purpose', 'defined') |
         selectattr('purpose', 'equalto', 'switch_metadata') | list | length
@@ -80,6 +81,113 @@
   when:
     - ansible_verbosity | int >= 3
     - breakout_expected_discovery_rounds is defined
+
+- name: Validate explicitly allowed successful forward-guard settling
+  when:
+    - ansible_verbosity | int >= 3
+    - breakout_expected_discovery_rounds is defined
+    - breakout_allow_guard_settling | default(false) | bool
+  block:
+    - name: Restrict extra discovery rounds to one real successful guarded action phase
+      ansible.builtin.assert:
+        that:
+          - breakout_allow_guard_settling is boolean
+          - breakout_expected_changed | bool
+          - not (breakout_expected_failed | default(false) | bool)
+          - breakout_expected_write_actions | default([]) | length == 1
+          - breakout_result.api_calls | selectattr('method', 'equalto', 'POST') | list | length == 1
+          - breakout_result.verification is defined
+          - breakout_result.verification.enabled | bool
+          - breakout_result.verification.complete | bool
+          - breakout_result.verification.phases | length > 0
+          - >-
+            breakout_result.verification.phases | map(attribute='phase') | unique | list ==
+            (['breakout'] if breakout_expected_write_actions | first == 'breakout' else ['unbreakout'])
+          - breakout_result.verification.phases | selectattr('topology_matches', 'equalto', false) | list | length == 0
+          - breakout_result.verification.phases | rejectattr('collateral', 'equalto', []) | list | length == 0
+        fail_msg: Settling allowance cannot relax no-op, check-mode, response-only, failed-action or multi-phase contracts.
+
+    - name: Derive mutated switches and the actual POST boundary from original evidence
+      ansible.builtin.set_fact:
+        breakout_guard_mutated_switches: >-
+          {{ breakout_result.api_outcomes | selectattr('outcome', 'equalto', 'success') |
+             map(attribute='switch_id') | unique | list }}
+        breakout_guard_post_index: >-
+          {{ breakout_result.api_calls.index(breakout_result.api_calls |
+             selectattr('method', 'equalto', 'POST') | list | first) }}
+
+    - name: Separate mandatory initial discovery from forward verification GETs
+      ansible.builtin.set_fact:
+        breakout_guard_before: "{{ breakout_result.api_calls[:breakout_guard_post_index | int] }}"
+        breakout_guard_after: "{{ breakout_result.api_calls[(breakout_guard_post_index | int) + 1:] }}"
+
+    - name: Count complete-query starts separately from pagination continuation pages
+      ansible.builtin.set_fact:
+        breakout_guard_before_rounds: >-
+          {{ breakout_guard_before | selectattr('method', 'equalto', 'GET') |
+             selectattr('path', 'search', '/interfacesSummary[?]') |
+             selectattr('path', 'search', '[?&]offset=0(?:&|$)') | list | length }}
+        breakout_guard_summary_calls: >-
+          {{ breakout_guard_after | selectattr('method', 'equalto', 'GET') |
+             selectattr('path', 'search', '/interfacesSummary[?]') | list }}
+        breakout_guard_after_rounds: >-
+          {{ breakout_guard_after | selectattr('method', 'equalto', 'GET') |
+             selectattr('path', 'search', '/interfacesSummary[?]') |
+             selectattr('path', 'search', '[?&]offset=0(?:&|$)') | list | length }}
+
+    - name: Preserve the initial-read budget and bound added rounds by the verification contract
+      ansible.builtin.assert:
+        that:
+          - breakout_guard_mutated_switches | length > 0
+          - breakout_result.verification.phases | length == (breakout_guard_mutated_switches | length)
+          - breakout_result.verification.phases | map(attribute='switch_id') | sort | list == (breakout_guard_mutated_switches | sort | list)
+          - (breakout_expected_discovery_rounds | int) > (breakout_guard_mutated_switches | length)
+          - (breakout_guard_before_rounds | int) == (breakout_expected_discovery_rounds | int) - (breakout_guard_mutated_switches | length)
+          - (breakout_guard_after_rounds | int) >= (breakout_guard_mutated_switches | length)
+          - (breakout_guard_before_rounds | int) + (breakout_guard_after_rounds | int) <= (breakout_expected_discovery_rounds | int) + 5 * (breakout_guard_mutated_switches | length)
+          - breakout_guard_after | rejectattr('method', 'equalto', 'GET') | list | length == 0
+          - breakout_guard_summary_calls | length == (breakout_guard_after | selectattr('method', 'equalto', 'GET') | list | length)
+        fail_msg: Only bounded post-action Ethernet guard reads may exceed the original query-start budget; mandatory initial reads remain exact.
+
+    - name: Require every forward verification page to stay within mutated switch scope
+      vars:
+        breakout_guard_query_serial: "{{ item.path | regex_findall('[?&]switchId=([^&]*)') | first | default('') }}"
+        breakout_guard_scoped_filter: "{{ 'interfaceType:ethernet AND switchId:' ~ breakout_guard_query_serial }}"
+        breakout_guard_allowed_filters:
+          - interfaceType:ethernet
+          - "{{ 'interfaceType:ethernet' | urlencode }}"
+          - "{{ breakout_guard_scoped_filter }}"
+          - "{{ breakout_guard_scoped_filter | urlencode }}"
+          - "{{ {'filter': breakout_guard_scoped_filter} | urlencode | regex_replace('^filter=', '') }}"
+      ansible.builtin.assert:
+        that:
+          - item.http_status == 200
+          - item.path | regex_findall('[?&]filter=([^&]*)') | length == 1
+          - (item.path | regex_findall('[?&]filter=([^&]*)') | first) in breakout_guard_allowed_filters
+          - item.path | regex_findall('[?&]includeAll=([^&]*)') | length == 1
+          - item.path is search('[?&]includeAll=true(?:&|$)')
+          - item.path | regex_findall('[?&]switchId=([^&]*)') | length == 1
+          - (item.path | regex_findall('[?&]switchId=([^&]*)') | first) in breakout_guard_mutated_switches
+          - item.path | regex_findall('[?&]offset=([^&]*)') | length == 1
+          - item.path | regex_findall('[?&]offset=([^&]*)') | first is match('^(?:0|[1-9][0-9]*)$')
+        fail_msg: Settling must use complete Ethernet scope on a switch actually mutated by this phase; pagination pages are not new rounds.
+      loop: "{{ breakout_guard_summary_calls }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Bound each mutated switch to one immediate guard round and at most five retries
+      ansible.builtin.assert:
+        that:
+          - >-
+            breakout_guard_summary_calls |
+            selectattr('path', 'search', '[?&]switchId=' ~ (item | regex_escape) ~ '(?:&|$)') |
+            selectattr('path', 'search', '[?&]offset=0(?:&|$)') | list | length >= 1
+          - >-
+            breakout_guard_summary_calls |
+            selectattr('path', 'search', '[?&]switchId=' ~ (item | regex_escape) ~ '(?:&|$)') |
+            selectattr('path', 'search', '[?&]offset=0(?:&|$)') | list | length <= 6
+        fail_msg: Each mutated switch needs a complete initial guard query and no more than five additional query starts within the 30-second/five-second contract.
+      loop: "{{ breakout_guard_mutated_switches }}"
 
 - name: Validate outcomes by original composite identity rather than response order
   ansible.builtin.assert:

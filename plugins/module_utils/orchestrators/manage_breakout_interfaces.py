@@ -46,6 +46,8 @@ _PAGE_SIZE = 1000
 _MAX_PAGES = 100
 _DISCOVERY_WAIT_SECONDS = 90
 _DISCOVERY_POLL_INTERVAL = 2
+_VERIFICATION_WAIT_SECONDS = 30
+_VERIFICATION_POLL_INTERVAL = 5
 _PARENT = re.compile(r"^Ethernet(?P<slot>[1-9]\d*)/(?P<port>[1-9]\d*)$", re.IGNORECASE)
 _PHYSICAL = re.compile(r"Ethernet([1-9]\d*)/([1-9]\d*)(?:/([1-9]\d*))?", re.IGNORECASE)
 _SPEED = re.compile(r"([1-9]\d*)(?:\.0+)?\s*(?:Gb|Gbps|G)", re.IGNORECASE)
@@ -103,6 +105,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
     _last_action_completed: bool = PrivateAttr(default=False)
     _write_attempted: bool = PrivateAttr(default=False)
     _report: dict[str, Any] = PrivateAttr(default_factory=dict)
+    _verification_deadline: float | None = PrivateAttr(default=None)
 
     @property
     def report_snapshot(self) -> dict[str, Any]:
@@ -244,6 +247,8 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
         operation_type=OperationType.QUERY,
     ):
         """Keep standard transport behavior and trace only completed responses."""
+        if verb == HttpVerbEnum.GET and self._verification_deadline is not None and time.monotonic() >= self._verification_deadline:
+            raise RuntimeError(f"The {_VERIFICATION_WAIT_SECONDS}-second verification budget expired before a complete topology snapshot could be obtained.")
         response_count = self.rest_send.response_count
         registered_before = self.results.task_sequence_number if self.results is not None else None
         started = time.monotonic()
@@ -310,6 +315,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
             reader.unit_test = writer.unit_test
             reader.timeout = writer.timeout
             reader.send_interval = writer.send_interval
+            reader.max_attempts = writer.max_attempts
             self.rest_send = reader
         try:
             return self._query_group_pages(switch_id, filter_text)
@@ -318,6 +324,9 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
 
     def _query_group_pages(self, switch_id: str | None, filter_text: str) -> list[dict[str, Any]]:
         """Read a filtered interface family/group, following bounded pagination."""
+        # NDFC can expand switchId to its vPC peer; the filter keeps the wire
+        # response scoped to the exact requested serial on every page.
+        wire_filter = f"{filter_text} AND switchId:{switch_id}" if switch_id is not None else filter_text
         rows = []
         offset = 0
         fingerprints = set()
@@ -326,7 +335,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
             endpoint = EpManageInterfacesSummaryGet(fabric_name=self.fabric_name)
             endpoint.endpoint_params.switch_id = switch_id
             endpoint.endpoint_params.include_all = True
-            endpoint.endpoint_params.filter = filter_text
+            endpoint.endpoint_params.filter = wire_filter
             endpoint.endpoint_params.max = _PAGE_SIZE
             endpoint.endpoint_params.offset = offset
             body = self._request(endpoint.path, endpoint.verb)
@@ -733,6 +742,49 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
             resource.setdefault("evidence", evidence)
             resource["snapshot_phase"] = evidence
         return snapshot
+
+    def _observe_action_guard(self, before, submitted, phase, requested_state, settle):
+        """Reuse complete observations and retry only unresolved action switches.
+
+        One deadline covers the first guard read, all subsequent pages and
+        five-second gaps. In-flight GETs retain the connection's own timeout.
+        Observed collateral exits immediately into the existing compensation
+        path; inverse requests and their acknowledgement are never polled here.
+        """
+        serials = list(dict.fromkeys(item["switch_id"] for item in submitted))
+        mutated_switches = set(serials)
+        deadline = time.monotonic() + _VERIFICATION_WAIT_SECONDS
+        writer = self.rest_send
+        saved_deadline, saved_attempts = self._verification_deadline, writer.max_attempts
+        if settle:
+            self._verification_deadline = deadline
+            # An HTTP failure is not unresolved topology. Do not hide another
+            # retry loop inside any page of the bounded guard observation.
+            writer.max_attempts = 1
+        try:
+            observed = self._topology_snapshot(serials)
+            current = {key: row for key, row in before.items() if key[0] not in mutated_switches}
+            current.update(observed)
+            reports = self._guard(before, current, submitted, phase, requested_state=requested_state)
+            while settle and not any(report["collateral"] for report in reports):
+                pending = [report["switch_id"] for report in reports if not report["topology_matches"]]
+                if not pending:
+                    return current, reports, False
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return current, reports, True
+                time.sleep(min(_VERIFICATION_POLL_INTERVAL, remaining))
+                if time.monotonic() >= deadline:
+                    return current, reports, True
+                fresh = self._topology_snapshot(pending)
+                pending_switches = set(pending)
+                current = {key: row for key, row in current.items() if key[0] not in pending_switches}
+                current.update(fresh)
+                reports = self._guard(before, current, submitted, phase, requested_state=requested_state)
+            return current, reports, False
+        finally:
+            self._verification_deadline = saved_deadline
+            writer.max_attempts = saved_attempts
 
     def _wait_for_inverse(self, submitted, state, snapshot, *, require_map=False, settle_removal=False):
         """Reuse observed readiness, polling only unresolved families with GETs.
@@ -1141,25 +1193,27 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
                         "verification",
                         {"enabled": True, "complete": True, "phases": []},
                     )
-                    serials = list(dict.fromkeys(item["switch_id"] for item in submitted))
-                    mutated_switches = set(serials)
                     try:
-                        observed = self._topology_snapshot(serials)
+                        current, reports, verification_expired = self._observe_action_guard(
+                            before, submitted, phase, state, settle=completed and not phase_failed
+                        )
                     except Exception as error:
                         verification["complete"] = False
                         errors.append(f"Topology guard could not obtain a complete snapshot: {error}")
                         result.update(failed=True, may_have_changed=True)
                         return result
-                    current = {key: row for key, row in before.items() if key[0] not in mutated_switches}
-                    current.update(observed)
                     result["changed"] = result["changed"] or self._families(before) != self._families(current)
-                    reports = self._guard(before, current, submitted, phase, requested_state=state)
                     verification["phases"].extend(reports)
                     offenders = {report["switch_id"] for report in reports if report["collateral"]}
                     for report in reports:
                         errors.extend(report["collateral"])
                         if not report["topology_matches"] and not report["collateral"]:
-                            errors.append(f"Requested {report['phase']} topology was not observed on '{report['switch_id']}'.")
+                            errors.append(
+                                f"API reported success, but requested {report['phase']} topology on '{report['switch_id']}' was not confirmed "
+                                f"within the {_VERIFICATION_WAIT_SECONDS}-second verification budget."
+                                if verification_expired
+                                else f"Requested {report['phase']} topology was not observed on '{report['switch_id']}'."
+                            )
                     if offenders:
                         result["observed_before_recovery"] = self._export_topology(current, keys)
                         self._compensate(

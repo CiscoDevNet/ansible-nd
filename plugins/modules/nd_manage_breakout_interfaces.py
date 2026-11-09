@@ -87,6 +87,9 @@ options:
     - Check for unintended breakout changes after each operation. Enabled by default.
     - Checks cover breakout parents and their child interfaces on each affected switch.
       Unexpected changes fail the task and trigger an attempt to undo the affected operation.
+    - If all API results succeed but the expected changes are not yet visible, the module checks again every five seconds for up to 30 seconds,
+      provided no unintended changes are found. Checks stop when the expected changes appear, unintended changes are found,
+      an interface read fails, or time runs out. An interface read already in progress may finish after this limit.
     - Nexus Dashboard may record active breakout interfaces before switch discovery finishes.
       Verification uses these records without waiting for physical discovery to complete.
     - When disabled, the module skips post-change interface checks, discovery waiting and automatic recovery.

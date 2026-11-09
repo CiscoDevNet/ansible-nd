@@ -602,9 +602,24 @@ def test_query_paths_are_scoped_filters_and_fabric_is_encoded():
     assert "/fabric%20name%2F1/" in interface_path
     query = parse_qs(urlsplit(interface_path).query)
     assert query["switchId"] == [SERIAL] and query["includeAll"] == ["true"]
-    assert query["filter"] == ["interfaceName:*Ethernet1/50*"]
+    assert query["filter"] == ["interfaceName:*Ethernet1/50* AND switchId:" + SERIAL]
     assert parse_qs(urlsplit(policy_path).query)["filter"] == ["switchId:" + SERIAL + " AND templateName:breakout_interface AND entityName:" + PARENT]
     assert "\\" not in policy_path
+
+
+@pytest.mark.parametrize("mixed_peer", [False, True])
+def test_paired_leaf_summary_uses_explicit_filter_and_still_rejects_peer_rows(mixed_peer):
+    rows = [interface("Ethernet1/" + str(port)) for port in range(1, 55)]
+    if mixed_peer:
+        rows.extend(interface("Ethernet1/" + str(port), switchId="VPC-PEER") for port in range(1, 55))
+    result, plugin = run([response("interfaces", rows), response("policies", [])], whole_switch=True, include_speeds=True)
+    assert result["failed"] is mixed_peer
+    query = parse_qs(urlsplit(plugin._execute_module.call_args_list[0].kwargs["module_args"]["path"]).query)
+    assert query["switchId"] == [SERIAL]
+    assert query["filter"] == ["interfaceType:ethernet AND switchId:" + SERIAL]
+    if mixed_peer:
+        assert "unexpected switch" in result["msg"]
+        assert plugin._execute_module.call_count == 1
 
 
 def test_custom_interface_filter_is_honored():
@@ -613,14 +628,14 @@ def test_custom_interface_filter_is_honored():
     result, plugin = run(fixture=declared)
     assert result["failed"] is False
     path = plugin._execute_module.call_args_list[0].kwargs["module_args"]["path"]
-    assert parse_qs(urlsplit(path).query)["filter"] == [declared["interface_filter"]]
+    assert parse_qs(urlsplit(path).query)["filter"] == [declared["interface_filter"] + " AND switchId:" + SERIAL]
 
 
 def test_quad_default_filter_uses_one_verified_wildcard_not_summary_or():
     result, plugin = run(fixture=fixture(True), expected_profile="map_a")
     assert result["failed"] is False
     path = plugin._execute_module.call_args_list[0].kwargs["module_args"]["path"]
-    assert parse_qs(urlsplit(path).query)["filter"] == ["interfaceName:*Ethernet1/2*"]
+    assert parse_qs(urlsplit(path).query)["filter"] == ["interfaceName:*Ethernet1/2* AND switchId:" + SERIAL]
     assert len(plugin._execute_module.call_args_list) == 2
 
 
@@ -636,8 +651,8 @@ def test_disjoint_ranges_use_separate_narrow_filters_not_full_inventory():
     assert result["failed"] is False
     paths = [call.kwargs["module_args"]["path"] for call in plugin._execute_module.call_args_list[:2]]
     assert [parse_qs(urlsplit(path).query)["filter"][0] for path in paths] == [
-        "interfaceName:*Ethernet1/21*",
-        "interfaceName:*Ethernet1/50*",
+        "interfaceName:*Ethernet1/21* AND switchId:" + SERIAL,
+        "interfaceName:*Ethernet1/50* AND switchId:" + SERIAL,
     ]
 
 
@@ -880,7 +895,7 @@ def test_complete_switch_speed_profiles_are_independently_validated(profile, qua
         expected = 25 if profile == "map_a" else 50
         assert family["child_speeds"] == {child: expected for child in family["children"]}
     query = parse_qs(urlsplit(plugin._execute_module.call_args_list[0].kwargs["module_args"]["path"]).query)
-    assert query["filter"] == ["interfaceType:ethernet"]
+    assert query["filter"] == ["interfaceType:ethernet AND switchId:" + SERIAL]
     assert query["switchId"] == [SERIAL]
     policy_query = parse_qs(urlsplit(plugin._execute_module.call_args_list[1].kwargs["module_args"]["path"]).query)
     assert policy_query["filter"] == ["switchId:" + SERIAL + " AND templateName:breakout_interface"]

@@ -497,7 +497,10 @@ class ActionModule(ActionBase):
                     {
                         "switchId": switch_id,
                         "includeAll": "true",
-                        "filter": interface_filter,
+                        # The switchId query parameter also includes a vPC
+                        # peer's rows. Filter the independently observed
+                        # physical scope on the server as well.
+                        "filter": f"{interface_filter} AND switchId:{switch_id}",
                     },
                     "interfaces",
                     task_vars,

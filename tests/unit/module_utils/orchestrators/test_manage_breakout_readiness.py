@@ -92,7 +92,7 @@ def assert_targeted_read(call, parent=P21):
     assert call["verb"] == HttpVerbEnum.GET
     assert query["switchId"] == [SERIAL]
     assert query["includeAll"] == ["true"]
-    assert query["filter"] == ["interfaceName:*" + parent + "*"]
+    assert query["filter"] == ["interfaceName:*" + parent + "* AND switchId:" + SERIAL]
 
 
 def test_coupled_intent_is_detected_before_discovery_and_inverse_waits_only_for_its_child(clock):
