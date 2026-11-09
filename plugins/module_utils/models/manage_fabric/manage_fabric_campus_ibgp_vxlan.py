@@ -56,6 +56,7 @@ class CampusRoutingProtocolEnum(str, Enum):
 
     OSPF = "ospf"
 
+
 """
 # Comprehensive Pydantic models for VXLAN Campus fabric management via Nexus Dashboard
 

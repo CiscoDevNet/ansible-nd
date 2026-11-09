@@ -28,9 +28,7 @@ def _same_tier_response(**management) -> dict:
 @pytest.mark.parametrize("auto_allocation", (False, True))
 def test_same_tier_as_omits_auto_allocation_and_is_idempotent(auto_allocation: bool) -> None:
     """ND-omitted sameTierAS state matches either user value and is never sent."""
-    proposed = FabricEbgpModel.from_config(
-        _config(bgp_as_mode="sameTierAS", bgp_asn_auto_allocation=auto_allocation)
-    )
+    proposed = FabricEbgpModel.from_config(_config(bgp_as_mode="sameTierAS", bgp_asn_auto_allocation=auto_allocation))
     existing = FabricEbgpModel.from_response(_same_tier_response())
 
     assert proposed.management is not None

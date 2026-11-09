@@ -831,34 +831,66 @@ class VxlanEbgpManagementModel(NDNestedModel):
     ai_load_sharing_packet_sequence_number: bool | None = Field(
         alias="aiLoadSharingPacketSequenceNumber", description="Use the RoCEv2 packet sequence number for hashing.", default=None
     )
-    ai_load_sharing_queuepair: bool | None = Field(alias="aiLoadSharingQueuepair", description="Use the RoCEv2 queue pair for AI load-sharing hashing.", default=None)
+    ai_load_sharing_queuepair: bool | None = Field(
+        alias="aiLoadSharingQueuepair", description="Use the RoCEv2 queue pair for AI load-sharing hashing.", default=None
+    )
     allow_smart_switch_ha: bool | None = Field(alias="allowSmartSwitchHA", description="Enable smart-switch high availability.", default=None)
-    auto_smart_switch_vpc_pair_ha: bool | None = Field(alias="autoSmartSwitchVpcPairHA", description="Automatically configure HA for smart-switch vPC pairs.", default=None)
+    auto_smart_switch_vpc_pair_ha: bool | None = Field(
+        alias="autoSmartSwitchVpcPairHA", description="Automatically configure HA for smart-switch vPC pairs.", default=None
+    )
     bfd_min_rx_interval: int | None = Field(alias="bfdMinRxInterval", description="BFD minimum receive interval in milliseconds.", ge=10, le=999, default=None)
     bfd_multiplier: int | None = Field(alias="bfdMultiplier", description="BFD detection multiplier.", ge=1, le=50, default=None)
     bfd_pim: bool | None = Field(alias="bfdPim", description="Enable BFD for PIM.", default=None)
     bfd_tx_interval: int | None = Field(alias="bfdTxInterval", description="BFD transmit interval in milliseconds.", ge=10, le=999, default=None)
     bgp_allow_as_in: bool | None = Field(alias="bgpAllowAsIn", description="Accept an AS path containing this border switch ASN.", default=None)
     dlb_all_interfaces: bool | None = Field(alias="dlbAllInterfaces", description="Apply DLB to all supported interfaces.", default=None)
-    enable_secure_default_vrf: bool | None = Field(alias="enableSecureDefaultVrf", description="Redirect default VRF traffic to a DPU for inspection.", default=None)
-    hypershield_ha_peer_link_subnet: str | None = Field(alias="hypershieldHAPeerLinkSubnet", description="IPv4 subnet pool for HA peer-link connectivity.", default=None)
+    enable_secure_default_vrf: bool | None = Field(
+        alias="enableSecureDefaultVrf", description="Redirect default VRF traffic to a DPU for inspection.", default=None
+    )
+    hypershield_ha_peer_link_subnet: str | None = Field(
+        alias="hypershieldHAPeerLinkSubnet", description="IPv4 subnet pool for HA peer-link connectivity.", default=None
+    )
     hypershield_ha_peer_link_subnet_granularity: Literal["/30", "/31"] | None = Field(
         alias="hypershieldHAPeerLinkSubnetGranularity", description="Subnet prefix size for HA peer-link allocations.", default=None
     )
-    hypershield_ha_source_intf: str | None = Field(alias="hypershieldHASourceIntf", description="Loopback interface used as the HA source.", min_length=3, max_length=40, default=None)
-    hypershield_ha_source_subnet: str | None = Field(alias="hypershieldHASourceSubnet", description="IPv4 subnet pool for the HA source loopback.", default=None)
+    hypershield_ha_source_intf: str | None = Field(
+        alias="hypershieldHASourceIntf", description="Loopback interface used as the HA source.", min_length=3, max_length=40, default=None
+    )
+    hypershield_ha_source_subnet: str | None = Field(
+        alias="hypershieldHASourceSubnet", description="IPv4 subnet pool for the HA source loopback.", default=None
+    )
     hypershield_ha_vlan: int | None = Field(alias="hypershieldHAVlan", description="VLAN used for smart-switch HA communication.", ge=2, le=4094, default=None)
-    use_hypershield_source_loopback_for_ha: bool | None = Field(alias="useHypershieldSourceLoopbackForHA", description="Reuse the Hypershield source loopback for HA.", default=None)
+    use_hypershield_source_loopback_for_ha: bool | None = Field(
+        alias="useHypershieldSourceLoopbackForHA", description="Reuse the Hypershield source loopback for HA.", default=None
+    )
     ntp_auth_algorithm: Literal["aes128cmac", "md5"] | None = Field(alias="ntpAuthAlgorithm", description="NTP authentication algorithm.", default=None)
     ntp_auth_enable: bool | None = Field(alias="ntpAuthEnable", description="Enable NTP authentication.", default=None)
-    ntp_auth_key: SecretStr | None = Field(alias="ntpAuthKey", description="NTP authentication key.", min_length=1, max_length=128, pattern=r"^\S+$", default=None, json_schema_extra={"secret": True})
+    ntp_auth_key: SecretStr | None = Field(
+        alias="ntpAuthKey",
+        description="NTP authentication key.",
+        min_length=1,
+        max_length=128,
+        pattern=r"^\S+$",
+        default=None,
+        json_schema_extra={"secret": True},
+    )
     ntp_auth_key_id: int | None = Field(alias="ntpAuthKeyId", description="NTP authentication key identifier.", ge=1, le=65535, default=None)
     ntp_auth_key_type: Literal["6", "7"] | None = Field(alias="ntpAuthKeyType", description="NTP authentication key type.", default=None)
-    per_vrf_unique_loopback_auto_provision: bool | None = Field(alias="perVrfUniqueLoopbackAutoProvision", description="Auto-provision a unique IPv4 loopback per VRF.", default=None)
-    per_vrf_unique_loopback_auto_provision_v6: bool | None = Field(alias="perVrfUniqueLoopbackAutoProvisionV6", description="Auto-provision a unique IPv6 loopback per VRF.", default=None)
-    per_vrf_unique_loopback_ip_range: FabricIPv4CIDR = Field(alias="perVrfUniqueLoopbackIpRange", description="IPv4 prefix pool for per-VRF unique loopbacks.", default=None)
-    per_vrf_unique_loopback_ipv6_range: IPv6CIDR = Field(alias="perVrfUniqueLoopbackIpv6Range", description="IPv6 prefix pool for per-VRF unique loopbacks.", default=None)
-    pim_auth_keychain_name: str | None = Field(alias="pimAuthKeychainName", description="PIM authentication keychain name.", min_length=1, max_length=63, pattern=r"^\S+$", default=None)
+    per_vrf_unique_loopback_auto_provision: bool | None = Field(
+        alias="perVrfUniqueLoopbackAutoProvision", description="Auto-provision a unique IPv4 loopback per VRF.", default=None
+    )
+    per_vrf_unique_loopback_auto_provision_v6: bool | None = Field(
+        alias="perVrfUniqueLoopbackAutoProvisionV6", description="Auto-provision a unique IPv6 loopback per VRF.", default=None
+    )
+    per_vrf_unique_loopback_ip_range: FabricIPv4CIDR = Field(
+        alias="perVrfUniqueLoopbackIpRange", description="IPv4 prefix pool for per-VRF unique loopbacks.", default=None
+    )
+    per_vrf_unique_loopback_ipv6_range: IPv6CIDR = Field(
+        alias="perVrfUniqueLoopbackIpv6Range", description="IPv6 prefix pool for per-VRF unique loopbacks.", default=None
+    )
+    pim_auth_keychain_name: str | None = Field(
+        alias="pimAuthKeychainName", description="PIM authentication keychain name.", min_length=1, max_length=63, pattern=r"^\S+$", default=None
+    )
     pim_auth_use_keychain: bool | None = Field(alias="pimAuthUseKeychain", description="Use a PIM authentication keychain.", default=None)
     pim_keys: list[KeychainKeyEntryModel] | None = Field(alias="pimKeys", description="PIM keychain entries.", default=None)
 

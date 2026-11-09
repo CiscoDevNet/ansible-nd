@@ -987,7 +987,9 @@ class VxlanIbgpManagementModel(NDNestedModel):
         description=("Additional CLIs as captured from the show running configuration, added after interface configurations for all ToRs"),
         default="",
     )
-    extra_config_intra_fabric_links: FabricCliText = Field(alias="extraConfigIntraFabricLinks", description="Additional CLIs for all Intra-Fabric links", default="")
+    extra_config_intra_fabric_links: FabricCliText = Field(
+        alias="extraConfigIntraFabricLinks", description="Additional CLIs for all Intra-Fabric links", default=""
+    )
     extra_config_aaa: FabricCliText = Field(alias="extraConfigAaa", description="AAA Configurations", default="")
     aaa: bool = Field(description="Include AAA configs from Manageability tab during device bootup", default=False)
     pre_interface_config_leaf: FabricCliText = Field(
@@ -1091,36 +1093,76 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
 
     # Additional controls exposed by the ND 4.3.1 iBGP VXLAN native template.
-    ai_load_sharing_opcode: bool | None = Field(alias="aiLoadSharingOpcode", description="Use the RoCEv2 opcode for AI load-sharing hash selection.", default=None)
-    ai_load_sharing_packet_sequence_number: bool | None = Field(alias="aiLoadSharingPacketSequenceNumber", description="Use the RoCEv2 packet sequence number for AI load-sharing hash selection.", default=None)
-    ai_load_sharing_queuepair: bool | None = Field(alias="aiLoadSharingQueuepair", description="Use the RoCEv2 source and receiver queue pair for AI load-sharing hash selection.", default=None)
-    allow_smart_switch_ha: bool | None = Field(alias="allowSmartSwitchHA", description="Enable Hypershield high availability for smart switches.", default=None)
-    auto_smart_switch_vpc_pair_ha: bool | None = Field(alias="autoSmartSwitchVpcPairHA", description="Automatically configure high availability for smart-switch vPC pairs.", default=None)
+    ai_load_sharing_opcode: bool | None = Field(
+        alias="aiLoadSharingOpcode", description="Use the RoCEv2 opcode for AI load-sharing hash selection.", default=None
+    )
+    ai_load_sharing_packet_sequence_number: bool | None = Field(
+        alias="aiLoadSharingPacketSequenceNumber", description="Use the RoCEv2 packet sequence number for AI load-sharing hash selection.", default=None
+    )
+    ai_load_sharing_queuepair: bool | None = Field(
+        alias="aiLoadSharingQueuepair", description="Use the RoCEv2 source and receiver queue pair for AI load-sharing hash selection.", default=None
+    )
+    allow_smart_switch_ha: bool | None = Field(
+        alias="allowSmartSwitchHA", description="Enable Hypershield high availability for smart switches.", default=None
+    )
+    auto_smart_switch_vpc_pair_ha: bool | None = Field(
+        alias="autoSmartSwitchVpcPairHA", description="Automatically configure high availability for smart-switch vPC pairs.", default=None
+    )
     bfd_min_rx_interval: int | None = Field(alias="bfdMinRxInterval", description="BFD minimum receive interval in milliseconds.", ge=10, le=999, default=None)
     bfd_multiplier: int | None = Field(alias="bfdMultiplier", description="BFD detection multiplier.", ge=1, le=50, default=None)
     bfd_tx_interval: int | None = Field(alias="bfdTxInterval", description="BFD transmit interval in milliseconds.", ge=10, le=999, default=None)
     dlb_all_interfaces: bool | None = Field(alias="dlbAllInterfaces", description="Apply dynamic load balancing to all supported interfaces.", default=None)
-    hypershield_ha_peer_link_subnet: str | None = Field(alias="hypershieldHAPeerLinkSubnet", description="IPv4 subnet pool for Hypershield HA peer-link connectivity.", default=None)
-    hypershield_ha_peer_link_subnet_granularity: Literal["/30", "/31"] | None = Field(alias="hypershieldHAPeerLinkSubnetGranularity", description="Hypershield HA peer-link subnet prefix size.", default=None)
-    hypershield_ha_source_intf: str | None = Field(alias="hypershieldHASourceIntf", description="Loopback interface used as the Hypershield HA source interface.", min_length=3, max_length=40, default=None)
-    hypershield_ha_source_subnet: str | None = Field(alias="hypershieldHASourceSubnet", description="IPv4 subnet pool for the Hypershield HA source loopback.", default=None)
+    hypershield_ha_peer_link_subnet: str | None = Field(
+        alias="hypershieldHAPeerLinkSubnet", description="IPv4 subnet pool for Hypershield HA peer-link connectivity.", default=None
+    )
+    hypershield_ha_peer_link_subnet_granularity: Literal["/30", "/31"] | None = Field(
+        alias="hypershieldHAPeerLinkSubnetGranularity", description="Hypershield HA peer-link subnet prefix size.", default=None
+    )
+    hypershield_ha_source_intf: str | None = Field(
+        alias="hypershieldHASourceIntf",
+        description="Loopback interface used as the Hypershield HA source interface.",
+        min_length=3,
+        max_length=40,
+        default=None,
+    )
+    hypershield_ha_source_subnet: str | None = Field(
+        alias="hypershieldHASourceSubnet", description="IPv4 subnet pool for the Hypershield HA source loopback.", default=None
+    )
     hypershield_ha_vlan: int | None = Field(alias="hypershieldHAVlan", description="VLAN used for Hypershield high availability.", ge=2, le=4094, default=None)
-    use_hypershield_source_loopback_for_ha: bool | None = Field(alias="useHypershieldSourceLoopbackForHA", description="Reuse the Hypershield source loopback for high availability.", default=None)
-    isis_auth_use_key_entries: bool | None = Field(alias="isisAuthUseKeyEntries", description="Use the configured IS-IS key entries for authentication.", default=None)
+    use_hypershield_source_loopback_for_ha: bool | None = Field(
+        alias="useHypershieldSourceLoopbackForHA", description="Reuse the Hypershield source loopback for high availability.", default=None
+    )
+    isis_auth_use_key_entries: bool | None = Field(
+        alias="isisAuthUseKeyEntries", description="Use the configured IS-IS key entries for authentication.", default=None
+    )
     isis_border_level12: bool | None = Field(alias="isisBorderLevel12", description="Apply IS-IS level 1-2 to border devices.", default=None)
     isis_keys: list[KeychainKeyEntryModel] | None = Field(alias="isisKeys", description="IS-IS keychain entries.", default=None)
     ntp_auth_algorithm: Literal["aes128cmac", "md5"] | None = Field(alias="ntpAuthAlgorithm", description="NTP authentication algorithm.", default=None)
     ntp_auth_enable: bool | None = Field(alias="ntpAuthEnable", description="Enable NTP authentication.", default=None)
-    ntp_auth_key: SecretStr | None = Field(alias="ntpAuthKey", description="NTP authentication key.", min_length=1, max_length=128, pattern=r"^\S+$", default=None, json_schema_extra={"secret": True})
+    ntp_auth_key: SecretStr | None = Field(
+        alias="ntpAuthKey",
+        description="NTP authentication key.",
+        min_length=1,
+        max_length=128,
+        pattern=r"^\S+$",
+        default=None,
+        json_schema_extra={"secret": True},
+    )
     ntp_auth_key_id: int | None = Field(alias="ntpAuthKeyId", description="NTP authentication key identifier.", ge=1, le=65535, default=None)
     ntp_auth_key_type: Literal["6", "7"] | None = Field(alias="ntpAuthKeyType", description="NTP authentication key type.", default=None)
-    ospf_auth_keychain_name: str | None = Field(alias="ospfAuthKeychainName", description="OSPF authentication keychain name.", min_length=1, max_length=63, pattern=r"^\S+$", default=None)
+    ospf_auth_keychain_name: str | None = Field(
+        alias="ospfAuthKeychainName", description="OSPF authentication keychain name.", min_length=1, max_length=63, pattern=r"^\S+$", default=None
+    )
     ospf_auth_use_keychain: bool | None = Field(alias="ospfAuthUseKeychain", description="Use an OSPF authentication keychain.", default=None)
     ospf_auto_cost_ref_bw: int | None = Field(alias="ospfAutoCostRefBw", description="OSPF auto-cost reference bandwidth.", ge=1, le=4000, default=None)
     ospf_keys: list[KeychainKeyEntryModel] | None = Field(alias="ospfKeys", description="OSPF keychain entries.", default=None)
     ospf_log_adj_changes: bool | None = Field(alias="ospfLogAdjChanges", description="Log OSPF adjacency changes.", default=None)
-    ospf_max_metric_startup_wait: int | None = Field(alias="ospfMaxMetricStartupWait", description="Maximum OSPF metric startup wait in seconds.", ge=1, le=65535, default=None)
-    pim_auth_keychain_name: str | None = Field(alias="pimAuthKeychainName", description="PIM authentication keychain name.", min_length=1, max_length=63, pattern=r"^\S+$", default=None)
+    ospf_max_metric_startup_wait: int | None = Field(
+        alias="ospfMaxMetricStartupWait", description="Maximum OSPF metric startup wait in seconds.", ge=1, le=65535, default=None
+    )
+    pim_auth_keychain_name: str | None = Field(
+        alias="pimAuthKeychainName", description="PIM authentication keychain name.", min_length=1, max_length=63, pattern=r"^\S+$", default=None
+    )
     pim_auth_use_keychain: bool | None = Field(alias="pimAuthUseKeychain", description="Use a PIM authentication keychain.", default=None)
     pim_keys: list[KeychainKeyEntryModel] | None = Field(alias="pimKeys", description="PIM keychain entries.", default=None)
     system_qos_classification: bool | None = Field(alias="systemQosClassification", description="Enable system QoS classification.", default=None)

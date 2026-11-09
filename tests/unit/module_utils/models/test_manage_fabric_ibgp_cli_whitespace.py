@@ -10,7 +10,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     FabricIbgpModel,
 )
 
-
 TEXT_FIELDS = (
     ("ibgp_peer_template", "ibgpPeerTemplate"),
     ("leaf_ibgp_peer_template", "leafIbgpPeerTemplate"),

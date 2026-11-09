@@ -223,19 +223,41 @@ class KeychainKeyEntryModel(NDNestedModel):
     crypto_algorithm: Literal["3des", "aes", "hmac-sha-1", "hmac-sha-256", "hmac-sha-384", "hmac-sha-512", "md5"] | None = Field(
         alias="cryptoAlgorithm", description="Cryptographic algorithm.", default=None
     )
-    accept_lifetime_start: str | None = Field(alias="acceptLifetimeStart", description="Accept lifetime start time.", pattern=KEYCHAIN_LIFETIME_TIME_RE, default=None)
-    accept_lifetime_start_date: str | None = Field(alias="acceptLifetimeStartDate", description="Accept lifetime start date.", pattern=KEYCHAIN_LIFETIME_DATE_RE, default=None)
-    accept_lifetime_end_mode: Literal["duration", "infinite", "endTime"] | None = Field(alias="acceptLifetimeEndMode", description="Accept lifetime end mode.", default=None)
-    accept_lifetime_duration: int | None = Field(alias="acceptLifetimeDuration", description="Accept lifetime duration in seconds.", ge=1, le=2147483646, default=None)
-    accept_lifetime_end: str | None = Field(alias="acceptLifetimeEnd", description="Accept lifetime end time.", pattern=KEYCHAIN_LIFETIME_TIME_RE, default=None)
-    accept_lifetime_end_date: str | None = Field(alias="acceptLifetimeEndDate", description="Accept lifetime end date.", pattern=KEYCHAIN_LIFETIME_DATE_RE, default=None)
+    accept_lifetime_start: str | None = Field(
+        alias="acceptLifetimeStart", description="Accept lifetime start time.", pattern=KEYCHAIN_LIFETIME_TIME_RE, default=None
+    )
+    accept_lifetime_start_date: str | None = Field(
+        alias="acceptLifetimeStartDate", description="Accept lifetime start date.", pattern=KEYCHAIN_LIFETIME_DATE_RE, default=None
+    )
+    accept_lifetime_end_mode: Literal["duration", "infinite", "endTime"] | None = Field(
+        alias="acceptLifetimeEndMode", description="Accept lifetime end mode.", default=None
+    )
+    accept_lifetime_duration: int | None = Field(
+        alias="acceptLifetimeDuration", description="Accept lifetime duration in seconds.", ge=1, le=2147483646, default=None
+    )
+    accept_lifetime_end: str | None = Field(
+        alias="acceptLifetimeEnd", description="Accept lifetime end time.", pattern=KEYCHAIN_LIFETIME_TIME_RE, default=None
+    )
+    accept_lifetime_end_date: str | None = Field(
+        alias="acceptLifetimeEndDate", description="Accept lifetime end date.", pattern=KEYCHAIN_LIFETIME_DATE_RE, default=None
+    )
     accept_lifetime_local: bool | None = Field(alias="acceptLifetimeLocal", description="Interpret the accept lifetime in local time.", default=None)
-    send_lifetime_start: str | None = Field(alias="sendLifetimeStart", description="Send lifetime start time.", pattern=KEYCHAIN_LIFETIME_TIME_RE, default=None)
-    send_lifetime_start_date: str | None = Field(alias="sendLifetimeStartDate", description="Send lifetime start date.", pattern=KEYCHAIN_LIFETIME_DATE_RE, default=None)
-    send_lifetime_end_mode: Literal["duration", "infinite", "endTime"] | None = Field(alias="sendLifetimeEndMode", description="Send lifetime end mode.", default=None)
-    send_lifetime_duration: int | None = Field(alias="sendLifetimeDuration", description="Send lifetime duration in seconds.", ge=1, le=2147483646, default=None)
+    send_lifetime_start: str | None = Field(
+        alias="sendLifetimeStart", description="Send lifetime start time.", pattern=KEYCHAIN_LIFETIME_TIME_RE, default=None
+    )
+    send_lifetime_start_date: str | None = Field(
+        alias="sendLifetimeStartDate", description="Send lifetime start date.", pattern=KEYCHAIN_LIFETIME_DATE_RE, default=None
+    )
+    send_lifetime_end_mode: Literal["duration", "infinite", "endTime"] | None = Field(
+        alias="sendLifetimeEndMode", description="Send lifetime end mode.", default=None
+    )
+    send_lifetime_duration: int | None = Field(
+        alias="sendLifetimeDuration", description="Send lifetime duration in seconds.", ge=1, le=2147483646, default=None
+    )
     send_lifetime_end: str | None = Field(alias="sendLifetimeEnd", description="Send lifetime end time.", pattern=KEYCHAIN_LIFETIME_TIME_RE, default=None)
-    send_lifetime_end_date: str | None = Field(alias="sendLifetimeEndDate", description="Send lifetime end date.", pattern=KEYCHAIN_LIFETIME_DATE_RE, default=None)
+    send_lifetime_end_date: str | None = Field(
+        alias="sendLifetimeEndDate", description="Send lifetime end date.", pattern=KEYCHAIN_LIFETIME_DATE_RE, default=None
+    )
     send_lifetime_local: bool | None = Field(alias="sendLifetimeLocal", description="Interpret the send lifetime in local time.", default=None)
 
     @field_serializer("key_string")
