@@ -181,6 +181,8 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         None
         """
         self._pending_deploys: list[tuple[str, str]] = []
+        self._pending_deploy_keys: set[tuple[str, str]] | None = set()
+        self._pending_deploy_keys_for = self._pending_deploys
         self._pending_removes: list[tuple[str, str]] = []
         self._deploy_attempted: bool = False
         self._switch_interfaces_cache: dict[str, dict[str, dict]] = {}
@@ -667,7 +669,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
                     sid, name = requested[key]
                     owners[key]._queue_deploy(name, sid)
                 if accepted:
-                    raise RuntimeError(f"Mixed bulk create accepted {len(accepted)} of {len(requested)} named identities before failure.") from error
+                    raise RuntimeError(f"Mixed bulk create accepted {len(accepted)} of {len(requested)} named identities before failure: {error}") from error
             raise
         finally:
             for sid in touched:
@@ -1434,6 +1436,16 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         api_endpoint.switch_sn = switch_sn
         return api_endpoint
 
+    def _replace_pending_deploys(self, targets: list[tuple[str, str]]) -> None:
+        """Replace the ordered queue and rebuild its plain-string membership index."""
+        # Exact controller/receipt types are part of the validation contract.
+        # pylint: disable=unidiomatic-typecheck
+        self._pending_deploys = targets
+        self._pending_deploy_keys = (
+            set(targets) if all(type(pair) is tuple and len(pair) == 2 and all(type(value) is str for value in pair) for pair in targets) else None
+        )
+        self._pending_deploy_keys_for = targets
+
     def _queue_deploy(self, interface_name: str, switch_id: str) -> None:
         """
         # Summary
@@ -1445,7 +1457,24 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         None
         """
+        # Exact controller/receipt types are part of the validation contract.
+        # pylint: disable=unidiomatic-typecheck
         pair = (interface_name, switch_id)
+        keys = getattr(self, "_pending_deploy_keys", None)
+        if (
+            type(interface_name) is str
+            and type(switch_id) is str
+            and keys is not None
+            and getattr(self, "_pending_deploy_keys_for", None) is self._pending_deploys
+            and len(keys) == len(self._pending_deploys)
+        ):
+            if pair not in keys:
+                self._pending_deploys.append(pair)
+                keys.add(pair)
+            return
+        # Preserve list comparison behavior for nonstandard caller values or
+        # externally replaced queues, including unhashable tuple components.
+        self._pending_deploy_keys = None
         if pair not in self._pending_deploys:
             self._pending_deploys.append(pair)
 
@@ -1810,7 +1839,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     def dequeue_deploy_targets(self, targets: Sequence[tuple[str, str]]) -> None:
         """Remove exact targets from the pending deploy queue without sending a request."""
         removed = set(targets)
-        self._pending_deploys = [target for target in self._pending_deploys if target not in removed]
+        self._replace_pending_deploys([target for target in self._pending_deploys if target not in removed])
 
     def absorb_deploy_context_from(self, source: NDBaseInterfaceOrchestrator) -> None:
         """Share exact derived identities and proven vPC pair scopes for a consolidated deploy."""
@@ -1882,7 +1911,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             return None
         self._deploy_attempted = True
         result = self.deploy_targets(self._pending_deploys)
-        self._pending_deploys = []
+        self._replace_pending_deploys([])
         return result
 
     def deploy_accepted_mutations(self) -> list[tuple[str, str]]:
@@ -1923,7 +1952,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             self.deploy_targets(accepted)
         except Exception as e:
             raise RuntimeError(f"Failure-path deploy failed for accepted interfaces {accepted}: {e}") from e
-        self._pending_deploys = [pair for pair in self._pending_deploys if pair in unsent]
+        self._replace_pending_deploys([pair for pair in self._pending_deploys if pair in unsent])
         return accepted
 
     def _unsent_delete_pairs(self) -> set[tuple[str, str]]:
@@ -1940,6 +1969,67 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         None
         """
         return set(self._pending_removes)
+
+    def _items_matching_pairs(self, model_instances: Sequence[ModelType], pairs: set[tuple[str, str]]) -> list[ModelType]:
+        """
+        # Summary
+
+        Return, in submission order, the interface models whose `(interface_name, switch_id)` pair is in `pairs`. Names compare
+        case-insensitively (ND echoes the switch-canonical spelling for some families); a model whose `switch_ip` cannot be resolved
+        is excluded, since it cannot have been sent. An empty `pairs` returns immediately without resolving any switch. Shared by the
+        issue #597 acceptance hooks.
+
+        ## Raises
+
+        None
+        """
+        if not pairs:
+            return []
+        wanted = {(name.strip().lower(), switch_id) for name, switch_id in pairs}
+        matched: list[ModelType] = []
+        for item in model_instances:
+            interface_name = getattr(item, "interface_name", None)
+            switch_ip = getattr(item, "switch_ip", None)
+            if not interface_name or not switch_ip:
+                continue
+            try:
+                switch_id = self._resolve_switch_id(switch_ip)
+            except RuntimeError:
+                continue
+            if (interface_name.strip().lower(), switch_id) in wanted:
+                matched.append(item)
+        return matched
+
+    def accepted_mutations(self, model_instances: Sequence[ModelType]) -> list[ModelType]:
+        """
+        # Summary
+
+        Return the submitted items whose create the controller accepted despite the failed bulk request: those whose pair is deploy-queued
+        (issue #597). `_post_bulk_create_group` queues the whole group on success, the exact-`success` 207 subset on a failed 207, and the
+        `_created_despite_failure` recovery set on a flat failure; earlier groups of the same bulk create are fully queued and `update`
+        queues after its PUT succeeds, so at the moment the state machine consults this hook the queue holds exactly the accepted
+        create/update pairs (override deletions, which queue before their removal is sent, run only after creates).
+
+        ## Raises
+
+        None
+        """
+        return self._items_matching_pairs(model_instances, set(self._pending_deploys))
+
+    def unaccepted_removals(self, model_instances: Sequence[ModelType]) -> list[ModelType]:
+        """
+        # Summary
+
+        Return the removed items whose delete-side request the controller has not accepted: those whose pair is still in a delete-side
+        queue (`_unsent_delete_pairs`, which subclasses extend with their normalize / reset queues). A pair left in such a queue after a
+        failure is, by the queue invariant, one whose removal was not accepted, so `NDStateMachine.reconcile_after_failure` restores
+        it to `after` (issue #597).
+
+        ## Raises
+
+        None
+        """
+        return self._items_matching_pairs(model_instances, self._unsent_delete_pairs())
 
     def _accepted_multistatus_names(self, response: Mapping[str, Any] | None | object = _UNSET_RESPONSE) -> set[str]:
         """

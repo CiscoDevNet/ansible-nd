@@ -914,6 +914,7 @@ def plan(
     auxiliary_orchestrators=(),
     execution_layers=(),
     parent_deployment_barriers=(),
+    member_preparations=(),
 ):
     """Build one InterfaceWorkflowPlan-shaped value."""
     return SimpleNamespace(
@@ -922,6 +923,7 @@ def plan(
         auxiliary_orchestrators=tuple(auxiliary_orchestrators),
         execution_layers=tuple(execution_layers),
         parent_deployment_barriers=tuple(parent_deployment_barriers),
+        member_preparations=tuple(member_preparations),
     )
 
 
@@ -1714,6 +1716,7 @@ def test_transition_put_precedes_ordinary_updates_and_creates_then_deploys_once(
         "status": "succeeded",
         "from_policy_type": "routedHost",
         "to_policy_type": "accessHost",
+        "execution_sequence": 1,
     }
     deploy_event = next(event for event in events if event[0] == "deploy")
     assert set(deploy_event[2]) == {
@@ -2705,21 +2708,21 @@ def test_mixed_create_response_deploys_only_the_exact_successful_item():
 def test_mixed_create_batches_independent_families_and_switches_once():
     events = []
     loopback = MixedCreateFakeOrchestrator("loopback", events)
-    svi = MixedCreateFakeOrchestrator("svi", events)
-    svi.rest_send = loopback.rest_send
+    subinterface = MixedCreateFakeOrchestrator("subinterface", events)
+    subinterface.rest_send = loopback.rest_send
     workflow_plan = plan(
         resource(0, loopback, creates=[FakeModel("loopback10")], resource_type="loopback"),
-        resource(1, svi, creates=[FakeModel("Vlan10", switch_ip="192.0.2.2")], resource_type="svi"),
+        resource(1, subinterface, creates=[FakeModel("Ethernet1/1.10", switch_ip="192.0.2.2")], resource_type="subinterface_unmanaged"),
     )
 
     result = InterfaceWorkflowExecutor(snapshot=CompleteFakeSnapshot(events), deploy=False).execute(workflow_plan)
 
     assert result.failed is False
     assert result.mutation_requests == 1
-    assert {item.interface_name: item.status for item in result.items} == {"loopback10": "succeeded", "Vlan10": "succeeded"}
+    assert {item.interface_name: item.status for item in result.items} == {"loopback10": "succeeded", "Ethernet1/1.10": "succeeded"}
     assert loopback.pending_deploys == (("loopback10", "SERIAL1"),)
-    assert svi.pending_deploys == (("Vlan10", "SERIAL2"),)
-    assert [event for event in events if event[0] == "mixed_create"] == [("mixed_create", ("loopback10", "Vlan10"))]
+    assert subinterface.pending_deploys == (("Ethernet1/1.10", "SERIAL2"),)
+    assert [event for event in events if event[0] == "mixed_create"] == [("mixed_create", ("loopback10", "Ethernet1/1.10"))]
 
 
 def test_mixed_create_runs_unqualified_singleton_on_established_create_path():
@@ -2738,12 +2741,12 @@ def test_mixed_create_runs_unqualified_singleton_on_established_create_path():
 
 def test_mixed_create_partial_207_reports_only_exact_accepted_family():
     events = []
-    loopback = MixedCreateFakeOrchestrator("loopback", events, fail_name="Vlan10")
-    svi = MixedCreateFakeOrchestrator("svi", events)
-    svi.rest_send = loopback.rest_send
+    loopback = MixedCreateFakeOrchestrator("loopback", events, fail_name="Ethernet1/1.10")
+    subinterface = MixedCreateFakeOrchestrator("subinterface", events)
+    subinterface.rest_send = loopback.rest_send
     workflow_plan = plan(
         resource(0, loopback, creates=[FakeModel("loopback10")], resource_type="loopback"),
-        resource(1, svi, creates=[FakeModel("Vlan10", switch_ip="192.0.2.2")], resource_type="svi"),
+        resource(1, subinterface, creates=[FakeModel("Ethernet1/1.10", switch_ip="192.0.2.2")], resource_type="subinterface_unmanaged"),
     )
 
     result = InterfaceWorkflowExecutor(snapshot=CompleteFakeSnapshot(events), deploy=False).execute(workflow_plan)
@@ -2751,9 +2754,13 @@ def test_mixed_create_partial_207_reports_only_exact_accepted_family():
     assert result.failed is True
     assert result.status == "partial_failure"
     assert result.mutation_requests == 1
-    assert {item.interface_name: item.status for item in result.items} == {"loopback10": "succeeded", "Vlan10": "failed"}
+    assert {item.interface_name: item.status for item in result.items} == {"loopback10": "succeeded", "Ethernet1/1.10": "failed"}
     assert loopback.pending_deploys == (("loopback10", "SERIAL1"),)
-    assert not svi.pending_deploys
+    assert not subinterface.pending_deploys
+    rejected = next(item for item in result.items if item.interface_name == "Ethernet1/1.10")
+    assert rejected.rejection["source"] == "native_named_sync_rejection_v1"
+    assert rejected.rejection["switch_id"] == "SERIAL2"
+    assert rejected.rejection["interface_name"] == "Ethernet1/1.10"
 
 
 def test_mixed_deploy_response_reports_target_outcomes_without_erasing_mutation_success():

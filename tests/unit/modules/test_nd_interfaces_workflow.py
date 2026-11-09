@@ -144,7 +144,8 @@ def test_loopback_union_contract_is_explicit_in_documentation_and_examples():
     assert "network_os_type: nx-os" in nd_interfaces_workflow.EXAMPLES
     assert "policy_type: loopback" in nd_interfaces_workflow.EXAMPLES
     assert "Identifier-only V(deleted) loopback items remain valid" in nd_interfaces_workflow.DOCUMENTATION
-    assert "Changing C(network_os_type) is rejected" in nd_interfaces_workflow.DOCUMENTATION
+    assert "without implicit workflow policy transitions" in nd_interfaces_workflow.DOCUMENTATION
+    assert "No additional summary queries, polling, or refresh retries" in nd_interfaces_workflow.DOCUMENTATION
 
 
 def test_main_requires_pydantic_then_runs_coordinator_and_exits():
@@ -223,6 +224,9 @@ def test_main_preserves_structured_execution_failure():
         def __init__(self, module):
             self.module = module
 
+        def attach_contract(self, result):
+            return dict(result, workflow_contract={"version": 1})
+
         def run(self):
             raise nd_interfaces_workflow.InterfaceWorkflowExecutionFailed(
                 {
@@ -247,5 +251,6 @@ def test_main_preserves_structured_execution_failure():
             "changed": True,
             "failed": True,
             "execution": {"status": "partial_failure"},
+            "workflow_contract": {"version": 1},
         }
     ]

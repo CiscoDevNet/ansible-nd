@@ -32,6 +32,7 @@ user to create the pair first via `nd_manage_vpc_pair`.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
 
@@ -66,6 +67,16 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types impor
 )
 
 ModelType = NDBaseModel
+
+
+@dataclass(frozen=True)
+class VpcDeletionPreviewPeer:
+    """Identity-only child scope from one fully validated deletion preview."""
+
+    switch_id: str
+    interface_name: str
+    running_member_ports: tuple[str, ...]
+    reset_member_ports: tuple[str, ...]
 
 
 class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
@@ -554,13 +565,15 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         interface_name: str,
         switch_id: str,
         peer_switch_id: str,
-    ) -> None:
+    ) -> tuple[VpcDeletionPreviewPeer, ...]:
         """Prove that replay can deploy only the requested pair's staged delete.
 
         ND may rediscover a deployed vPC after its policy is deleted. A raw
         policy-less record alone does not prove the pending command is a
         deletion, so require an exact successful row for each authoritative
         peer, matching running vPC ID, and an exact parent removal command.
+        Return only immutable interface identities after every command passes;
+        callers can bind this scope to their own prior ownership receipts.
         """
 
         match = re.fullmatch(r"vpc([0-9]+)", interface_name, re.IGNORECASE)
@@ -572,10 +585,11 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         if error is not None:
             raise RuntimeError(f"Cannot safely replay absent vPC delete for {expected_pairs!r}: {error}")
         if not pending_pairs:
-            return
+            return ()
         if pending_pairs != {self._normalized_interface_pair(*pair) for pair in expected_pairs}:
             raise RuntimeError(f"Absent vPC delete preview is pending on only part of pair {expected_pairs!r}.")
 
+        footprints = []
         for row in preview["configurationDiffs"]:
             configs = row["combinedConfigs"]
             running = [item.get("config") for item in configs if item["configType"].strip().lower() == "running"]
@@ -619,16 +633,35 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 r"no shutdown",
             )
             pending_member = None
-            for index, line in enumerate(pending_lines[1:], 1):
-                if line == "configure terminal" and index == len(pending_lines) - 1:
+            reset_members = set()
+            for line in pending_lines[1:]:
+                if line == "configure terminal":
+                    # ND can delimit generated member-reset stanzas with a
+                    # fresh configuration context. Require a new proven member
+                    # header before accepting any following member commands.
+                    pending_member = None
                     continue
                 if (member_match := re.fullmatch(r"interface (ethernet[0-9/]+)", line)) is not None:
                     pending_member = member_match.group(1)
                     if pending_member not in owned_members:
                         raise RuntimeError(f"Absent vPC delete preview touches a non-member interface: {line!r}.")
+                    reset_members.add(pending_member)
                     continue
                 if pending_member is None or not any(re.fullmatch(pattern, line) for pattern in allowed_member_commands):
                     raise RuntimeError(f"Absent vPC delete preview includes an unproven command: {line!r}.")
+
+            def canonical_member(name):
+                return "Ethernet" + "/".join(str(int(value)) for value in name.removeprefix("ethernet").split("/"))
+
+            footprints.append(
+                VpcDeletionPreviewPeer(
+                    switch_id=self._normalized_interface_pair(row["interfaceName"], row["switchId"])[1],
+                    interface_name=f"port-channel{int(po_id)}",
+                    running_member_ports=tuple(sorted({canonical_member(name) for name in owned_members})),
+                    reset_member_ports=tuple(sorted({canonical_member(name) for name in reset_members})),
+                )
+            )
+        return tuple(sorted(footprints, key=lambda item: item.switch_id))
 
     def reconcile_absent_deletes(self, model_instances: Sequence[ModelType]) -> bool:
         """Preview exact pair-scoped staged deletes before the shared replay."""

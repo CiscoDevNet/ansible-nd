@@ -1,0 +1,323 @@
+{
+  "source": "interface-cleanup-journal-20b/postverification/storm-reset-diagnostics.json",
+  "scope": "Exact selected live rows; not a complete per-switch inventory",
+  "records": [
+    {
+      "switch_ip": "10.122.84.181",
+      "row": {
+        "configData": {
+          "mode": "trunk",
+          "networkOS": {
+            "networkOSType": "nx-os",
+            "policy": {
+              "adminState": true,
+              "allowedVlans": "none",
+              "bpduGuard": "default",
+              "mtu": "jumbo",
+              "netflow": false,
+              "policyType": "trunkHost",
+              "portTypeEdgeTrunk": true,
+              "speed": "auto"
+            }
+          }
+        },
+        "interfaceName": "Ethernet1/60",
+        "interfaceType": "ethernet",
+        "operData": {
+          "adminStatus": "up",
+          "mode": "trunk",
+          "mtu": 9216,
+          "operationalDescription": "Link not connected",
+          "operationalStatus": "down",
+          "portChannelId": -1,
+          "speed": "10Gb",
+          "switchName": "nac-msd-fabric1-leaf1",
+          "vlanRange": "-1"
+        },
+        "switchId": "99TRB2TMZYJ"
+      }
+    },
+    {
+      "switch_ip": "10.122.84.181",
+      "row": {
+        "configData": {
+          "mode": "trunk",
+          "networkOS": {
+            "networkOSType": "nx-os",
+            "policy": {
+              "accessVlan": "1",
+              "adminState": true,
+              "allowedVlans": "none",
+              "bpduFilter": "default",
+              "bpduGuard": "default",
+              "cdp": true,
+              "debounceTimer": 100,
+              "duplexMode": "auto",
+              "errorDetectionAcl": true,
+              "fec": "auto",
+              "linkType": "auto",
+              "monitor": false,
+              "mtu": "jumbo",
+              "nativeVlan": 1,
+              "negotiateAuto": true,
+              "netflow": false,
+              "orphanPort": false,
+              "pfc": false,
+              "policyType": "trunkHost",
+              "portTypeEdgeTrunk": true,
+              "ptp": "false",
+              "qos": false,
+              "speed": "auto",
+              "stormControl": false,
+              "stormControlAction": "default",
+              "stormControlBroadcastLevel": 0,
+              "stormControlBroadcastLevelPps": 0,
+              "stormControlMulticastLevel": 0,
+              "stormControlMulticastLevelPps": 0,
+              "stormControlUnicastLevel": 0,
+              "stormControlUnicastLevelPps": 0,
+              "vlanMapping": false
+            }
+          }
+        },
+        "interfaceName": "Ethernet1/46",
+        "interfaceType": "ethernet",
+        "operData": {
+          "adminStatus": "up",
+          "mode": "trunk",
+          "mtu": 9216,
+          "operationalDescription": "Link not connected",
+          "operationalStatus": "down",
+          "portChannelId": -1,
+          "speed": "10Gb",
+          "switchName": "nac-msd-fabric1-leaf1",
+          "vlanRange": "-1"
+        },
+        "switchId": "99TRB2TMZYJ"
+      }
+    },
+    {
+      "switch_ip": "10.122.84.182",
+      "row": {
+        "configData": {
+          "mode": "trunk",
+          "networkOS": {
+            "networkOSType": "nx-os",
+            "policy": {
+              "adminState": true,
+              "allowedVlans": "none",
+              "bpduGuard": "default",
+              "mtu": "jumbo",
+              "netflow": false,
+              "policyType": "trunkHost",
+              "portTypeEdgeTrunk": true,
+              "speed": "auto"
+            }
+          }
+        },
+        "interfaceName": "Ethernet1/60",
+        "interfaceType": "ethernet",
+        "operData": {
+          "adminStatus": "up",
+          "mode": "trunk",
+          "mtu": 9216,
+          "operationalDescription": "Link not connected",
+          "operationalStatus": "down",
+          "portChannelId": -1,
+          "speed": "10Gb",
+          "switchName": "nac-msd-fabric1-leaf2",
+          "vlanRange": "-1"
+        },
+        "switchId": "9FF8AWWMKLN"
+      }
+    },
+    {
+      "switch_ip": "10.122.84.182",
+      "row": {
+        "configData": {
+          "mode": "trunk",
+          "networkOS": {
+            "networkOSType": "nx-os",
+            "policy": {
+              "accessVlan": "1",
+              "adminState": true,
+              "allowedVlans": "none",
+              "bpduFilter": "default",
+              "bpduGuard": "default",
+              "cdp": true,
+              "debounceTimer": 100,
+              "duplexMode": "auto",
+              "errorDetectionAcl": true,
+              "fec": "auto",
+              "linkType": "auto",
+              "monitor": false,
+              "mtu": "jumbo",
+              "nativeVlan": 1,
+              "negotiateAuto": true,
+              "netflow": false,
+              "orphanPort": false,
+              "pfc": false,
+              "policyType": "trunkHost",
+              "portTypeEdgeTrunk": true,
+              "ptp": "false",
+              "qos": false,
+              "speed": "auto",
+              "stormControl": false,
+              "stormControlAction": "default",
+              "stormControlBroadcastLevel": 0,
+              "stormControlBroadcastLevelPps": 0,
+              "stormControlMulticastLevel": 0,
+              "stormControlMulticastLevelPps": 0,
+              "stormControlUnicastLevel": 0,
+              "stormControlUnicastLevelPps": 0,
+              "vlanMapping": false
+            }
+          }
+        },
+        "interfaceName": "Ethernet1/43",
+        "interfaceType": "ethernet",
+        "operData": {
+          "adminStatus": "up",
+          "mode": "trunk",
+          "mtu": 9216,
+          "operationalDescription": "Link not connected",
+          "operationalStatus": "down",
+          "portChannelId": -1,
+          "speed": "10Gb",
+          "switchName": "nac-msd-fabric1-leaf2",
+          "vlanRange": "-1"
+        },
+        "switchId": "9FF8AWWMKLN"
+      }
+    },
+    {
+      "switch_ip": "10.122.84.182",
+      "row": {
+        "configData": {
+          "mode": "trunk",
+          "networkOS": {
+            "networkOSType": "nx-os",
+            "policy": {
+              "accessVlan": "1",
+              "adminState": true,
+              "allowedVlans": "none",
+              "bpduFilter": "default",
+              "bpduGuard": "default",
+              "cdp": true,
+              "debounceTimer": 100,
+              "duplexMode": "auto",
+              "errorDetectionAcl": true,
+              "fec": "auto",
+              "linkType": "auto",
+              "monitor": false,
+              "mtu": "jumbo",
+              "nativeVlan": 1,
+              "negotiateAuto": true,
+              "netflow": false,
+              "orphanPort": false,
+              "pfc": false,
+              "policyType": "trunkHost",
+              "portTypeEdgeTrunk": true,
+              "ptp": "false",
+              "qos": false,
+              "speed": "auto",
+              "stormControl": false,
+              "stormControlAction": "default",
+              "stormControlBroadcastLevel": 0,
+              "stormControlBroadcastLevelPps": 0,
+              "stormControlMulticastLevel": 0,
+              "stormControlMulticastLevelPps": 0,
+              "stormControlUnicastLevel": 0,
+              "stormControlUnicastLevelPps": 0,
+              "vlanMapping": false
+            }
+          }
+        },
+        "interfaceName": "Ethernet1/44",
+        "interfaceType": "ethernet",
+        "operData": {
+          "adminStatus": "up",
+          "mode": "trunk",
+          "mtu": 9216,
+          "operationalDescription": "Link not connected",
+          "operationalStatus": "down",
+          "portChannelId": -1,
+          "speed": "10Gb",
+          "switchName": "nac-msd-fabric1-leaf2",
+          "vlanRange": "-1"
+        },
+        "switchId": "9FF8AWWMKLN"
+      }
+    },
+    {
+      "switch_ip": "10.122.84.183",
+      "row": {
+        "configData": {
+          "mode": "trunk",
+          "networkOS": {
+            "networkOSType": "nx-os",
+            "policy": {
+              "adminState": true,
+              "allowedVlans": "none",
+              "bpduGuard": "default",
+              "mtu": "jumbo",
+              "netflow": false,
+              "policyType": "trunkHost",
+              "portTypeEdgeTrunk": true,
+              "speed": "auto"
+            }
+          }
+        },
+        "interfaceName": "Ethernet1/60",
+        "interfaceType": "ethernet",
+        "operData": {
+          "adminStatus": "up",
+          "mode": "trunk",
+          "mtu": 9216,
+          "operationalDescription": "Link not connected",
+          "operationalStatus": "down",
+          "portChannelId": -1,
+          "speed": "10Gb",
+          "switchName": "nac-msd-fabric1-leaf3",
+          "vlanRange": "-1"
+        },
+        "switchId": "9RB62ZJYAL0"
+      }
+    },
+    {
+      "switch_ip": "10.122.84.184",
+      "row": {
+        "configData": {
+          "mode": "trunk",
+          "networkOS": {
+            "networkOSType": "nx-os",
+            "policy": {
+              "adminState": true,
+              "allowedVlans": "none",
+              "bpduGuard": "default",
+              "mtu": "jumbo",
+              "netflow": false,
+              "policyType": "trunkHost",
+              "portTypeEdgeTrunk": true,
+              "speed": "auto"
+            }
+          }
+        },
+        "interfaceName": "Ethernet1/60",
+        "interfaceType": "ethernet",
+        "operData": {
+          "adminStatus": "up",
+          "mode": "trunk",
+          "mtu": 9216,
+          "operationalDescription": "Link not connected",
+          "operationalStatus": "down",
+          "portChannelId": -1,
+          "speed": "10Gb",
+          "switchName": "nac-msd-fabric1-leaf4",
+          "vlanRange": "-1"
+        },
+        "switchId": "9FH9LQIB51G"
+      }
+    }
+  ]
+}

@@ -185,7 +185,7 @@ def test_absent_vpc_delete_preview_requires_exact_peer_removal() -> None:
         ("interface ethernet1/43\n  shutdown\n", "unproven command"),
         ("interface ethernet1/43\n  no channel-group 102 force mode active\n", "unproven command"),
         ("no interface loopback99\n", "unproven command"),
-        ("configure terminal\ninterface ethernet1/43\n", "unproven command"),
+        ("configure terminal\ninterface ethernet1/43\n  ip address 192.0.2.1/24\n", "unproven command"),
     ],
 )
 def test_absent_vpc_delete_preview_rejects_unrelated_commands(extra_pending: str, expected_error: str) -> None:
