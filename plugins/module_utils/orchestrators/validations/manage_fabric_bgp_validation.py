@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -12,14 +11,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
     SITE_ID_MAX_ND_4_2,
 )
-
-
-def parse_controller_version(value: object) -> tuple[int, int, int] | None:
-    """Return the ND major/minor/patch tuple from a build-version value."""
-    match = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:\.|$)", str(value or ""))
-    if match is None:
-        return None
-    return tuple(int(part) for part in match.groups())
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_release_validation import (
+    parse_controller_version,
+)
 
 
 class ManageFabricBgpValidationMixin:

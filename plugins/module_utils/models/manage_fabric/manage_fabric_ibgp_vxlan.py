@@ -121,14 +121,16 @@ class VxlanIbgpManagementModel(NDNestedModel):
         "vrfLiteIpv6SubnetTargetMask": 126,
     }
 
-    # Fabric Designer settings remain intentionally unsupported as module
-    # parameters. Preserve that writable state across full replacement.
+    # Fabric Designer settings and hidden Hypershield proxy settings are not
+    # public parameters. Preserve their writable response state on replacement.
     _opaque_replacement_fields: ClassVar[set[str]] = {
         "borderCount",
         "breakoutSpineInterfaces",
         "designerUseRobotPassword",
         "fabricDesignSettings",
         "fabricDesigner",
+        "hypershieldConnectivityProxyServer",
+        "hypershieldConnectivityProxyServerPort",
         "leafCount",
         "spineCount",
     }
@@ -1084,14 +1086,6 @@ class VxlanIbgpManagementModel(NDNestedModel):
         alias="enableDpuPinning", description="Enable pinning of VRFs and networks to specific DPUs on smart switches", default=False
     )
     connectivity_domain_name: str | None = Field(alias="connectivityDomainName", description="Domain name to connect to Hypershield", default=None)
-    hypershield_connectivity_proxy_server: str | None = Field(
-        alias="hypershieldConnectivityProxyServer",
-        description="IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication",
-        default=None,
-    )
-    hypershield_connectivity_proxy_server_port: int | None = Field(
-        alias="hypershieldConnectivityProxyServerPort", description="Proxy port number for communication with Hypershield", default=None
-    )
     hypershield_connectivity_source_intf: str | None = Field(
         alias="hypershieldConnectivitySourceIntf", description="Loopback interface on smart switch for communication with Hypershield", default=None
     )

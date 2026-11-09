@@ -1889,16 +1889,6 @@ options:
             - Applies to smart switches onboarded using O(config.management.allow_smart_switch_onboarding=true).
             - Domain name to connect to Hypershield.
             type: str
-          hypershield_connectivity_proxy_server:
-            description:
-            - Applies to smart switches onboarded using O(config.management.allow_smart_switch_onboarding=true).
-            - IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication.
-            type: str
-          hypershield_connectivity_proxy_server_port:
-            description:
-            - Used with O(config.management.hypershield_connectivity_proxy_server) for smart switch onboarding.
-            - Proxy port number for communication with Hypershield.
-            type: int
           hypershield_connectivity_source_intf:
             description:
             - Applies to smart switches onboarded using O(config.management.allow_smart_switch_onboarding=true).

@@ -19,6 +19,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_dhcp_validation import (
     ManageFabricDhcpValidationMixin,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_release_validation import (
+    ManageFabricEbgpReleaseValidationMixin,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.mixin import (
     ConfigActionsMixin,
 )
@@ -39,6 +42,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 
 
 class ManageAiEbgpVxlanFabricOrchestrator(
+    ManageFabricEbgpReleaseValidationMixin,
     ManageFabricBgpValidationMixin,
     ManageFabricDhcpValidationMixin,
     ManageFabricCollectionQueryMixin,

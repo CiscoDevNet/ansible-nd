@@ -126,11 +126,11 @@ options:
           replication_mode:
             description:
             - Replication Mode for BUM Traffic.
+            - The ND 4.2.1 and 4.3.1 Campus native templates make this field read-only and fix it to C(multicast).
             - Multicast pool and rendezvous-point settings below apply when C(multicast) is selected.
-            - Although the OpenAPI schema also declares C(ingress), ND 4.2.1 rejects that value for Campus fabrics.
             type: str
             default: multicast
-            choices: [ multicast, ingress ]
+            choices: [ multicast ]
           multicast_group_subnet:
             description:
             - IPv4 multicast pool in CIDR notation with a prefix length from C(8) through C(30).
@@ -539,9 +539,10 @@ options:
             type: str
           link_state_routing_protocol:
             description:
-            - "Link-State Routing Protocol. Supported: OSPF."
+            - The ND 4.2.1 and 4.3.1 Campus native templates make this field read-only and fix it to C(ospf).
             type: str
             default: ospf
+            choices: [ ospf ]
           route_reflector_count:
             description:
             - Number of spines acting as Route-Reflectors.

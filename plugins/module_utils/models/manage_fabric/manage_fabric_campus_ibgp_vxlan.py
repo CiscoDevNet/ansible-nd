@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import re
-
+from enum import Enum
 from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
@@ -20,7 +20,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
     DhcpProtocolVersionEnum,
     FabricTypeEnum,
     GreenfieldDebugFlagEnum,
-    ReplicationModeEnum,
     RendezvousPointCountEnum,
     RouteReflectorCountEnum,
     UnderlayMulticastGroupAddressLimitEnum,
@@ -28,6 +27,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
     VrfLiteAutoConfigEnum,
     VlanTrunkingProtocolModeEnum,
 )
+
+
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
     BootstrapSubnetModel,
     FabricDhcpGatewayAddress,
@@ -42,6 +43,18 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     validate_site_id_value,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import FabricBaseModel
+
+
+class CampusReplicationModeEnum(str, Enum):
+    """Only replication mode offered by the Campus native template."""
+
+    MULTICAST = "multicast"
+
+
+class CampusRoutingProtocolEnum(str, Enum):
+    """Only link-state protocol offered by the Campus native template."""
+
+    OSPF = "ospf"
 
 """
 # Comprehensive Pydantic models for VXLAN Campus fabric management via Nexus Dashboard
@@ -139,10 +152,10 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     )
 
     # Multicast / Replication
-    replication_mode: ReplicationModeEnum = Field(
+    replication_mode: CampusReplicationModeEnum = Field(
         alias="replicationMode",
-        description="Replication Mode for BUM Traffic",
-        default=ReplicationModeEnum.MULTICAST,
+        description="Campus replication mode for BUM traffic; the native template fixes this to multicast.",
+        default=CampusReplicationModeEnum.MULTICAST,
     )
     multicast_group_subnet: MulticastGroupSubnet = Field(
         alias="multicastGroupSubnet",
@@ -521,10 +534,10 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     # --- campusProperties (campus-specific fields) ---
 
     # Routing Protocol
-    link_state_routing_protocol: str = Field(
+    link_state_routing_protocol: CampusRoutingProtocolEnum = Field(
         alias="linkStateRoutingProtocol",
-        description="Link-State Routing Protocol. Supported: OSPF",
-        default="ospf",
+        description="Campus link-state routing protocol; the native template fixes this to OSPF.",
+        default=CampusRoutingProtocolEnum.OSPF,
     )
     route_reflector_count: RouteReflectorCountEnum = Field(
         alias="routeReflectorCount",

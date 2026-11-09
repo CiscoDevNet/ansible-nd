@@ -363,6 +363,16 @@ class NetflowMonitorModel(NDNestedModel):
     exporter2_name: str = Field(alias="exporter2Name", description="Secondary exporter name", default="")
 
 
+class NetflowSamplerModel(NDNestedModel):
+    """NetFlow sampler configuration used by External Connectivity fabrics."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
+
+    sampler_name: str | None = Field(alias="samplerName", description="Name of the sampler", default=None)
+    num_samples: int | None = Field(alias="numSamples", description="Samples per sampling operation (1 to 63).", ge=1, le=63, default=None)
+    sampling_rate: int | None = Field(alias="samplingRate", description="Packets per sampling operation (1 to 131071).", ge=1, le=131071, default=None)
+
+
 class NetflowRecordModel(NDNestedModel):
     """
     # Summary

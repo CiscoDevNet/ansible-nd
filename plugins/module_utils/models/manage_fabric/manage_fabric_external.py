@@ -23,6 +23,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
     BootstrapSubnetModel,
     FabricDhcpGatewayAddress,
+    NetflowSamplerModel,
     NetflowSettingsModel,
     ScheduledBackupTime,
     validate_bgp_asn_value,
@@ -58,16 +59,11 @@ fabric = FabricExternalConnectivityModel(**fabric_data)
 
 
 class ExternalNetflowSettingsModel(NetflowSettingsModel):
-    """External-only netflow state retained across full replacement.
+    """External NetFlow settings, including template-supported samplers."""
 
-    ``netflowSamplerCollection`` is writable for External Connectivity
-    fabrics, but is not part of this module's public configuration surface.
-    Preserve a controller-returned collection for replaced/overridden payloads
-    and keep it out of normalized Ansible output.
-    """
-
-    replacement_preserve_fields: ClassVar[set[str]] = {"netflowSamplerCollection"}
-    config_exclude_fields: ClassVar[set[str]] = replacement_preserve_fields
+    netflow_sampler_collection: list[NetflowSamplerModel] | None = Field(
+        alias="netflowSamplerCollection", description="List of NetFlow samplers", default=None
+    )
 
 
 class ExternalConnectivityManagementModel(NDNestedModel):
@@ -89,25 +85,9 @@ class ExternalConnectivityManagementModel(NDNestedModel):
 
     _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
 
-    # ND 4.3.x settings not yet exposed by this module. They are writable
-    # fabric state, so full replacement must carry controller-returned values
-    # forward while normal Ansible output keeps them hidden.
-    _opaque_replacement_fields: ClassVar[set[str]] = {
-        "aiMonitoring",
-        "allowSmartSwitchHA",
-        "autoSmartSwitchVpcPairHA",
-        "enableRemoteSwitchBackup",
-        "hypershieldHAPeerLinkSubnet",
-        "hypershieldHAPeerLinkSubnetGranularity",
-        "hypershieldHASourceIntf",
-        "hypershieldHASourceSubnet",
-        "hypershieldHAVlan",
-        "iosXeTorBootstrapVlan",
-        "remoteStorageServer",
-        "softwareUpdateInMonitoredMode",
-        "strictConfigComplianceMode",
-        "useHypershieldSourceLoopbackForHA",
-    }
+    # Hidden Hypershield proxy response values are not public parameters. Keep
+    # their writable state across full replacement while gathered output omits it.
+    _opaque_replacement_fields: ClassVar[set[str]] = {"hypershieldConnectivityProxyServer", "hypershieldConnectivityProxyServerPort"}
     replacement_preserve_fields: ClassVar[set[str]] = _opaque_replacement_fields
     config_exclude_fields: ClassVar[set[str]] = _opaque_replacement_fields
 
@@ -276,16 +256,40 @@ class ExternalConnectivityManagementModel(NDNestedModel):
 
     # Hypershield / Connectivity
     connectivity_domain_name: str | None = Field(alias="connectivityDomainName", description="Domain name to connect to Hypershield", default=None)
-    hypershield_connectivity_proxy_server: str | None = Field(
-        alias="hypershieldConnectivityProxyServer",
-        description="IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication",
-        default=None,
-    )
-    hypershield_connectivity_proxy_server_port: int | None = Field(
-        alias="hypershieldConnectivityProxyServerPort", description="Proxy port number for communication with Hypershield", default=None
-    )
     hypershield_connectivity_source_intf: str | None = Field(
         alias="hypershieldConnectivitySourceIntf", description="Loopback interface on smart switch for communication with Hypershield", default=None
+    )
+
+    # Additional controls present in the ND 4.3.1 External_Fabric template.
+    ai_monitoring: bool | None = Field(alias="aiMonitoring", description="Enable AI monitoring features.", default=None)
+    allow_smart_switch_ha: bool | None = Field(alias="allowSmartSwitchHA", description="Enable high availability configuration for smart switches.", default=None)
+    auto_smart_switch_vpc_pair_ha: bool | None = Field(
+        alias="autoSmartSwitchVpcPairHA", description="Enable automatic high availability configuration for smart-switch vPC pairs.", default=None
+    )
+    enable_remote_switch_backup: bool | None = Field(alias="enableRemoteSwitchBackup", description="Enable remote switch backup.", default=None)
+    hypershield_ha_peer_link_subnet: str | None = Field(alias="hypershieldHAPeerLinkSubnet", description="IPv4 subnet pool for HA peer-link connectivity.", default=None)
+    hypershield_ha_peer_link_subnet_granularity: Literal["/30", "/31"] | None = Field(
+        alias="hypershieldHAPeerLinkSubnetGranularity", description="Subnet prefix size for HA peer-link allocations.", default=None
+    )
+    hypershield_ha_source_intf: str | None = Field(alias="hypershieldHASourceIntf", description="Loopback interface used as the HA source.", min_length=3, max_length=40, default=None)
+    hypershield_ha_source_subnet: str | None = Field(alias="hypershieldHASourceSubnet", description="IPv4 subnet pool for the HA source loopback.", default=None)
+    hypershield_ha_vlan: int | None = Field(alias="hypershieldHAVlan", description="VLAN used for smart-switch HA communication.", ge=2, le=4094, default=None)
+    use_hypershield_source_loopback_for_ha: bool | None = Field(
+        alias="useHypershieldSourceLoopbackForHA", description="Reuse the Hypershield source loopback for HA.", default=None
+    )
+    ios_xe_tor_bootstrap_vlan: int | None = Field(alias="iosXeTorBootstrapVlan", description="Catalyst ToR bootstrap VLAN for inband PnP.", ge=1, le=4094, default=None)
+    remote_storage_server: str | None = Field(
+        alias="remoteStorageServer",
+        description="Name of the remote storage configured in Nexus Dashboard.",
+        max_length=63,
+        pattern=r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$",
+        default=None,
+    )
+    software_update_in_monitored_mode: bool | None = Field(
+        alias="softwareUpdateInMonitoredMode", description="Allow image management while the fabric is in monitored mode.", default=None
+    )
+    strict_config_compliance_mode: bool | None = Field(
+        alias="strictConfigComplianceMode", description="Enable bidirectional configuration compliance checks.", default=None
     )
 
     @field_validator("bgp_asn")
