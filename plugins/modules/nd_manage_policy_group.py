@@ -1537,11 +1537,11 @@ def _project_created_priorities(result, orchestrator, state_machine):
 def _build_group_failure_result(
     orchestrator, original_groups, state_machine, force_models, direct_entries, log, *, check_mode, force_preview, direct_previews
 ):
-    """Retain known accepted effects without trusting a partially executed plan.
+    """Build failure results from accepted effects or validated check-mode plans.
 
-    The generic state machine reconstructs ordinary accepted updates, but bulk
-    creates, split PUTs and post-write deployment can fail between API steps.
-    The group-local ledger records those exact accepted steps independently.
+    Real runs project accepted_changes onto known original inventory.
+    Check-mode predictions remain separate from controller-accepted writes.
+    See PolicyGroupOrchestrator.accepted_changes for shared-hook limitations.
     """
     result = {}
     if state_machine is not None:

@@ -157,11 +157,19 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
 
     @property
     def accepted_changes(self) -> list[dict]:
-        """Return accepted per-request configuration effects for local reporting.
+        """Return controller-accepted writes for local result reporting.
 
-        Record before subsequent split requests or deployment can fail. The
-        ledger does not alter request execution, cache timing, or response
-        validation; it only retains effects already accepted by those paths.
+        The shared accepted_mutations hook handles failed bulk creates, while
+        unaccepted_removals restores removals already recorded by the state
+        machine. Neither records the accepted subset of a synchronous bulk delete
+        when that call raises.
+
+        Forced creations and direct actions can fail before a state machine
+        exists. Split updates can also accept an intermediate PUT before a later
+        PUT or deployment fails.
+
+        Retain each accepted step before subsequent requests can fail. This
+        journal does not alter request execution or retry behavior.
         """
         return deepcopy(self._accepted_changes)
 
@@ -569,6 +577,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         can belong to a mixed parent row or an exactly source-linked child; they
         must never be put back into gathered membership or merged PUT payloads.
         """
+        # TODO(4.2.1) policygroups-direct-delete-ghost-freeform-config
         if not self.deploy:
             self._delete_deploy_targets = {}
             self._active_delete_policy_ids = set()
@@ -671,6 +680,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         can use a different template, so use their known parent when present;
         an orphan requires an exact ID rather than a description-only guess.
         """
+        # TODO(4.2.1) policygroups-direct-delete-ghost-freeform-config
         policy_group_id, description = self._cleanup_identity(entry)
         raw_template = entry.get("name") or ""
         template_name = raw_template
