@@ -81,6 +81,8 @@ class HttpApi(HttpApiBase):
         self.info = {}
         self.version = None
         self._nd_version_resolved = False
+        self._nd_product_version = None
+        self._nd_build_version = None
 
         # Cached auth endpoint base path, set after first successful login to new endpoint.
         # "" (default) means not yet detected or legacy, "/api/v1/infra" means ND 4.2.1+.
@@ -109,18 +111,37 @@ class HttpApi(HttpApiBase):
                 self.version = 12
             return self.version
         elif platform == "nd":
-            if not self._nd_version_resolved:
-                # Unified ND 4.2.1+ reports the build version (e.g. "4.2.1.10") from /api/v1/infra/about.
-                response_json = self._send_nd_request("GET", "/api/v1/infra/about", self.headers)
-                self.version = response_json.get("body", {}).get("buildVersion")
-                # Cache a successful lookup even when an older/unexpected
-                # response omits buildVersion. This persistent HTTPAPI object
-                # is shared by collection tasks, so repeated version gates do
-                # not create one about request per module invocation.
-                self._nd_version_resolved = True
-            return self.version
+            self._resolve_nd_versions()
+            return self._nd_build_version
         else:
             raise ValueError("Unknown platform type: {0}".format(platform))
+
+    def get_product_version(self, platform="nd"):
+        """Return ND's product release (for example, ``4.3.1a``)."""
+        if platform != "nd":
+            raise ValueError("Product versions are only available for the nd platform")
+        self._resolve_nd_versions()
+        return self._nd_product_version
+
+    def get_build_version(self, platform="nd"):
+        """Return ND's installed build version without changing Ansible's get_version API."""
+        if platform != "nd":
+            raise ValueError("Build versions are only available for the nd platform")
+        self._resolve_nd_versions()
+        return self._nd_build_version
+
+    def _resolve_nd_versions(self):
+        """Fetch and cache ND product and build versions from one /about request."""
+        if self._nd_version_resolved:
+            return
+        response_json = self._send_nd_request("GET", "/api/v1/infra/about", self.headers)
+        body = response_json.get("body", {})
+        self._nd_product_version = body.get("productVersion")
+        self._nd_build_version = body.get("buildVersion")
+        # Cache successful lookups even when an older/unexpected response omits
+        # either field. The persistent HTTPAPI object is shared across tasks.
+        self.version = self._nd_build_version
+        self._nd_version_resolved = True
 
     # Required for cisco.dcnm modules
     def get_token(self):

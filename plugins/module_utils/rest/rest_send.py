@@ -118,8 +118,10 @@ class RestSend:  # pylint: disable=too-many-public-methods
 
         self._check_mode: bool = False
         self._committed_payload: Optional[Union[dict, list]] = None
-        self._controller_version: Optional[str] = None
-        self._controller_version_resolved: bool = False
+        self._controller_build_version: Optional[str] = None
+        self._controller_build_version_resolved: bool = False
+        self._controller_product_version: Optional[str] = None
+        self._controller_product_version_resolved: bool = False
         self._path: Optional[str] = None
         self._payload: Optional[Union[dict, list]] = None
         self._response: list[dict[str, Any]] = []
@@ -822,32 +824,52 @@ class RestSend:  # pylint: disable=too-many-public-methods
             msg += f"Got type {type(value).__name__}."
             raise TypeError(msg)
         self._sender = value
-        if self._controller_version is None:
-            self._controller_version_resolved = False
+        if self._controller_build_version is None:
+            self._controller_build_version_resolved = False
+        if self._controller_product_version is None:
+            self._controller_product_version_resolved = False
 
     @property
-    def controller_version(self) -> Optional[str]:
+    def controller_build_version(self) -> Optional[str]:
         """
         Controller build version string (e.g. ``"4.2.1.10"``), or ``None`` when unknown.
 
-        Fetched once from the sender's connection (``get_version``) and cached. Not all
+        Fetched once from the sender's connection (``get_build_version``) and cached. Not all
         senders expose a connection (the file-based test sender does not), so callers
         may also set this directly to drive version-gated behaviour in unit tests.
         """
-        if not self._controller_version_resolved:
-            self._controller_version_resolved = True
-            getter = getattr(self._sender, "get_version", None)
+        if not self._controller_build_version_resolved:
+            self._controller_build_version_resolved = True
+            getter = getattr(self._sender, "get_build_version", None)
             if callable(getter):
                 try:
-                    self._controller_version = getter()
+                    self._controller_build_version = getter()
                 except Exception:  # pragma: no cover - connection failures fall back to None
-                    self._controller_version = None
-        return self._controller_version
+                    self._controller_build_version = None
+        return self._controller_build_version
 
-    @controller_version.setter
-    def controller_version(self, value: Optional[str]):
-        self._controller_version = value
-        self._controller_version_resolved = True
+    @controller_build_version.setter
+    def controller_build_version(self, value: Optional[str]):
+        self._controller_build_version = value
+        self._controller_build_version_resolved = True
+
+    @property
+    def controller_product_version(self) -> Optional[str]:
+        """ND product release (e.g. ``4.3.1a``), cached separately from build version."""
+        if not self._controller_product_version_resolved:
+            self._controller_product_version_resolved = True
+            getter = getattr(self._sender, "get_product_version", None)
+            if callable(getter):
+                try:
+                    self._controller_product_version = getter()
+                except Exception:  # pragma: no cover - connection failures fall back to None
+                    self._controller_product_version = None
+        return self._controller_product_version
+
+    @controller_product_version.setter
+    def controller_product_version(self, value: Optional[str]):
+        self._controller_product_version = value
+        self._controller_product_version_resolved = True
 
     @property
     def timeout(self) -> int:

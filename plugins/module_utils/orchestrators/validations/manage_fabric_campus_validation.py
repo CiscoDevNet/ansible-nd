@@ -9,7 +9,10 @@ from collections.abc import Sequence
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_bgp_validation import (
     ManageFabricBgpValidationMixin,
-    parse_controller_version,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_release_validation import (
+    ND_4_3_1,
+    parse_controller_product_version,
 )
 
 
@@ -25,13 +28,13 @@ class ManageCampusFabricValidationMixin(ManageFabricBgpValidationMixin):
                 fast_convergence_fabrics.append(str(item.get_identifier_value()))
 
         if fast_convergence_fabrics:
-            raw_version = self.rest_send.controller_version
-            version = parse_controller_version(raw_version)
-            if version is None or version < (4, 3, 1):
+            raw_version = self.rest_send.controller_product_version
+            version = parse_controller_product_version(raw_version)
+            if version is None or version < ND_4_3_1:
                 reported = raw_version or "unknown"
                 raise RuntimeError(
                     "management.bgp_fast_convergence requires ND 4.3.1 or later when supplied; "
-                    f"controller version is {reported!r} for fabric(s): {', '.join(fast_convergence_fabrics)}"
+                    f"controller product version is {reported!r} for fabric(s): {', '.join(fast_convergence_fabrics)}"
                 )
 
         super().preflight(model_instances)

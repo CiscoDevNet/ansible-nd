@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Mapping
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+
+ND_4_3_1 = (4, 3, 1, 0)
 
 IBGP_ND_4_3_FIELDS = frozenset(
     {
@@ -103,12 +105,16 @@ EXTERNAL_ND_4_3_FIELDS = frozenset(
 )
 
 
-def parse_controller_version(value: object) -> tuple[int, int, int] | None:
-    """Return the ND major/minor/patch tuple from a build-version value."""
-    match = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:\.|$)", str(value or ""))
+def parse_controller_product_version(value: object) -> tuple[int, int, int, int] | None:
+    """Parse an ND product version, ordering lettered bug-fix releases after the base release."""
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)([a-z]*)", str(value or "").strip().lower())
     if match is None:
         return None
-    return tuple(int(part) for part in match.groups())
+    major, minor, patch, suffix = match.groups()
+    suffix_order = 0
+    for character in suffix:
+        suffix_order = suffix_order * 26 + ord(character) - ord("a") + 1
+    return int(major), int(minor), int(patch), suffix_order
 
 
 class ManageFabricReleaseValidationMixin:
@@ -117,24 +123,39 @@ class ManageFabricReleaseValidationMixin:
     rest_send: Any
     release_gated_fields: ClassVar[frozenset[str]] = frozenset()
     release_gate_family: ClassVar[str] = "fabric"
+    release_gate_minimum_version: ClassVar[tuple[int, int, int, int]] = ND_4_3_1
+    # Add per-field overrides only when ND confirms a field's later minimum release.
+    release_gate_minimum_versions: ClassVar[Mapping[str, tuple[int, int, int, int]]] = {}
 
     def preflight(self, model_instances: Sequence[NDBaseModel]) -> None:
         """Reject explicitly supplied fields unsupported before ND 4.3.1."""
         affected = []
+        raw_version = None
+        version = None
         for item in model_instances:
             management = getattr(item, "management", None)
-            if management is not None and management.model_fields_set & self.release_gated_fields:
-                affected.append(str(item.get_identifier_value()))
+            supplied_fields = management.model_fields_set & self.release_gated_fields if management is not None else set()
+            if not supplied_fields:
+                continue
+            if version is None:
+                raw_version = self.rest_send.controller_product_version
+                version = parse_controller_product_version(raw_version)
+            unsupported_fields = [
+                field
+                for field in supplied_fields
+                if version is None
+                or version < self.release_gate_minimum_versions.get(field, self.release_gate_minimum_version)
+            ]
+            if unsupported_fields:
+                affected.append(f"{item.get_identifier_value()} ({', '.join(sorted(unsupported_fields))})")
 
         if affected:
-            raw_version = self.rest_send.controller_version
-            version = parse_controller_version(raw_version)
-            if version is None or version < (4, 3, 1):
-                reported = raw_version or "unknown"
-                raise RuntimeError(
-                    f"{self.release_gate_family} settings require ND 4.3.1 or later when supplied; "
-                    f"controller version is {reported!r} for fabric(s): {', '.join(affected)}"
-                )
+            reported = raw_version or "unknown"
+            raise RuntimeError(
+                f"{self.release_gate_family} settings require ND 4.3.1 or later, with field-specific release "
+                f"thresholds where configured; controller product version is {reported!r} for fabric(s): "
+                f"{', '.join(affected)}"
+            )
 
         super().preflight(model_instances)
 

@@ -111,14 +111,14 @@ def test_rest_send_00030():
 
 
 @pytest.mark.parametrize("result", ("4.3.1.175", None))
-def test_controller_version_caches_success_and_unknown(result: str | None) -> None:
+def test_controller_build_version_caches_success_and_unknown(result: str | None) -> None:
     """A sender version lookup, including a None result, is performed only once."""
 
     class VersionSender:
         def __init__(self):
             self.calls = 0
 
-        def get_version(self):
+        def get_build_version(self):
             self.calls += 1
             return result
 
@@ -126,19 +126,19 @@ def test_controller_version_caches_success_and_unknown(result: str | None) -> No
     sender = VersionSender()
     instance._sender = sender
 
-    assert instance.controller_version == result
-    assert instance.controller_version == result
+    assert instance.controller_build_version == result
+    assert instance.controller_build_version == result
     assert sender.calls == 1
 
 
-def test_controller_version_caches_lookup_failure() -> None:
+def test_controller_build_version_caches_lookup_failure() -> None:
     """A failed connection version lookup is negatively cached for the session."""
 
     class VersionSender:
         def __init__(self):
             self.calls = 0
 
-        def get_version(self):
+        def get_build_version(self):
             self.calls += 1
             raise RuntimeError("about endpoint unavailable")
 
@@ -146,23 +146,61 @@ def test_controller_version_caches_lookup_failure() -> None:
     sender = VersionSender()
     instance._sender = sender
 
-    assert instance.controller_version is None
-    assert instance.controller_version is None
+    assert instance.controller_build_version is None
+    assert instance.controller_build_version is None
     assert sender.calls == 1
 
 
-def test_controller_version_setter_bypasses_sender_lookup() -> None:
+def test_controller_build_version_setter_bypasses_sender_lookup() -> None:
     """An explicitly injected version remains the unit-test and caller override."""
 
     class VersionSender:
-        def get_version(self):
+        def get_build_version(self):
             raise AssertionError("sender lookup must not run")
 
     instance = RestSend({"check_mode": False})
     instance._sender = VersionSender()
-    instance.controller_version = "4.2.1.10"
+    instance.controller_build_version = "4.2.1.10"
 
-    assert instance.controller_version == "4.2.1.10"
+    assert instance.controller_build_version == "4.2.1.10"
+
+
+def test_controller_product_version_is_cached_separately_from_build_version() -> None:
+    class VersionSender:
+        def __init__(self):
+            self.build_calls = 0
+            self.product_calls = 0
+
+        def get_build_version(self):
+            self.build_calls += 1
+            return "4.3.1.235"
+
+        def get_product_version(self):
+            self.product_calls += 1
+            return "4.3.1a"
+
+    instance = RestSend({"check_mode": False})
+    sender = VersionSender()
+    instance._sender = sender
+
+    assert instance.controller_build_version == "4.3.1.235"
+    assert instance.controller_product_version == "4.3.1a"
+    assert instance.controller_build_version == "4.3.1.235"
+    assert instance.controller_product_version == "4.3.1a"
+    assert sender.build_calls == 1
+    assert sender.product_calls == 1
+
+
+def test_controller_product_version_setter_bypasses_sender_lookup() -> None:
+    class VersionSender:
+        def get_product_version(self):
+            raise AssertionError("sender lookup must not run")
+
+    instance = RestSend({"check_mode": False})
+    instance._sender = VersionSender()
+    instance.controller_product_version = "4.3.1b"
+
+    assert instance.controller_product_version == "4.3.1b"
 
 
 # =============================================================================
