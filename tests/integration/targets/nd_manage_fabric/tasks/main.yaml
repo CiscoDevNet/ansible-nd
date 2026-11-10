@@ -3,11 +3,24 @@
   ansible.builtin.set_fact:
     nd_fabric_test_run_id: "{{ lookup('ansible.builtin.password', '/dev/null', length=10, chars=['ascii_lowercase', 'digits']) }}"
   when: nd_fabric_test_run_id is not defined
+  tags: [always]
+
+- name: Detect an ND 4.x harness-only target run
+  ansible.builtin.set_fact:
+    nd4x_fabric_harness_only: >-
+      {{ (ansible_run_tags | default(['all']))
+         | intersect([
+             'nd4x_demo', 'nd4x_demo_preflight', 'nd4x_demo_ibgp',
+             'nd4x_demo_ebgp', 'nd4x_demo_campus', 'nd4x_demo_external',
+             'nd4x_demo_ai_ibgp', 'nd4x_demo_ai_ebgp'
+           ]) | length > 0 }}
+  tags: [always]
 
 - name: Define the disposable Campus failure-cleanup probe
   ansible.builtin.set_fact:
     campus_cleanup_failure_probe: "ndit_{{ nd_fabric_test_run_id }}_campus_cleanup"
     campus_cleanup_controlled_failure_observed: false
+  tags: [always]
 
 - name: Run nd_manage_fabric iBGP tests
   block:
@@ -27,6 +40,7 @@
           - fabric_name: "{{ ibgp_multi_fabric_2 }}"
       ignore_errors: true
       tags: [cleanup, always]
+  when: not (nd4x_fabric_harness_only | default(false) | bool)
 
 - name: Run nd_manage_fabric Campus iBGP VXLAN tests
   block:
@@ -104,6 +118,7 @@
           - fabric_name: "{{ campus_cleanup_failure_probe }}"
       ignore_errors: true
       tags: [cleanup, always]
+  when: not (nd4x_fabric_harness_only | default(false) | bool)
 
 - name: Run nd_manage_fabric eBGP tests
   block:
@@ -123,6 +138,7 @@
           - fabric_name: "{{ ebgp_multi_fabric_2 }}"
       ignore_errors: true
       tags: [cleanup, always]
+  when: not (nd4x_fabric_harness_only | default(false) | bool)
 
 - name: Run nd_manage_fabric External Connectivity tests
   block:
@@ -142,6 +158,7 @@
           - fabric_name: "{{ ext_multi_fabric_2 }}"
       ignore_errors: true
       tags: [cleanup, always]
+  when: not (nd4x_fabric_harness_only | default(false) | bool)
 
 - name: Run nd_manage_fabric AI iBGP VXLAN tests
   block:
@@ -159,6 +176,7 @@
           - fabric_name: "{{ ai_ibgp_test_fabric_config_actions }}"
       ignore_errors: true
       tags: [cleanup, always]
+  when: not (nd4x_fabric_harness_only | default(false) | bool)
 
 - name: Run nd_manage_fabric AI eBGP VXLAN tests
   block:
@@ -176,3 +194,186 @@
           - fabric_name: "{{ ai_ebgp_test_fabric_config_actions }}"
       ignore_errors: true
       tags: [cleanup, always]
+  when: not (nd4x_fabric_harness_only | default(false) | bool)
+
+- name: Run the ND 4.x fabric harness preflight
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_preflight.yaml
+    apply:
+      tags:
+        - never
+        - nd4x_demo
+        - nd4x_demo_preflight
+        - nd4x_demo_ibgp
+        - nd4x_demo_ebgp
+        - nd4x_demo_campus
+        - nd4x_demo_external
+        - nd4x_demo_ai_ibgp
+        - nd4x_demo_ai_ebgp
+  tags:
+    - never
+    - nd4x_demo
+    - nd4x_demo_preflight
+    - nd4x_demo_ibgp
+    - nd4x_demo_ebgp
+    - nd4x_demo_campus
+    - nd4x_demo_external
+    - nd4x_demo_ai_ibgp
+    - nd4x_demo_ai_ebgp
+  when: nd4x_fabric_harness_only | default(false) | bool
+
+- name: Run the ND 4.x iBGP fabric harness scenarios
+  block:
+    - name: Include iBGP fabric scenario tasks
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_fabric_stateful.yaml
+        apply:
+          tags: [nd4x_demo, nd4x_demo_ibgp]
+  always:
+    - name: Clean up disposable iBGP fabric harness resources
+      cisco.nd.nd4x_module_test:
+        module: "{{ nd4x_fabric_case.module }}"
+        state: deleted
+        config: "{{ nd4x_fabric_case.cleanup_config }}"
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+        check_mode: false
+        idempotency: false
+      ignore_errors: true
+  vars:
+    nd4x_fabric_case: "{{ nd4x_fabric_cases.ibgp }}"
+    ansible_command_timeout: 300
+  tags: [never, nd4x_demo, nd4x_demo_ibgp]
+  when:
+    - nd4x_fabric_harness_only | default(false) | bool
+    - nd4x_supported | default(false) | bool
+
+- name: Run the ND 4.x eBGP fabric harness scenarios
+  block:
+    - name: Include eBGP fabric scenario tasks
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_fabric_stateful.yaml
+        apply:
+          tags: [nd4x_demo, nd4x_demo_ebgp]
+  always:
+    - name: Clean up disposable eBGP fabric harness resources
+      cisco.nd.nd4x_module_test:
+        module: "{{ nd4x_fabric_case.module }}"
+        state: deleted
+        config: "{{ nd4x_fabric_case.cleanup_config }}"
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+        check_mode: false
+        idempotency: false
+      ignore_errors: true
+  vars:
+    nd4x_fabric_case: "{{ nd4x_fabric_cases.ebgp }}"
+    ansible_command_timeout: 300
+  tags: [never, nd4x_demo, nd4x_demo_ebgp]
+  when:
+    - nd4x_fabric_harness_only | default(false) | bool
+    - nd4x_supported | default(false) | bool
+
+- name: Run the ND 4.x Campus fabric harness scenarios
+  block:
+    - name: Include Campus fabric scenario tasks
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_fabric_stateful.yaml
+        apply:
+          tags: [nd4x_demo, nd4x_demo_campus]
+  always:
+    - name: Clean up disposable Campus fabric harness resources
+      cisco.nd.nd4x_module_test:
+        module: "{{ nd4x_fabric_case.module }}"
+        state: deleted
+        config: "{{ nd4x_fabric_case.cleanup_config }}"
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+        check_mode: false
+        idempotency: false
+      ignore_errors: true
+  vars:
+    nd4x_fabric_case: "{{ nd4x_fabric_cases.campus }}"
+    ansible_command_timeout: 300
+  tags: [never, nd4x_demo, nd4x_demo_campus]
+  when:
+    - nd4x_fabric_harness_only | default(false) | bool
+    - nd4x_supported | default(false) | bool
+
+- name: Run the ND 4.x External Connectivity fabric harness scenarios
+  block:
+    - name: Include External Connectivity fabric scenario tasks
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_fabric_stateful.yaml
+        apply:
+          tags: [nd4x_demo, nd4x_demo_external]
+  always:
+    - name: Clean up disposable External Connectivity fabric harness resources
+      cisco.nd.nd4x_module_test:
+        module: "{{ nd4x_fabric_case.module }}"
+        state: deleted
+        config: "{{ nd4x_fabric_case.cleanup_config }}"
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+        check_mode: false
+        idempotency: false
+      ignore_errors: true
+  vars:
+    nd4x_fabric_case: "{{ nd4x_fabric_cases.external }}"
+    ansible_command_timeout: 300
+  tags: [never, nd4x_demo, nd4x_demo_external]
+  when:
+    - nd4x_fabric_harness_only | default(false) | bool
+    - nd4x_supported | default(false) | bool
+
+- name: Run the ND 4.x AI iBGP fabric harness scenarios
+  block:
+    - name: Include AI iBGP fabric scenario tasks
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_fabric_stateful.yaml
+        apply:
+          tags: [nd4x_demo, nd4x_demo_ai_ibgp]
+  always:
+    - name: Clean up disposable AI iBGP fabric harness resources
+      cisco.nd.nd4x_module_test:
+        module: "{{ nd4x_fabric_case.module }}"
+        state: deleted
+        config: "{{ nd4x_fabric_case.cleanup_config }}"
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+        check_mode: false
+        idempotency: false
+      ignore_errors: true
+  vars:
+    nd4x_fabric_case: "{{ nd4x_fabric_cases.ai_ibgp }}"
+    ansible_command_timeout: 300
+  tags: [never, nd4x_demo, nd4x_demo_ai_ibgp]
+  when:
+    - nd4x_fabric_harness_only | default(false) | bool
+    - nd4x_supported | default(false) | bool
+
+- name: Run the ND 4.x AI eBGP fabric harness scenarios
+  block:
+    - name: Include AI eBGP fabric scenario tasks
+      ansible.builtin.include_tasks:
+        file: nd4x_demo_fabric_stateful.yaml
+        apply:
+          tags: [nd4x_demo, nd4x_demo_ai_ebgp]
+  always:
+    - name: Clean up disposable AI eBGP fabric harness resources
+      cisco.nd.nd4x_module_test:
+        module: "{{ nd4x_fabric_case.module }}"
+        state: deleted
+        config: "{{ nd4x_fabric_case.cleanup_config }}"
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+        check_mode: false
+        idempotency: false
+      ignore_errors: true
+  vars:
+    nd4x_fabric_case: "{{ nd4x_fabric_cases.ai_ebgp }}"
+    ansible_command_timeout: 300
+  tags: [never, nd4x_demo, nd4x_demo_ai_ebgp]
+  when:
+    - nd4x_fabric_harness_only | default(false) | bool
+    - nd4x_supported | default(false) | bool

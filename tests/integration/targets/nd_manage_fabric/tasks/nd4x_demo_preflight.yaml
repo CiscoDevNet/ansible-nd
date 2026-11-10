@@ -1,0 +1,56 @@
+---
+- name: Verify that the ND connection variables are available for the fabric harness
+  ansible.builtin.fail:
+    msg: >-
+      Define ansible_host, ansible_user, and ansible_password before running the
+      nd_manage_fabric ND 4.x harness scenarios.
+  when: >-
+    ansible_host is not defined or ansible_user is not defined or
+    ansible_password is not defined
+
+- name: Set common ND arguments for the fabric harness
+  ansible.builtin.set_fact:
+    nd_info:
+      output_level: "{{ api_key_output_level | default('debug') }}"
+
+- name: Query the Nexus Dashboard version for the fabric harness
+  cisco.nd.nd_version:
+    state: query
+    output_level: "{{ nd_info.output_level }}"
+  register: nd4x_fabric_version
+
+- name: Record whether the fabric modules are supported by this controller
+  ansible.builtin.set_fact:
+    nd4x_supported: >-
+      {{ nd4x_fabric_version.current.platformVersion is version('4.2.0', '>=') }}
+
+- name: Define the full fabric inventory snapshot for predictive execution
+  ansible.builtin.set_fact:
+    nd4x_fabric_check_mode_queries:
+      - name: Snapshot all fabrics before and after predictive execution
+        path: /api/v1/manage/fabrics?category=fabric&sort=name
+        expected_status: 200
+        pagination:
+          page_size: 100
+          collection_key: fabrics
+          max_pages: 10000
+        unordered_paths:
+          - /fabrics
+  when: nd4x_supported | bool
+
+- name: Verify that the fabric predictive snapshot is configured
+  ansible.builtin.assert:
+    that:
+      - nd4x_fabric_check_mode_queries | length == 1
+      - nd4x_fabric_check_mode_queries[0].pagination.collection_key == 'fabrics'
+    fail_msg: >-
+      Fabric state-changing harness calls require a complete paginated snapshot
+      of the ND fabric inventory.
+  when: nd4x_supported | bool
+
+- name: Explain why the fabric harness is skipped on this controller
+  ansible.builtin.debug:
+    msg: >-
+      Skipping the nd_manage_fabric ND 4.x harness because controller version
+      {{ nd4x_fabric_version.current.platformVersion }} is older than 4.2.0.
+  when: not nd4x_supported | bool

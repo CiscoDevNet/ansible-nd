@@ -1,0 +1,544 @@
+---
+- name: "MERGED CREATE: Create {{ nd4x_fabric_case.label }} fabric through the harness"
+  cisco.nd.nd4x_module_test:
+    module: "{{ nd4x_fabric_case.module }}"
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+    config:
+      - >-
+        {{ {'fabric_name': nd4x_fabric_case.merged_name}
+           | combine(nd4x_fabric_case.fixture, recursive=True)
+           | combine(nd4x_fabric_case.merged_seed_overrides | default({}), recursive=True) }}
+    check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Verify created {{ nd4x_fabric_case.label }} fabric
+        path: "/api/v1/manage/fabrics/{{ nd4x_fabric_case.merged_name }}"
+        method: get
+        expected_status: 200
+        expect:
+          - jsonpath: $.current.name
+            equals: "{{ nd4x_fabric_case.merged_name }}"
+          - jsonpath: $.current.management.type
+            exists: true
+  register: nd4x_fabric_merged_create
+
+- name: Verify merged create exercised all harness phases
+  ansible.builtin.assert:
+    that:
+      - nd4x_fabric_merged_create.check_mode_result.changed | bool
+      - nd4x_fabric_merged_create.first_run_result.changed | bool
+      - not nd4x_fabric_merged_create.second_run_result.changed | bool
+      - nd4x_fabric_merged_create.nd_query_results | length == 1
+
+- name: "MERGED UPDATE: Update {{ nd4x_fabric_case.label }} fabric fields"
+  cisco.nd.nd4x_module_test:
+    module: "{{ nd4x_fabric_case.module }}"
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+    config:
+      - "{{ {'fabric_name': nd4x_fabric_case.merged_name} | combine(nd4x_fabric_case.merged_update, recursive=True) }}"
+    check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Verify updated {{ nd4x_fabric_case.label }} fabric
+        path: "/api/v1/manage/fabrics/{{ nd4x_fabric_case.merged_name }}"
+        method: get
+        expected_status: 200
+        expect: >-
+          {{ nd4x_fabric_case.merged_expectations
+             + nd4x_fabric_legacy_field_expectations[
+                 nd4x_fabric_case.field_expectation_key].merged }}
+  register: nd4x_fabric_merged_update
+
+- name: Verify merged update returned state and controller state
+  ansible.builtin.assert:
+    that:
+      - nd4x_fabric_merged_update.check_mode_result.changed | bool
+      - nd4x_fabric_merged_update.first_run_result.changed | bool
+      - not nd4x_fabric_merged_update.second_run_result.changed | bool
+      - nd4x_fabric_merged_update.nd_query_results | length == 1
+
+- name: "MERGED RELEASE FIELD: Apply a field gated by the detected controller version"
+  cisco.nd.nd4x_module_test:
+    module: "{{ nd4x_fabric_case.module }}"
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+    config:
+      - "{{ {'fabric_name': nd4x_fabric_case.merged_name} | combine(nd4x_fabric_case.versioned_update, recursive=True) }}"
+    check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Verify the release-gated fabric field
+        path: "/api/v1/manage/fabrics/{{ nd4x_fabric_case.merged_name }}"
+        method: get
+        expected_status: 200
+        expect: "{{ nd4x_fabric_case.versioned_expectations }}"
+  register: nd4x_fabric_versioned_update
+  when:
+    - nd4x_fabric_case.versioned_update is defined
+    - nd4x_fabric_version.current.platformVersion is version('4.3.1', '>=')
+
+- name: "REPLACED CREATE: Create {{ nd4x_fabric_case.label }} replacement fixture"
+  cisco.nd.nd4x_module_test:
+    module: "{{ nd4x_fabric_case.module }}"
+    state: replaced
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+    config:
+      - >-
+        {{ {'fabric_name': nd4x_fabric_case.replaced_name}
+           | combine(nd4x_fabric_case.fixture, recursive=True)
+           | combine(nd4x_fabric_case.replace_seed_overrides, recursive=True) }}
+    check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Verify created replacement fixture
+        path: "/api/v1/manage/fabrics/{{ nd4x_fabric_case.replaced_name }}"
+        method: get
+        expected_status: 200
+        expect:
+          - jsonpath: $.current.name
+            equals: "{{ nd4x_fabric_case.replaced_name }}"
+  register: nd4x_fabric_replaced_create
+
+- name: "REPLACED UPDATE: Apply the legacy minimal replacement"
+  cisco.nd.nd4x_module_test:
+    module: "{{ nd4x_fabric_case.module }}"
+    state: replaced
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+    config:
+      - "{{ {'fabric_name': nd4x_fabric_case.replaced_name} | combine(nd4x_fabric_case.replace_minimal, recursive=True) }}"
+    check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Verify replaced {{ nd4x_fabric_case.label }} defaults and identity
+        path: "/api/v1/manage/fabrics/{{ nd4x_fabric_case.replaced_name }}"
+        method: get
+        expected_status: 200
+        expect: >-
+          {{ nd4x_fabric_case.replace_expectations
+             + nd4x_fabric_legacy_field_expectations[
+                 nd4x_fabric_case.field_expectation_key].replaced }}
+  register: nd4x_fabric_replaced_update
+
+- name: Verify replaced update returned state
+  ansible.builtin.assert:
+    that:
+      - nd4x_fabric_replaced_create.first_run_result.changed | bool
+      - nd4x_fabric_replaced_update.check_mode_result.changed | bool
+      - nd4x_fabric_replaced_update.first_run_result.changed | bool
+      - not nd4x_fabric_replaced_update.second_run_result.changed | bool
+
+- name: "COMPARISON SEED: Create the same-fabric merged/replaced comparison baseline"
+  cisco.nd.nd4x_module_test:
+    module: "{{ nd4x_fabric_case.module }}"
+    state: replaced
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+    config:
+      - "{{ {'fabric_name': nd4x_fabric_case.comparison.name} | combine(nd4x_fabric_case.comparison.seed_config, recursive=True) }}"
+    check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Verify comparison baseline for {{ nd4x_fabric_case.label }}
+        path: "/api/v1/manage/fabrics/{{ nd4x_fabric_case.comparison.name }}"
+        method: get
+        expected_status: 200
+        expect: "{{ nd4x_fabric_case.comparison.seed_expectations }}"
+  register: nd4x_fabric_comparison_seed
+  when: nd4x_fabric_case.comparison is defined
+
+- name: "COMPARISON MERGED: Partially update the comparison fabric with merged"
+  cisco.nd.nd4x_module_test:
+    module: "{{ nd4x_fabric_case.module }}"
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+    config:
+      - "{{ {'fabric_name': nd4x_fabric_case.comparison.name} | combine(nd4x_fabric_case.comparison.merged_config, recursive=True) }}"
+    check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Verify merged partial update retained the comparison state
+        path: "/api/v1/manage/fabrics/{{ nd4x_fabric_case.comparison.name }}"
+        method: get
+        expected_status: 200
+        expect: "{{ nd4x_fabric_case.comparison.merged_expectations }}"
+  register: nd4x_fabric_comparison_merged
+  when: nd4x_fabric_case.comparison is defined
+
+- name: "COMPARISON REPLACED: Apply a partial replaced config to that same fabric"
+  cisco.nd.nd4x_module_test:
+    module: "{{ nd4x_fabric_case.module }}"
+    state: replaced
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+    config:
+      - "{{ {'fabric_name': nd4x_fabric_case.comparison.name} | combine(nd4x_fabric_case.comparison.replaced_config, recursive=True) }}"
+    check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Verify replaced reset fields after the merged comparison
+        path: "/api/v1/manage/fabrics/{{ nd4x_fabric_case.comparison.name }}"
+        method: get
+        expected_status: 200
+        expect: "{{ nd4x_fabric_case.comparison.replaced_expectations }}"
+  register: nd4x_fabric_comparison_replaced
+  when: nd4x_fabric_case.comparison is defined
+
+- name: "CAMPUS CLEANUP: Verify teardown runs after a controlled failure"
+  block:
+    - name: Create the disposable Campus cleanup probe through the harness
+      cisco.nd.nd4x_module_test:
+        module: "{{ nd4x_fabric_case.module }}"
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+        config:
+          - fabric_name: "{{ nd4x_fabric_case.failure_cleanup_probe }}"
+            management:
+              bgp_asn: "65099"
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        nd_queries:
+          - name: Verify the disposable Campus cleanup probe exists
+            path: "/api/v1/manage/fabrics/{{ nd4x_fabric_case.failure_cleanup_probe }}"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: $.current.name
+                equals: "{{ nd4x_fabric_case.failure_cleanup_probe }}"
+              - jsonpath: $.current.management.type
+                equals: vxlanCampus
+
+    - name: Trigger the expected Campus cleanup failure path
+      ansible.builtin.fail:
+        msg: "Expected controlled failure for Campus cleanup verification"
+  rescue:
+    - name: Verify and record the expected controlled failure
+      ansible.builtin.assert:
+        that:
+          - ansible_failed_result.msg == "Expected controlled failure for Campus cleanup verification"
+
+    - name: Record that the controlled Campus failure was observed
+      ansible.builtin.set_fact:
+        campus_cleanup_controlled_failure_observed: true
+  always:
+    - name: Remove the Campus cleanup probe after the controlled failure
+      cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+        output_level: "{{ nd_info.output_level }}"
+        state: deleted
+        config:
+          - fabric_name: "{{ nd4x_fabric_case.failure_cleanup_probe }}"
+      check_mode: false
+  when: nd4x_fabric_case.failure_cleanup_probe is defined
+  tags: [always]
+
+- name: Verify the controlled Campus failure was rescued
+  ansible.builtin.assert:
+    that:
+      - campus_cleanup_controlled_failure_observed | default(false) | bool
+  when: nd4x_fabric_case.failure_cleanup_probe is defined
+
+- name: Verify the Campus cleanup probe was already removed
+  cisco.nd.nd4x_module_test:
+    module: "{{ nd4x_fabric_case.module }}"
+    state: deleted
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+    config:
+      - fabric_name: "{{ nd4x_fabric_case.failure_cleanup_probe }}"
+    check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+    expected:
+      check_mode:
+        changed: false
+        failed: false
+      apply:
+        changed: false
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Verify Campus failure cleanup removed the probe
+        path: "/api/v1/manage/fabrics/{{ nd4x_fabric_case.failure_cleanup_probe }}"
+        method: get
+        expected_status: 404
+        expected_failed: true
+  when: nd4x_fabric_case.failure_cleanup_probe is defined
+
+- name: "DELETED SETUP: Create a disposable {{ nd4x_fabric_case.label }} fabric"
+  cisco.nd.nd4x_module_test:
+    module: "{{ nd4x_fabric_case.module }}"
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+    config:
+      - "{{ {'fabric_name': nd4x_fabric_case.deleted_name} | combine(nd4x_fabric_case.fixture, recursive=True) }}"
+    check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Verify delete fixture exists before deletion
+        path: "/api/v1/manage/fabrics/{{ nd4x_fabric_case.deleted_name }}"
+        method: get
+        expected_status: 200
+        expect:
+          - jsonpath: $.current.name
+            equals: "{{ nd4x_fabric_case.deleted_name }}"
+  register: nd4x_fabric_delete_setup
+
+- name: "DELETED: Delete the disposable {{ nd4x_fabric_case.label }} fabric"
+  cisco.nd.nd4x_module_test:
+    module: "{{ nd4x_fabric_case.module }}"
+    state: deleted
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+    config:
+      - fabric_name: "{{ nd4x_fabric_case.deleted_name }}"
+    check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Verify deleted fabric is absent
+        path: "/api/v1/manage/fabrics/{{ nd4x_fabric_case.deleted_name }}"
+        method: get
+        expected_status: 404
+        expected_failed: true
+  register: nd4x_fabric_delete
+
+- name: Verify deleted state completed through every harness phase
+  ansible.builtin.assert:
+    that:
+      - nd4x_fabric_delete_setup.first_run_result.changed | bool
+      - nd4x_fabric_delete.check_mode_result.changed | bool
+      - nd4x_fabric_delete.first_run_result.changed | bool
+      - not nd4x_fabric_delete.second_run_result.changed | bool
+      - nd4x_fabric_delete.nd_query_results | length == 1
+
+- name: "CONFIG ACTIONS SETUP: Create the baseline {{ nd4x_fabric_case.label }} fabric"
+  cisco.nd.nd4x_module_test:
+    module: "{{ nd4x_fabric_case.module }}"
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+    config:
+      - >-
+        {{ {'fabric_name': nd4x_fabric_case.config_actions_name}
+           | combine(nd4x_fabric_case.fixture, recursive=True)
+           | combine(nd4x_fabric_case.config_actions_fixture_overrides | default({}), recursive=True)
+           | combine({'management': {nd4x_fabric_case.action_field_key:
+               nd4x_fabric_case.action_baseline_value}}, recursive=True) }}
+    check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Verify config-actions baseline
+        path: "/api/v1/manage/fabrics/{{ nd4x_fabric_case.config_actions_name }}"
+        method: get
+        expected_status: 200
+        expect:
+          - jsonpath: "{{ nd4x_fabric_case.action_field_jsonpath }}"
+            equals: "{{ nd4x_fabric_case.action_baseline_value }}"
+
+- name: Run direct invalid config-actions regression cases
+  ansible.builtin.include_tasks:
+    file: "{{ nd4x_fabric_case.config_actions_tasks }}"
+    apply:
+      tags: "{{ nd4x_fabric_case.harness_tags }}"
+  tags: "{{ nd4x_fabric_case.harness_tags }}"
+  vars:
+    nd4x_action_invalid_config:
+      - >-
+        {{ {'fabric_name': nd4x_fabric_case.config_actions_name}
+           | combine(nd4x_fabric_case.fixture, recursive=True)
+           | combine(nd4x_fabric_case.config_actions_fixture_overrides | default({}), recursive=True)
+           | combine({'management': {nd4x_fabric_case.action_field_key:
+               nd4x_fabric_case.action_invalid_value}}, recursive=True) }}
+
+- name: "CONFIG ACTIONS VERIFY: Confirm invalid actions left the fabric unchanged"
+  cisco.nd.nd4x_module_test:
+    module: "{{ nd4x_fabric_case.module }}"
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+    config:
+      - >-
+        {{ {'fabric_name': nd4x_fabric_case.config_actions_name}
+           | combine(nd4x_fabric_case.fixture, recursive=True)
+           | combine(nd4x_fabric_case.config_actions_fixture_overrides | default({}), recursive=True)
+           | combine({'management': {nd4x_fabric_case.action_field_key:
+               nd4x_fabric_case.action_baseline_value}}, recursive=True) }}
+    check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+    expected:
+      check_mode:
+        changed: false
+        failed: false
+      apply:
+        changed: false
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Confirm invalid config-actions did not mutate controller state
+        path: "/api/v1/manage/fabrics/{{ nd4x_fabric_case.config_actions_name }}"
+        method: get
+        expected_status: 200
+        expect:
+          - jsonpath: "{{ nd4x_fabric_case.action_field_jsonpath }}"
+            equals: "{{ nd4x_fabric_case.action_baseline_value }}"
+
+- name: "MULTI FABRIC: Create multiple {{ nd4x_fabric_case.label }} fabrics in one harness call"
+  cisco.nd.nd4x_module_test:
+    module: "{{ nd4x_fabric_case.module }}"
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+    config: "{{ nd4x_fabric_multi_cases[nd4x_fabric_case.field_expectation_key].configs }}"
+    check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Verify first multi-fabric resource
+        path: "/api/v1/manage/fabrics/{{ nd4x_fabric_case.multi_fabric_names[0] }}"
+        method: get
+        expected_status: 200
+        expect: >-
+          {{ nd4x_fabric_multi_cases[
+               nd4x_fabric_case.field_expectation_key].expectations[0] }}
+      - name: Verify second multi-fabric resource
+        path: "/api/v1/manage/fabrics/{{ nd4x_fabric_case.multi_fabric_names[1] }}"
+        method: get
+        expected_status: 200
+        expect: >-
+          {{ nd4x_fabric_multi_cases[
+               nd4x_fabric_case.field_expectation_key].expectations[1] }}
+  register: nd4x_fabric_multi_create
+  when: nd4x_fabric_case.multi_fabric_names is defined
+
+- name: Verify multi-fabric operation returned both controller resources
+  ansible.builtin.assert:
+    that:
+      - nd4x_fabric_multi_create.get('first_run_result', {}).get('changed', false) | bool
+      - nd4x_fabric_multi_create.get('nd_query_results', []) | length == 2
+  when:
+    - nd4x_fabric_case.multi_fabric_names is defined
