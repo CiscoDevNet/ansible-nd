@@ -152,6 +152,9 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     # opts out — used by interface types with no capability endpoint (e.g. future breakout).
     interface_type: ClassVar[str] = ""
     interface_mode: ClassVar[str] = ""
+    # `interfaceType` values under which ND lists this family's staged-delete tombstone (see `_can_replay_absent_delete`). Empty opts
+    # out: families with their own `_can_replay_absent_delete` (ethernet, port-channel, vPC) never consult it.
+    staged_delete_echo_interface_types: ClassVar[frozenset[str]] = frozenset()
     # Subclasses whose delete side removes IOS-XE logical interfaces (`interfaceActions/remove` + deploy) set this so `state: deleted`
     # and `state: overridden` refuse a removal ND cannot complete yet (see `_check_xe_removal_discovered`).
     xe_removal_requires_discovery: ClassVar[bool] = False
@@ -1985,14 +1988,25 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         return self._reconcile_deploy_models(model_instances, empty_preview_is_converged=False)
 
     def _can_replay_absent_delete(self, existing_data: dict | None) -> bool:
-        """An absent delete may replay only if no raw interface record remains.
+        """An absent delete may replay only if no raw record remains, or the record is this family's own delete tombstone.
 
         ``query_all`` filters by policy type, so an absent model can still name
         an interface owned by another module. Previewing that identity would
-        deploy the other policy's staged configuration.
+        deploy the other policy's staged configuration. The one exception is the
+        ``userDefined`` / ``interface_delete`` record ND lists after an accepted
+        ``interfaceActions/remove`` that has not been deployed yet (a delete run
+        with ``deploy: false``): it carries no competing policy, only the pending
+        ``no interface`` command, so an explicit delete of the same name must be
+        able to deploy it. Subclasses opt in through ``staged_delete_echo_interface_types``.
         """
 
-        return existing_data is None
+        if existing_data is None:
+            return True
+        if existing_data.get("interfaceType") not in self.staged_delete_echo_interface_types:
+            return False
+        network_os = (existing_data.get("configData") or {}).get("networkOS") or {}
+        policy = network_os.get("policy") or {}
+        return policy.get("policyType") == "userDefined" and policy.get("templateName") == "interface_delete"
 
     def reconcile_absent_deletes(self, model_instances: Sequence[ModelType]) -> bool:
         """Recover an accepted deletion whose switch-side deploy remains pending.

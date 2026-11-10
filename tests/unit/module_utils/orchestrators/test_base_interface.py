@@ -1252,6 +1252,56 @@ def test_reconcile_absent_delete_empty_preview_is_idempotent(monkeypatch, check_
     assert instance._pending_deploys == []
 
 
+def _staged_delete_tombstone(name: str, interface_type: str, network_os_type: str = "ios-xe") -> dict:
+    """Return the raw record ND lists after an accepted, undeployed `interfaceActions/remove` (lab 2026-11-10, 4.2.1.10)."""
+    return {
+        "interfaceName": name,
+        "interfaceType": interface_type,
+        "switchId": "FDO12345ABC",
+        "configData": {
+            "networkOS": {
+                "networkOSType": network_os_type,
+                "policy": {"policyType": "userDefined", "templateConfig": {"ReadOnlyOnEdit": True}, "templateName": "interface_delete"},
+            }
+        },
+    }
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("network_os_type", ["ios-xe", "nx-os"])
+def test_reconcile_absent_delete_replays_staged_delete_tombstone(monkeypatch, check_mode: bool, network_os_type: str) -> None:
+    """A delete staged with `deploy: false` is deployed by a later `deploy: true` delete of the same interface."""
+
+    def responses():
+        yield _preview_multistatus([_preview_row("loopback10", "FDO12345ABC", pending_lines=1)])
+
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "staged_delete_echo_interface_types", frozenset({"loopback"}))
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    instance.rest_send.check_mode = check_mode
+    instance.deploy = True
+    _seed_shared_inventory(instance, "FDO12345ABC", {"loopback10": _staged_delete_tombstone("Loopback10", "loopback", network_os_type)})
+    deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
+
+    assert instance.reconcile_absent_deletes([deleted]) is True
+    assert instance._pending_deploys == ([] if check_mode else [("loopback10", "FDO12345ABC")])
+
+
+def test_reconcile_absent_delete_ignores_tombstone_of_another_interface_type(monkeypatch) -> None:
+    """A delete tombstone of a type this orchestrator does not manage is not a replay target and costs no preview."""
+
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "staged_delete_echo_interface_types", frozenset({"loopback"}))
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    instance.deploy = True
+    _seed_shared_inventory(instance, "FDO12345ABC", {"vlan10": _staged_delete_tombstone("Vlan10", "svi")})
+    deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="vlan10")
+
+    assert instance.reconcile_absent_deletes([deleted]) is False
+    assert instance._pending_deploys == []
+    assert instance.rest_send.response_count == 0
+
+
 @pytest.mark.parametrize("check_mode", [False, True])
 def test_reconcile_absent_delete_skips_foreign_policy_and_previews_only_absent_target(monkeypatch, check_mode: bool) -> None:
     """A filtered-out foreign policy cannot hitchhike on a valid pending delete."""

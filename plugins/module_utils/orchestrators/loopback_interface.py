@@ -101,6 +101,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     supports_bulk_modify_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
     interface_type: ClassVar[str] = "loopback"
+    staged_delete_echo_interface_types: ClassVar[frozenset[str]] = frozenset({"loopback"})
     interface_mode: ClassVar[str] = "managed"
     # TODO(4.2.1) ios-xe-loopback-remove-case: Recheck whether ND removal
     # accepts lowercase names and still generates device-side deletion.
