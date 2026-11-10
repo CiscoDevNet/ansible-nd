@@ -3694,6 +3694,33 @@ def test_base_interface_01110() -> None:
     assert len(instance.rest_send.responses) == 0
 
 
+def test_base_interface_01115() -> None:
+    """
+    # Summary
+
+    Verify `_check_xe_removal_discovered` skips ND's staged-delete tombstone (`userDefined` / `interface_delete`). ND flips a
+    tombstone's `operationalStatus` to `unknown` for several seconds after any deploy on the switch (lab 2026-11-10, 4.2.1.10), and
+    its deployment history still ends with the create push, so the guard would refuse a removal ND has already accepted.
+
+    ## Test
+
+    - Candidate vlan983 is an `ios-xe` tombstone with `operationalStatus: unknown`
+    - No exception; no deployment-history request is made
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    """
+    tombstone = _staged_delete_tombstone("Vlan983", "svi")
+    tombstone["operData"] = {"operationalStatus": "unknown"}
+    instance = _seeded_orchestrator(ResponseGenerator(iter(())), [tombstone])
+
+    with does_not_raise():
+        instance._check_xe_removal_discovered([("vlan983", "CAT9KV1701")])
+
+    assert len(instance.rest_send.responses) == 0
+
+
 def test_base_interface_01120() -> None:
     """
     # Summary

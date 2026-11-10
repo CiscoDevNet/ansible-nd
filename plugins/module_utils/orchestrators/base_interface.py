@@ -1253,6 +1253,11 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             network_os = (record.get("configData") or {}).get("networkOS") or {}
             if network_os.get("networkOSType") != "ios-xe":
                 continue
+            # A staged-delete tombstone means ND already accepted the removal and holds the pending `no interface`. ND reports its
+            # `operationalStatus` as `unknown` for several seconds after any deploy on the switch while its history still ends with
+            # the create push, so the check below would refuse a removal that only needs deploying (lab-verified 2026-11-10, 4.2.1.10).
+            if self._is_staged_delete_tombstone(record):
+                continue
             status = str((record.get("operData") or {}).get("operationalStatus") or "").strip().lower()
             if status in ("up", "down"):
                 continue
@@ -2004,9 +2009,23 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             return True
         if existing_data.get("interfaceType") not in self.staged_delete_echo_interface_types:
             return False
-        network_os = (existing_data.get("configData") or {}).get("networkOS") or {}
+        return self._is_staged_delete_tombstone(existing_data)
+
+    @staticmethod
+    def _is_staged_delete_tombstone(record: dict) -> bool:
+        """
+        # Summary
+
+        Return whether `record` is the `userDefined` / `interface_delete` row ND lists for an interface whose `interfaceActions/remove`
+        was accepted but not deployed yet.
+
+        ## Raises
+
+        None
+        """
+        network_os = (record.get("configData") or {}).get("networkOS") or {}
         policy = network_os.get("policy") or {}
-        return policy.get("policyType") == "userDefined" and policy.get("templateName") == "interface_delete"
+        return isinstance(policy, dict) and policy.get("policyType") == "userDefined" and policy.get("templateName") == "interface_delete"
 
     def reconcile_absent_deletes(self, model_instances: Sequence[ModelType]) -> bool:
         """Recover an accepted deletion whose switch-side deploy remains pending.
