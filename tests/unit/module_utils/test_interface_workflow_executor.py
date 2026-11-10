@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -3040,53 +3042,6 @@ def test_workflow_bulk_partial_207_preserves_exact_success() -> None:
     assert orchestrator.pending_deploys == (("loopback1", "SERIAL1"),)
 
 
-@pytest.mark.parametrize("description", ["Customer tunnel", ""])
-@pytest.mark.parametrize("deploy", [False, True])
-def test_dot1q_update_keeps_singular_request_without_disabling_other_family_bulk(description, deploy):
-    from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_dot1q_tunnel_host_interface import (
-        EthernetDot1qTunnelHostInterfaceModel,
-    )
-    from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_dot1q_tunnel_host_interface import (
-        EthernetDot1qTunnelHostInterfaceOrchestrator,
-    )
-
-    class Dot1qOrchestrator(FakeOrchestrator):
-        supports_bulk_full_modify = False
-        prepare_bulk_description_update = EthernetDot1qTunnelHostInterfaceOrchestrator.prepare_bulk_description_update
-        prepare_bulk_full_update = EthernetDot1qTunnelHostInterfaceOrchestrator.prepare_bulk_full_update
-
-    class BatchedLoopback(BulkUpdateOrchestrator, FakeOrchestrator):
-        pass
-
-    events = []
-    dot1q = Dot1qOrchestrator("dot1q", events)
-    loopback = BatchedLoopback("loopback", events)
-    desired = EthernetDot1qTunnelHostInterfaceModel(
-        switch_ip="192.0.2.1",
-        interface_name="Ethernet1/40",
-        config_data={"network_os": {"policy": {"access_vlan": 150, "description": description}}},
-    )
-    workflow_plan = plan(
-        resource(0, dot1q, updates=[desired], resource_type="ethernet_dot1q_tunnel_host"),
-        resource(1, loopback, updates=[FakeModel("loopback10"), FakeModel("loopback11")]),
-    )
-
-    result = InterfaceWorkflowExecutor(snapshot=FakeSnapshot(events), deploy=deploy).execute(workflow_plan)
-
-    assert result.failed is False
-    assert ("update", "dot1q", "Ethernet1/40") in events
-    assert [event for event in events if event[0] == "bulk_modify"] == [("bulk_modify", "loopback", ("loopback10", "loopback11"))]
-    assert result.mutation_requests == 2
-    assert result.deploy_requests == int(deploy)
-    assert not any(event[0] == "refresh" for event in events)
-    if deploy:
-        assert set(next(event[2] for event in events if event[0] == "deploy")) == {
-            ("Ethernet1/40", "SERIAL1"),
-            ("loopback10", "SERIAL1"),
-            ("loopback11", "SERIAL1"),
-        }
-
-
 def test_dot1q_partial_create_deploys_only_the_accepted_port():
     events = []
     orchestrator = FakeOrchestrator("dot1q", events, fail_create=True)
@@ -3107,3 +3062,374 @@ def test_dot1q_partial_create_deploys_only_the_accepted_port():
     assert result.mutation_requests == 1
     assert result.deploy_requests == 1
     assert result.deployment["targets"] == [{"interface_name": "Ethernet1/40", "switch_id": "SERIAL1", "status": "succeeded"}]
+
+
+def _dot1q_bulk_workflow(
+    monkeypatch,
+    targets,
+    *,
+    outcomes=None,
+    reject_empty=False,
+    unchanged=False,
+    description_only=False,
+    from_access=False,
+    state="replaced",
+    omit_description=False,
+    existing_policy=None,
+):
+    """Use real family planners and payload guards with an in-memory ND transport."""
+    from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import EthernetBaseOrchestrator
+
+    monkeypatch.setattr(EthernetBaseOrchestrator, "_fabric_link_endpoints", lambda _self: set())
+    for hook in ("validate_prerequisites", "preflight", "preflight_create", "preflight_delete"):
+        monkeypatch.setattr(EthernetBaseOrchestrator, hook, lambda _self, *_args: None)
+    rest = RestSend({"fabric_name": "FABRIC1", "check_mode": True})
+    rest.controller_version = "4.3.1.175"
+    context = FabricContext(rest_send=rest, fabric_name="FABRIC1")
+    context._fabric_summary = {"local": True, "fabricStatus": "default"}
+    context._switch_map = {"192.0.2.1": "SERIAL1", "192.0.2.2": "SERIAL2"}
+    context._switch_map_by_id = {serial: ip for ip, serial in context._switch_map.items()}
+    inventory = {"SERIAL1": {}, "SERIAL2": {}}
+    resources = []
+    for family, ip, name, description in targets:
+        serial = context._switch_map[ip]
+        policy_type = "dot1qTunnelHost" if family == "ethernet_dot1q_tunnel_host" else "accessHost"
+        mode = "dot1qTunnel" if family == "ethernet_dot1q_tunnel_host" else "access"
+        if from_access:
+            policy_type, mode = "accessHost", "access"
+        policy = {"policyType": policy_type, "accessVlan": 150, "description": "old"}
+        policy.update(deepcopy(existing_policy or {}))
+        if policy_type == "dot1qTunnelHost":
+            policy["ptp"] = False  # ND echoes this field, but it is not writable.
+        inventory[serial][name.casefold()] = {
+            "interfaceName": name,
+            "switchId": serial,
+            "interfaceType": "ethernet",
+            "configData": {"mode": mode, "networkOS": {"networkOSType": "nx-os", "policy": policy}},
+            "operData": {"portChannelId": -1},
+        }
+        resources.append(
+            {
+                "type": family,
+                "state": state,
+                "config": [
+                    {
+                        "switch_ip": ip,
+                        "interface_names": [name],
+                        "config_data": {
+                            "network_os": {
+                                "policy": {
+                                    "access_vlan": 150 if unchanged or description_only else 151,
+                                    "description": "old" if unchanged else description,
+                                }
+                            }
+                        },
+                    }
+                ],
+            }
+        )
+    if omit_description:
+        for resource_config in resources:
+            resource_config["config"][0]["config_data"]["network_os"]["policy"].pop("description")
+    reads = []
+
+    def read(**kwargs):
+        serial = next(serial for serial in inventory if serial in kwargs["path"])
+        reads.append(serial)
+        rows = deepcopy(list(inventory[serial].values()))
+        if "interfacesSummary" in kwargs["path"]:
+            rows = [
+                {
+                    "interfaceName": row["interfaceName"],
+                    "interfaceType": "ethernet",
+                    "switchId": serial,
+                    "policyType": row["configData"]["networkOS"]["policy"]["policyType"],
+                    "editAllowed": True,
+                    "rbacAccessible": True,
+                    "blockConfig": False,
+                    "markDeleted": False,
+                    "hasDeletedOverlay": False,
+                    "policyChangeSupported": True,
+                }
+                for row in rows
+            ]
+        return {"interfaces": rows}
+
+    snapshot = InterfaceStateSnapshot(fabric_name="FABRIC1", fabric_context=context, request=read)
+
+    def sender(params):
+        value = RestSend(dict(params, check_mode=True))
+        value.controller_version = "4.3.1.175"
+        return value
+
+    workflow_plan = InterfaceWorkflowPlanner(snapshot=snapshot, rest_send_factory=sender, run_capability_preflight=False).plan(resources)
+    requests = []
+    rejected = set()
+
+    def record(owner, path, method, data, code, result_data, *, success):
+        response = {"REQUEST_PATH": path, "METHOD": method, "RETURN_CODE": code, "DATA": result_data}
+        owner.rest_send.response_current = response
+        owner.rest_send.add_response(response)
+        result = {"success": success, "changed": success or code == 207}
+        owner.rest_send.result_current = result
+        owner.rest_send.add_result(result)
+        requests.append((method, path, deepcopy(data)))
+        return response
+
+    def request(owner, path, verb, data=None, not_found_ok=False, operation_type=None):
+        method = getattr(verb, "value", verb)
+        if method == "POST" and path.endswith("/interfaceActions/modify"):
+            rows = (
+                outcomes(data["interfaces"])
+                if outcomes
+                else [{"name": f"{item['switchId']}~{item['interfaceName']}", "status": "success"} for item in data["interfaces"]]
+            )
+            record(owner, path, method, data, 207, {"results": rows}, success=True)
+            for item in data["interfaces"]:
+                name = f"{item['switchId']}~{item['interfaceName']}"
+                exact = [row for row in rows if row.get("name") == name]
+                if len(exact) == 1 and exact[0].get("status") == "success":
+                    inventory[item["switchId"]][item["interfaceName"].casefold()] = deepcopy(item)
+            return {"ok": True}
+        if method == "PUT":
+            policy = data["configData"]["networkOS"]["policy"]
+            key = data["switchId"], data["interfaceName"]
+            if reject_empty and policy.get("description") == "" and key not in rejected:
+                rejected.add(key)
+                record(
+                    owner,
+                    path,
+                    method,
+                    data,
+                    400,
+                    {
+                        "errors": [
+                            {
+                                "description": "/configData/networkOS/policy/description: minimum string length is 1",
+                            }
+                        ]
+                    },
+                    success=False,
+                )
+                raise RuntimeError("ND rejected an empty description")
+            inventory[data["switchId"]][data["interfaceName"].casefold()] = deepcopy(data)
+            record(owner, path, method, data, 200, {}, success=True)
+            return {"ok": True}
+        pytest.fail(f"Unexpected transport: {method} {path}")
+
+    def deploy(owner, pairs):
+        record(owner, "/interfaceActions/deploy", "POST", {"targets": list(pairs)}, 200, {}, success=True)
+        return {"ok": True}
+
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_request", request)
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "deploy_targets", deploy)
+    return workflow_plan, snapshot, requests, reads
+
+
+@pytest.mark.parametrize(
+    "second_ip,second_name",
+    [
+        ("192.0.2.1", "Ethernet1/41"),
+        ("192.0.2.2", "Ethernet1/41"),
+        ("192.0.2.2", "Ethernet1/40"),
+    ],
+)
+@pytest.mark.parametrize("description_only", [False, True])
+def test_dot1q_existing_updates_batch_with_exact_switch_identity(monkeypatch, second_ip, second_name, description_only):
+    targets = [
+        ("ethernet_dot1q_tunnel_host", "192.0.2.1", "Ethernet1/40", "first"),
+        ("ethernet_dot1q_tunnel_host", second_ip, second_name, "second"),
+    ]
+    workflow_plan, snapshot, requests, reads = _dot1q_bulk_workflow(monkeypatch, targets, description_only=description_only)
+
+    result = InterfaceWorkflowExecutor(snapshot=snapshot, deploy=True).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.mutation_requests == 1
+    assert result.deploy_requests == 1
+    assert len(requests) == 2
+    body = requests[0][2]["interfaces"]
+    second_serial = "SERIAL1" if second_ip == "192.0.2.1" else "SERIAL2"
+    assert {(item["switchId"], item["interfaceName"]) for item in body} == {
+        ("SERIAL1", "Ethernet1/40"),
+        (second_serial, second_name),
+    }
+    assert all(item["configData"]["mode"] == "dot1qTunnel" for item in body)
+    assert all("ptp" not in item["configData"]["networkOS"]["policy"] for item in body)
+    assert {item["switch_id"] for item in result.deployment["targets"]} == {"SERIAL1", second_serial}
+    assert len(reads) == len({"SERIAL1", second_serial})
+
+
+@pytest.mark.parametrize("dot_first", [False, True])
+@pytest.mark.parametrize("description_only", [False, True])
+def test_dot1q_and_access_share_typed_bulk_in_either_source_order(monkeypatch, dot_first, description_only):
+    targets = [
+        ("ethernet_dot1q_tunnel_host", "192.0.2.1", "Ethernet1/40", "tunnel"),
+        ("ethernet_access", "192.0.2.2", "Ethernet1/41", "access"),
+    ]
+    if not dot_first:
+        targets.reverse()
+    workflow_plan, snapshot, requests, _reads = _dot1q_bulk_workflow(monkeypatch, targets, description_only=description_only)
+
+    result = InterfaceWorkflowExecutor(snapshot=snapshot, deploy=False).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.mutation_requests == 1
+    assert result.deploy_requests == 0
+    assert len(requests) == 1
+    assert {item["configData"]["networkOS"]["policy"]["policyType"] for item in requests[0][2]["interfaces"]} == {"dot1qTunnelHost", "accessHost"}
+    assert all("ptp" not in item["configData"]["networkOS"]["policy"] for item in requests[0][2]["interfaces"])
+
+
+@pytest.mark.parametrize(
+    "response_kind,accepted",
+    [
+        ("partial", {"SERIAL1"}),
+        ("missing", {"SERIAL1"}),
+        ("wrong-switch", {"SERIAL1"}),
+        ("duplicate", {"SERIAL2"}),
+        ("ambiguous-name", set()),
+    ],
+)
+def test_dot1q_bulk_207_keeps_only_exact_success_and_never_replays(monkeypatch, response_kind, accepted):
+    def outcomes(_payloads):
+        first = {"name": "SERIAL1~Ethernet1/40", "status": "success"}
+        second = {"name": "SERIAL2~Ethernet1/40", "status": "success"}
+        return {
+            "partial": [first, dict(second, status="failed")],
+            "missing": [first],
+            "wrong-switch": [first, dict(second, name="SERIAL9~Ethernet1/40")],
+            "duplicate": [first, first, second],
+            "ambiguous-name": [{"name": "Ethernet1/40", "status": "success"}],
+        }[response_kind]
+
+    workflow_plan, snapshot, requests, _reads = _dot1q_bulk_workflow(
+        monkeypatch,
+        [
+            ("ethernet_dot1q_tunnel_host", "192.0.2.1", "Ethernet1/40", "first"),
+            ("ethernet_dot1q_tunnel_host", "192.0.2.2", "Ethernet1/40", "second"),
+        ],
+        outcomes=outcomes,
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=snapshot, deploy=True).execute(workflow_plan)
+
+    assert result.failed is True
+    assert result.mutation_requests == 1
+    assert result.deploy_requests == int(bool(accepted))
+    assert sum(path.endswith("/interfaceActions/modify") for _verb, path, _data in requests) == 1
+    assert not any(verb == "PUT" for verb, _path, _data in requests)
+    assert {item.switch_id for item in result.items if item.status == "succeeded"} == accepted
+    assert {item["switch_id"] for item in result.deployment["targets"]} == accepted
+
+
+def test_dot1q_empty_description_keeps_its_individual_retry_while_other_ports_batch(monkeypatch):
+    workflow_plan, snapshot, requests, _reads = _dot1q_bulk_workflow(
+        monkeypatch,
+        [
+            ("ethernet_dot1q_tunnel_host", "192.0.2.1", "Ethernet1/40", ""),
+            ("ethernet_dot1q_tunnel_host", "192.0.2.1", "Ethernet1/41", "first"),
+            ("ethernet_dot1q_tunnel_host", "192.0.2.1", "Ethernet1/42", "second"),
+        ],
+        reject_empty=True,
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=snapshot, deploy=True).execute(workflow_plan)
+
+    assert result.failed is False
+    bulk = next(data["interfaces"] for _verb, path, data in requests if path.endswith("/interfaceActions/modify"))
+    assert {item["interfaceName"] for item in bulk} == {"Ethernet1/41", "Ethernet1/42"}
+    puts = [data for verb, _path, data in requests if verb == "PUT"]
+    assert len(puts) == 2
+    assert puts[0]["configData"]["networkOS"]["policy"]["description"] == ""
+    assert "description" not in puts[1]["configData"]["networkOS"]["policy"]
+    assert result.deploy_requests == 1
+    assert {item["interface_name"] for item in result.deployment["targets"]} == {"Ethernet1/40", "Ethernet1/41", "Ethernet1/42"}
+
+
+@pytest.mark.parametrize("unchanged", [False, True])
+def test_dot1q_singleton_or_unchanged_request_keeps_the_existing_path(monkeypatch, unchanged):
+    workflow_plan, snapshot, requests, _reads = _dot1q_bulk_workflow(
+        monkeypatch,
+        [
+            ("ethernet_dot1q_tunnel_host", "192.0.2.1", "Ethernet1/40", "new"),
+        ],
+        unchanged=unchanged,
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=snapshot, deploy=False).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.mutation_requests == int(not unchanged)
+    assert result.deploy_requests == 0
+    assert len(requests) == int(not unchanged)
+    if requests:
+        assert requests[0][0] == "PUT"
+
+
+def test_dot1q_bulk_keeps_dependency_layers_and_one_final_deploy(monkeypatch):
+    workflow_plan, snapshot, requests, _reads = _dot1q_bulk_workflow(
+        monkeypatch, [("ethernet_dot1q_tunnel_host", "192.0.2.1", f"Ethernet1/{number}", "new") for number in range(40, 44)]
+    )
+    nodes = tuple(scheduled_operation(resource_plan, "update", resource_plan.operations.updates[0]) for resource_plan in workflow_plan.resources)
+    workflow_plan = replace(workflow_plan, execution_layers=(nodes[:2], nodes[2:]))
+
+    result = InterfaceWorkflowExecutor(snapshot=snapshot, deploy=True).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.mutation_requests == 2
+    assert result.deploy_requests == 1
+    bulks = [data["interfaces"] for _verb, path, data in requests if path.endswith("/interfaceActions/modify")]
+    assert [{item["interfaceName"] for item in batch} for batch in bulks] == [
+        {"Ethernet1/40", "Ethernet1/41"},
+        {"Ethernet1/42", "Ethernet1/43"},
+    ]
+    assert requests[-1][1] == "/interfaceActions/deploy"
+
+
+def test_dot1q_policy_transitions_keep_separate_updates_and_one_final_deploy(monkeypatch):
+    workflow_plan, snapshot, requests, _reads = _dot1q_bulk_workflow(
+        monkeypatch,
+        [
+            ("ethernet_dot1q_tunnel_host", "192.0.2.1", "Ethernet1/40", "first"),
+            ("ethernet_dot1q_tunnel_host", "192.0.2.1", "Ethernet1/41", "second"),
+        ],
+        from_access=True,
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=snapshot, deploy=True).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.mutation_requests == 2
+    assert result.deploy_requests == 1
+    assert [verb for verb, _path, _data in requests] == ["PUT", "PUT", "POST"]
+    assert requests[-1][1] == "/interfaceActions/deploy"
+    assert {item.action for item in result.items} == {"transition"}
+
+
+def test_dot1q_merged_omitted_description_preserves_current_fields_and_batches(monkeypatch):
+    workflow_plan, snapshot, requests, _reads = _dot1q_bulk_workflow(
+        monkeypatch,
+        [
+            ("ethernet_dot1q_tunnel_host", "192.0.2.1", "Ethernet1/40", "unused"),
+            ("ethernet_dot1q_tunnel_host", "192.0.2.1", "Ethernet1/41", "unused"),
+        ],
+        state="merged",
+        omit_description=True,
+        existing_policy={"speed": "1Gb", "bpduGuard": "disable", "orphanPort": True},
+    )
+
+    result = InterfaceWorkflowExecutor(snapshot=snapshot, deploy=False).execute(workflow_plan)
+
+    assert result.failed is False
+    assert result.mutation_requests == 1
+    assert result.deploy_requests == 0
+    assert len(requests) == 1
+    for payload in requests[0][2]["interfaces"]:
+        policy = payload["configData"]["networkOS"]["policy"]
+        assert policy["description"] == "old"
+        assert policy["speed"] == "1Gb"
+        assert policy["bpduGuard"] == "disable"
+        assert policy["orphanPort"] is True
+        assert policy["accessVlan"] == 151
+        assert "ptp" not in policy

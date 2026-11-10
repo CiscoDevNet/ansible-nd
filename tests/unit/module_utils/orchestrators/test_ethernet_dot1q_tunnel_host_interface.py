@@ -9,6 +9,8 @@ from copy import deepcopy
 
 import pytest
 
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
+from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_dot1q_tunnel_host_interface import (
     EthernetDot1qTunnelHostInterfaceModel,
 )
@@ -73,7 +75,8 @@ def test_existing_fabric_owned_policy_cannot_be_reassigned() -> None:
         orchestrator._check_fabric_ownership(proposed, _wire("Ethernet1/1", "numbered", mode="routed"))
 
 
-def test_empty_description_fallback_only_removes_the_exact_dot1q_field(monkeypatch) -> None:
+@pytest.mark.parametrize("verb", [HttpVerbEnum.POST, HttpVerbEnum.PUT])
+def test_empty_description_fallback_only_removes_the_exact_dot1q_field(monkeypatch, verb) -> None:
     orchestrator = _orchestrator()
     body = {
         "interfaces": [
@@ -91,7 +94,7 @@ def test_empty_description_fallback_only_removes_the_exact_dot1q_field(monkeypat
 
     monkeypatch.setattr(EthernetBaseOrchestrator, "_request", fake_request)
     monkeypatch.setattr(orchestrator, "_rejected_empty_description", lambda _count: True)
-    assert orchestrator._request("/exact", HttpVerbEnum.POST, body) == {"ok": True}
+    assert orchestrator._request("/exact", verb, body) == {"ok": True}
     assert calls[0]["interfaces"][0]["configData"]["networkOS"]["policy"]["description"] == ""
     assert "description" not in calls[1]["interfaces"][0]["configData"]["networkOS"]["policy"]
     assert calls[1]["interfaces"][1]["configData"]["networkOS"]["policy"]["description"] == "kept"
@@ -156,7 +159,7 @@ def test_dot1q_deploy_pending_uses_only_queued_exact_target(monkeypatch) -> None
 
 
 @pytest.mark.parametrize("description", ["new description", ""])
-def test_description_updates_decline_unqualified_bulk_without_state_reads(monkeypatch, description) -> None:
+def test_description_updates_decline_raw_inventory_bulk_without_state_reads(monkeypatch, description) -> None:
     orchestrator = _orchestrator()
     model = EthernetDot1qTunnelHostInterfaceModel.from_config(
         {"switch_ip": "192.0.2.11", "interface_name": "Ethernet1/40", "config_data": {"network_os": {"policy": {"description": description}}}}
@@ -164,6 +167,118 @@ def test_description_updates_decline_unqualified_bulk_without_state_reads(monkey
     monkeypatch.setattr(
         orchestrator,
         "_resolve_switch_id",
-        lambda *_args: pytest.fail("Declining unqualified dot1q bulk modify must not add discovery reads"),
+        lambda *_args: pytest.fail("Declining raw-inventory dot1q batching must not add discovery reads"),
     )
     assert orchestrator.prepare_bulk_description_update(model, model) is None
+
+
+def _dot1q_model(name: str = "Ethernet1/40", **policy) -> EthernetDot1qTunnelHostInterfaceModel:
+    return EthernetDot1qTunnelHostInterfaceModel.from_config(
+        {"switch_ip": "192.0.2.11", "interface_name": name, "config_data": {"network_os": {"policy": policy}}}
+    )
+
+
+def _bulk_orchestrator(version: str = "4.3.1.175") -> EthernetDot1qTunnelHostInterfaceOrchestrator:
+    """Use a complete shared snapshot and fail on any unexpected inventory read."""
+    rest_send = RestSend({"fabric_name": "test_fabric", "state": "replaced", "check_mode": False})
+    rest_send.controller_version = version
+    context = FabricContext(rest_send=rest_send, fabric_name="test_fabric")
+    context._switch_map = {"192.0.2.11": "SERIAL11"}
+    context._switch_map_by_id = {"SERIAL11": "192.0.2.11"}
+    snapshot = InterfaceStateSnapshot(fabric_name="test_fabric", fabric_context=context, request=lambda **_kwargs: pytest.fail("Unexpected inventory read"))
+    snapshot._interfaces_by_switch["SERIAL11"] = {}
+    for name in ("Ethernet1/40", "Ethernet1/41"):
+        current = _dot1q_model(name, description="before", access_vlan=150).to_payload()
+        current["switchId"] = "SERIAL11"
+        current["configData"]["networkOS"]["policy"]["ptp"] = False
+        snapshot._interfaces_by_switch["SERIAL11"][name.casefold()] = current
+    return EthernetDot1qTunnelHostInterfaceOrchestrator(rest_send=rest_send, interface_state_snapshot=snapshot)
+
+
+@pytest.mark.parametrize("version", ["4.3.1.175", "4.3.2.1"])
+def test_full_bulk_update_uses_typed_body_without_replaying_readonly_ptp(version) -> None:
+    """A VLAN and description update must omit fields only echoed by ND."""
+    orchestrator = _bulk_orchestrator(version)
+    previous = _dot1q_model(description="before", access_vlan=150)
+    desired = _dot1q_model(description="after", access_vlan=151)
+    current = orchestrator.state_snapshot.cached_interface("SERIAL11", desired.interface_name)
+    original = deepcopy(current)
+    payload = orchestrator.prepare_bulk_full_update(desired, previous)
+    assert payload == {**desired.to_payload(), "switchId": "SERIAL11"}
+    assert payload["configData"]["networkOS"]["policy"]["accessVlan"] == 151
+    assert "ptp" not in payload["configData"]["networkOS"]["policy"]
+    assert orchestrator.state_snapshot.cached_interface("SERIAL11", desired.interface_name) == original
+
+
+@pytest.mark.parametrize("policy", [{}, {"description": None}, {"description": ""}])
+def test_full_bulk_update_keeps_empty_or_missing_description_on_singular_put(policy) -> None:
+    orchestrator = _bulk_orchestrator()
+    previous = _dot1q_model(description="before", access_vlan=150)
+    desired = _dot1q_model(access_vlan=151, **policy)
+    assert orchestrator.prepare_bulk_full_update(desired, previous) is None
+
+
+def test_full_bulk_update_guard_rejects_identifier_only_model() -> None:
+    orchestrator = _bulk_orchestrator()
+    desired = EthernetDot1qTunnelHostInterfaceModel.from_config({"switch_ip": "192.0.2.11", "interface_name": "Ethernet1/40"})
+    assert orchestrator._bulk_full_modify_guard(desired, {}) is False
+
+
+def test_full_bulk_update_preserves_parent_family_guard(monkeypatch) -> None:
+    orchestrator = _bulk_orchestrator()
+    monkeypatch.setattr(EthernetBaseOrchestrator, "_bulk_full_modify_guard", lambda *_args: False)
+    model = _dot1q_model(description="after", access_vlan=151)
+    assert orchestrator.prepare_bulk_full_update(model, model) is None
+
+
+@pytest.mark.parametrize("version", ["4.2.1.10", "4.3.0.99", "", "invalid"])
+def test_full_bulk_update_requires_qualified_controller_version(version) -> None:
+    orchestrator = _bulk_orchestrator(version)
+    model = _dot1q_model(description="after", access_vlan=151)
+    assert orchestrator.prepare_bulk_full_update(model, model) is None
+
+
+def test_full_bulk_update_requires_previous_model() -> None:
+    orchestrator = _bulk_orchestrator()
+    model = _dot1q_model(description="after", access_vlan=151)
+    assert orchestrator.prepare_bulk_full_update(model) is None
+
+
+@pytest.mark.parametrize("mismatch", ["absent", "switch", "name", "family", "policy", "member", "network_os"])
+def test_full_bulk_update_requires_exact_owned_nxos_dot1q_identity(mismatch) -> None:
+    orchestrator = _bulk_orchestrator()
+    inventory = orchestrator.state_snapshot._interfaces_by_switch["SERIAL11"]
+    current = inventory["ethernet1/40"]
+    if mismatch == "absent":
+        inventory.pop("ethernet1/40")
+    elif mismatch == "switch":
+        current["switchId"] = "OTHER"
+    elif mismatch == "name":
+        current["interfaceName"] = "Ethernet1/99"
+    elif mismatch == "family":
+        current["interfaceType"] = "portChannel"
+    elif mismatch == "policy":
+        current["configData"]["networkOS"]["policy"]["policyType"] = "numbered"
+    elif mismatch == "member":
+        current["configData"]["networkOS"]["policy"]["policyType"] = "dot1qTunnelPoMember"
+    else:
+        current["configData"]["networkOS"]["networkOSType"] = "ios-xe"
+    model = _dot1q_model(description="after", access_vlan=151)
+    assert orchestrator.prepare_bulk_full_update(model, model) is None
+
+
+@pytest.mark.parametrize("guard", ["_check_fabric_ownership", "_check_port_channel_restrictions"])
+def test_full_bulk_sender_rechecks_ethernet_write_guards(monkeypatch, guard) -> None:
+    """Batching must retain the same ownership and membership checks as PUT."""
+    orchestrator = _bulk_orchestrator()
+    models = [_dot1q_model(name, description="after", access_vlan=151) for name in ("Ethernet1/40", "Ethernet1/41")]
+    payloads = [orchestrator.prepare_bulk_full_update(model, model) for model in models]
+
+    def reject(*_args):
+        raise RuntimeError("guard rejected write")
+
+    monkeypatch.setattr(orchestrator, guard, reject)
+    monkeypatch.setattr(orchestrator, "_request", lambda **_kwargs: pytest.fail("Rejected batch must not reach transport"))
+    with pytest.raises(RuntimeError, match="guard rejected write"):
+        orchestrator.modify_bulk_prepared(payloads, payload_orchestrators=[orchestrator] * 2, payload_models=models, payload_modes=["full"] * 2)
+    assert orchestrator.pending_deploys == ()

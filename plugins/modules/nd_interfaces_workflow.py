@@ -221,7 +221,8 @@ notes:
   an empty top-level C(config) list with V(overridden) intentionally resets all eligible dot1q hosts in the fabric.
 - V(ethernet_dot1q_tunnel_host) manages only NX-OS C(dot1qTunnelHost) policies. Dot1q port-channel and vPC member policies remain protected.
   This is distinct from selective VLAN mappings on a trunk and routed subinterface encapsulation.
-- Dot1q host updates use singular PUT requests, including description clearing, to preserve the standalone module's ND-specific handling.
+- On ND 4.3.1 or newer, updates to existing dot1q host policies with nonempty resulting descriptions can be batched automatically.
+  Set C(description="") to clear a description. Description clearing and policy transitions remain supported but are excluded from batching.
   The family is outside O(execution_options.preparation_only) and the optional observed-satisfaction optimization.
 - C(cisco.nd.nd_interface_flow_rules) is intentionally outside this workflow and is not a valid O(resources[].type).
 - C(cisco.nd.nd_manage_links) manages fabric-link resources rather than a host-interface family and is not a valid

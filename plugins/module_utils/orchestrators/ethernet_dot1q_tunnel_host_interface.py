@@ -31,25 +31,34 @@ class EthernetDot1qTunnelHostInterfaceOrchestrator(EthernetBaseOrchestrator):
 
     model_class: ClassVar[type[NDBaseModel]] = EthernetDot1qTunnelHostInterfaceModel
     MEMBER_FAMILY: ClassVar[str] = ""
-    # Use singular PUT until the dot1q full-policy bulk modify path, including
-    # partial outcomes, is live-qualified on ND 4.3.1.
-    supports_bulk_full_modify: ClassVar[bool] = False
+    # ND 4.3.1 accepts typed dot1q full-policy updates with a nonempty description.
+    # An empty or omitted outgoing description keeps the singular PUT retry below.
+    supports_bulk_full_modify: ClassVar[bool] = True
 
     def _managed_policy_types(self) -> set[str]:
         """Select host policies, never dot1q port-channel or vPC members."""
         return {"dot1qTunnelHost"}
 
     def prepare_bulk_description_update(self, model_instance: NDBaseModel, previous_model: NDBaseModel | None = None) -> dict | None:
-        """Keep description writes on the dot1q-specific request path.
+        """Use the typed full-policy body instead of copying controller inventory.
 
-        Bulk modify has not been qualified for this policy. A singular PUT
-        retains its empty-description retry and avoids replaying read-only
-        fields from controller inventory.
+        This avoids replaying read-only fields such as ptp. The full-policy
+        guard keeps bodies with empty or omitted descriptions on singular PUT,
+        where the exact empty-description 400 retry remains available.
         """
         profile = getattr(self.rest_send, "performance_profile", None)
         if profile is not None:
-            profile.record_bulk_update_decision("dot1q_description_bulk_unqualified")
+            profile.record_bulk_update_decision("dot1q_use_typed_full_policy")
         return None
+
+    def _bulk_full_modify_guard(self, model_instance: NDBaseModel, current: dict) -> bool:
+        """Require a nonempty description in the final, resolved dot1q policy body."""
+        if not super()._bulk_full_modify_guard(model_instance, current):
+            return False
+        if not isinstance(model_instance, EthernetDot1qTunnelHostInterfaceModel) or model_instance.config_data is None:
+            return False
+        policy = model_instance.config_data.network_os.policy
+        return policy is not None and isinstance(policy.description, str) and policy.description != ""
 
     def _prepare_member_intent(self, model_instance: NDBaseModel, existing_data: dict | None) -> bool:
         """Refuse every member policy with a dot1q-host-specific explanation."""

@@ -24,7 +24,7 @@ def test_orchestrator_has_narrow_host_policy_scope() -> None:
     assert EthernetDot1qTunnelHostInterfaceOrchestrator.MEMBER_FAMILY == ""
     assert EthernetDot1qTunnelHostInterfaceOrchestrator.supports_bulk_create is True
     assert EthernetDot1qTunnelHostInterfaceOrchestrator.supports_bulk_delete is True
-    assert EthernetDot1qTunnelHostInterfaceOrchestrator.supports_bulk_full_modify is False
+    assert EthernetDot1qTunnelHostInterfaceOrchestrator.supports_bulk_full_modify is True
 
 
 @pytest.mark.parametrize("normalize", [expand_config, expand_ethernet_dot1q_tunnel_host_config])
