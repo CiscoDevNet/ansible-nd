@@ -2003,13 +2003,24 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         with ``deploy: false``): it carries no competing policy, only the pending
         ``no interface`` command, so an explicit delete of the same name must be
         able to deploy it. Subclasses opt in through ``staged_delete_echo_interface_types``.
+        A row of an opted-in type that carries no policy at all is accepted on the
+        same terms: it has no competing policy either, and the replay deploys only
+        when the preview of that exact name reports pending lines.
         """
 
         if existing_data is None:
             return True
         if existing_data.get("interfaceType") not in self.staged_delete_echo_interface_types:
             return False
-        return self._is_staged_delete_tombstone(existing_data)
+        if self._is_staged_delete_tombstone(existing_data):
+            return True
+        # TODO(4.2.1) staged-removal-before-discovery-lists-policyless-row
+        # When `interfaceActions/remove` is accepted within seconds of the create deploy (before ND has discovered the interface), ND
+        # lists the interface as a row with no policy instead of the `interface_delete` tombstone, while `interfaceActions/preview`
+        # still reports `no interface <name>` pending (NX-OS loopback, lab-verified 2026-11-10 on 4.2.1.10 and 4.3.1.175). Without this
+        # the staged removal is never deployed. The same shape is ND's stale row after a deployed removal and its row for an interface
+        # it does not manage; both preview with zero pending lines, so the replay queues nothing for them.
+        return not ((existing_data.get("configData") or {}).get("networkOS") or {}).get("policy")
 
     @staticmethod
     def _is_staged_delete_tombstone(record: dict) -> bool:
