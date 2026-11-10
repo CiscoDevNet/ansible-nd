@@ -612,6 +612,23 @@ class InterfaceWorkflowPlanner:
             response.append(enriched)
         return NDConfigCollection.from_api_response(response_data=response, model_class=adapter.model_class)
 
+    def _validate_dot1q_platforms(self, targets: NDConfigCollection) -> None:
+        """Reject known non-NX-OS evidence for explicitly named or selected dot1q targets."""
+        inventory = self._inventory()
+        for target in targets:
+            switch_ip = getattr(target, "switch_ip")
+            switch_id = self.fabric_context.get_switch_id(switch_ip)
+            name = getattr(target, "interface_name")
+            raw = inventory.get((switch_id, name.casefold())) or {}
+            platform = self.fabric_context.get_platform_type(switch_ip)
+            platform_type = getattr(platform, "value", None)
+            current_network_os = self._wire_network_os_type(raw)
+            if any(value not in (None, "nx-os") for value in (platform_type, current_network_os)):
+                raise InterfaceWorkflowValidationError(
+                    f"Type 'ethernet_dot1q_tunnel_host' supports NX-OS only; {switch_ip}/{name} reports "
+                    f"switch platformType {platform_type!r} and interface networkOSType {current_network_os!r}."
+                )
+
     def _existing_collection(
         self,
         adapter: InterfaceFamilyAdapter,
@@ -623,20 +640,7 @@ class InterfaceWorkflowPlanner:
             # Identifier-only deletes have no network OS in their input. Check
             # the cached switch and interface records before treating one as
             # an already-reset port or building another platform's reset.
-            inventory = self._inventory()
-            for desired in proposed:
-                switch_ip = getattr(desired, "switch_ip")
-                switch_id = self.fabric_context.get_switch_id(switch_ip)
-                name = getattr(desired, "interface_name")
-                raw = inventory.get((switch_id, name.casefold())) or {}
-                platform = self.fabric_context.get_platform_type(switch_ip)
-                platform_type = getattr(platform, "value", None)
-                current_network_os = self._wire_network_os_type(raw)
-                if any(value not in (None, "nx-os") for value in (platform_type, current_network_os)):
-                    raise InterfaceWorkflowValidationError(
-                        f"Type '{adapter.resource_type}' supports NX-OS only; {switch_ip}/{name} reports "
-                        f"switch platformType {platform_type!r} and interface networkOSType {current_network_os!r}."
-                    )
+            self._validate_dot1q_platforms(proposed)
         if adapter.ownership_domain == "ethernet" and orchestrator.rest_send.params.get("state") == "deleted":
             # A filtered default must not manufacture a successful reset after
             # model parsing silently omits an unmodeled controller field.
@@ -654,7 +658,12 @@ class InterfaceWorkflowPlanner:
                         f"with unsupported observed configuration fields: {', '.join(unsupported)}."
                     )
         if adapter.ownership_domain != "vpc":
-            return adapter.existing_collection(orchestrator)
+            existing = adapter.existing_collection(orchestrator)
+            if adapter.resource_type == "ethernet_dot1q_tunnel_host" and orchestrator.rest_send.params.get("state") == "overridden":
+                # Omitted override targets are selected from existing state,
+                # so validating only proposed would miss their platform evidence.
+                self._validate_dot1q_platforms(existing)
+            return existing
 
         orchestrator.validate_prerequisites()
         return self.pair_scoped_vpc_collection(inventory=self._inventory(), adapter=adapter, orchestrator=orchestrator, proposed=proposed)

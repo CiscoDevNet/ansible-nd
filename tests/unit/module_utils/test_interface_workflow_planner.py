@@ -3766,6 +3766,38 @@ def test_dot1q_override_resets_only_omitted_host_policies(monkeypatch) -> None:
     assert len(recorder.calls) == 2
 
 
+@pytest.mark.parametrize("platform", [PlatformType.IOS_XE, PlatformType.IOS_XR, PlatformType.SONIC, PlatformType.APIC, PlatformType.OTHER])
+@pytest.mark.parametrize("retain_primary", [False, True])
+def test_dot1q_override_rejects_non_nx_os_omitted_targets(platform: PlatformType, retain_primary: bool) -> None:
+    """Empty and partial overrides validate switch evidence for omitted resets."""
+    primary = _wire_interface("Ethernet1/1", "ethernet", "dot1qTunnelHost", mode="dot1qTunnel", accessVlan=10)
+    omitted = _wire_interface("Ethernet1/40", "ethernet", "dot1qTunnelHost", mode="dot1qTunnel", accessVlan=150)
+    planner, recorder = _planner(responses=[{"interfaces": [primary]}, {"interfaces": [omitted]}])
+    planner.fabric_context._platform_map = {"192.0.2.1": PlatformType.NX_OS, "192.0.2.2": platform}
+    desired = [_ethernet("192.0.2.1")] if retain_primary else []
+
+    with pytest.raises(InterfaceWorkflowValidationError, match=r"supports NX-OS only; 192\.0\.2\.2/Ethernet1/40"):
+        planner.plan([{"type": "ethernet_dot1q_tunnel_host", "state": "overridden", "config": desired}])
+
+    assert len(recorder.calls) == 2
+    assert all(call["verb"] == HttpVerbEnum.GET for call in recorder.calls)
+
+
+def test_dot1q_override_leaves_unrelated_non_nx_os_interfaces_untouched(monkeypatch) -> None:
+    """The platform guard applies to selected dot1q hosts, not every fabric row."""
+    dot1q = _wire_interface("Ethernet1/40", "ethernet", "dot1qTunnelHost", mode="dot1qTunnel", accessVlan=150)
+    unrelated = _wire_interface("GigabitEthernet1/0/1", "ethernet", "iosXeRoutedHost", network_os_type="ios-xe")
+    planner, recorder = _planner(responses=[{"interfaces": [dot1q]}, {"interfaces": [unrelated]}])
+    planner.fabric_context._platform_map = {"192.0.2.1": PlatformType.NX_OS, "192.0.2.2": PlatformType.IOS_XE}
+    monkeypatch.setattr(EthernetBaseOrchestrator, "_fabric_link_endpoints", lambda _self: {})
+
+    plan = planner.plan([{"type": "ethernet_dot1q_tunnel_host", "state": "overridden", "config": []}])
+
+    assert [(item.switch_ip, item.interface_name) for item in plan.resources[0].operations.deletes] == [("192.0.2.1", "Ethernet1/40")]
+    assert plan.request_stats["interface_inventory_gets"] == 2
+    assert len(recorder.calls) == 2
+
+
 def test_dot1q_absent_delete_keeps_unknown_platform_metadata_tolerance() -> None:
     """Missing platform metadata alone does not turn a safe no-op into a failure."""
     planner, recorder = _planner(responses=[{"interfaces": []}])
