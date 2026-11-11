@@ -26,7 +26,7 @@ def write_json(path, value):
     path.write_text(json.dumps(value) + "\n")
 
 
-def queue_fixture(tmp_path, structured, stale_marker=False, skip_fields=None, extra_events=()):
+def queue_fixture(tmp_path, structured, stale_marker=False, skip_fields=None, extra_events=(), preparation_recap=False):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     queue = workspace / "reports"
@@ -59,6 +59,9 @@ def queue_fixture(tmp_path, structured, stale_marker=False, skip_fields=None, ex
         if outcome in counts:
             counts[outcome] += 1
     lines = [f"[MODULE: {MODULE}] Starting execution...", f"[RUN_MARKER: {marker}]", "[TIMESTAMP_START: 100]"]
+    if preparation_recap:
+        lines += ["PLAY RECAP", "localhost : ok=11 changed=1 unreachable=0 failed=1 skipped=125 rescued=0 ignored=1",
+                  "TASKS RECAP"]
     for name, _, _, outcome in TASKS:
         if outcome is None:
             continue
@@ -98,6 +101,17 @@ def queue_fixture(tmp_path, structured, stale_marker=False, skip_fields=None, ex
     closed = cli("close", *execution_args, "--exit-code", "2", "--duration-seconds", "10")
     assert closed["summary_ready"] is False
     return workspace, queue, job, cli
+
+
+@pytest.mark.parametrize("structured", [True, False])
+def test_preparation_recap_does_not_change_module_task_counts(tmp_path, structured):
+    _, queue, job, cli = queue_fixture(tmp_path, structured, preparation_recap=True)
+    cli("finish", "--status", "failed")
+    result = cli("next", "--after-execution")["execution"]
+    assert result["summary_source"] == ("structured_events" if structured else "raw_log_recovery")
+    stored = json.loads((queue / "results" / (job["id"] + ".json")).read_text())
+    assert stored["invocation"]["counts"] == {"ok": 4, "changed": 1, "unreachable": 0, "failed": 1,
+                                               "skipped": 1, "rescued": 0, "ignored": 0}
 
 
 @pytest.mark.parametrize("structured", [True, False])

@@ -37,6 +37,7 @@ def parse_log(stream, run_id):
     counts = dict.fromkeys(COUNTERS, 0)
     markers = {}
     recap_rows = 0
+    incomplete_recap = False
     in_recap = False
     skipped = False
     conflicting_run = False
@@ -79,12 +80,24 @@ def parse_log(stream, run_id):
             markers[key] = value
             in_recap = False
             continue
+        if line == "[ND_MODULE_PLAYBOOK_START]":
+            counts = dict.fromkeys(COUNTERS, 0)
+            recap_rows = 0
+            incomplete_recap = False
+            in_recap = False
+            continue
         if line.startswith("PLAY RECAP ") or line == "PLAY RECAP":
+            counts = dict.fromkeys(COUNTERS, 0)
+            recap_rows = 0
+            incomplete_recap = False
             in_recap = True
             continue
         if in_recap and ROW.match(line):
             recap_rows += 1
-            for key, value in re.findall(r"\b(" + "|".join(COUNTERS) + r")=(\d+)\b", line):
+            fields = re.findall(r"\b(" + "|".join(COUNTERS) + r")=(\d+)\b", line)
+            if len(fields) != len(COUNTERS) or {key for key, _ in fields} != set(COUNTERS):
+                incomplete_recap = True
+            for key, value in fields:
                 counts[key] += int(value)
         elif line:
             in_recap = False
@@ -96,6 +109,8 @@ def parse_log(stream, run_id):
         errors.append("missing or conflicting current-run marker")
     if not recap_rows:
         errors.append("no PLAY RECAP rows")
+    elif incomplete_recap:
+        errors.append("incomplete PLAY RECAP counters")
     numeric = {}
     for key in ("TIMESTAMP_START", "TIMESTAMP_END", "DURATION_SECONDS", "ANSIBLE_EXIT_STATUS"):
         value = markers.get(key)

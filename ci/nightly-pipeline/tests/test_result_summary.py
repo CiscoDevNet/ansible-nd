@@ -33,6 +33,49 @@ def test_counts_only_real_recap_rows():
     assert result["counts"]["failed"] == 0
 
 
+def test_module_recap_does_not_add_earlier_preparation_recap():
+    preparation = ("PLAY RECAP ********\n"
+                   "host : ok=11 changed=1 unreachable=0 failed=1 skipped=2 rescued=0 ignored=1\n"
+                   "TASKS RECAP ********\n")
+    result = REPORT.parse_log(io.StringIO(log_text(preparation,
+        recap="host : ok=25 changed=3 unreachable=0 failed=1 skipped=125 rescued=0 ignored=0")), "current")
+    assert result["counts"] == {"ok": 25, "changed": 3, "unreachable": 0, "failed": 1,
+                                "skipped": 125, "rescued": 0, "ignored": 0}
+
+
+def test_final_recap_sums_all_hosts_and_does_not_use_missing_prior_counters():
+    preparation = "PLAY RECAP\nold : ok=9 changed=0 unreachable=0 failed=0 skipped=8\nTASKS RECAP\n"
+    recap = ("first : ok=3 changed=1 unreachable=0 failed=1 skipped=5 rescued=0 ignored=1\n"
+             "second : ok=4 changed=2 unreachable=1 failed=0 skipped=6 rescued=1 ignored=0")
+    result = REPORT.parse_log(io.StringIO(log_text(preparation, recap)), "current")
+    assert result["counts"] == {"ok": 7, "changed": 3, "unreachable": 1, "failed": 1,
+                                "skipped": 11, "rescued": 1, "ignored": 1}
+    assert result["status"] == "FAIL"
+
+
+def test_invalid_last_recap_does_not_fall_back_to_earlier_success():
+    preparation = "PLAY RECAP\nold : ok=9 changed=0 unreachable=0 failed=0 skipped=8\nTASKS RECAP\n"
+    result = REPORT.parse_log(io.StringIO(log_text(preparation, recap="invalid recap")), "current")
+    assert result["status"] == "ERR"
+    assert "no PLAY RECAP rows" in result["reason"]
+
+
+def test_missing_module_recap_does_not_use_preparation_recap():
+    text = ("[RUN_MARKER: current]\n[TIMESTAMP_START: 100]\n"
+            "PLAY RECAP\nold : ok=9 changed=0 unreachable=0 failed=0 skipped=8\n"
+            "[ND_MODULE_PLAYBOOK_START]\nERROR! module playbook failed to load\n"
+            "[ANSIBLE_EXIT_STATUS: 4]\n[TIMESTAMP_END: 120]\n[DURATION_SECONDS: 20]\n")
+    result = REPORT.parse_log(io.StringIO(text), "current")
+    assert result["status"] == "ERR"
+    assert "no PLAY RECAP rows" in result["reason"]
+
+
+def test_missing_counter_is_not_reported_as_zero():
+    result = REPORT.parse_log(io.StringIO(log_text(recap="host : ok=43 changed=6 unreachable=0 failed=0")), "current")
+    assert result["status"] == "ERR"
+    assert "incomplete PLAY RECAP counters" in result["reason"]
+
+
 @pytest.mark.parametrize("extra,status", [
     ("[ANSIBLE_EXIT_STATUS: 2]", "FAIL"),
     ("NDP_MODULE_SKIPPED missing link", "SKIP"),
@@ -45,7 +88,7 @@ def test_fail_closed_and_skip(extra, status):
 
 
 def test_unreachable_is_failure():
-    result = REPORT.parse_log(io.StringIO(log_text(recap="host : ok=0 changed=0 unreachable=1 failed=0")), "current")
+    result = REPORT.parse_log(io.StringIO(log_text(recap="host : ok=0 changed=0 unreachable=1 failed=0 skipped=0 rescued=0 ignored=0")), "current")
     assert result["status"] == "FAIL"
 
 
@@ -134,7 +177,7 @@ def test_capability_failure_classification_survives_compaction(ignored):
 
 
 def test_compact_recap_preserves_unreachable_and_exit_code():
-    result = REPORT.parse_log(io.StringIO(log_text("[ANSIBLE_EXIT_STATUS: 4]", "host : ok=2 changed=0 unreachable=1 failed=0")), "current")
+    result = REPORT.parse_log(io.StringIO(log_text("[ANSIBLE_EXIT_STATUS: 4]", "host : ok=2 changed=0 unreachable=1 failed=0 skipped=0 rescued=0 ignored=0")), "current")
     recap = REPORT.compact_recap(result)
     assert "failed=1" in recap
     assert "[ANSIBLE_EXIT_STATUS: 4]" in recap

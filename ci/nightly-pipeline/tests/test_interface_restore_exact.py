@@ -30,6 +30,20 @@ if method != 'get':
             s['pending']=body['configData']
         else:
             s['current']['configData']=body['configData']
+            if s['problem'] in ('nd_trunk_defaults', 'nd_unexpected_default', 'nd_changed_existing', 'nd_unknown_field', 'nd_wrong_type'):
+                policy=s['current']['configData']['networkOS']['policy']
+                policy.update({'bpduFilter':'default','cdp':True,'duplexMode':'auto',
+                    'errorDetectionAcl':True,'fec':'auto','linkType':'auto','monitor':False,
+                    'negotiateAuto':True,'orphanPort':False,'pfc':False,'ptp':'false',
+                    'qos':False,'stormControl':False,'stormControlAction':'default','vlanMapping':False})
+                if s['problem'] == 'nd_unexpected_default':
+                    policy['cdp']=False
+                if s['problem'] == 'nd_changed_existing':
+                    policy['description']='changed by controller'
+                if s['problem'] == 'nd_unknown_field':
+                    policy['unexpectedOption']=True
+                if s['problem'] == 'nd_wrong_type':
+                    policy['cdp']=1
     if method == 'post':
         if 'pending' in s:
             m.fail_json(msg='deploy before intent acceptance')
@@ -62,10 +76,12 @@ def execute(tmp_path, *, problem='', before_up=False, prepare=False, mode='trunk
         current={'mode':'routed','networkOS':{'networkOSType':'nx-os','policy':{'adminState':True,'policyType':'routedHost','mtu':9216}}}
     detail={'switchId':'SERIAL','interfaceName':'Ethernet1/35','interfaceType':'ethernet',
         'configData':current,'operData':{'mode':current['mode'],'adminStatus':'up' if current['networkOS']['policy']['adminState'] else 'down'}}
+    if problem == 'staged_pending_deploy':
+        detail['operData']['adminStatus']='down'
     if problem == 'foreign':
         detail['switchId']='FOREIGN'
     ledger=tmp_path/'ledger.json'; journal=tmp_path/'journal.yaml'
-    ledger.write_text(json.dumps({'current':detail,'problem':problem,'writes':[],'require_journal':prepare}))
+    ledger.write_text(json.dumps({'current':detail,'problem':problem,'writes':[],'require_journal':bool(prepare and not before_up)}))
     modules=tmp_path/'collections/ansible_collections/cisco/nd/plugins/modules'; modules.mkdir(parents=True)
     for name in ['nd_rest','nd_interface_subinterface_managed','nd_interface_subinterface_unmanaged','nd_manage_links']:
         (modules/(name+'.py')).write_text(REST)
@@ -163,6 +179,35 @@ def test_admin_up_rejected_put_reports_safe_reason_without_deploy(tmp_path):
     assert [row[0] for row in state['writes']]==['put']
     assert 'NDP_ADMIN_UP_UNVERIFIED' in done.stdout
     assert 'intent_matches=False' in done.stdout
+    assert 'put_http_status=0' in done.stdout
+    assert 'admin_up=False' in done.stdout
+    assert 'mode_matches=True' in done.stdout
+    assert 'policy_type_matches=True' in done.stdout
+    assert 'other_intent_matches=True' in done.stdout
+    assert 'preserve exactly' not in done.stdout+done.stderr
+
+
+def test_admin_up_accepts_only_observed_nd_trunk_defaults(tmp_path):
+    done,state,_,_=execute(tmp_path,prepare='only',problem='nd_trunk_defaults')
+    assert done.returncode==0,done.stdout+done.stderr
+    assert [row[0] for row in state['writes']]==['put','post']
+    assert state['current']['operData']['adminStatus']=='up'
+
+
+def test_admin_up_deploys_existing_staged_intent_without_rewriting_it(tmp_path):
+    done,state,before,_=execute(tmp_path,prepare='only',before_up=True,problem='staged_pending_deploy')
+    assert done.returncode==0,done.stdout+done.stderr
+    assert [row[0] for row in state['writes']]==['post']
+    assert state['current']['configData']==before
+    assert state['current']['operData']['adminStatus']=='up'
+
+
+@pytest.mark.parametrize('problem',['nd_unexpected_default','nd_changed_existing','nd_unknown_field','nd_wrong_type'])
+def test_admin_up_rejects_nondefault_or_changed_policy_fields(tmp_path,problem):
+    done,state,_,_=execute(tmp_path,prepare='only',problem=problem)
+    assert done.returncode!=0
+    assert [row[0] for row in state['writes']]==['put']
+    assert 'NDP_ADMIN_UP_UNVERIFIED' in done.stdout
     assert 'preserve exactly' not in done.stdout+done.stderr
 
 

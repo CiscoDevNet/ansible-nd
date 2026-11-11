@@ -42,6 +42,13 @@
   ansible.builtin.set_fact:
     _auif_cur: "{{ _auif_get.current }}"
     _auif_expected: "{{ _auif_get.current.configData | combine({'networkOS': {'policy': {'adminState': true}}}, recursive=True) }}"
+    _auif_trunk_defaults: >-
+      {{ {'bpduFilter': 'default', 'cdp': true, 'duplexMode': 'auto', 'errorDetectionAcl': true,
+          'fec': 'auto', 'linkType': 'auto', 'monitor': false, 'negotiateAuto': true,
+          'orphanPort': false, 'pfc': false, 'ptp': 'false', 'qos': false,
+          'stormControl': false, 'stormControlAction': 'default', 'vlanMapping': false}
+         if _auif_get.current.configData.mode | default('') == 'trunk'
+         and _auif_get.current.configData.networkOS.policy.policyType == 'trunkHost' else {} }}
   no_log: true
 
 - name: "admin_up apply only the requested interface {{ _auif.label }}"
@@ -90,12 +97,17 @@
         path: "/api/v1/manage/fabrics/{{ _auif.fabric }}/switches/{{ _auif.serial }}/interfaces/{{ _auif.ifname | replace('/', '%2F') }}"
         method: get
       register: _auif_accepted
+      vars:
+        _auif_accepted_expected: >-
+          {{ {'networkOS': {'policy': (_auif_trunk_defaults | dict2items
+             | selectattr('key', 'in', (_auif_accepted.current.configData.networkOS.policy | default({})).keys() | list)
+             | items2dict)}} | combine(_auif_expected, recursive=True) }}
       retries: 12
       delay: 5
       until: >-
         (_auif_accepted.current.switchId | default('')) == _auif.serial and
         (_auif_accepted.current.interfaceName | default('')) == _auif.ifname and
-        (_auif_accepted.current.configData | default({})) == _auif_expected
+        (_auif_accepted.current.configData | default({}) | to_json(sort_keys=True)) == (_auif_accepted_expected | to_json(sort_keys=True))
       ignore_errors: true
       no_log: true
 
@@ -105,35 +117,59 @@
           - _auif_accepted is not failed
           - (_auif_accepted.current.switchId | default('')) == _auif.serial
           - (_auif_accepted.current.interfaceName | default('')) == _auif.ifname
-          - (_auif_accepted.current.configData | default({})) == _auif_expected
+          - (_auif_accepted.current.configData | default({}) | to_json(sort_keys=True)) == (_auif_accepted_expected | to_json(sort_keys=True))
         fail_msg: >-
           NDP_ADMIN_UP_UNVERIFIED: intent acceptance was not verified; no deploy was requested.
+          put_http_status={{ _auif_put.status | default(0) | int }};
           switch_matches={{ (_auif_accepted.current.switchId | default('')) == _auif.serial }};
           interface_matches={{ (_auif_accepted.current.interfaceName | default('')) == _auif.ifname }};
-          intent_matches={{ (_auif_accepted.current.configData | default({})) == _auif_expected }}.
+          intent_matches={{ (_auif_accepted.current.configData | default({})) == _auif_expected }};
+          admin_up={{ (_auif_accepted.current.configData.networkOS.policy.adminState | default(none)) is sameas true }};
+          mode_matches={{ (_auif_accepted.current.configData.mode | default(none)) == (_auif_expected.mode | default(none)) }};
+          policy_type_matches={{ (_auif_accepted.current.configData.networkOS.policy.policyType | default(none)) == (_auif_expected.networkOS.policy.policyType | default(none)) }};
+          other_intent_matches={{ ((_auif_accepted.current.configData | default({})) | combine({'networkOS': {'policy': {'adminState': true}}}, recursive=True)) == _auif_expected }}.
+      vars:
+        _auif_accepted_expected: >-
+          {{ {'networkOS': {'policy': (_auif_trunk_defaults | dict2items
+             | selectattr('key', 'in', (_auif_accepted.current.configData.networkOS.policy | default({})).keys() | list)
+             | items2dict)}} | combine(_auif_expected, recursive=True) }}
 
-    - name: "admin_up deploy only {{ _auif.label }}"
-      cisco.nd.nd_rest:
-        path: "/api/v1/manage/fabrics/{{ _auif.fabric }}/interfaceActions/deploy"
-        method: post
-        content:
-          interfaces:
-            - interfaceName: "{{ _auif.ifname }}"
-              switchId: "{{ _auif.serial }}"
-      register: _auif_deploy
-      failed_when: false
-      no_log: true
+- name: "admin_up require a known observed admin state for {{ _auif.label }}"
+  ansible.builtin.assert:
+    that:
+      - _auif_cur.operData.adminStatus | default('') in ['up', 'down']
+    fail_msg: "NDP_ADMIN_UP_UNVERIFIED: observed admin state is unavailable; no deploy was requested."
+  when: _auif_cur.configData.networkOS.policy.adminState
 
-    - name: "admin_up verify the observed admin state for {{ _auif.label }}"
-      cisco.nd.nd_rest:
-        path: "/api/v1/manage/fabrics/{{ _auif.fabric }}/switches/{{ _auif.serial }}/interfaces/{{ _auif.ifname | replace('/', '%2F') }}"
-        method: get
-      register: _auif_verified
-      retries: 12
-      delay: 5
-      until: >-
-        (_auif_verified.current.switchId | default('')) == _auif.serial and
-        (_auif_verified.current.interfaceName | default('')) == _auif.ifname and
-        (_auif_verified.current.configData | default({})) == _auif_expected and
-        (_auif_verified.current.operData.adminStatus | default('')) == 'up'
-      no_log: true
+- name: "admin_up deploy only {{ _auif.label }}"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _auif.fabric }}/interfaceActions/deploy"
+    method: post
+    content:
+      interfaces:
+        - interfaceName: "{{ _auif.ifname }}"
+          switchId: "{{ _auif.serial }}"
+  register: _auif_deploy
+  failed_when: false
+  no_log: true
+  when: not _auif_cur.configData.networkOS.policy.adminState or _auif_cur.operData.adminStatus | default('') == 'down'
+
+- name: "admin_up verify the observed admin state for {{ _auif.label }}"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _auif.fabric }}/switches/{{ _auif.serial }}/interfaces/{{ _auif.ifname | replace('/', '%2F') }}"
+    method: get
+  register: _auif_verified
+  vars:
+    _auif_verified_expected: >-
+      {{ {'networkOS': {'policy': (_auif_trunk_defaults | dict2items
+         | selectattr('key', 'in', (_auif_verified.current.configData.networkOS.policy | default({})).keys() | list)
+         | items2dict)}} | combine(_auif_expected, recursive=True) }}
+  retries: 12
+  delay: 5
+  until: >-
+    (_auif_verified.current.switchId | default('')) == _auif.serial and
+    (_auif_verified.current.interfaceName | default('')) == _auif.ifname and
+    (_auif_verified.current.configData | default({}) | to_json(sort_keys=True)) == (_auif_verified_expected | to_json(sort_keys=True)) and
+    (_auif_verified.current.operData.adminStatus | default('')) == 'up'
+  no_log: true
+  when: not _auif_cur.configData.networkOS.policy.adminState or _auif_cur.operData.adminStatus | default('') == 'down'

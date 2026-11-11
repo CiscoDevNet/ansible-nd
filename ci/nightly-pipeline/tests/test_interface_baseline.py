@@ -412,6 +412,32 @@ def test_peerlink_probe_loads_private_registry_before_admin_up(variant):
     assert tasks[1]['ansible.builtin.include_tasks'].endswith('/admin_up_interface.yaml')
 
 
+@pytest.mark.parametrize('reverse,wrong_port,present,expected', [
+    (False, False, True, True), (True, False, True, True),
+    (False, True, True, False), (False, False, False, False),
+])
+def test_advanced_peerlink_probe_matches_exact_approved_ports(tmp_path, reverse, wrong_port, present, expected):
+    root = Path(__file__).resolve().parents[1]
+    text = (root / 'Jenkinsfile_nd_jenkins_script').read_text()
+    probe = text.split("<<'PEERLINK_PROBE_EOF'", 1)[1].split('PEERLINK_PROBE_EOF', 1)[0]
+    task = json.loads(probe)[0]['tasks'][-1]
+    first = ('SERIAL1', 'Ethernet1/2')
+    second = ('SERIAL2', 'Ethernet1/99' if wrong_port else 'Ethernet1/1')
+    src, dst = (second, first) if reverse else (first, second)
+    link = {'srcSwitchId': src[0], 'srcInterfaceName': src[1], 'dstSwitchId': dst[0],
+            'dstInterfaceName': dst[1], 'linkPresent': present}
+    play = [{'hosts': 'localhost', 'connection': 'local', 'gather_facts': False,
+             'vars': {'probe_s1': 'SERIAL1', 'probe_s2': 'SERIAL2', 'probe_exact_peerlink': 'advanced',
+                      '_probe_links': {'current': {'links': [link]}}}, 'tasks': [task]}]
+    path = tmp_path / 'probe.json'
+    path.write_text(json.dumps(play))
+    env = dict(os.environ, ANSIBLE_LOCAL_TEMP=str(tmp_path / 'local'), ANSIBLE_REMOTE_TEMP=str(tmp_path / 'remote'))
+    run = subprocess.run([str(Path(sys.executable).with_name('ansible-playbook')), '-i', 'localhost,', str(path)],
+                         cwd=tmp_path, env=env, text=True, capture_output=True, timeout=30)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert ('NDP_VPC_PEERLINK_PRESENT' in run.stdout) == expected
+
+
 @pytest.mark.parametrize('apply', [False, True])
 @pytest.mark.parametrize('recovers', [False, True])
 def test_initial_sync_readiness_retries_are_fresh_bounded_and_do_not_mutate(baseline, apply, recovers):
