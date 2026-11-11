@@ -1,5 +1,6 @@
 """Offline checks for pristine selected-branch execution; no ND calls."""
 import importlib.util
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -310,9 +311,60 @@ def test_runner_does_not_rewrite_authored_tests():
         facts = task.get("ansible.builtin.set_fact", {})
         assert not set(facts).intersection({"l3out_bgp", "l3out_bgp_updated", "l3out_svi", "l3out_static",
             "l3out_static_replaced", "subif_eth_3", "subif_eth_4", "subif_pc_5", "nd_test_manage_vpc_pairs"})
+        if "{{ item }}" in facts:
+            assert task.get("loop") == ["l3out_bgp", "l3out_bgp_updated", "l3out_svi", "l3out_static_replaced"]
     runs = [task for task in tasks if task.get("ansible.builtin.include_role", {}).get("name") == "{{ test_module }}"
             and not task.get("ansible.builtin.include_role", {}).get("tasks_from")]
     assert runs
     assert all("nd_manage_tor" not in str(task.get("when")) and not task.get("ignore_errors") for task in runs)
     registry = yaml.safe_load((ROOT / "tests/nd_prerequisite_profiles.yaml").read_text())
     assert all("nd_test_manage_vpc_pairs" not in profile.get("runtime_vars", {}) for profile in registry["profiles"].values())
+
+
+@pytest.mark.parametrize("existing_asn,response,expected_asn,success", [
+    (None, {"current": {"management": {"bgpAsn": "65002"}}}, "65002", True),
+    ("65100", {"failed": True}, "65100", True),
+    (None, {"current": {"management": {}}}, None, False),
+    (None, {"failed": True}, None, False),
+])
+def test_l3out_external_asn_override_runs_in_ansible(tmp_path, existing_asn, response, expected_asn, success):
+    play = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]
+    setup = next(task for task in walk(play["pre_tasks"] + play["tasks"])
+                 if task.get("name", "").endswith("SETUP - prepare route-map prerequisites for the original L3Out cases"))
+    selected = setup["block"][:4]
+    selected[1] = {"ansible.builtin.set_fact": {"_ndp_l3out_fabric2": response}}
+    bgp = {"fabric1_details": {"advertise_default_route": True}, "bfd": True}
+    if existing_asn:
+        bgp["fabric2_details"] = {"local_asn": existing_asn, "advertise_host_routes": True}
+    case = {"configured_fabrics": "both", "routing_details": {"routing_protocol": "bgp", "bgp": bgp}}
+    fixture_path = tmp_path / "tests/integration/targets/nd_manage_l3out/vars/main.yaml"
+    fixture_path.parent.mkdir(parents=True)
+    cases = {name: case for name in ("l3out_bgp", "l3out_bgp_updated", "l3out_svi", "l3out_static_replaced")}
+    fixture_path.write_text(yaml.safe_dump(cases))
+    role_path = tmp_path / "roles/fixture"
+    (role_path / "vars").mkdir(parents=True)
+    (role_path / "tasks").mkdir()
+    (role_path / "vars/main.yaml").write_text(yaml.safe_dump(cases))
+    (role_path / "tasks/main.yaml").write_text(yaml.safe_dump([{"ansible.builtin.assert": {"that": [
+        "l3out_bgp.routing_details.bgp.fabric2_details.local_asn == expected_asn",
+        "l3out_bgp_updated.routing_details.bgp.fabric2_details.local_asn == expected_asn",
+        "l3out_svi.routing_details.bgp.fabric2_details.local_asn == expected_asn",
+        "l3out_static_replaced.routing_details.bgp.fabric2_details.local_asn == expected_asn",
+        "l3out_bgp.routing_details.bgp.fabric1_details.advertise_default_route",
+        "l3out_bgp.routing_details.bgp.bfd",
+        "not preserve_host_routes or l3out_bgp.routing_details.bgp.fabric2_details.advertise_host_routes",
+    ]}}]))
+    play_path = tmp_path / "play.yaml"
+    play_path.write_text(yaml.safe_dump([{"hosts": "all", "connection": "local", "gather_facts": False,
+        "vars": {"ansible_python_interpreter": sys.executable, "test_module": "nd_manage_l3out",
+                 "expected_asn": expected_asn, "preserve_host_routes": bool(existing_asn)},
+        "tasks": selected + [{"ansible.builtin.include_role": {"name": "fixture"}}]}]))
+    result = subprocess.run([str(Path(sys.executable).with_name("ansible-playbook")), "-i", "localhost,", str(play_path)],
+        cwd=tmp_path, env=dict(os.environ, ANSIBLE_LOCAL_TEMP=str(tmp_path / "local"),
+                               ANSIBLE_REMOTE_TEMP=str(tmp_path / "remote")),
+        text=True, capture_output=True, timeout=30)
+    if success:
+        assert result.returncode == 0, result.stdout + result.stderr
+    else:
+        assert result.returncode != 0
+        assert "NDP_L3OUT_FABRIC2_ASN_MISSING" in result.stdout

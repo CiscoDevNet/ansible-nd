@@ -144,6 +144,70 @@ def synthetic_collection(tmp_path, tasks, module="nd_fixture"):
     return tmp_path / "collection", module
 
 
+@pytest.mark.parametrize("adapter", ["verbose", "quiet", "events"])
+def test_unnumbered_module_call_with_failed_validation_counts_as_failed(tmp_path, adapter):
+    collection, module = synthetic_collection(tmp_path, [
+        {"name": "Create object", "cisco.nd.nd_fixture": {"state": "merged"}},
+        {"name": "Verify object", "ansible.builtin.assert": {"that": [False]}},
+    ])
+    rows = records_for(collection, module, "tasks/main.yaml")
+    log, used, code = emit_log(tmp_path, rows, paths=adapter != "quiet", collection=collection, module=module,
+                               outcomes={rows[1]["key"]: "failed"})
+    if adapter == "events":
+        events_for(log, used, code, collection=collection, module=module)
+        result = REPORT.summarize_events(log, module, "current", "fixture", "iBGP", collection)
+    else:
+        result = REPORT.summarize(log, module, "current", "fixture", "iBGP", collection)
+    assert result["result"] == "FAIL"
+    assert result["testcase_totals"] == {"started": 1, "passed": 0, "failed": 1, "skipped": 0, "incomplete": 0}
+
+
+@pytest.mark.parametrize("paths", [True, False])
+def test_unnumbered_ignored_validation_does_not_fail_case(tmp_path, paths):
+    collection, module = synthetic_collection(tmp_path, [
+        {"name": "Create object", "cisco.nd.nd_fixture": {"state": "merged"}},
+        {"name": "Expected negative validation", "ansible.builtin.assert": {"that": [False]}, "ignore_errors": True},
+    ])
+    rows = records_for(collection, module, "tasks/main.yaml")
+    log, _, _ = emit_log(tmp_path, rows, paths=paths, collection=collection, module=module,
+                         outcomes={rows[1]["key"]: "failed"}, ignored={rows[1]["key"]})
+    result = REPORT.summarize(log, module, "current", "fixture", "iBGP", collection)
+    assert result["result"] == "PASS"
+    assert result["testcase_totals"]["passed"] == 1
+    assert result["testcase_totals"]["failed"] == 0
+
+
+def test_unnumbered_validation_in_another_source_does_not_fail_case(tmp_path):
+    collection, module = synthetic_collection(tmp_path, [
+        {"name": "Create object", "cisco.nd.nd_fixture": {"state": "merged"}},
+    ])
+    other = collection / "tests/integration/targets" / module / "tasks/other.yaml"
+    other.write_text(json.dumps([{"name": "Unrelated validation", "ansible.builtin.assert": {"that": [False]}}]))
+    rows = records_for(collection, module, "tasks/main.yaml") + records_for(collection, module, "tasks/other.yaml")
+    log, _, _ = emit_log(tmp_path, rows, collection=collection, module=module, outcomes={rows[1]["key"]: "failed"})
+    result = REPORT.summarize(log, module, "current", "fixture", "iBGP", collection)
+    assert result["result"] == "FAIL"
+    assert result["testcase_totals"]["failed"] == 0
+
+
+def test_unnumbered_validation_failure_in_mixed_catalog_counts_as_failed(tmp_path):
+    collection, module = synthetic_collection(tmp_path, [
+        {"name": "Merged TC1 create", "cisco.nd.nd_fixture": {"state": "merged"}},
+        {"name": "Merged TC1 verify", "ansible.builtin.assert": {"that": [True]}},
+    ])
+    other = collection / "tests/integration/targets" / module / "tasks/other.yaml"
+    other.write_text(json.dumps([
+        {"name": "Create another object", "cisco.nd.nd_fixture": {"state": "merged"}},
+        {"name": "Verify another object", "ansible.builtin.assert": {"that": [False]}},
+    ], indent=2))
+    rows = records_for(collection, module, "tasks/main.yaml") + records_for(collection, module, "tasks/other.yaml")
+    log, _, _ = emit_log(tmp_path, rows, collection=collection, module=module, outcomes={rows[-1]["key"]: "failed"})
+    result = REPORT.summarize(log, module, "current", "fixture", "iBGP", collection)
+    assert result["result"] == "FAIL"
+    assert result["testcase_totals"] == {"started": 2, "passed": 1, "failed": 1, "skipped": 0, "incomplete": 0}
+    assert [case["label"] for case in result["case_results"] if case["outcome"] == "failed"] == ["Create another object"]
+
+
 @pytest.mark.parametrize("adapter", ["text", "events"])
 @pytest.mark.parametrize("terminal_failure", [False, True])
 def test_rescued_cleanup_is_not_a_terminal_failure(tmp_path, adapter, terminal_failure):

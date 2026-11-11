@@ -528,7 +528,7 @@ def _summarize_catalog(log, module, run_id, build, fabric, collection_root, test
     state = {"current": None, "recap": False, "recap_rows": 0, "recap_failed": 0, "recap_rescued": 0,
              "exit_code": None, "exit_conflict": False,
              "module_skip": False, "outside_failure": False, "outside_reasons": set(), "unmatched_case": False,
-             "last_case": None, "last_path": None}
+             "last_case": None, "last_path": None, "last_untagged": None}
 
     def add_failure(label):
         label = safe_label(label)
@@ -595,8 +595,10 @@ def _summarize_catalog(log, module, run_id, build, fabric, collection_root, test
         record = candidates[0]
         if record["case"]:
             state["last_case"], state["last_path"] = record["case"], record["path"]
+            state["last_untagged"] = None
         elif record["base"] or record["cleanup"]:
             state["last_case"], state["last_path"] = None, None
+            state["last_untagged"] = None
         outcomes = set(event["outcomes"])
         if event["ignored"]:
             outcomes.discard("failed")
@@ -616,6 +618,10 @@ def _summarize_catalog(log, module, run_id, build, fabric, collection_root, test
             call = untagged_seen.setdefault(record.get("key", record["name"]),
                                             {"label": record["name"], "state": record["state"], "outcomes": set()})
             call["outcomes"].update(outcomes)
+            state["last_untagged"] = (record["path"], record.get("key", record["name"])) if outcomes & {"ok", "failed", "ignored"} else None
+        elif (record["verification"] and "failed" in outcomes
+              and state["last_untagged"] and state["last_untagged"][0] == record["path"]):
+            untagged_seen[state["last_untagged"][1]]["outcomes"].add("failed")
         if not identity and "failed" in outcomes:
             phase = "module base" if record["base"] else "module cleanup" if record["cleanup"] else "unlabelled module task"
             add_failure(with_reason(phase + ": " + record["name"], event))
@@ -708,6 +714,10 @@ def _summarize_catalog(log, module, run_id, build, fabric, collection_root, test
                 if "failed" in outcomes:
                     outcomes.discard("failed")
                     outcomes.add("rescued")
+        for call in untagged_seen.values():
+            if "failed" in call["outcomes"]:
+                call["outcomes"].discard("failed")
+                call["outcomes"].add("rescued")
         result["handled_failures"] = list(result["failure"])
         result["failure"] = []
         state["outside_failure"] = False

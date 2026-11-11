@@ -578,14 +578,49 @@
       when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
 
     # -------------------------------------------------------------------------
-    # Prepare the route maps referenced by the original L3Out test variables.
-    # Read those variables unchanged; do not rewrite any authored case payload.
+    # Prepare route maps and supply only a missing external ASN for L3Out BGP cases.
     - name: "[{{ test_module }}] SETUP - prepare route-map prerequisites for the original L3Out cases"
       when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
       block:
         - name: "[{{ test_module }}] SETUP - read the target's unchanged L3Out variables"
           ansible.builtin.include_vars:
             file: "{{ playbook_dir }}/tests/integration/targets/nd_manage_l3out/vars/main.yaml"
+
+        - name: "[{{ test_module }}] SETUP - read external fabric BGP settings"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ nd_test_fabric2_name }}"
+          register: _ndp_l3out_fabric2
+          failed_when: false
+          no_log: true
+
+        - name: "[{{ test_module }}] SETUP - require external fabric ASN when missing from a BGP case"
+          ansible.builtin.assert:
+            that:
+              - not (_ndp_l3out_fabric2.failed | default(false) | bool)
+              - (_ndp_l3out_fabric2.current.management.bgpAsn | default('', true) | string | trim | length) > 0
+            fail_msg: "NDP_L3OUT_FABRIC2_ASN_MISSING: external fabric BGP ASN could not be verified."
+          loop: [l3out_bgp, l3out_bgp_updated, l3out_svi, l3out_static_replaced]
+          vars:
+            _ndp_l3out_case: "{{ lookup('ansible.builtin.vars', item) }}"
+          when:
+            - _ndp_l3out_case.configured_fabrics | default('') in ['both', 'fabric2']
+            - _ndp_l3out_case.routing_details.routing_protocol | default('') == 'bgp'
+            - _ndp_l3out_case.routing_details.bgp.fabric2_details.local_asn | default('', true) | string | trim | length == 0
+
+        - name: "[{{ test_module }}] SETUP - supply missing external fabric ASN to BGP cases"
+          ansible.builtin.set_fact:
+            "{{ item }}": >-
+              {{ _ndp_l3out_case | combine({'routing_details': {'bgp': {'fabric2_details':
+                 {'local_asn': (_ndp_l3out_fabric2.current.management.bgpAsn | string | trim)}}}}, recursive=True) }}
+          loop: [l3out_bgp, l3out_bgp_updated, l3out_svi, l3out_static_replaced]
+          vars:
+            _ndp_l3out_case: "{{ lookup('ansible.builtin.vars', item) }}"
+          when:
+            - _ndp_l3out_case.configured_fabrics | default('') in ['both', 'fabric2']
+            - _ndp_l3out_case.routing_details.routing_protocol | default('') == 'bgp'
+            - _ndp_l3out_case.routing_details.bgp.fabric2_details.local_asn | default('', true) | string | trim | length == 0
+          no_log: true
 
         - name: "[{{ test_module }}] SETUP - resolve route maps referenced by the original cases"
           ansible.builtin.set_fact:

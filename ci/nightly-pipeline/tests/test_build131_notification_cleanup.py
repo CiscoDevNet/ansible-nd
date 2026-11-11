@@ -14,6 +14,13 @@ def test_integration_case_contract_never_uses_whole_invocation_recaps(variant):
     assert 'recordedRecapCount' not in counter
     assert "test_type == 'integration'" in counter
     assert 'caseOutcomeCount(' in counter
+    recap = source.split('def moduleTaskRecapText() {', 1)[1].split('\ndef moduleCaseSummaryRows()', 1)[0]
+    assert "['ok', 'changed', 'unreachable', 'failed', 'skipped', 'rescued', 'ignored']" in recap
+    assert "it.result != 'NOT_RUN'" in recap
+    assert "row.reporting_status != 'ERROR'" in recap
+    assert "invocation.status in ['OK', 'FAIL', 'SKIP']" in recap
+    assert "ANSIBLE TASK RECAP (includes setup and cleanup; not test-case counts)" in recap
+    assert source.count('moduleTaskRecapText()') == 3
     assert 'Counts use the closed-log task recap' not in source
     assert "test_type: target[1]" in source
     assert "test_type: PLAYBOOK_FILES.contains(module) ? 'smoke' : 'integration'" in source
@@ -209,4 +216,26 @@ try {
         result:'FAIL',coverage:'UNKNOWN',case_totals:[:]]], '140')
 } catch (Exception failure) { caught = failure }
 assert caught?.message?.contains('NDP_CASE_COUNTS_UNRECOVERABLE')
+''')
+
+
+def test_notification_reports_task_recaps_separately_for_all_modules(groovy_runner):
+    groovy_runner(POST + r'''
+script.MODULE_ACTIVITY_RESULTS.putAll([
+    policy: [module:'policy_fixture', test_type:'integration', nd:'4.3', scope:'iBGP', round_label:'iBGP',
+        result:'PASS', coverage:'COMPLETE', validated:true, case_totals:[started:1,passed:1,failed:0,skipped:0,incomplete:0],
+        invocation:[status:'OK',counts:[ok:150,changed:21,unreachable:0,failed:0,skipped:125,rescued:0,ignored:7]]],
+    other: [module:'other_fixture', test_type:'integration', nd:'4.3', scope:'iBGP', round_label:'iBGP',
+        result:'FAIL', coverage:'COMPLETE', validated:true, case_totals:[started:1,passed:0,failed:1,skipped:0,incomplete:0],
+        invocation:[status:'FAIL',counts:[ok:20,changed:3,unreachable:0,failed:1,skipped:9,rescued:0,ignored:0]]],
+    missing: [module:'missing_fixture', test_type:'integration', nd:'4.3', scope:'eBGP', round_label:'eBGP',
+        result:'NOT_RUN', coverage:'UNKNOWN', case_totals:[:]]
+])
+script.run()
+def message = sent.join('\n')
+assert message.contains('Passed: 1') && message.contains('Failed: 1') && message.contains('Skipped: 0')
+assert message.contains('ANSIBLE TASK RECAP')
+assert message.contains('policy_fixture [iBGP]: ok=150 changed=21 unreachable=0 failed=0 skipped=125 rescued=0 ignored=7')
+assert message.contains('other_fixture [iBGP]: ok=20 changed=3 unreachable=0 failed=1 skipped=9 rescued=0 ignored=0')
+assert !message.contains('missing_fixture [eBGP]: ok=0')
 ''')
