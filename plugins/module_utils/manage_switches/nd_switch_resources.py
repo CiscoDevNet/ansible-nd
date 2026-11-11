@@ -3386,6 +3386,30 @@ class NDSwitchResourceModule:
 
         return serials
 
+    @staticmethod
+    def _check_mode_idempotent_sync_serials(plan: "SwitchPlan", sync_serials: list[str]) -> list[str]:
+        """Return idempotent deploy targets only when normal execution finalizes them independently.
+
+        The normal merged, replaced, and overridden handlers pass add-phase and
+        migration targets to ``post_add_processing()``, which owns their save and
+        deploy. In those runs, the separate idempotent-sync ``finalize()`` path
+        is skipped, so its targets must not appear in the check-mode config
+        action preview.
+
+        ## Parameters
+
+        - `plan`: Action plan for the current state handler.
+        - `sync_serials`: Existing idempotent switches with unresolved config sync.
+
+        ## Returns
+
+        - The idempotent switch serials that normal execution will pass to its
+          standalone sync finalization path.
+        """
+        if plan.to_add or plan.to_update or plan.normal_readd or plan.migration_mode:
+            return []
+        return sync_serials
+
     def _register_check_mode_result(
         self,
         action: str,
@@ -3600,7 +3624,7 @@ class NDSwitchResourceModule:
                     "rma": [c.seed_ip for c in plan.to_rma],
                     "save_deploy_required": idempotent_save_req,
                 },
-                save_deploy_serials=sync_serials,
+                save_deploy_serials=self._check_mode_idempotent_sync_serials(plan, sync_serials),
             )
             return
 
@@ -3705,7 +3729,7 @@ class NDSwitchResourceModule:
                     "swap": len(plan.to_swap),
                     "save_deploy_required": idempotent_save_req,
                 },
-                save_deploy_serials=sync_serials,
+                save_deploy_serials=self._check_mode_idempotent_sync_serials(plan, sync_serials),
             )
             return
 
@@ -3850,7 +3874,7 @@ class NDSwitchResourceModule:
                     "swap": len(plan.to_swap),
                     "save_deploy_required": idempotent_save_req,
                 },
-                save_deploy_serials=sync_serials,
+                save_deploy_serials=self._check_mode_idempotent_sync_serials(plan, sync_serials),
             )
             return
 

@@ -2008,6 +2008,51 @@ def test_check_mode_idempotent_out_of_sync_switch_reports_changed_for_config_act
     assert resource.results.diffs[0]["save_deploy_serial_numbers"] == ["SERIAL1"]
 
 
+@pytest.mark.parametrize(
+    ("state", "handler_name", "add_bucket"),
+    [
+        ("merged", "_handle_merged_state", "to_add"),
+        ("overridden", "_handle_overridden_state", "to_update"),
+        ("replaced", "_handle_replaced_state", "to_update"),
+    ],
+)
+def test_check_mode_does_not_preview_idempotent_deploy_when_add_phase_will_finalize(state, handler_name, add_bucket):
+    """A mixed plan does not preview an idempotent-only finalize path that normal mode skips."""
+    existing = [
+        _sw(
+            "192.0.2.10",
+            "SERIAL1",
+            additionalData={
+                "configSyncStatus": "outOfSync",
+                "discoveryStatus": "ok",
+                "systemMode": "normal",
+                "platformType": "nx-os",
+            },
+        )
+    ]
+    idempotent_cfg = _cfg("192.0.2.10")
+    add_cfg = _cfg("192.0.2.11")
+    resource = _resource(
+        state=state,
+        config=[
+            {"seed_ip": "192.0.2.10", "username": "admin", "password": "password", "role": "leaf"},
+            {"seed_ip": "192.0.2.11", "username": "admin", "password": "password", "role": "leaf"},
+        ],
+        check_mode=True,
+        existing=existing,
+    )
+    resource.ctx.save_config = True
+    resource.ctx.deploy_config = True
+    resource.ctx.deploy_type = "switch"
+    plan = _empty_plan(idempotent=[idempotent_cfg], **{add_bucket: [add_cfg]})
+
+    getattr(resource, handler_name)(plan, {})
+
+    assert resource.results.diffs[0]["save_deploy_required"] is True
+    assert "save_deploy_serial_numbers" not in resource.results.diffs[0]
+    assert resource._check_mode_config_actions == []
+
+
 def test_exit_json_normal_requeries_inventory_and_builds_delete_add_diff(monkeypatch):
     """exit_json normal branch re-queries successful runs and combines delete/add diffs."""
     before = [_sw("192.0.2.10", "SERIAL1")]
