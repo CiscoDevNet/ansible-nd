@@ -309,3 +309,30 @@ def test_manage_fabric_group_vxlan_00340():
     model = _model({"multisite_inter_connect_bgp_key": ""})
     assert model.management.multisite_inter_connect_bgp_key is None
     assert "multisiteInterConnectBgpKey" not in model.to_payload()["management"]
+
+
+def test_manage_fabric_group_vxlan_00400():
+    """
+    # Summary
+
+    Verify the controller's read-only security-group status is never replayed.
+
+    ## Test
+
+    - Response parsing accepts and strips securityGroupStatus.
+    - Payload, config, gathered output, diff, and argument spec omit the field.
+    """
+    model = FabricGroupVxlanModel.from_response(
+        {
+            "name": "MSD1",
+            "category": "fabricGroup",
+            "management": {"type": "vxlan", "securityGroupStatus": "enabled"},
+        }
+    )
+    management_spec = FabricGroupVxlanModel.get_argument_spec()["config"]["options"]["management"]["options"]
+
+    assert "securityGroupStatus" not in model.to_payload()["management"]
+    assert "security_group_status" not in model.to_config()["management"]
+    assert "security_group_status" not in model.to_gathered_config()["management"]
+    assert "securityGroupStatus" not in model.to_diff_dict()["management"]
+    assert "security_group_status" not in management_spec

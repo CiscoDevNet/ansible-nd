@@ -108,11 +108,31 @@ def test_manage_fabric_group_vxlan_endpoints_00100(monkeypatch):
     def fake_request(*args, **kwargs):
         return {
             "fabrics": [
-                {"name": "fg1", "category": "fabricGroup", "management": {"type": "vxlan"}},
-                {"name": "f1", "category": "fabric", "management": {"type": "vxlanIbgp"}},
-                {"name": "fg2", "category": "fabricGroup", "management": {"type": "vxlan"}},
-                {"name": "fg3", "category": "fabricGroup", "management": {"type": "other"}},
-                {"name": "f2", "category": "fabric", "management": {"type": "vxlanEbgp"}},
+                {
+                    "name": "fg1",
+                    "category": "fabricGroup",
+                    "management": {"type": "vxlan"},
+                },
+                {
+                    "name": "f1",
+                    "category": "fabric",
+                    "management": {"type": "vxlanIbgp"},
+                },
+                {
+                    "name": "fg2",
+                    "category": "fabricGroup",
+                    "management": {"type": "vxlan"},
+                },
+                {
+                    "name": "fg3",
+                    "category": "fabricGroup",
+                    "management": {"type": "other"},
+                },
+                {
+                    "name": "f2",
+                    "category": "fabric",
+                    "management": {"type": "vxlanEbgp"},
+                },
             ]
         }
 
@@ -131,8 +151,16 @@ def test_manage_fabric_group_vxlan_endpoints_00110(monkeypatch):
         "_request",
         lambda *a, **k: {
             "fabrics": [
-                {"name": "f1", "category": "fabric", "management": {"type": "vxlanIbgp"}},
-                {"name": "f2", "category": "fabric", "management": {"type": "vxlanEbgp"}},
+                {
+                    "name": "f1",
+                    "category": "fabric",
+                    "management": {"type": "vxlanIbgp"},
+                },
+                {
+                    "name": "f2",
+                    "category": "fabric",
+                    "management": {"type": "vxlanEbgp"},
+                },
             ]
         },
     )
@@ -169,7 +197,11 @@ def test_manage_fabric_group_vxlan_endpoints_00150(monkeypatch):
         lambda *a, **k: {
             "fabrics": [
                 {"name": "fg-no-mgmt", "category": "fabricGroup"},
-                {"name": "fg-ok", "category": "fabricGroup", "management": {"type": "vxlan"}},
+                {
+                    "name": "fg-ok",
+                    "category": "fabricGroup",
+                    "management": {"type": "vxlan"},
+                },
             ]
         },
     )
@@ -203,4 +235,4 @@ def test_manage_fabric_group_vxlan_endpoints_00170(monkeypatch):
     monkeypatch.setattr(orch, "_request", fake_request)
     orch.query_all()
     assert captured["kwargs"].get("not_found_ok") is True
-    assert captured["kwargs"]["path"] == "/api/v1/manage/fabrics?category=fabricGroup"
+    assert captured["kwargs"]["path"] == ("/api/v1/manage/fabrics?category=fabricGroup&max=100&offset=0&sort=name")

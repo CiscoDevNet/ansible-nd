@@ -9,7 +9,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config
     VrfConfigModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_argument_specs import (
-    vrf_base_argument_spec,
+    vrf_standalone_argument_spec,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_vrf import (
     BaseVrfStrategy,
@@ -44,7 +44,7 @@ class StandaloneVrfStrategy(BaseVrfStrategy):
 
     def get_argument_spec(self) -> dict[str, Any]:
         """Standalone fabrics use the base VRF argument spec (no child_fabric_config)."""
-        return vrf_base_argument_spec()
+        return vrf_standalone_argument_spec()
 
     # ── Endpoint classes ──────────────────────────────────────────
 

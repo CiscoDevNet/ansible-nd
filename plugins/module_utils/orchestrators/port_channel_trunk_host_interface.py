@@ -15,7 +15,10 @@ from __future__ import annotations
 from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import TrunkPoHostPolicyTypeEnum
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
+    TrunkPoHostPolicyTypeEnum,
+    XeTrunkPoHostPolicyTypeEnum,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_trunk_host_interface import (
     PortChannelTrunkHostInterfaceModel,
 )
@@ -29,7 +32,8 @@ class PortChannelTrunkHostInterfaceOrchestrator(PortChannelBaseOrchestrator):
     Orchestrator for port-channel trunkPoHost interface CRUD operations on Nexus Dashboard.
 
     Inherits all shared port-channel logic from `PortChannelBaseOrchestrator`. Defines `model_class` as
-    `PortChannelTrunkHostInterfaceModel` and manages the `trunkPoHost` policy type.
+    `PortChannelTrunkHostInterfaceModel` and manages both the NX-OS `trunkPoHost` and the IOS-XE `iosXeTrunkPoHost`
+    policy types (issue #537).
 
     ## Raises
 
@@ -40,14 +44,20 @@ class PortChannelTrunkHostInterfaceOrchestrator(PortChannelBaseOrchestrator):
 
     model_class: ClassVar[type[NDBaseModel]] = PortChannelTrunkHostInterfaceModel
 
+    # Capability preflight (PR #570 review): `capableSwitches?interfaceType=portChannel&mode=trunk` lists every switch of a VXLAN
+    # and a Campus VXLAN fabric, Catalyst included (lab-verified 2026-09-21 on ND 4.2.1.10 and 4.3.1.175), unlike the ethernet modes.
+    interface_type: ClassVar[str] = "portChannel"
+    interface_mode: ClassVar[str] = "trunk"
+
     def _managed_policy_types(self) -> set[str]:
         """
         # Summary
 
-        Return the set of API-side policy type values managed by this orchestrator.
+        Return the set of API-side policy type values managed by this orchestrator: the NX-OS `trunkPoHost` and the
+        IOS-XE `iosXeTrunkPoHost` policy types (issue #537).
 
         ## Raises
 
         None
         """
-        return {e.value for e in TrunkPoHostPolicyTypeEnum}
+        return {e.value for e in TrunkPoHostPolicyTypeEnum} | {e.value for e in XeTrunkPoHostPolicyTypeEnum}

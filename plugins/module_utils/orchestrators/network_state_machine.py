@@ -57,15 +57,21 @@ class NetworkStateMachine:
         """Return True when the owning Ansible module is running in check mode."""
         return bool(getattr(getattr(self.coordinator, "module", None), "check_mode", False))
 
-    def run_basic(self, module_args: dict, strategy: BaseNetworkStrategy | None = None) -> dict[str, Any]:
+    def run_basic(self, module_args: dict, strategy: BaseNetworkStrategy | None = None, prebuilt_sm: Any = None) -> dict[str, Any]:
         """
         Run only the generic NDStateMachine-backed Network CRUD/gathered flow.
         """
         state = module_args.get("state", "merged")
-        sm, original_config, original_state = self.coordinator._new_state_machine(crud_module_args(module_args), strategy)
+        if prebuilt_sm is None:
+            sm, original_config, original_state = self.coordinator._new_state_machine(crud_module_args(module_args), strategy)
+        else:
+            sm = prebuilt_sm
+            original_config = self.coordinator.module.params.get("config")
+            original_state = self.coordinator.module.params.get("state")
         try:
             prepare_crud_state(sm, state)
             if state != "gathered":
+                self.coordinator._preflight_fabric_features(sm, module_args, strategy or self.coordinator.strategy)
                 self._trace("manage_state_start", state=state)
                 sm.manage_state()
                 self._trace("manage_state_end", state=state)
@@ -85,7 +91,6 @@ class NetworkStateMachine:
         """
         active_strategy = strategy or self.coordinator.strategy
         state = module_args.get("state", "merged")
-        config = [dict(network) for network in module_args.get("config") or []]
 
         if active_strategy.is_child or state == "gathered":
             return self.run_basic(module_args, strategy=active_strategy)
@@ -93,56 +98,7 @@ class NetworkStateMachine:
         if state == "deleted":
             return self.run_deleted(module_args, active_strategy)
 
-        if state in ("replaced", "overridden", "staged"):
-            return self._run_state_machine_aware_with_attachments(module_args, active_strategy, defer_deploy)
-
-        desired_attachments = None
-        desired_network_names = None
-        if state in ("merged", "replaced", "overridden", "staged"):
-            desired_attachments = self.coordinator._desired_attachment_map(
-                module_args,
-                active_strategy,
-            )
-
-        self._trace("attachment_phase_pre_start", state=state)
-        pre_attach = self.coordinator._apply_attachment_phase(
-            module_args,
-            active_strategy,
-            phase="pre",
-            desired=desired_attachments,
-            current_network_names=desired_network_names,
-        )
-        self._trace("attachment_phase_pre_end", changed=pre_attach.get("changed"), payload_count=len(pre_attach.get("payloads", [])))
-        current_attachments = self._current_after_pre_detach(pre_attach)
-
-        result = self.coordinator._run_state_machine(module_args, strategy=active_strategy)
-
-        self._prepend_traces(result, [pre_attach])
-
-        if result.get("failed", False):
-            return result
-
-        self._trace("attachment_phase_post_start", state=state)
-        post_attach = self.coordinator._apply_attachment_phase(
-            module_args,
-            active_strategy,
-            phase="post",
-            desired=desired_attachments,
-            current_network_names=desired_network_names,
-            current=current_attachments,
-        )
-        self._trace("attachment_phase_post_end", changed=post_attach.get("changed"), payload_count=len(post_attach.get("payloads", [])))
-        self.coordinator._merge_api_trace(result, post_attach)
-
-        return self._deploy_after_attachment_changes(
-            result,
-            config,
-            module_args,
-            active_strategy,
-            pre_attach,
-            post_attach,
-            defer_deploy,
-        )
+        return self._run_state_machine_aware_with_attachments(module_args, active_strategy, defer_deploy)
 
     def run_overridden(
         self,
@@ -162,7 +118,7 @@ class NetworkStateMachine:
         defer_deploy: bool = False,
     ) -> dict[str, Any]:
         """
-        Run replaced/overridden/staged after deriving current Network names from the state machine.
+        Run write states using the state machine's cached Network inventory.
 
         The pre-detach phase must only query attachments for Networks that
         already exist. First-create ``state=replaced`` tasks can then create
@@ -182,7 +138,12 @@ class NetworkStateMachine:
             current_network_name_set = set(current_network_names)
             desired_network_name_set = set(desired_network_names)
             current_desired_network_names = [network_name for network_name in desired_network_names if network_name in current_network_name_set]
-            attachment_query_network_names = current_network_names if state in ("overridden", "staged") else current_desired_network_names
+            if state in ("overridden", "staged"):
+                attachment_query_network_names = current_network_names
+            elif state == "replaced" or desired_attachments:
+                attachment_query_network_names = current_desired_network_names
+            else:
+                attachment_query_network_names = []
             current_attachment_details = (
                 self.coordinator._current_attachment_details_ignore_missing(
                     module_args,
@@ -195,6 +156,9 @@ class NetworkStateMachine:
             current_desired_attachments = self.coordinator._attachment_map_from_details(
                 current_attachment_details,
                 current_desired_network_names,
+            )
+            self.coordinator._preflight_fabric_features(
+                sm, module_args, strategy, current_attachments=current_desired_attachments, desired_attachments=desired_attachments
             )
 
             pre_delete_traces: list[dict[str, Any]] = []
@@ -219,9 +183,11 @@ class NetworkStateMachine:
             )
             self._trace("attachment_phase_pre_end", changed=pre_attach.get("changed"), payload_count=len(pre_attach.get("payloads", [])))
             desired_attachments = pre_attach.get("desired", desired_attachments)
-            current_attachments = self._current_after_pre_detach(
-                pre_attach,
-                empty_when_absent=current_desired_network_names == [],
+            # Merged skips pre-detach, so retain its original attachment cache.
+            current_attachments = (
+                current_desired_attachments
+                if state == "merged"
+                else self._current_after_pre_detach(pre_attach, empty_when_absent=current_desired_network_names == [])
             )
 
             self._trace("manage_state_start", state=state)
@@ -237,7 +203,7 @@ class NetworkStateMachine:
             post_attachment_details = list(current_attachment_details or [])
             post_current_attachments = dict(current_attachments or {})
             new_desired_network_names = [network_name for network_name in desired_network_names if network_name not in current_network_name_set]
-            if state in ("replaced", "overridden", "staged") and desired_attachments and new_desired_network_names and not self._check_mode():
+            if desired_attachments and new_desired_network_names and not self._check_mode():
                 self._trace("attachment_phase_post_new_current_query_start", network_names=new_desired_network_names)
                 new_attachment_details = self.coordinator._current_attachment_details(
                     module_args,
@@ -277,6 +243,7 @@ class NetworkStateMachine:
                 pre_attach,
                 post_attach,
                 defer_deploy,
+                existing_names=current_network_name_set if self._check_mode() else None,
             )
         finally:
             self.coordinator._restore_state_machine_params(original_config, original_state)
@@ -304,23 +271,37 @@ class NetworkStateMachine:
         pre_attach: dict[str, Any],
         post_attach: dict[str, Any],
         defer_deploy: bool,
+        existing_names: set[str] | None = None,
     ) -> dict[str, Any]:
-        """Deploy or defer pending work produced by attachment phases."""
+        """
+        Deploy or defer pending work produced by attachment phases.
+
+        ## Raises
+
+        ### ValueError
+
+        - If an attachment removal has no affected switch ID for undeploy.
+        """
+        detach_targets = pre_attach.get("deploy_targets", {})
+        detach_payloads = self.coordinator._build_delete_deploy_payloads(config, detach_targets, strategy=strategy) if detach_targets else []
+        if detach_targets and not detach_payloads:
+            raise ValueError("Cannot deploy Network attachment removals without affected switch IDs.")
         deploy_payloads = self.coordinator._build_deploy_payloads(
             config,
-            pre_attach.get("deploy_targets", {}),
+            {},
             post_attach.get("deploy_targets", {}),
         )
         self._trace("deploy_payloads_from_attachments", payload_count=len(deploy_payloads), payloads=deploy_payloads)
-        if not deploy_payloads:
+        if not deploy_payloads and not detach_targets:
             deploy_payloads = self.coordinator._build_pending_network_deploy_payloads(
                 result,
                 config,
                 module_args,
                 strategy,
+                existing_names,
             )
             self._trace("deploy_payloads_from_result", payload_count=len(deploy_payloads), payloads=deploy_payloads)
-        if not deploy_payloads and self._should_query_pending_networks(result, config):
+        if not deploy_payloads and not detach_targets and self._should_query_pending_networks(result, config):
             self._trace("deploy_pending_query_start")
             current_networks, query_trace = self.coordinator._query_current_networks_with_trace(module_args, strategy)
             self.coordinator._merge_api_trace(result, query_trace)
@@ -329,13 +310,14 @@ class NetworkStateMachine:
                 config,
                 module_args,
                 strategy,
+                existing_names,
             )
             self._trace("deploy_pending_query_end", current_count=len(current_networks), payload_count=len(deploy_payloads), payloads=deploy_payloads)
-        if not deploy_payloads:
+        if not deploy_payloads and not detach_payloads:
             return result
 
         if defer_deploy:
-            result["_deferred_deploy_payloads"] = deploy_payloads
+            result["_deferred_deploy_payloads"] = [{"_undeploy": True, **payload} for payload in detach_payloads] + deploy_payloads
             return result
 
         if self._check_mode():
@@ -344,11 +326,16 @@ class NetworkStateMachine:
                 {
                     "changed": True,
                     "failed": False,
-                    "check_mode_deploy_payloads": deploy_payloads,
+                    "check_mode_deploy_payloads": detach_payloads + deploy_payloads,
                 },
             )
             return result
 
+        for deploy_payload in detach_payloads:
+            self._trace("undeploy_start", deploy_payload=deploy_payload)
+            deploy_trace = self.coordinator._deploy_network_attachments(module_args, strategy, deploy_payload, undeploy=True)
+            self.coordinator._merge_api_trace(result, deploy_trace)
+            self._trace("undeploy_end", deploy_payload=deploy_payload)
         for deploy_payload in deploy_payloads:
             self._trace("deploy_start", deploy_payload=deploy_payload)
             deploy_trace = self.coordinator._deploy_network_attachments(
@@ -526,16 +513,14 @@ class NetworkStateMachine:
         target_network_names = wait_network_names
         if target_network_names is None:
             target_network_names = self.coordinator._configured_network_names(config)
-        is_mcfg_parent = bool(getattr(strategy, "is_parent", False) and getattr(strategy, "is_multicluster", False))
         delete_deploy_targets: dict[str, set[str]] = {}
-        if not is_mcfg_parent:
-            delete_deploy_targets = {network_name: set() for network_name in target_network_names if network_name}
         for network_name, switch_ids in (detach_trace.get("deploy_targets", {}) if detach_trace else {}).items():
             delete_deploy_targets.setdefault(network_name, set()).update(switch_ids or set())
 
         deploy_payloads = self.coordinator._build_delete_deploy_payloads(
             config,
             delete_deploy_targets,
+            strategy=strategy,
         )
         self._trace("delete_deploy_payloads_built", payload_count=len(deploy_payloads), payloads=deploy_payloads)
         if self._check_mode():
@@ -556,13 +541,13 @@ class NetworkStateMachine:
                     api_args,
                     strategy,
                     deploy_payload,
+                    undeploy=True,
                 )
             )
             self._trace("delete_deploy_end", deploy_payload=deploy_payload)
 
         if target_network_names:
             self._trace("delete_wait_ready_start", network_names=target_network_names)
-            self.coordinator._wait_for_network_attachments_delete_ready(wait_args, strategy, target_network_names)
             self.coordinator._wait_for_networks_delete_ready(wait_args, strategy, target_network_names)
             self._trace("delete_wait_ready_end", network_names=target_network_names)
         return traces

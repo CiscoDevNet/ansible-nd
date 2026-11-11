@@ -23,6 +23,7 @@ and clear it during merge, and a dual-valued ND echo must survive unrelated merg
 from __future__ import annotations
 
 from contextlib import contextmanager
+from typing import get_args
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import (
@@ -50,6 +51,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_tru
     TrunkVpcHostPolicyModel,
 )
 from pydantic import ValidationError
+from pydantic_core import PydanticUndefined
 
 
 @contextmanager
@@ -261,7 +263,10 @@ PPS_ATTR = "storm_control_broadcast_level_pps"
 
 def nd_interface_response(policy_cls, interface_name, policy_fields):
     """Build an ND-shaped interface GET response dict carrying the given aliased policy fields."""
-    policy_type = policy_cls.model_fields["policy_type"].default
+    field = policy_cls.model_fields["policy_type"]
+    # Models whose discriminator is an injected `Literal` (ethernet access / trunk-host since issues #534 / #535) carry no
+    # field default; read the single Literal member instead.
+    policy_type = field.default if field.default is not PydanticUndefined else get_args(field.annotation)[0]
     policy = {"policyType": getattr(policy_type, "value", policy_type)}
     policy.update(policy_fields)
     return {"switchIp": SWITCH_IP, "interfaceName": interface_name, "configData": {"networkOS": {"policy": policy}}}

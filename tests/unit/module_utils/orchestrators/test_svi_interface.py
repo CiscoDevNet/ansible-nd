@@ -26,6 +26,8 @@ Uses the file-based `Sender` from `tests/unit/module_utils/sender_file.py` as th
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.svi_interface import SviInterfaceModel
@@ -49,6 +51,7 @@ def _build_rest_send(
     fabric_name: str = "fabric_1",
     state: str | None = None,
     config: list[dict] | None = None,
+    check_mode: bool = False,
 ) -> RestSend:
     """Build a RestSend wired to the file-based Sender and the real ResponseHandler.
 
@@ -64,7 +67,7 @@ def _build_rest_send(
     response_handler.verb = HttpVerbEnum.GET
     response_handler.commit()
 
-    params: dict = {"check_mode": False, "fabric_name": fabric_name}
+    params: dict = {"check_mode": check_mode, "fabric_name": fabric_name}
     if state is not None:
         params["state"] = state
     if config is not None:
@@ -83,17 +86,18 @@ def _build_orchestrator(
     fabric_name: str = "fabric_1",
     state: str | None = None,
     config: list[dict] | None = None,
+    check_mode: bool = False,
 ) -> SviInterfaceOrchestrator:
     """Construct an orchestrator with the file-based RestSend injected."""
-    rest_send = _build_rest_send(gen_responses, fabric_name=fabric_name, state=state, config=config)
+    rest_send = _build_rest_send(gen_responses, fabric_name=fabric_name, state=state, config=config, check_mode=check_mode)
     return SviInterfaceOrchestrator(rest_send=rest_send)
 
 
-def _build_model(switch_ip: str = "192.168.1.1", interface_name: str = "vlan333", **policy_kwargs) -> SviInterfaceModel:
+def _build_model(switch_ip: str = "192.168.1.1", interface_name: str = "vlan333", network_os_type: str = "nx-os", **policy_kwargs) -> SviInterfaceModel:
     """Build an SviInterfaceModel with optional policy fields populated."""
     config_data = None
     if policy_kwargs:
-        config_data = {"mode": "managed", "network_os": {"network_os_type": "nx-os", "policy": policy_kwargs}}
+        config_data = {"mode": "managed", "network_os": {"network_os_type": network_os_type, "policy": policy_kwargs}}
     return SviInterfaceModel.from_config({"switch_ip": switch_ip, "interface_name": interface_name, "interface_type": "svi", "config_data": config_data})
 
 
@@ -548,3 +552,304 @@ def test_svi_orchestrator_01000() -> None:
     assert policy["policyType"] == "svi"
     assert policy["description"] == "just description"
     assert "hsrpVersion" not in policy
+
+
+# =============================================================================
+# Test: IOS-XE branch (issue #540) — query_all managed set and create_bulk grouping
+# =============================================================================
+
+
+def test_svi_orchestrator_00450() -> None:
+    """
+    # Summary
+
+    Verify `query_all` keeps both IOS-XE managed policy types (`iosXeSvi`, `iosXeSviShutNoShut`), filters `userDefined`, and
+    tolerates the records a Catalyst switch list carries that the NX-OS-only filter never saw: the discovered `Vlan1` record whose
+    `policy` is `null` and an `svi` record with no `configData` at all (lab-verified shapes, ND 4.2.1.10, 2026-09-16).
+
+    ## Test
+
+    - state is `overridden`, one Catalyst switch
+    - Result contains exactly `vlan990` (iosXeSvi) and `Vlan991` (iosXeSviShutNoShut) with `switchIp` injected
+    - `Vlan992` (userDefined), `Vlan1` (policy null), `Vlan2` (no configData) and the ethernet are filtered without raising
+
+    ## Classes and Methods
+
+    - SviInterfaceOrchestrator.query_all()
+    """
+
+    def responses():
+        yield responses_svi("test_query_all_xe_00450a")
+        yield responses_svi("test_query_all_xe_00450b")
+        yield responses_svi("test_query_all_xe_00450c")
+
+    gen_responses = ResponseGenerator(responses())
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(gen_responses, state="overridden")
+        result = orchestrator.query_all()
+
+    by_name = {iface["interfaceName"]: iface for iface in result}
+    assert set(by_name) == {"vlan990", "Vlan991"}
+    assert by_name["vlan990"]["switchIp"] == "192.168.12.181"
+    assert by_name["Vlan991"]["configData"]["networkOS"]["policy"]["policyType"] == "iosXeSviShutNoShut"
+
+
+def test_svi_orchestrator_00910() -> None:
+    """
+    # Summary
+
+    Verify `create_bulk` sends one POST per `(switch, policyType)` group (shared `bulk_create_groups`, issue #409): ND rejects an
+    `interfaces[]` array that mixes `iosXeSvi` and `iosXeSviShutNoShut` on one switch (lab-verified 2026-09-16 on 4.2.1.10 and
+    4.3.1.175, "Mixed policy types ... are not allowed in bulk interface creation").
+
+    ## Test
+
+    - Two IOS-XE SVIs of different policy types on the Catalyst and one NX-OS SVI on a Nexus leaf
+    - Three POSTs consumed (switch GET + three create responses) and all three interfaces queued for deploy
+
+    ## Classes and Methods
+
+    - SviInterfaceOrchestrator.create_bulk()
+    - NDBaseInterfaceOrchestrator.bulk_create_groups()
+    """
+
+    def responses():
+        yield responses_svi("test_create_bulk_grouped_00910a")
+        yield responses_svi("test_create_bulk_grouped_00910b")
+        yield responses_svi("test_create_bulk_grouped_00910c")
+        yield responses_svi("test_create_bulk_grouped_00910d")
+
+    gen_responses = ResponseGenerator(responses())
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(gen_responses)
+        models = [
+            _build_model(switch_ip="192.168.12.181", interface_name="vlan990", network_os_type="ios-xe", admin_state=True, ip="10.99.90.1", prefix=24),
+            _build_model(switch_ip="192.168.12.181", interface_name="vlan991", network_os_type="ios-xe", policy_type="iosXeSviShutNoShut", admin_state=False),
+            _build_model(interface_name="vlan333", admin_state=True, ip="10.99.99.1", prefix=24),
+        ]
+        results = orchestrator.create_bulk(models)
+
+    assert len(results) == 3
+    assert len(orchestrator.rest_send.responses) == 4
+    assert ("vlan990", "CAT9KV1701") in orchestrator._pending_deploys
+    assert ("vlan991", "CAT9KV1701") in orchestrator._pending_deploys
+    assert ("vlan333", "FDO11111AAA") in orchestrator._pending_deploys
+
+
+def test_svi_orchestrator_00920() -> None:
+    """
+    # Summary
+
+    Verify the grouping keys `bulk_create_groups` builds for the SVI model: `policy_type` is read through the model's discriminated
+    union for both branches and the group order follows the first model of each group.
+
+    ## Test
+
+    - Same three models as test 00910
+    - Keys are `(CAT9KV1701, iosXeSvi)`, `(CAT9KV1701, iosXeSviShutNoShut)`, `(FDO11111AAA, svi)` in that order
+    - Each payload carries the injected `switchId` and its `policyType`
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.bulk_create_groups()
+    - NDBaseInterfaceOrchestrator._desired_policy_type()
+    """
+
+    def responses():
+        yield responses_svi("test_bulk_create_groups_00920a")
+
+    gen_responses = ResponseGenerator(responses())
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(gen_responses)
+        models = [
+            _build_model(switch_ip="192.168.12.181", interface_name="vlan990", network_os_type="ios-xe", admin_state=True, ip="10.99.90.1", prefix=24),
+            _build_model(switch_ip="192.168.12.181", interface_name="vlan991", network_os_type="ios-xe", policy_type="iosXeSviShutNoShut", admin_state=False),
+            _build_model(interface_name="vlan333", admin_state=True, ip="10.99.99.1", prefix=24),
+        ]
+        groups = orchestrator.bulk_create_groups(models)
+
+    keys = [(key.switch_id, key.policy_type) for key in groups]
+    assert keys == [("CAT9KV1701", "iosXeSvi"), ("CAT9KV1701", "iosXeSviShutNoShut"), ("FDO11111AAA", "svi")]
+    for key, items in groups.items():
+        for item in items:
+            assert item.payload["switchId"] == key.switch_id
+            assert item.payload["configData"]["networkOS"]["policy"]["policyType"] == key.policy_type
+
+
+@pytest.mark.parametrize(
+    "policy_kwargs",
+    [
+        {"admin_state": True},
+        {"policy_type": "iosXeSviShutNoShut", "admin_state": False},
+    ],
+    ids=["iosXeSvi", "iosXeSviShutNoShut"],
+)
+def test_svi_orchestrator_00930(policy_kwargs: dict) -> None:
+    """
+    # Summary
+
+    Verify a mixed HTTP 207 inside one `(switch, policyType)` group still deploy-queues the SVI the controller accepted (PR #571
+    review), for both IOS-XE policy types: the accepted sibling's intent IS on the controller, so the failure-path finalizer must
+    ship it. The match is case-insensitive and the queued pair keeps the module's identifier.
+
+    ## Test
+
+    - Two IOS-XE SVIs of the same policy type on the Catalyst share one POST
+    - POST returns 207: `Vlan990` `success`, `vlan991` `failed`
+    - `RuntimeError` matches `Bulk create failed` and names the accepted SVI
+    - `_pending_deploys == [("vlan990", sw)]` only
+
+    ## Classes and Methods
+
+    - SviInterfaceOrchestrator.create_bulk()
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    """
+
+    def responses():
+        yield responses_svi("test_svi_orchestrator_00930a")
+        yield responses_svi("test_svi_orchestrator_00930b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()))
+    models = [_build_model(switch_ip="192.168.12.181", interface_name=name, network_os_type="ios-xe", **policy_kwargs) for name in ("vlan990", "vlan991")]
+
+    with pytest.raises(RuntimeError, match=r"Bulk create failed.*accepted \['vlan990'\] from the same request"):
+        orchestrator.create_bulk(models)
+
+    assert len(orchestrator.rest_send.responses) == 2
+    assert orchestrator._pending_deploys == [("vlan990", "CAT9KV1701")]
+
+
+def test_svi_orchestrator_00940() -> None:
+    """
+    # Summary
+
+    Verify `state: deleted` refuses to remove an IOS-XE SVI that is deployed but not yet discovered (PR #571 review), while a
+    discovered SVI and a staged, never-deployed SVI on the same switch pass, with one deployment-history GET per undiscovered SVI.
+
+    ## Test
+
+    - vlan980 is `up`; vlan981 is `unknown` with no interface push in its history (staged); vlan982 is `unknown` with its create push newest
+    - `preflight_delete` raises `RuntimeError` naming vlan982 only
+    - Exactly four requests; nothing is queued
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight_delete()
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    """
+
+    def responses():
+        yield responses_svi("test_svi_orchestrator_00940a")
+        yield responses_svi("test_svi_orchestrator_00940b")
+        yield responses_svi("test_svi_orchestrator_00940c")
+        yield responses_svi("test_svi_orchestrator_00940d")
+
+    names = ("vlan980", "vlan981", "vlan982")
+    config = [{"switch_ip": "192.168.12.181", "interface_name": name} for name in names]
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), state="deleted", config=config)
+    models = [_build_model(switch_ip="192.168.12.181", interface_name=name, network_os_type="ios-xe", admin_state=True) for name in names]
+
+    with pytest.raises(RuntimeError, match=r"Cannot remove IOS-XE interface.*vlan982") as exc_info:
+        orchestrator.preflight_delete(models)
+
+    assert "vlan981" not in str(exc_info.value)
+    assert len(orchestrator.rest_send.responses) == 4
+    assert orchestrator._pending_removes == []
+    assert orchestrator._pending_deploys == []
+
+
+# =============================================================================
+# Test: capability preflight opt-in (PR #571 review)
+# =============================================================================
+
+
+def test_svi_orchestrator_00945() -> None:
+    """
+    # Summary
+
+    Verify the orchestrator opts in to the shared capability preflight as `svi` / `managed`.
+
+    ## Test
+
+    - `interface_type == "svi"` and `interface_mode == "managed"`
+
+    ## Classes and Methods
+
+    - SviInterfaceOrchestrator.interface_type
+    - SviInterfaceOrchestrator.interface_mode
+    """
+    assert SviInterfaceOrchestrator.interface_type == "svi"
+    assert SviInterfaceOrchestrator.interface_mode == "managed"
+
+
+@pytest.mark.parametrize("check_mode", [False, True], ids=["normal", "check_mode"])
+def test_svi_orchestrator_00950(check_mode: bool) -> None:
+    """
+    # Summary
+
+    Verify `preflight` validates every target switch against the cached `capableSwitches` answer for `svi` / `managed`, at scale:
+    four SVIs on two switches cost exactly one switches GET and one `capableSwitches` GET, in normal and check mode.
+
+    ## Test
+
+    - Two NX-OS SVIs on switch A and two IOS-XE SVIs on the Catalyst; both switches are capable
+    - `preflight` does not raise
+    - Exactly two responses were consumed: the switches list, then the `capableSwitches` GET
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_svi(f"{method_name}a")
+        yield responses_svi(f"{method_name}b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), check_mode=check_mode)
+    models = [
+        _build_model(interface_name="vlan333", admin_state=True),
+        _build_model(interface_name="vlan334", admin_state=True),
+        _build_model(switch_ip="192.168.12.181", interface_name="vlan980", network_os_type="ios-xe", admin_state=True),
+        _build_model(switch_ip="192.168.12.181", interface_name="vlan981", network_os_type="ios-xe", admin_state=True),
+    ]
+
+    with does_not_raise():
+        orchestrator.preflight(models)
+
+    paths = [response.get("REQUEST_PATH") for response in orchestrator.rest_send.responses]
+    assert paths == ["/api/v1/manage/fabrics/fabric_1/switches", "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=svi&mode=managed"]
+
+
+def test_svi_orchestrator_00960() -> None:
+    """
+    # Summary
+
+    Verify `preflight` refuses an SVI on a switch the controller does not list as capable of `svi` / `managed`, outside check mode,
+    naming the switch.
+
+    ## Test
+
+    - `capableSwitches` lists switch A only; the Catalyst is the target
+    - `preflight` raises `RuntimeError` naming the Catalyst's switch id and the mode
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.preflight()
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_svi(f"{method_name}a")
+        yield responses_svi(f"{method_name}b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()))
+    model = _build_model(switch_ip="192.168.12.181", interface_name="vlan980", network_os_type="ios-xe", admin_state=True)
+
+    with pytest.raises(RuntimeError, match=r"not capable of hosting interface_type='svi' mode='managed'.*CAT9KV1701"):
+        orchestrator.preflight([model])

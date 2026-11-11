@@ -17,9 +17,10 @@ inherit from this base and provide their own `model_class` and `_managed_policy_
 Inherits shared interface lifecycle operations (deploy queuing, fabric validation, switch resolution) from
 `NDBaseInterfaceOrchestrator` and adds vPC-specific functionality:
 
-- Peer-serial auto-resolution: each create/update reads the per-switch `vpcPair` endpoint to obtain the peer
-  serial, then injects it as `peerSwitchId` in the payload. Results are cached per orchestrator instance so
-  bulk operations make at most one lookup per primary switch.
+- Peer-serial auto-resolution: create/update injects the peer serial as `peerSwitchId` in the payload. Standalone
+  orchestrators resolve a cache miss through the per-switch `vpcPair` endpoint. The aggregate interface workflow
+  shares a cache seeded from its authoritative fabric-wide `vpcPairs` read, so its mutations need no per-primary
+  pair lookups.
 - Standard remove-based deletion (vPC interfaces are virtual and deletable).
 - Fabric-wide `query_all()` filtered by `interfaceType: "vpc"` and per-type policy filtering.
 
@@ -30,11 +31,13 @@ user to create the pair first via `nd_manage_vpc_pair`.
 
 from __future__ import annotations
 
-from collections import defaultdict
-from collections.abc import Sequence
-from typing import ClassVar
+import re
+from collections.abc import Mapping, Sequence
+from typing import Any, ClassVar
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_vpc_pair import (
     EpVpcPairGet,
 )
@@ -45,10 +48,22 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesPost,
     EpManageInterfacesPut,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.interface_membership import (
+    EthernetMembershipIndex,
+    MembershipValidationError,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import requires_bulk_support
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
+    requires_bulk_support,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
+    BulkCreateGroupKey,
+    BulkCreateItem,
+    NDBaseInterfaceOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    ResponseType,
+)
 
 ModelType = NDBaseModel
 
@@ -62,8 +77,9 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     Provides shared logic for all vPC interface types. Subclasses must set `model_class` and implement
     `_managed_policy_types()` to define which policy types they manage.
 
-    Each create/update reads the `vpcPair` record for the primary switch to obtain the peer serial, which is
-    then injected as `peerSwitchId` in the payload. Lookups are cached per orchestrator instance.
+    Each create/update obtains the peer serial from the active cache and injects it as `peerSwitchId` in the
+    payload. Standalone instances populate cache misses from `vpcPair`; aggregate workflows can share a cache
+    pre-seeded from an authoritative `vpcPairs` inventory.
 
     Mutation methods (`create`, `update`) queue deploys for bulk execution. `delete` issues an immediate
     per-interface `DELETE /interfaces/{name}` (the bulk `interfaceActions/remove` endpoint rejects vPC interfaces;
@@ -90,6 +106,8 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     # per-interface `DELETE /interfaces/{name}` endpoint works (returns 204). We therefore disable bulk delete and
     # use the per-interface DELETE via `delete_endpoint`.
     supports_bulk_create: ClassVar[bool] = True
+    supports_bulk_full_modify: ClassVar[bool] = True
+    supports_bulk_modify_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = False
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
@@ -113,26 +131,98 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         super().model_post_init(__context)
         self._peer_serial_cache: dict[str, str] = {}
+        self._peer_echo_cache: dict[str, str] = {}
+        self._preview_scoped_child_switches: dict[tuple[str, str], set[str]] = {}
+
+    def _register_pending_preview_derived_identities(
+        self,
+        result: ResponseType,
+        pairs: list[tuple[str, str]],
+    ) -> set[tuple[str, str]]:
+        """Retain exact pair scope when ND omits one peer's child preview.
+
+        ND 4.3.1 can return an exact two-row vPC preview where the primary row
+        contains the pending generated port-channel/member CLI while the peer
+        row says the interface is not discovered and has zero pending lines.
+        The subsequent 207 deploy nevertheless reports generated children for
+        both peers. Keep ordinary row-scoped child registration unchanged, but
+        remember the exact reciprocal switch set proven by that structurally
+        valid parent preview. An unregistered canonical child on that pair can
+        then be treated as insufficient evidence and must pass the ordinary
+        exact post-deploy preview; it is never accepted from the 207 alone.
+        """
+
+        # TODO(4.3.1) vpc-preview-omits-peer-pending-child-cli
+        processed = super()._register_pending_preview_derived_identities(result, pairs)
+        originals = {
+            normalized: (name, switch_id) for name, switch_id in pairs if (normalized := self._normalized_interface_pair(name, switch_id)) is not None
+        }
+        for parent in processed:
+            original = originals.get(parent)
+            if original is None:
+                continue
+            verification_pairs = self._preview_verification_pairs([original])
+            switch_ids = {
+                normalized[1] for name, switch_id in verification_pairs if (normalized := self._normalized_interface_pair(name, switch_id)) is not None
+            }
+            if len(switch_ids) == 2:
+                self._preview_scoped_child_switches[parent] = switch_ids
+        return processed
+
+    def _preview_scoped_deploy_child_switches(self) -> dict[tuple[str, str], set[str]]:
+        """Expose exact parent/peer preview scopes to a consolidated deploy."""
+
+        scopes = {parent: set(switch_ids) for parent, switch_ids in super()._preview_scoped_deploy_child_switches().items()}
+        for parent, switch_ids in self._preview_scoped_child_switches.items():
+            scopes.setdefault(parent, set()).update(switch_ids)
+        return scopes
+
+    def _preview_scoped_unregistered_child_requires_verification(
+        self,
+        pair: tuple[str, str],
+        submitted_pairs: list[tuple[str, str]],
+    ) -> bool:
+        """Force post-deploy preview for canonical children on an exact vPC pair."""
+
+        return super()._preview_scoped_unregistered_child_requires_verification(pair, submitted_pairs)
+
+    def preflight_safety(self, model_instances: Sequence[ModelType]) -> None:
+        """Validate both peers and member ownership without capability API calls."""
+        super().preflight_safety(model_instances)
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
+        self._validate_unique_pair_names(model_instances)
 
     def preflight(self, model_instances: Sequence[ModelType]) -> None:
         """
         # Summary
 
-        Run the shared interface preflight, then reject a config that lists the same `interface_name` under both peers of one vPC
-        pair. With the composite `(switch_ip, interface_name)` identity (issue #356) such a config parses as two proposed items that
-        target a single ND resource; failing fast here (the state machine runs `preflight` before any mutation, in check mode too)
-        prevents a double-write against one interface. Pair resolution runs ONLY for names that appear more than once, so runs with
-        unique names — the common case — issue no additional requests; the duplicate path costs one cached `vpcPair` GET per distinct
-        primary switch, reused later by create/update.
+        Run the shared interface preflight, then reject two unsafe ownership shapes before any mutation:
+
+        - A config that lists the same `interface_name` under both peers of one vPC pair. With the composite
+          `(switch_ip, interface_name)` identity (issue #356), those two proposed items target one ND resource.
+        - A proposed physical member that current ND intent assigns to another port-channel/vPC, or that another vPC in the same task
+          also claims. ND otherwise rejects the create only after the POST reaches the controller (issue #533 IFACE-006).
+
+        Every proposed item resolves both sides of its vPC pair before any mutation. This reconciles the authoritative ``vpcPair``
+        records with any peer identity echoed by interface inventory. Member-bearing items additionally read each pair member's
+        already paginated/cached interface inventory once.
 
         ## Raises
 
         ### RuntimeError
 
         - If two (or more) proposed items share an `interface_name` and resolve to the same vPC pair.
+        - If a proposed member is already owned by another parent, has inconsistent current member evidence, or is claimed by two
+          proposed vPCs in the same task.
         - Propagated from `super().preflight` / `_resolve_switch_id` / `_resolve_peer_switch_id` (unresolvable switch, missing pair).
         """
-        super().preflight(model_instances)
+        self.preflight_safety(model_instances)
+        self.validate_switches_capable(model_instances)
+
+    def _validate_unique_pair_names(self, model_instances: Sequence[ModelType]) -> None:
+        """Reject one vPC name listed under both peers of the same pair."""
         items_by_name: dict[str, list[ModelType]] = {}
         for model_instance in model_instances:
             items_by_name.setdefault(model_instance.interface_name, []).append(model_instance)
@@ -143,7 +233,7 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             switch_ips_by_pair: dict[frozenset[str], list[str]] = {}
             for item in items:
                 switch_id = self._resolve_switch_id(item.switch_ip)
-                peer_serial = self._resolve_peer_switch_id(item.switch_ip, switch_id)
+                peer_serial = self._resolve_reciprocal_peer_switch_id(item.switch_ip, switch_id)
                 switch_ips_by_pair.setdefault(frozenset({switch_id, peer_serial}), []).append(item.switch_ip)
             for switch_ips in switch_ips_by_pair.values():
                 if len(switch_ips) > 1:
@@ -152,6 +242,150 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                     )
         if offenders:
             raise RuntimeError(f"Invalid vPC config in fabric '{self.fabric_name}': " + "; ".join(sorted(offenders)))
+        self._validate_members_available(model_instances)
+
+    @staticmethod
+    def _proposed_peer_members(
+        model_instance: ModelType,
+    ) -> tuple[tuple[int, tuple[str, ...]], ...]:
+        """Return the non-empty, per-peer physical-member lists from one proposal."""
+
+        config_data = getattr(model_instance, "config_data", None)
+        network_os = getattr(config_data, "network_os", None) if config_data is not None else None
+        policy = getattr(network_os, "policy", None) if network_os is not None else None
+        if policy is None:
+            return ()
+        proposed: list[tuple[int, tuple[str, ...]]] = []
+        for peer_number in (1, 2):
+            members = getattr(policy, f"peer{peer_number}_member_ports", None) or []
+            normalized = tuple(member for member in members if isinstance(member, str) and member)
+            if normalized:
+                proposed.append((peer_number, normalized))
+        return tuple(proposed)
+
+    @staticmethod
+    def _claim_matches_target_vpc(claim, *, parent_name: str, peer_switch_id: str) -> bool:
+        """Return whether an existing claim is the same pair-scoped vPC parent."""
+
+        if claim.interface_type != "vpc" or claim.interface_name.lower() != parent_name.lower():
+            return False
+        config_data = claim.record.get("configData") or {}
+        network_os = config_data.get("networkOS") or {}
+        policy = network_os.get("policy") or {}
+        declared_peer = policy.get("peerSwitchId")
+        return declared_peer in (None, "", peer_switch_id)
+
+    def _validate_members_available(self, model_instances: Sequence[ModelType]) -> None:
+        """Reject physical members already owned by another parent.
+
+        Proposed ``peer1`` members are scoped to the configured ``switch_ip``;
+        proposed ``peer2`` members are scoped to its authoritative vPC peer.
+        Existing ownership comes from ``EthernetMembershipIndex``, so reciprocal
+        parent orientation and switch-local interface-name reuse follow the same
+        fail-closed rules as standalone member updates.
+        """
+
+        proposals: list[tuple[ModelType, str, str, tuple[tuple[int, tuple[str, ...]], ...]]] = []
+        pair_indexes: dict[frozenset[str], EthernetMembershipIndex] = {}
+        for model_instance in model_instances:
+            peer_members = self._proposed_peer_members(model_instance)
+            if not peer_members:
+                continue
+            primary_switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            peer_switch_id = self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, primary_switch_id)
+            proposals.append((model_instance, primary_switch_id, peer_switch_id, peer_members))
+
+            pair_key = frozenset({primary_switch_id, peer_switch_id})
+            if pair_key in pair_indexes:
+                continue
+            try:
+                pair_indexes[pair_key] = EthernetMembershipIndex(
+                    {
+                        primary_switch_id: self._switch_interfaces(primary_switch_id),
+                        peer_switch_id: self._switch_interfaces(peer_switch_id),
+                    },
+                    peer_switch_ids={
+                        primary_switch_id: peer_switch_id,
+                        peer_switch_id: primary_switch_id,
+                    },
+                )
+            except MembershipValidationError as exc:
+                raise RuntimeError(f"Cannot validate vPC member ownership for pair {sorted(pair_key)!r} " f"in fabric '{self.fabric_name}': {exc}") from exc
+
+        conflicts: list[str] = []
+        task_claims: dict[tuple[str, str], tuple[frozenset[str], str]] = {}
+        for (
+            model_instance,
+            primary_switch_id,
+            peer_switch_id,
+            peer_members,
+        ) in proposals:
+            pair_key = frozenset({primary_switch_id, peer_switch_id})
+            membership_index = pair_indexes[pair_key]
+            parent_name = model_instance.interface_name
+            switches_by_peer = {1: primary_switch_id, 2: peer_switch_id}
+            peer_by_switch = {
+                primary_switch_id: peer_switch_id,
+                peer_switch_id: primary_switch_id,
+            }
+            target_identity = (pair_key, parent_name.lower())
+
+            for peer_number, members in peer_members:
+                switch_id = switches_by_peer[peer_number]
+                for member_name in members:
+                    member_key = (switch_id, member_name.lower())
+                    prior_target = task_claims.get(member_key)
+                    if prior_target is not None and prior_target != target_identity:
+                        conflicts.append(
+                            f"(switch_id={switch_id}, vPC={parent_name}, member={member_name}, " f"also claimed by proposed vPC={prior_target[1]})"
+                        )
+                    else:
+                        task_claims[member_key] = target_identity
+
+                    claims = membership_index.claiming_parents(switch_id, member_name)
+                    foreign_claims = [
+                        claim
+                        for claim in claims
+                        if not self._claim_matches_target_vpc(
+                            claim,
+                            parent_name=parent_name,
+                            peer_switch_id=peer_by_switch[switch_id],
+                        )
+                    ]
+                    if foreign_claims:
+                        owners = sorted({f"{claim.interface_name} ({claim.policy_type or claim.interface_type})" for claim in foreign_claims})
+                        conflicts.append(f"(switch_id={switch_id}, vPC={parent_name}, member={member_name}, " f"current owner={', '.join(owners)})")
+                        continue
+
+                    current_member = membership_index.get_member(switch_id, member_name)
+                    if current_member is None:
+                        continue
+                    try:
+                        ownership = membership_index.validate(switch_id, member_name)
+                    except MembershipValidationError as exc:
+                        conflicts.append(
+                            f"(switch_id={switch_id}, vPC={parent_name}, member={member_name}, " f"current member ownership is inconsistent: {exc})"
+                        )
+                        continue
+                    if (
+                        ownership.owner.interface_name.lower() != parent_name.lower()
+                        or ownership.peer_owner is None
+                        or ownership.peer_owner.switch_id != peer_by_switch[switch_id]
+                        or ownership.peer_owner.interface_name.lower() != parent_name.lower()
+                    ):
+                        conflicts.append(
+                            f"(switch_id={switch_id}, vPC={parent_name}, member={member_name}, " f"current owner={ownership.owner.interface_name})"
+                        )
+
+        if conflicts:
+            raise RuntimeError(
+                f"Cannot configure vPC member(s) already in use or inconsistently owned in fabric "
+                f"'{self.fabric_name}': {'; '.join(conflicts)}. Remove each member from its current parent first."
+            )
+
+    def share_peer_serial_cache(self, cache: dict[str, str]) -> None:
+        """Use a caller-owned peer-serial cache shared by aggregate workflow orchestrators."""
+        self._peer_serial_cache = cache
 
     def _managed_policy_types(self) -> set[str]:
         """
@@ -172,9 +406,10 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         # Summary
 
-        Resolve the peer switch's serial number for the vPC pair containing `primary_serial`. Reads the per-switch
-        `vpcPair` endpoint. Caches the result per orchestrator instance so bulk operations issue at most one lookup
-        per primary switch.
+        Resolve one switch's declared peer serial from its authoritative
+        ``vpcPair`` endpoint. Cache only that directed observation; a one-sided
+        record is not evidence for the reverse relation. Aggregate-workflow
+        orchestrators may share the directed-observation cache.
 
         ## Raises
 
@@ -186,20 +421,232 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         cached = self._peer_serial_cache.get(primary_serial)
         if cached:
             return cached
+
+        peer_serial = self._fetch_peer_switch_id(switch_ip, primary_serial)
+        self._peer_serial_cache[primary_serial] = peer_serial
+        return peer_serial
+
+    def _resolve_reciprocal_peer_switch_id(self, switch_ip: str, primary_serial: str) -> str:
+        """Require authoritative, reciprocal endpoint evidence for a vPC pair."""
+
+        peer_serial = self._resolve_peer_switch_id(switch_ip, primary_serial)
+        reciprocal_serial = self._resolve_peer_switch_id(peer_serial, peer_serial)
+        if reciprocal_serial != primary_serial:
+            raise RuntimeError(
+                f"vPC pair identity is not reciprocal for switch {switch_ip} (serial {primary_serial}): "
+                f"primary reports {peer_serial!r}, but that peer reports {reciprocal_serial!r}"
+            )
+        return peer_serial
+
+    def _validate_peer_evidence(self, switch_id: str, peer_switch_id: str, *, record_echo: bool = False) -> None:
+        """Reject directed peer evidence that cannot form one reciprocal pair.
+
+        Interface rows are only evidence for the switch that returned them. Do
+        not manufacture the reverse relation from a one-sided echo; retain each
+        directed observation independently and reconcile it when the peer row
+        or authoritative pair endpoints are available.
+        """
+
+        outgoing = self._peer_echo_cache.get(switch_id)
+        reverse_outgoing = self._peer_echo_cache.get(peer_switch_id)
+        incoming_to_switch = {source for source, target in self._peer_echo_cache.items() if target == switch_id}
+        incoming_to_peer = {source for source, target in self._peer_echo_cache.items() if target == peer_switch_id}
+        if (
+            outgoing not in (None, peer_switch_id)
+            or reverse_outgoing not in (None, switch_id)
+            or not incoming_to_switch.issubset({peer_switch_id})
+            or not incoming_to_peer.issubset({switch_id})
+        ):
+            raise RuntimeError(
+                f"vPC peer identity for switch {switch_id!r} and peer {peer_switch_id!r} conflicts with "
+                f"interface inventory: outgoing={outgoing!r}, peer outgoing={reverse_outgoing!r}, "
+                f"incoming={sorted(incoming_to_switch)!r}, peer incoming={sorted(incoming_to_peer)!r}"
+            )
+        if record_echo:
+            self._peer_echo_cache[switch_id] = peer_switch_id
+
+    def _fetch_peer_switch_id(self, switch_label: str, switch_id: str) -> str:
+        """Fetch and validate one side of an authoritative vPC-pair relation."""
+
         api_endpoint = EpVpcPairGet()
         api_endpoint.fabric_name = self.fabric_name
-        api_endpoint.switch_id = primary_serial
+        api_endpoint.switch_id = switch_id
         result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
         if not result:
             raise RuntimeError(
-                f"Switch {switch_ip} (serial {primary_serial}) is not in a vPC pair; "
+                f"Switch {switch_label} (serial {switch_id}) is not in a vPC pair; "
                 f"create the pair via nd_manage_vpc_pair before configuring vPC interfaces."
             )
+        returned_switch_id = result.get("switchId")
+        if returned_switch_id not in (None, ""):
+            if not isinstance(returned_switch_id, str) or returned_switch_id.strip() != switch_id:
+                raise RuntimeError(f"vPC pair record requested for switch {switch_label} (serial {switch_id}) " f"declares switchId {returned_switch_id!r}")
         peer_serial = result.get("peerSwitchId")
-        if not peer_serial:
-            raise RuntimeError(f"vPC pair record for switch {switch_ip} (serial {primary_serial}) is missing 'peerSwitchId'; " f"received: {result!r}")
-        self._peer_serial_cache[primary_serial] = peer_serial
+        if not isinstance(peer_serial, str) or not peer_serial.strip():
+            raise RuntimeError(f"vPC pair record for switch {switch_label} (serial {switch_id}) is missing 'peerSwitchId'; " f"received: {result!r}")
+        peer_serial = peer_serial.strip()
+        if peer_serial == switch_id:
+            raise RuntimeError(f"vPC pair record for switch {switch_label} (serial {switch_id}) identifies the switch as its own peer")
+        try:
+            self._validate_peer_evidence(switch_id, peer_serial)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"Authoritative vPC pair identity for switch {switch_label} (serial {switch_id}) "
+                f"conflicts with interface inventory: endpoint reports {peer_serial!r}: {exc}"
+            ) from exc
         return peer_serial
+
+    def _preview_verification_pairs(self, pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        """Expand each submitted vPC identity to its exact two-switch preview pair.
+
+        ND deploy accepts one switch-scoped vPC parent identity but its preview
+        reports convergence for both parent copies. Use cached peer evidence from
+        create/update when available; after delete, resolve the still-existing
+        switch pair directly because the interface record itself is gone.
+        """
+
+        expanded: list[tuple[str, str]] = []
+        for interface_name, switch_id in pairs:
+            peer_switch_id = self._peer_serial_cache.get(switch_id)
+            if peer_switch_id is None:
+                peer_switch_id = self._resolve_reciprocal_peer_switch_id(switch_id, switch_id)
+            for pair in ((interface_name, switch_id), (interface_name, peer_switch_id)):
+                if pair not in expanded:
+                    expanded.append(pair)
+        return expanded
+
+    def _pending_deploy_pairs(self, pairs: list[tuple[str, str]], pending_pairs: set[tuple[str, str]]) -> list[tuple[str, str]]:
+        """A pending preview on either vPC peer requires the submitted parent deploy."""
+
+        return [pair for pair in pairs if any(self._normalized_interface_pair(*peer) in pending_pairs for peer in self._preview_verification_pairs([pair]))]
+
+    def _prepare_deploy_context(self, model_instance: ModelType, switch_id: str) -> None:
+        """Require exact preview-derived child identities for a vPC deploy."""
+
+        if not self.deploy:
+            return
+        self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
+        # Controller echoes can use pair-wide or switch-local peer-slot order.
+        # A parent-scoped preview is the only unambiguous source for the exact
+        # switch identity of generated port-channel/member result rows.
+        self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
+
+    def _prepare_no_diff_deploy_context(self, model_instance: ModelType, switch_id: str) -> None:
+        """Discover pending switch-side children when unchanged vPC intent has none."""
+
+        if self.deploy:
+            self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
+
+    def _can_replay_absent_delete(self, existing_data: dict | None) -> bool:
+        """Allow only ND's policy-less, structurally vPC discovery echo."""
+
+        if existing_data is None:
+            return True
+        if existing_data.get("interfaceType") != "vpc":
+            return False
+        config_data = existing_data.get("configData") or {}
+        network_os = config_data.get("networkOS") or {}
+        return config_data.get("mode") == "unknown" and not network_os.get("policy")
+
+    def _validate_absent_vpc_delete_preview(
+        self,
+        preview: ResponseType,
+        interface_name: str,
+        switch_id: str,
+        peer_switch_id: str,
+    ) -> None:
+        """Prove that replay can deploy only the requested pair's staged delete.
+
+        ND may rediscover a deployed vPC after its policy is deleted. A raw
+        policy-less record alone does not prove the pending command is a
+        deletion, so require an exact successful row for each authoritative
+        peer, matching running vPC ID, and an exact parent removal command.
+        """
+
+        match = re.fullmatch(r"vpc([0-9]+)", interface_name, re.IGNORECASE)
+        if match is None:
+            raise RuntimeError(f"Cannot classify absent vPC delete identity {interface_name!r}.")
+        vpc_id = match.group(1)
+        expected_pairs = [(interface_name, switch_id), (interface_name, peer_switch_id)]
+        pending_pairs, error = self._pending_preview_pairs(preview, expected_pairs)
+        if error is not None:
+            raise RuntimeError(f"Cannot safely replay absent vPC delete for {expected_pairs!r}: {error}")
+        if not pending_pairs:
+            return
+        if pending_pairs != {self._normalized_interface_pair(*pair) for pair in expected_pairs}:
+            raise RuntimeError(f"Absent vPC delete preview is pending on only part of pair {expected_pairs!r}.")
+
+        for row in preview["configurationDiffs"]:
+            configs = row["combinedConfigs"]
+            running = [item.get("config") for item in configs if item["configType"].strip().lower() == "running"]
+            pending = [item.get("config") for item in configs if item["configType"].strip().lower() == "pending"]
+            if len(running) != 1 or len(pending) != 1 or not isinstance(running[0], str) or not isinstance(pending[0], str):
+                raise RuntimeError(f"Absent vPC delete preview lacks unique running/pending CLI for {expected_pairs!r}.")
+            running_lines = [line.strip().casefold() for line in running[0].splitlines()]
+            pending_lines = [line.strip().casefold() for line in pending[0].splitlines() if line.strip()]
+            port_channel_ids = [po_match.group(1) for line in running_lines if (po_match := re.fullmatch(r"interface port-channel([0-9]+)", line)) is not None]
+            if len(port_channel_ids) != 1 or f"vpc {vpc_id}" not in running_lines:
+                raise RuntimeError(f"Absent vPC delete preview lacks one port-channel with vPC {vpc_id} on each peer.")
+            po_id = port_channel_ids[0]
+            if not pending_lines or pending_lines[0] != f"no interface port-channel{po_id}":
+                raise RuntimeError(f"Absent vPC delete preview does not prove removal of port-channel{po_id} on both peers.")
+            # A preview can include member resets as well as the parent delete.
+            # Prove each member belongs to this exact port-channel in the
+            # running config before accepting *any* commands beneath it.
+            running_member = None
+            owned_members = set()
+            for line in running_lines:
+                if (member_match := re.fullmatch(r"interface (ethernet[0-9/]+)", line)) is not None:
+                    running_member = member_match.group(1)
+                elif line.startswith("interface "):
+                    running_member = None
+                elif running_member and re.fullmatch(rf"channel-group {po_id} mode (?:active|passive|on)", line):
+                    owned_members.add(running_member)
+
+            allowed_member_commands = (
+                rf"no channel-group {po_id} force mode (?:active|passive|on)",
+                r"no storm-control action (?:trap|shutdown)",
+                r"no storm-control (?:broadcast|multicast|unicast) level .+",
+                r"no switchport access vlan [0-9]+",
+                r"no switchport trunk native vlan [0-9]+",
+                r"no lacp rate fast",
+                r"no description .+",
+                r"switchport",
+                r"switchport mode trunk",
+                r"switchport trunk allowed vlan none",
+                r"mtu [0-9]+",
+                r"spanning-tree port type edge trunk",
+                r"no shutdown",
+            )
+            pending_member = None
+            for index, line in enumerate(pending_lines[1:], 1):
+                if line == "configure terminal" and index == len(pending_lines) - 1:
+                    continue
+                if (member_match := re.fullmatch(r"interface (ethernet[0-9/]+)", line)) is not None:
+                    pending_member = member_match.group(1)
+                    if pending_member not in owned_members:
+                        raise RuntimeError(f"Absent vPC delete preview touches a non-member interface: {line!r}.")
+                    continue
+                if pending_member is None or not any(re.fullmatch(pattern, line) for pattern in allowed_member_commands):
+                    raise RuntimeError(f"Absent vPC delete preview includes an unproven command: {line!r}.")
+
+    def reconcile_absent_deletes(self, model_instances: Sequence[ModelType]) -> bool:
+        """Preview exact pair-scoped staged deletes before the shared replay."""
+
+        if not self.deploy or not model_instances:
+            return False
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            existing_data = self._switch_interfaces(switch_id).get(model_instance.interface_name.strip().lower())
+            if not self._can_replay_absent_delete(existing_data):
+                continue
+            peer_switch_id = self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
+            payload = {"interfaces": [{"interfaceName": model_instance.interface_name, "switchId": switch_id}]}
+            preview = self._preview_interfaces(payload)
+            if isinstance(preview, Mapping) and preview.get("configurationDiffs") == []:
+                continue
+            self._validate_absent_vpc_delete_preview(preview, model_instance.interface_name, switch_id, peer_switch_id)
+        return super().reconcile_absent_deletes(model_instances)
 
     def _inject_peer_switch_id(self, payload: dict, peer_serial: str) -> dict:
         """
@@ -240,13 +687,14 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            peer_serial = self._resolve_peer_switch_id(model_instance.switch_ip, switch_id)
+            peer_serial = self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
             api_endpoint = self._configure_endpoint(self.create_endpoint(), switch_sn=switch_id)
             payload = model_instance.to_payload()
             payload["switchId"] = switch_id
             self._inject_peer_switch_id(payload, peer_serial)
             request_body = {"interfaces": [payload]}
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
+            self._prepare_deploy_context(model_instance, switch_id)
             self._queue_deploy(model_instance.interface_name, switch_id)
             return result
         except Exception as e:
@@ -269,17 +717,53 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            peer_serial = self._resolve_peer_switch_id(model_instance.switch_ip, switch_id)
+            peer_serial = self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
+            previous_model = kwargs.get("previous_model")
+            if previous_model is not None:
+                self._prepare_deploy_context(previous_model, switch_id)
+                if not self._proposed_peer_members(previous_model) and not self._proposed_peer_members(model_instance):
+                    self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
             api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
             api_endpoint.set_identifiers(model_instance.interface_name)
             payload = model_instance.to_payload()
             payload["switchId"] = switch_id
             self._inject_peer_switch_id(payload, peer_serial)
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+            self._prepare_deploy_context(model_instance, switch_id)
             self._queue_deploy(model_instance.interface_name, switch_id)
             return result
         except Exception as e:
             raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
+
+    def _bulk_modify_payload(self, model_instance: ModelType, switch_id: str) -> dict[str, Any]:
+        """Build the singular vPC body, including its authoritative peer ID."""
+        peer_serial = self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
+        payload = super()._bulk_modify_payload(model_instance, switch_id)
+        self._inject_peer_switch_id(payload, peer_serial)
+        return payload
+
+    def _bulk_full_modify_guard(self, model_instance: ModelType, current: dict[str, Any]) -> bool:
+        """Keep peer-member changes and mismatched pair ownership on PUT."""
+        current_policy = ((current.get("configData") or {}).get("networkOS") or {}).get("policy") or {}
+        desired_policy = self._bulk_modify_payload(model_instance, current["switchId"])["configData"]["networkOS"]["policy"]
+        if current_policy.get("peerSwitchId") != desired_policy.get("peerSwitchId"):
+            return False
+        for peer in (1, 2):
+            field = f"peer{peer}MemberPorts"
+            before = current_policy.get(field) or []
+            after = desired_policy.get(field) or []
+            if not isinstance(before, list) or not isinstance(after, list) or before or after:
+                return False
+        return True
+
+    def prepare_bulk_modify_context(self, model_instance: ModelType, previous_model: ModelType | None = None) -> None:
+        """Retain pair/child deploy evidence as the singular vPC update does."""
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        if previous_model is not None:
+            self._prepare_deploy_context(previous_model, switch_id)
+            if not self._proposed_peer_members(previous_model) and not self._proposed_peer_members(model_instance):
+                self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
+        self._prepare_deploy_context(model_instance, switch_id)
 
     def delete(self, model_instance: ModelType, **kwargs) -> None:
         """
@@ -298,8 +782,15 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            # Delete is not routed through the ordinary create/update preflight.
+            # Require reciprocal authoritative pair evidence here before the
+            # controller receives the mutation.
+            self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
             api_endpoint = self._configure_endpoint(self.delete_endpoint(), switch_sn=switch_id)
             api_endpoint.set_identifiers(model_instance.interface_name)
+            self._prepare_deploy_context(model_instance, switch_id)
+            if not self._proposed_peer_members(model_instance):
+                self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
             self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
             self._queue_deploy(model_instance.interface_name, switch_id)
         except Exception as e:
@@ -310,9 +801,9 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         # Summary
 
-        Create multiple vPC interfaces in bulk. Groups by primary switch, resolves the peer serial once per group, and
-        sends one POST per primary switch with all vPC interfaces in the `interfaces` array. Queues deploys for all
-        created interfaces for later bulk execution via `deploy_pending`.
+        Create multiple vPC interfaces in bulk. Groups by primary switch and policy type, resolves the peer serial once per group,
+        and sends one POST per group with all vPC interfaces in the `interfaces` array. Uses the shared interface partial-create
+        recovery so every vPC explicitly accepted from a mixed response is queued for failure-path deployment.
 
         ## Raises
 
@@ -322,24 +813,28 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         - If any primary switch is not in a vPC pair.
         """
         try:
-            groups: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+            groups: dict[BulkCreateGroupKey, list[BulkCreateItem]] = {}
             for model_instance in model_instances:
                 switch_id = self._resolve_switch_id(model_instance.switch_ip)
-                peer_serial = self._resolve_peer_switch_id(model_instance.switch_ip, switch_id)
+                peer_serial = self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
                 payload = model_instance.to_payload()
                 payload["switchId"] = switch_id
                 self._inject_peer_switch_id(payload, peer_serial)
-                groups[switch_id].append((model_instance.interface_name, payload))
+                self._prepare_deploy_context(model_instance, switch_id)
+                group_key = BulkCreateGroupKey(
+                    switch_id=switch_id,
+                    policy_type=self._desired_policy_type(model_instance),
+                )
+                groups.setdefault(group_key, []).append(
+                    BulkCreateItem(
+                        interface_name=model_instance.interface_name,
+                        payload=payload,
+                    )
+                )
 
             results = []
-            for switch_id, items in groups.items():
-                # Guarded at runtime by @requires_bulk_support("supports_bulk_create")
-                api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)  # pyright: ignore[reportOptionalCall]
-                request_body = {"interfaces": [payload for interface_name, payload in items]}
-                result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
-                results.append(result)
-                for interface_name, payload in items:
-                    self._queue_deploy(interface_name, switch_id)
+            for group_key, items in groups.items():
+                results.append(self._post_bulk_create_group(group_key, items))
             return results
         except Exception as e:
             raise RuntimeError(f"Bulk create failed: {e}") from e
@@ -444,27 +939,43 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         config_data = iface.get("configData") or {}
         network_os = config_data.get("networkOS") or {}
         policy = network_os.get("policy") or {}
-        peer_switch_id = policy.get("peerSwitchId") or self._resolve_peer_switch_id(switch_ip, switch_id)
+        raw_peer_switch_id = policy.get("peerSwitchId")
+        if raw_peer_switch_id in (None, ""):
+            peer_switch_id = self._resolve_peer_switch_id(switch_ip, switch_id)
+        else:
+            if not isinstance(raw_peer_switch_id, str) or not raw_peer_switch_id.strip():
+                raise RuntimeError(f"vPC interface {iface.get('interfaceName')!r} on switch {switch_id!r} has an invalid peerSwitchId")
+            peer_switch_id = raw_peer_switch_id.strip()
+            if peer_switch_id == switch_id:
+                raise RuntimeError(f"vPC interface {iface.get('interfaceName')!r} on switch {switch_id!r} identifies itself as its peer")
+            authoritative_peer = self._peer_serial_cache.get(switch_id)
+            if authoritative_peer is not None and peer_switch_id != authoritative_peer:
+                raise RuntimeError(
+                    f"vPC interface {iface.get('interfaceName')!r} peerSwitchId {peer_switch_id!r} conflicts with "
+                    f"the authoritative vpcPair peer {authoritative_peer!r} for switch {switch_id!r}"
+                )
+            try:
+                self._validate_peer_evidence(switch_id, peer_switch_id, record_echo=True)
+            except RuntimeError as exc:
+                raise RuntimeError(f"vPC interface {iface.get('interfaceName')!r} has non-reciprocal peer identity: {exc}") from exc
         return frozenset({switch_id, peer_switch_id})
 
     def _managed_vpc_interfaces(self, switch_ip: str, switch_id: str, managed_types: set[str]) -> list[dict]:
         """
         # Summary
 
-        Fetch one switch's interface list and return the vPC interfaces whose policy type this orchestrator manages,
-        each enriched with the `switchIp` of the switch it was read from. Tolerates a missing body (`not_found_ok`) and
-        a non-dict body (the `isinstance` guard) without raising.
+        Read one switch's complete shared interface inventory and return the vPC interfaces whose policy type this orchestrator manages,
+        each enriched with the `switchIp` of the switch it was read from. The shared reader paginates, validates identities, and publishes
+        its cache only after the full collection succeeds.
 
         ## Raises
 
         ### Exception
 
-        - If the interface-list request fails (propagated to `query_all`'s wrapper).
+        - If the paginated interface-list request or completeness validation fails (propagated to `query_all`'s wrapper).
         """
-        api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
-        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-        interfaces = result.get("interfaces", []) or [] if isinstance(result, dict) else []
-        managed = [iface for iface in interfaces if iface.get("interfaceType") == "vpc" and self._policy_type(iface) in managed_types]
+        interfaces = self._switch_interfaces(switch_id).values()
+        managed = [dict(iface) for iface in interfaces if iface.get("interfaceType") == "vpc" and self._policy_type(iface) in managed_types]
         for iface in managed:
             iface["switchIp"] = switch_ip
         return managed

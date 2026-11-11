@@ -1,0 +1,110 @@
+---
+# Setup has already proved the fabric had no pre-existing managed dot1q hosts.
+- name: OVERRIDDEN | Read all current policies before the preview
+  ansible.builtin.include_tasks: read_interfaces.yaml
+
+- name: OVERRIDDEN | Record the authoritative-preview checkpoint
+  ansible.builtin.set_fact:
+    dot1q_checkpoint: "{{ dot1q_readback.results | map(attribute='current.configData') | list }}"
+
+- name: OVERRIDDEN | Preview keeping two hosts and resetting the omitted third
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: &dot1q_override_hosts
+    fabric_name: "{{ test_fabric_name }}"
+    state: overridden
+    config: ["{{ dot1q_override }}"]
+  check_mode: true
+  register: cm_dot1q_override
+
+- name: OVERRIDDEN | Prove preview left all physical intent unchanged
+  ansible.builtin.include_tasks: assert_unchanged.yaml
+
+- name: OVERRIDDEN | Keep two hosts and reset the omitted host
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_override_hosts
+  register: nm_dot1q_override
+
+- name: OVERRIDDEN | Require only the two desired host identities in the result
+  ansible.builtin.assert:
+    that:
+      - cm_dot1q_override is changed
+      - nm_dot1q_override is changed
+      - nm_dot1q_override.after | length == 2
+      - nm_dot1q_override.after | map(attribute='interface_name') | sort == test_interface_names[:2] | sort
+
+- name: OVERRIDDEN | Read back retained dot1q hosts and the omitted physical reset
+  ansible.builtin.include_tasks: verify.yaml
+  vars:
+    dot1q_expected:
+      - name: "{{ test_interface_names[0] }}"
+        policy_type: dot1qTunnelHost
+        policy:
+          accessVlan: "{{ (test_access_vlan | int) + 3 }}"
+          description: ansible-dot1q-overridden
+      - name: "{{ test_interface_names[1] }}"
+        policy_type: dot1qTunnelHost
+        policy:
+          accessVlan: "{{ (test_access_vlan | int) + 3 }}"
+          description: ansible-dot1q-overridden
+      - name: "{{ test_interface_names[2] }}"
+        policy_type: trunkHost
+        policy:
+          description: ''
+
+- name: OVERRIDDEN | Replay normally
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_override_hosts
+  register: nm_dot1q_override_replay
+
+- name: OVERRIDDEN | Replay in check mode
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_override_hosts
+  check_mode: true
+  register: cm_dot1q_override_replay
+
+- name: OVERRIDDEN | Require retained-set idempotency
+  ansible.builtin.assert:
+    that:
+      - nm_dot1q_override_replay is not changed
+      - cm_dot1q_override_replay is not changed
+
+- name: OVERRIDDEN EMPTY | Capture intent before the intentional reset-all preview
+  ansible.builtin.include_tasks: read_interfaces.yaml
+
+- name: OVERRIDDEN EMPTY | Record the reset-all checkpoint
+  ansible.builtin.set_fact:
+    dot1q_checkpoint: "{{ dot1q_readback.results | map(attribute='current.configData') | list }}"
+
+- name: OVERRIDDEN EMPTY | Preview the explicit top-level empty desired set
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: &dot1q_override_empty
+    fabric_name: "{{ test_fabric_name }}"
+    state: overridden
+    config: []
+  check_mode: true
+  register: cm_dot1q_override_empty
+
+- name: OVERRIDDEN EMPTY | Prove the reset-all preview did not reset either host
+  ansible.builtin.include_tasks: assert_unchanged.yaml
+
+- name: OVERRIDDEN EMPTY | Reset all run-owned dot1q hosts
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_override_empty
+  register: nm_dot1q_override_empty
+
+- name: OVERRIDDEN EMPTY | Require an empty managed result
+  ansible.builtin.assert:
+    that:
+      - cm_dot1q_override_empty is changed
+      - nm_dot1q_override_empty is changed
+      - nm_dot1q_override_empty.after | length == 0
+
+- name: OVERRIDDEN EMPTY | Verify all three ports are physical default trunks
+  ansible.builtin.include_tasks: verify.yaml
+  vars:
+    dot1q_expected:
+      - {name: "{{ test_interface_names[0] }}", policy_type: trunkHost, policy: {description: ''}}
+      - {name: "{{ test_interface_names[1] }}", policy_type: trunkHost, policy: {description: ''}}
+      - {name: "{{ test_interface_names[2] }}", policy_type: trunkHost, policy: {description: ''}}
+
+- name: OVERRIDDEN EMPTY | Replay the empty override
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_override_empty
+  register: nm_dot1q_empty_replay
+
+- name: OVERRIDDEN EMPTY | Require a no-op once no dot1q hosts remain
+  ansible.builtin.assert:
+    that: nm_dot1q_empty_replay is not changed

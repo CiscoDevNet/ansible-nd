@@ -29,16 +29,16 @@ both the per-interface PUT and the bulk POST accept `routedHost` on a VXLAN leaf
                 - `policy` -> `XeEthernetRoutedPolicyModel` (`policy_type: "iosXeRoutedHost"`, injected when omitted)
 
 `policy_type` is optional on input: each network OS has exactly one managed routed policy type today, so it is derived from
-`network_os_type` (`_default_policy_type`). An explicit value is still accepted and validated.
+`network_os_type` (`default_policy_type`). An explicit value is still accepted and validated.
 """
 
 from __future__ import annotations
 
-import re
 from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -48,46 +48,16 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     SpeedEnum,
     XeEthernetSpeedEnum,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_common import (
+    AddressPrefixPairMixin,
+    default_policy_type,
+    normalize_ethernet_interface_name,
+    reconcile_cidr_prefix,
+    require_address_prefix_pair,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4Host
-
-# Leading alphabetic prefix + the remainder (digits, /, ., -) of an interface name.
-# TODO: issue #353 consolidates per-model interface-name normalization into shared helpers; this module's
-# normalizer is the first to canonicalize across BOTH network OS families and should seed that helper.
-_INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
-
-# Wire-canonical interface-name prefixes this module manages (lab-verified 2026-07-27: ND echoes
-# `Ethernet1/7` on NX-OS and `GigabitEthernet3` on IOS-XE). A user-supplied prefix that is a
-# case-insensitive prefix of exactly ONE canonical name is expanded to it (e.g. `e1/7`, `eth1/7`,
-# `gi3`); anything else passes through verbatim so correctly-typed names of other XE interface
-# families (e.g. `TenGigabitEthernet1/1`) are never corrupted.
-_CANONICAL_INTERFACE_PREFIXES = ("Ethernet", "GigabitEthernet")
-
-
-def normalize_ethernet_interface_name(value):
-    """
-    # Summary
-
-    Normalize the leading alphabetic prefix of an interface name to its wire-canonical form (see
-    `EthernetRoutedInterfaceModel.normalize_interface_name` for examples). Shared between the model's field validator
-    and the orchestrator's config-name matching so both sides canonicalize identically.
-
-    ## Raises
-
-    None
-    """
-    if not isinstance(value, str) or not value:
-        return value
-    match = _INTERFACE_NAME_PREFIX_RE.match(value)
-    if not match:
-        return value
-    prefix, rest = match.groups()
-    expansions = [canonical for canonical in _CANONICAL_INTERFACE_PREFIXES if canonical.lower().startswith(prefix.lower())]
-    if len(expansions) == 1:
-        return expansions[0] + rest
-    return value
-
 
 # Public argspec `speed` choices: the union of the NX-OS and IOS-XE speed enums, in NX order with the XE-only extras appended.
 # The Ansible argspec cannot express the per-policy_type subset (that stays with the Pydantic branch models), but listing the
@@ -96,30 +66,7 @@ _NX_SPEED_CHOICES: list[str] = [e.value for e in SpeedEnum]
 _SPEED_ARGSPEC_CHOICES: list[str] = _NX_SPEED_CHOICES + [e.value for e in XeEthernetSpeedEnum if e.value not in _NX_SPEED_CHOICES]
 
 
-def _default_policy_type(data: Any, policy_type: str) -> Any:
-    """
-    # Summary
-
-    Inject the `policyType` discriminator into a policy input dict when the caller did not supply it (key absent, or present with
-    `None`, which is how the Ansible argspec passes an omitted suboption). The module manages exactly one routed policy type per
-    network OS today, so `policy_type` is fully determined by `network_os_type` and the user need not repeat it (PR #550 review).
-    An explicit value is left untouched, which keeps the input forward-compatible with the feature-gated follow-up branches
-    (`endPointLocator`, `ipfmL3Port`, `dataBrokerL3Host`): when the NX branch becomes a `policy_type` discriminated union, this
-    same injection supplies the discriminator Pydantic needs for an omitted value. Injecting on the input (rather than a field
-    default) makes the field explicitly SET, so `merge()` / `get_diff(exclude_unset=True)` treat it exactly like a typed value.
-
-    ## Raises
-
-    None
-    """
-    if not isinstance(data, dict):
-        return data
-    if data.get("policyType") is not None or data.get("policy_type") is not None:
-        return data
-    return {**{key: value for key, value in data.items() if key not in ("policyType", "policy_type")}, "policyType": policy_type}
-
-
-class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
+class NexusEthernetRoutedPolicyModel(AddressPrefixPairMixin):
     """
     # Summary
 
@@ -133,6 +80,8 @@ class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
 
     None
     """
+
+    address_prefix_pairs: ClassVar[tuple[tuple[str, str], ...]] = (("ip", "prefix"),)
 
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND 4.2.1 `int_routed_host` template defaults (schema-sourced via nd-openapi `intRoutedHostTemplate`), in the model's
@@ -152,8 +101,14 @@ class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
         "speed": "auto",
     }
 
+    # TODO(4.3.1) ethernet-create-required-fields-431
+    # ND 4.3.1 rejects a routedHost create body that omits `mtu` ("Validation failed for following fields: [mtu]")
+    # where 4.2.1 defaulted it to 9216 (neither spec marks it required). Always emit the template default on the wire;
+    # 4.2.1 stores 9216 either way, so idempotency is unchanged on both releases. Payload-only: see `NDBaseModel.payload_defaults`.
+    payload_defaults: ClassVar[dict[str, Any]] = {"mtu": 9216}
+
     policy_type: Literal["routedHost"] = Field(
-        alias="policyType", description="Routed-host policy template discriminator; injected as `routedHost` when omitted (see `_default_policy_type`)"
+        alias="policyType", description="Routed-host policy template discriminator; injected as `routedHost` when omitted (see `default_policy_type`)"
     )
 
     @model_validator(mode="before")
@@ -162,18 +117,53 @@ class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
         """
         # Summary
 
-        Supply `policyType: routedHost` when the input omits the discriminator (`_default_policy_type`).
+        Supply `policyType: routedHost` when the input omits the discriminator (`default_policy_type`).
 
         ## Raises
 
         None
         """
-        return _default_policy_type(data, "routedHost")
+        return default_policy_type(data, "routedHost")
+
+    @model_validator(mode="before")
+    @classmethod
+    def reconcile_cidr_input(cls, data: Any) -> Any:
+        """
+        # Summary
+
+        Move a CIDR mask on `ip` into `prefix` instead of dropping it (`ethernet_common.reconcile_cidr_prefix`, issue #584).
+
+        ## Raises
+
+        ### ValueError
+
+        - If a CIDR mask disagrees with the explicit `prefix`.
+        """
+        return reconcile_cidr_prefix(data, "ip", ("prefix",), 4)
+
+    @model_validator(mode="after")
+    def _validate_address_prefix_paired(self, info: ValidationInfo) -> NexusEthernetRoutedPolicyModel:
+        """
+        # Summary
+
+        Require `ip` with `prefix` (`ethernet_common.require_address_prefix_pair`). ND rejects an `ip` without `prefix` (HTTP 400) but silently
+        stores a `prefix` without `ip`; both halves are rejected here before any controller call (lab-verified on 4.2.1.10 and 4.3.1.175).
+
+        ## Raises
+
+        ### ValueError
+
+        - If exactly one of `ip` / `prefix` is set.
+        """
+        require_address_prefix_pair(self.ip, self.prefix, "ip", "prefix", info)
+        return self
 
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
     fec: FecEnum | None = Field(default=None, alias="fec", description="Forward error correction mode")
-    ip: IPv4Host = Field(default=None, alias="ip", description="Interface IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and normalized)")
+    ip: IPv4Host = Field(
+        default=None, alias="ip", description="Interface IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and reconciled with `prefix`)"
+    )
     ip_redirects: bool | None = Field(default=None, alias="ipRedirects", description="Disable IPv4 and IPv6 redirects on the interface")
     mtu: int | None = Field(default=None, alias="mtu", ge=576, le=9216, description="Interface MTU (576-9216)")
     netflow: bool | None = Field(default=None, alias="netflow", description="Enable netflow (requires netflow enabled on the fabric)")
@@ -192,7 +182,7 @@ class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
 
     # TODO(4.2.1) interface-get-field-normalization
     # ND 4.2.1 GET echoes routingTag as an integer even though the template defines it as a string (string in,
-    # int out). Same drift as loopback routeMapTag - keep the coerce validators in sync.
+    # int out). Same drift as the SVI and routed port-channel routingTag - keep the coerce validators in sync.
     @field_validator("routing_tag", mode="before")
     @classmethod
     def coerce_routing_tag(cls, value):
@@ -210,7 +200,7 @@ class NexusEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
         return str(value)
 
 
-class XeEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
+class XeEthernetRoutedPolicyModel(AddressPrefixPairMixin):
     """
     # Summary
 
@@ -223,6 +213,8 @@ class XeEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
     None
     """
 
+    address_prefix_pairs: ClassVar[tuple[tuple[str, str], ...]] = (("ip", "prefix"),)
+
     # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
     # ND 4.2.1 `ios_xe_int_routed_host` template defaults (schema-sourced via nd-openapi `iosXeIntRoutedHostTemplate`), in
     # the model's dumped form. The orchestrator derives its unconfigured-default query filter from this table.
@@ -232,9 +224,17 @@ class XeEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
         "speed": "auto",
     }
 
+    # TODO(4.3.1) ethernet-create-required-fields-431
+    # ND 4.3.1 rejects an iosXeRoutedHost create body and the per-interface reset PUT that omit `mtu` ("Validation failed for
+    # following fields: [mtu]") where 4.2.1 defaulted it to 1500 (neither spec marks it required). Lab-verified 2026-09-14 on the
+    # CAMPUS1 Catalyst 9000v. Always emit the template default on the wire; 4.2.1 stores 1500 either way, so idempotency is
+    # unchanged on both releases. Payload-only: see `NDBaseModel.payload_defaults`. The C8000V per-port-mtu rejection
+    # (vault `c8000v-rejects-per-port-mtu`) was observed on the normalize template only; create/update PUTs carrying mtu succeeded.
+    payload_defaults: ClassVar[dict[str, Any]] = {"mtu": 1500}
+
     policy_type: Literal["iosXeRoutedHost"] = Field(
         alias="policyType",
-        description="IOS-XE routed-host policy template discriminator; injected as `iosXeRoutedHost` when omitted (see `_default_policy_type`)",
+        description="IOS-XE routed-host policy template discriminator; injected as `iosXeRoutedHost` when omitted (see `default_policy_type`)",
     )
 
     @model_validator(mode="before")
@@ -243,17 +243,52 @@ class XeEthernetRoutedPolicyModel(InterfacePolicyStrictBase):
         """
         # Summary
 
-        Supply `policyType: iosXeRoutedHost` when the input omits the discriminator (`_default_policy_type`).
+        Supply `policyType: iosXeRoutedHost` when the input omits the discriminator (`default_policy_type`).
 
         ## Raises
 
         None
         """
-        return _default_policy_type(data, "iosXeRoutedHost")
+        return default_policy_type(data, "iosXeRoutedHost")
+
+    @model_validator(mode="before")
+    @classmethod
+    def reconcile_cidr_input(cls, data: Any) -> Any:
+        """
+        # Summary
+
+        Move a CIDR mask on `ip` into `prefix` instead of dropping it (`ethernet_common.reconcile_cidr_prefix`, issue #584).
+
+        ## Raises
+
+        ### ValueError
+
+        - If a CIDR mask disagrees with the explicit `prefix`.
+        """
+        return reconcile_cidr_prefix(data, "ip", ("prefix",), 4)
+
+    @model_validator(mode="after")
+    def _validate_address_prefix_paired(self, info: ValidationInfo) -> XeEthernetRoutedPolicyModel:
+        """
+        # Summary
+
+        Require `ip` with `prefix` (`ethernet_common.require_address_prefix_pair`). ND rejects an `ip` without `prefix` (HTTP 400) but silently
+        stores a `prefix` without `ip`; both halves are rejected here before any controller call (lab-verified on 4.2.1.10 and 4.3.1.175).
+
+        ## Raises
+
+        ### ValueError
+
+        - If exactly one of `ip` / `prefix` is set.
+        """
+        require_address_prefix_pair(self.ip, self.prefix, "ip", "prefix", info)
+        return self
 
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=200, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
-    ip: IPv4Host = Field(default=None, alias="ip", description="Interface IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and normalized)")
+    ip: IPv4Host = Field(
+        default=None, alias="ip", description="Interface IPv4 address (bare host form, e.g. 10.1.1.1; CIDR input is accepted and reconciled with `prefix`)"
+    )
     mtu: int | None = Field(default=None, alias="mtu", ge=1500, le=9216, description="Interface MTU (1500-9216)")
     prefix: int | None = Field(default=None, alias="prefix", ge=1, le=31, description="Netmask length for the IP address (1-31)")
     speed: XeEthernetSpeedEnum | None = Field(default=None, alias="speed", description="Interface speed")
@@ -365,7 +400,7 @@ class EthernetRoutedInterfaceModel(NDBaseModel):
 
         Normalize the leading alphabetic prefix of an interface name to its wire-canonical form so that user-supplied
         casing or abbreviations round-trip against the wire. A prefix matching (case-insensitively) exactly one of the
-        canonical names in `_CANONICAL_INTERFACE_PREFIXES` is expanded to it. Examples:
+        canonical names in `ethernet_common._CANONICAL_INTERFACE_PREFIXES` is expanded to it. Examples:
 
         - `ethernet1/7`, `ETHERNET1/7`, `eth1/7`, `e1/7` -> `Ethernet1/7`
         - `gigabitethernet3`, `gi3` -> `GigabitEthernet3`

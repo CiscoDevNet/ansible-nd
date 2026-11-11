@@ -104,3 +104,90 @@ test_pc_501_removed_member:
         port_channel_mode: active
         lacp_rate: fast
         description: "Ansible integration test PC 501"
+
+# --- IOS-XE coverage (issue #536) ---
+# Set nd_test_xe_switch_ip (and optionally nd_test_xe_fabric_name and nd_test_xe_pc_member_a..d) in inventory/extra-vars to
+# enable; xe.yaml is skipped when nd_test_xe_switch_ip is unset. Members default to GigabitEthernet1/0/2-5 on a Catalyst leaf:
+# they must exist as real ports, must not be fabric-link endpoints, and are converted to iosXeAccess by the scenario's setup.
+# Port-channel IDs 101-104 are reserved (Catalyst supports 1-128).
+test_xe_fabric_name: "{{ nd_test_xe_fabric_name | default(test_fabric_name) }}"
+test_xe_switch_ip: "{{ nd_test_xe_switch_ip | default('') }}"
+test_xe_pc_member_a: "{{ nd_test_xe_pc_member_a | default('GigabitEthernet1/0/2') }}"
+test_xe_pc_member_b: "{{ nd_test_xe_pc_member_b | default('GigabitEthernet1/0/3') }}"
+test_xe_pc_member_c: "{{ nd_test_xe_pc_member_c | default('GigabitEthernet1/0/4') }}"
+test_xe_pc_member_d: "{{ nd_test_xe_pc_member_d | default('GigabitEthernet1/0/5') }}"
+# A member deliberately LEFT at the fabric default (iosXeTrunkHost) for the negative test. Never converted.
+test_xe_pc_member_trunk: "{{ nd_test_xe_pc_member_trunk | default('GigabitEthernet1/0/6') }}"
+
+xe_members_access:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_names:
+    - "{{ test_xe_pc_member_a }}"
+    - "{{ test_xe_pc_member_b }}"
+    - "{{ test_xe_pc_member_c }}"
+    - "{{ test_xe_pc_member_d }}"
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        admin_state: true
+        access_vlan: 100
+        description: "Ansible integration test XE PC member"
+
+xe_pc_101:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: port-channel101   # lowercase on purpose: the module rewrites the create body to Port-channel101
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        # policy_type intentionally omitted: derived from network_os_type (iosXeAccessPoHost); xe.yaml asserts the echo carries it.
+        admin_state: true
+        access_vlan: 100
+        port_channel_mode: active
+        ports:
+          - "{{ test_xe_pc_member_a }}"
+          - "{{ test_xe_pc_member_b }}"
+        description: "Ansible integration test XE PC 101"
+
+xe_pc_102:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: port-channel102
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        policy_type: iosXeAccessPoHost
+        admin_state: true
+        access_vlan: 200
+        ports:
+          - "{{ test_xe_pc_member_c }}"
+        description: "Ansible integration test XE PC 102"
+
+# No mtu: the Catalyst 9000v rejects a per-port-channel MTU at deploy time (system MTU only), so the XE scenarios never set it.
+xe_pc_101_updated:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: port-channel101
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        admin_state: true
+        access_vlan: 150
+        bpdu_guard: enable
+        port_channel_mode: active
+        ports:
+          - "{{ test_xe_pc_member_a }}"
+          - "{{ test_xe_pc_member_b }}"
+        description: "Updated XE PC 101"
+
+xe_pc_bad_member:
+  switch_ip: "{{ test_xe_switch_ip }}"
+  interface_name: port-channel103
+  config_data:
+    network_os:
+      network_os_type: ios-xe
+      policy:
+        access_vlan: 100
+        ports:
+          - "{{ test_xe_pc_member_trunk }}"

@@ -380,23 +380,24 @@ def test_validate_interface_names_00100_rejects_null_empty_or_non_string(interfa
         validate_interface_names(config)
 
 
-def test_validate_interface_names_00101_null_list_is_treated_as_empty():
+def test_validate_interface_names_00101_null_list_is_rejected():
     """
     # Summary
 
-    Verify a whole-list `interface_names: ~` (yielding `None`) is treated as empty and does not raise,
-    consistent with the duplicate validators and `expand_config`.
+    Verify a whole-list `interface_names: ~` is rejected rather than becoming an
+    authoritative empty list.
 
     ## Test
 
-    - `interface_names: None` -> no error (caller's empty-list semantics)
+    - `interface_names: None` -> ValueError
 
     ## Classes and Methods
 
     - validate_interface_names()
     """
     config = [{"switch_ip": "1.1.1.1", "interface_names": None}]
-    validate_interface_names(config)
+    with pytest.raises(ValueError, match="interface_names.*must be a list"):
+        validate_interface_names(config)
 
 
 def test_expand_config_00102_null_entry_raises_value_error_via_expand():

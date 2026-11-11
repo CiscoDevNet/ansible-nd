@@ -11,6 +11,21 @@
 # the NX test fabric) a mixed NX-OS + IOS-XE overridden pass to prove
 # cross-OS convergence in query_all.
 
+# --- XE RELEASE GATE ---
+# ND 4.3.1 rejects the csrLoopback policy on create and update (issue #632), so the
+# csrLoopback coverage is split out: xe_csr.yaml runs below 4.3.1, and
+# xe_csr_unsupported.yaml proves the module refuses the policy before any write
+# at 4.3.1 or later. Everything else in this file is release-independent.
+
+- name: "XE SETUP: Query the Nexus Dashboard version for the csrLoopback release gate"
+  cisco.nd.nd_version:
+    state: query
+  register: xe_nd_version
+
+- name: "XE SETUP: Decide whether csrLoopback is writable on this release"
+  ansible.builtin.set_fact:
+    xe_csr_loopback_supported: "{{ xe_nd_version.current.platformVersion is version('4.3.1', '<') }}"
+
 # --- XE PRE-CLEAN ---
 
 - name: "XE SETUP: Remove test loopback interfaces before XE state tests"
@@ -26,50 +41,53 @@
 
 # --- XE MERGED CREATE ---
 
-- name: "XE MERGED CREATE: Create loopback205 (iosXeLoopback) and loopback206 (csrLoopback) (check mode)"
-  cisco.nd.nd_interface_loopback: &xe_merge_105_106
+- name: "XE MERGED CREATE: Create loopback205 (iosXeLoopback) (check mode)"
+  cisco.nd.nd_interface_loopback: &xe_merge_105
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_xe_fabric_name }}"
     config:
       - "{{ xe_loopback_205 }}"
-      - "{{ xe_loopback_206 }}"
     state: merged
   check_mode: true
   register: cm_xe_merged_create
 
-- name: "XE MERGED CREATE: Create loopback205 (iosXeLoopback) and loopback206 (csrLoopback) (normal mode)"
-  cisco.nd.nd_interface_loopback: *xe_merge_105_106
+- name: "XE MERGED CREATE: Create loopback205 (iosXeLoopback) (normal mode)"
+  cisco.nd.nd_interface_loopback: *xe_merge_105
   register: nm_xe_merged_create
 
-- name: "XE MERGED CREATE: Verify loopback205 and loopback206 creation"
+- name: "XE MERGED CREATE: Verify loopback205 creation"
   ansible.builtin.assert:
     that:
       - cm_xe_merged_create is changed
       - nm_xe_merged_create is changed
       - nm_xe_merged_create.after | selectattr('interface_name', 'equalto', 'loopback205') | list | length == 1
-      - nm_xe_merged_create.after | selectattr('interface_name', 'equalto', 'loopback206') | list | length == 1
 
 # --- XE MERGED IDEMPOTENCY ---
-# loopback206 (csrLoopback) previously exercised the CSR drift case: the ND
-# 4.2.1 OpenAPI READ schema lists the policyType as "csrIntLoopback", but a
-# live-lab probe (2026-07-18) proved the wire echoes "csrLoopback" on reads
-# too, so no read-side normalization is needed. This test still confirms no
-# spurious diff is seen on re-apply.
 
-- name: "XE MERGED IDEMPOTENT: Re-apply loopback205/loopback206 creation (check mode)"
-  cisco.nd.nd_interface_loopback: *xe_merge_105_106
+- name: "XE MERGED IDEMPOTENT: Re-apply loopback205 creation (check mode)"
+  cisco.nd.nd_interface_loopback: *xe_merge_105
   check_mode: true
   register: cm_xe_merged_idem
 
-- name: "XE MERGED IDEMPOTENT: Re-apply loopback205/loopback206 creation (normal mode)"
-  cisco.nd.nd_interface_loopback: *xe_merge_105_106
+- name: "XE MERGED IDEMPOTENT: Re-apply loopback205 creation (normal mode)"
+  cisco.nd.nd_interface_loopback: *xe_merge_105
   register: nm_xe_merged_idem
 
-- name: "XE MERGED IDEMPOTENT: Verify no change on second run (csrLoopback wire name is stable)"
+- name: "XE MERGED IDEMPOTENT: Verify no change on second run"
   ansible.builtin.assert:
     that:
       - cm_xe_merged_idem is not changed
       - nm_xe_merged_idem is not changed
+
+# --- XE CSR LOOPBACK (release-gated, see the gate above) ---
+
+- name: "XE CSR: Run csrLoopback coverage (release below 4.3.1)"
+  ansible.builtin.include_tasks: xe_csr.yaml
+  when: xe_csr_loopback_supported
+
+- name: "XE CSR: Run csrLoopback refusal coverage (release 4.3.1 or later)"
+  ansible.builtin.include_tasks: xe_csr_unsupported.yaml
+  when: not xe_csr_loopback_supported
 
 # --- XE REPLACED ---
 

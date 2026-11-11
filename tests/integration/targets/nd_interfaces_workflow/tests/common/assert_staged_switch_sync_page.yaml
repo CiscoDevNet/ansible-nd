@@ -1,0 +1,51 @@
+---
+- name: "Read switch sync page at offset {{ nd_iw_staged_switch_offset }}"
+  cisco.nd.nd_rest:
+    method: get
+    path: "/api/v1/manage/fabrics/{{ nd_iw_current_fabric.fabric_name }}/switches?max=500&offset={{ nd_iw_staged_switch_offset }}"
+  register: nd_iw_staged_switch_status
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+
+- name: "Extract switch sync page and continuation metadata"
+  ansible.builtin.set_fact:
+    nd_iw_staged_switch_page: "{{ nd_iw_staged_switch_status.current.switches | default([]) }}"
+    nd_iw_staged_switch_meta: "{{ nd_iw_staged_switch_status.current.meta | default({}) }}"
+
+- name: "Verify switch sync page advances without duplicate identities"
+  ansible.builtin.assert:
+    that:
+      - nd_iw_staged_switch_page is sequence
+      - nd_iw_staged_switch_page | selectattr('switchId', 'defined') | list | length == nd_iw_staged_switch_page | length
+      - >-
+        nd_iw_staged_switch_page | map(attribute='switchId') | unique | list | length
+        == nd_iw_staged_switch_page | length
+      - >-
+        nd_iw_staged_switch_page | map(attribute='switchId') | list
+        | intersect(nd_iw_staged_switch_rows | map(attribute='switchId') | list)
+        | length == 0
+
+- name: "Accumulate switch sync page and calculate continuation"
+  ansible.builtin.set_fact:
+    nd_iw_staged_switch_rows: "{{ nd_iw_staged_switch_rows + nd_iw_staged_switch_page }}"
+    nd_iw_staged_switch_next_offset: "{{ nd_iw_staged_switch_offset | int + nd_iw_staged_switch_page | length }}"
+    nd_iw_staged_switch_has_next: >-
+      {{ (nd_iw_staged_switch_meta.links.next | default('', true) | length > 0)
+         if nd_iw_staged_switch_meta.links is defined and nd_iw_staged_switch_meta.links.next is defined else
+         ((nd_iw_staged_switch_offset | int + nd_iw_staged_switch_page | length)
+          < (nd_iw_staged_switch_meta.counts.total | int)
+          if nd_iw_staged_switch_meta.counts is defined and nd_iw_staged_switch_meta.counts.total is defined else
+          (nd_iw_staged_switch_page | length == 500)) }}
+
+- name: "Reject a non-progressing switch sync continuation"
+  ansible.builtin.assert:
+    that:
+      - not nd_iw_staged_switch_has_next | bool or nd_iw_staged_switch_page | length > 0
+
+- name: "Advance switch sync page offset"
+  ansible.builtin.set_fact:
+    nd_iw_staged_switch_offset: "{{ nd_iw_staged_switch_next_offset | int }}"
+  when: nd_iw_staged_switch_has_next | bool
+
+- name: "Continue switch sync pagination"
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/assert_staged_switch_sync_page.yaml"
+  when: nd_iw_staged_switch_has_next | bool

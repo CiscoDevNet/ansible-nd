@@ -56,6 +56,18 @@ def responses_vpc_access(key: str):
     return load_fixture("test_vpc_access_interface_orchestrator")[key]
 
 
+def _vpc_pair_response(switch_id: str, peer_switch_id: str) -> dict:
+    """Build one authoritative vPC-pair response."""
+
+    return {
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": f"/api/v1/manage/fabrics/fabric_1/switches/{switch_id}/vpcPair",
+        "MESSAGE": "OK",
+        "DATA": {"switchId": switch_id, "peerSwitchId": peer_switch_id},
+    }
+
+
 def _build_rest_send(
     gen_responses: ResponseGenerator,
     fabric_name: str = "fabric_1",
@@ -100,6 +112,107 @@ def _build_orchestrator(
     """Construct an orchestrator with the file-based RestSend injected."""
     rest_send = _build_rest_send(gen_responses, fabric_name=fabric_name, state=state, config=config)
     return AccessVpcHostInterfaceOrchestrator(rest_send=rest_send)
+
+
+@pytest.mark.parametrize(
+    "interface_type,mode,policy,expected",
+    [
+        ("vpc", "unknown", None, True),
+        ("vpc", "unknown", {"policyType": "trunkVpcHost"}, False),
+        ("vpc", "access", None, False),
+        ("portChannel", "unknown", None, False),
+    ],
+)
+def test_absent_vpc_delete_accepts_only_policyless_discovery_echo(interface_type, mode, policy, expected) -> None:
+    """A different vPC policy and a different structural type are never replay targets."""
+
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    record = {
+        "interfaceName": "vPC101",
+        "interfaceType": interface_type,
+        "configData": {"mode": mode, "networkOS": {"policy": policy}},
+    }
+    assert orchestrator._can_replay_absent_delete(record) is expected
+
+
+def test_absent_vpc_delete_preview_requires_exact_peer_removal() -> None:
+    """A policy-less echo replays only a proven two-peer vPC deletion."""
+
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    first = "FDO11111AAA"
+    second = "FDO11111AAB"
+
+    def row(switch_id: str, po_id: int = 101) -> dict:
+        return {
+            "interfaceName": "vpc101",
+            "switchId": switch_id,
+            "status": "success",
+            "combinedConfigs": [
+                {
+                    "configType": "running",
+                    "config": f"interface port-channel{po_id}\n  vpc 101\ninterface Ethernet1/43\n  channel-group {po_id} mode active\n",
+                    "lines": 4,
+                },
+                {
+                    "configType": "pending",
+                    "config": f"no interface port-channel{po_id}\ninterface ethernet1/43\n  no channel-group {po_id} force mode active\n",
+                    "lines": 3,
+                },
+                {"configType": "expected", "config": "", "lines": 0},
+            ],
+        }
+
+    preview = {"configurationDiffs": [row(first), row(second)]}
+    orchestrator._validate_absent_vpc_delete_preview(preview, "vpc101", first, second)
+
+    # Peer-local port-channel IDs need not equal the shared vPC ID.
+    preview["configurationDiffs"][1] = row(second, 102)
+    orchestrator._validate_absent_vpc_delete_preview(preview, "vpc101", first, second)
+
+    preview["configurationDiffs"][1]["combinedConfigs"][1]["config"] = "no interface port-channel103\n"
+    with pytest.raises(RuntimeError, match="does not prove removal"):
+        orchestrator._validate_absent_vpc_delete_preview(preview, "vpc101", first, second)
+
+    preview["configurationDiffs"][1] = row("FDO11111AAC")
+    with pytest.raises(RuntimeError, match="identities differ"):
+        orchestrator._validate_absent_vpc_delete_preview(preview, "vpc101", first, second)
+
+
+@pytest.mark.parametrize(
+    "extra_pending,expected_error",
+    [
+        ("interface ethernet1/99\n  shutdown\n", "non-member interface"),
+        ("interface ethernet1/43\n  shutdown\n", "unproven command"),
+        ("interface ethernet1/43\n  no channel-group 102 force mode active\n", "unproven command"),
+        ("no interface loopback99\n", "unproven command"),
+        ("configure terminal\ninterface ethernet1/43\n", "unproven command"),
+    ],
+)
+def test_absent_vpc_delete_preview_rejects_unrelated_commands(extra_pending: str, expected_error: str) -> None:
+    """A parent-scoped preview must not deploy unrelated or unsafe CLI."""
+
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    first = "FDO11111AAA"
+    second = "FDO11111AAB"
+    row = {
+        "interfaceName": "vpc101",
+        "status": "success",
+        "combinedConfigs": [
+            {
+                "configType": "running",
+                "config": "interface port-channel101\n  vpc 101\ninterface Ethernet1/43\n  channel-group 101 mode active\n",
+                "lines": 4,
+            },
+            {
+                "configType": "pending",
+                "config": "no interface port-channel101\n" + extra_pending,
+                "lines": 1 + len(extra_pending.splitlines()),
+            },
+        ],
+    }
+    preview = {"configurationDiffs": [{**row, "switchId": first}, {**row, "switchId": second}]}
+    with pytest.raises(RuntimeError, match=expected_error):
+        orchestrator._validate_absent_vpc_delete_preview(preview, "vpc101", first, second)
 
 
 # =============================================================================
@@ -345,6 +458,8 @@ def test_vpc_access_orchestrator_00600_delete_uses_per_interface_endpoint() -> N
             "MESSAGE": "OK",
             "DATA": {"switches": [{"fabricManagementIp": "192.168.1.1", "switchId": "FDOAAAAAAAA"}]},
         }
+        yield _vpc_pair_response("FDOAAAAAAAA", "FDOBBBBBBBB")
+        yield _vpc_pair_response("FDOBBBBBBBB", "FDOAAAAAAAA")
         yield {
             "RETURN_CODE": 204,
             "METHOD": "DELETE",
@@ -590,7 +705,7 @@ def _assert_idempotent(state_machine: NDStateMachine, spy: _SpyAccessVpcHostInte
     `changed` False."""
     before = list(state_machine.before)
     assert [(item.switch_ip, item.interface_name) for item in before] == [(expected_switch_ip, "vpc100")]
-    assert state_machine.results.path == expected_paths
+    assert [path.split("?", 1)[0] for path in state_machine.results.path] == expected_paths
     state_machine.manage_state()
     assert spy._calls == []
     assert state_machine.output.format()["changed"] is False
@@ -621,6 +736,8 @@ def test_vpc_access_orchestrator_00440_overridden_mixed_case_idempotent() -> Non
     def responses():
         for suffix in ("a", "b", "c", "d"):
             yield responses_vpc_access(f"test_overridden_mixed_case_00440{suffix}")
+        yield _vpc_pair_response("FDOBBBBBBBB", "FDOAAAAAAAA")
+        yield _vpc_pair_response("FDOAAAAAAAA", "FDOBBBBBBBB")
 
     config = [{"switch_ip": "192.168.1.2", "interface_name": "VPC100", "config_data": {"network_os": {"policy": _OVERRIDDEN_POLICY}}}]
 
@@ -659,6 +776,8 @@ def test_vpc_access_orchestrator_00445_overridden_mixed_case_idempotent_check_mo
     def responses():
         for suffix in ("a", "b", "c", "d"):
             yield responses_vpc_access(f"test_overridden_mixed_case_00445{suffix}")
+        yield _vpc_pair_response("FDOBBBBBBBB", "FDOAAAAAAAA")
+        yield _vpc_pair_response("FDOAAAAAAAA", "FDOBBBBBBBB")
 
     config = [{"switch_ip": "192.168.1.2", "interface_name": "VPC100", "config_data": {"network_os": {"policy": _OVERRIDDEN_POLICY}}}]
 
@@ -701,6 +820,7 @@ def test_vpc_access_orchestrator_00450_overridden_one_peer_missing_peer_switch_i
     def responses():
         for suffix in ("a", "b", "c", "d", "e"):
             yield responses_vpc_access(f"test_overridden_one_peer_missing_00450{suffix}")
+        yield _vpc_pair_response("FDOAAAAAAAA", "FDOBBBBBBBB")
 
     config = [{"switch_ip": "192.168.1.1", "interface_name": "vpc100", "config_data": {"network_os": {"policy": _OVERRIDDEN_POLICY}}}]
 
@@ -728,8 +848,7 @@ def test_vpc_access_orchestrator_00455_overridden_both_peers_missing_peer_switch
 
     ## Test
 
-    - Both `vpc100` echoes omit `peerSwitchId`; one `vpcPair` GET per switch (positional replay cannot also feed pre-fix code both
-      echoes here, so the pinned request sequence is what proves the pair resolution ran for each switch)
+    - Both `vpc100` echoes omit `peerSwitchId`; the first authoritative `vpcPair` GET seeds both reciprocal cache entries
     - Config lists `vpc100` on 192.168.1.1 with a policy mirroring the echo
     - `before` holds exactly `(192.168.1.1, vpc100)`; no planned mutation; `changed` is False
 

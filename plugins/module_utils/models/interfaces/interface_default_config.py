@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import EthernetTrunkHostPolicyModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 
 
@@ -60,6 +61,9 @@ class InterfaceDefaultPolicyModel(NDNestedModel):
     cdp: bool = Field(default=True)
     config_template: str = Field(default="int_trunk_host", alias="configTemplate")
     debounce_timer: int = Field(default=100, alias="debounceTimer")
+    # `""` is the template default and what ND 4.2.1 needs to clear a description: 4.2.1 leaves any field the normalize body omits
+    # untouched. ND 4.3.1 enforces the spec's `interfaceDescription` minLength 1 (HTTP 400 "minimum string length is 1") but resets
+    # an omitted field, so `to_normalize_payload(omit_description=True)` drops the key for it. Lab-verified on both, 2026-09-11.
     description: str = Field(default="")
     duplex_mode: str = Field(default="auto", alias="duplexMode")
     error_detection_acl: bool = Field(default=True, alias="errorDetectionAcl")
@@ -151,11 +155,16 @@ class InterfaceDefaultConfig(NDNestedModel):
     UNRESETTABLE_FIELDS: ClassVar[set[str]] = {"bandwidth", "debounceLinkupTimer", "inheritBandwidth"}
 
     @classmethod
-    def to_normalize_payload(cls, switch_interfaces: list[tuple[str, str]]) -> dict:
+    def to_normalize_payload(cls, switch_interfaces: list[tuple[str, str]], omit_description: bool = False) -> dict:
         """
         # Summary
 
         Build the full `interfaceActions/normalize` request body from a list of `(interface_name, switch_id)` pairs.
+
+        With `omit_description` the `description` key is dropped from the policy: ND 4.3.1 rejects the template's empty string
+        (`interfaceDescription` is minLength 1 in the spec) yet resets an omitted field, while ND 4.2.1 accepts the empty string and
+        needs it, since it leaves an omitted field untouched. `EthernetBaseOrchestrator._normalize_interfaces` sends the template
+        body first and switches to `omit_description=True` for the rest of the run when the controller answers with that rejection.
 
         ## Raises
 
@@ -163,6 +172,8 @@ class InterfaceDefaultConfig(NDNestedModel):
         """
         instance = cls()
         payload = instance.to_payload()
+        if omit_description:
+            payload["configData"]["networkOS"]["policy"].pop("description", None)
         payload["switchInterfaces"] = [{"interfaceName": name, "switchId": switch_id} for name, switch_id in switch_interfaces]
         return payload
 
@@ -175,9 +186,10 @@ class InterfaceDefaultConfig(NDNestedModel):
         (`bandwidth`, `debounceLinkupTimer`, `inheritBandwidth`) that the normalize endpoint cannot clear.
 
         PUT to `/api/v1/manage/fabrics/{fabric}/switches/{sn}/interfaces/{name}` is a true replace: omitted fields fall
-        back to ND's schema defaults for the declared `policyType`, so a body containing only `adminState: true` and
-        `policyType: "trunkHost"` is sufficient to land the interface in the same logical state as the normalize template
-        — minus the persisted Class C fields, which clear to null. Lab-verified on ND 4.2.1.
+        back to ND's schema defaults for the declared `policyType`, so a body containing only `adminState: true`,
+        `policyType: "trunkHost"` and the template-required `allowedVlans: "none"` is sufficient to land the interface in the
+        same logical state as the normalize template — minus the persisted Class C fields, which clear to null. Lab-verified on
+        ND 4.2.1 and 4.3.1.
 
         ## Raises
 
@@ -188,7 +200,11 @@ class InterfaceDefaultConfig(NDNestedModel):
                 "mode": "trunk",
                 "networkOS": {
                     "networkOSType": "nx-os",
-                    "policy": {"adminState": True, "policyType": "trunkHost"},
+                    # TODO(4.3.1) ethernet-create-required-fields-431
+                    # ND 4.3.1 rejects this PUT without `allowedVlans` ("Validation failed for following fields: [allowedVlans]",
+                    # lab-verified 2026-09-14 on S3_BG1 Ethernet1/48) where 4.2.1 defaulted it. Sourced from the trunkHost policy
+                    # model's `payload_defaults` (issue #564) so the reset body and the create body share one table.
+                    "policy": {"adminState": True, "policyType": "trunkHost", **EthernetTrunkHostPolicyModel.payload_defaults},
                 },
             },
             "interfaceName": interface_name,

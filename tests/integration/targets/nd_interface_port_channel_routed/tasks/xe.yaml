@@ -1,0 +1,393 @@
+---
+# IOS-XE tests for nd_interface_port_channel_routed (issue #549)
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Requires nd_test_xe_switch_ip; gated in tasks/main.yaml. Members a-c are converted to iosXeRoutedHost first (ND refuses a routed
+# port-channel whose member is still a trunk host), and reset to the fabric default at the end. Lab-verified on CAMPUS1 Catalyst 9000v
+# leaves against ND 4.2.1.10 and 4.3.1.175 (see the PR body).
+
+# --- XE SETUP ---
+
+- name: "XE SETUP: Remove any leftover XE test port-channels"
+  cisco.nd.nd_interface_port_channel_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_xe_switch_ip }}"
+        interface_name: port-channel110
+      - switch_ip: "{{ test_xe_switch_ip }}"
+        interface_name: port-channel111
+      - switch_ip: "{{ test_xe_switch_ip }}"
+        interface_name: port-channel112
+    config_actions:
+      deploy: true
+    state: deleted
+
+- name: "XE SETUP: Convert the member ports to iosXeRoutedHost"
+  cisco.nd.nd_interface_ethernet_routed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config: "{{ xe_members_routed }}"
+    config_actions:
+      deploy: true
+    state: merged
+
+# --- XE SETUP: switch id for the discovery waits below ---
+
+- name: "XE SETUP: Read the fabric switch inventory"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches"
+    method: get
+  register: xe_switches
+
+- name: "XE SETUP: Resolve the Catalyst switch id from its management IP"
+  vars:
+    matches: "{{ xe_switches.jsondata.switches | selectattr('fabricManagementIp', 'equalto', test_xe_switch_ip) | map(attribute='switchId') | list }}"
+  ansible.builtin.set_fact:
+    xe_switch_id: "{{ (matches + ['']) | first }}"
+
+- name: "XE SETUP: Verify the Catalyst switch is in the fabric"
+  ansible.builtin.assert:
+    that:
+      - xe_switch_id | length > 0
+    fail_msg: "No switch with fabricManagementIp {{ test_xe_switch_ip }} in fabric {{ test_xe_fabric_name }}"
+
+# --- XE NEGATIVE: member still a trunk host ---
+
+- name: "XE NEGATIVE: Routed port-channel with a trunk-host member is refused (check mode)"
+  cisco.nd.nd_interface_port_channel_routed: &xe_bad_member
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_pc_bad_member }}"
+    state: merged
+  check_mode: true
+  register: cm_xe_bad_member
+  ignore_errors: true
+
+- name: "XE NEGATIVE: Routed port-channel with a trunk-host member is refused (normal mode)"
+  cisco.nd.nd_interface_port_channel_routed: *xe_bad_member
+  register: nm_xe_bad_member
+  ignore_errors: true
+
+- name: "XE NEGATIVE: Verify the preflight refusal names the member and the ethernet module"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_bad_member is failed
+      - nm_xe_bad_member is failed
+      - "'current policy=iosXeTrunkHost' in nm_xe_bad_member.msg"
+      - "'required=iosXeRoutedHost' in nm_xe_bad_member.msg"
+      - "'nd_interface_ethernet_routed' in nm_xe_bad_member.msg"
+
+# --- XE MERGED CREATE ---
+
+- name: "XE MERGED CREATE: Create port-channel110 and port-channel111 (check mode)"
+  cisco.nd.nd_interface_port_channel_routed: &xe_merge
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_pc_110 }}"
+      - "{{ xe_pc_111 }}"
+    config_actions:
+      deploy: true
+    state: merged
+  check_mode: true
+  register: cm_xe_merged
+
+- name: "XE MERGED CREATE: Create port-channel110 and port-channel111 (normal mode)"
+  cisco.nd.nd_interface_port_channel_routed: *xe_merge
+  register: nm_xe_merged
+
+- name: "XE MERGED CREATE: Verify both port-channels and the echoed discriminators"
+  vars:
+    pc110: "{{ nm_xe_merged.after | selectattr('interface_name', 'equalto', 'port-channel110') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_merged is changed
+      - nm_xe_merged is changed
+      - nm_xe_merged.after | selectattr('interface_name', 'equalto', 'port-channel111') | list | length == 1
+      - pc110.config_data.network_os.network_os_type == "ios-xe"
+      - pc110.config_data.network_os.policy.policy_type == "iosXeL3PortChannel"
+      - pc110.config_data.network_os.policy.ip == "10.49.110.1"
+      - pc110.config_data.network_os.policy.prefix == 30
+      - pc110.config_data.network_os.policy.ports | length == 2
+
+- name: "XE MERGED IDEMPOTENT: Re-apply (check mode)"
+  cisco.nd.nd_interface_port_channel_routed: *xe_merge
+  check_mode: true
+  register: cm_xe_merged_idem
+
+- name: "XE MERGED IDEMPOTENT: Re-apply (normal mode)"
+  cisco.nd.nd_interface_port_channel_routed: *xe_merge
+  register: nm_xe_merged_idem
+
+- name: "XE MERGED IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_merged_idem is not changed
+      - nm_xe_merged_idem is not changed
+
+# --- XE MERGED UPDATE ---
+
+- name: "XE MERGED UPDATE: Change ip and description on port-channel110 (check mode)"
+  cisco.nd.nd_interface_port_channel_routed: &xe_merge_updated
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_pc_110_updated }}"
+    config_actions:
+      deploy: true
+    state: merged
+  check_mode: true
+  register: cm_xe_update
+
+- name: "XE MERGED UPDATE: Change ip and description on port-channel110 (normal mode)"
+  cisco.nd.nd_interface_port_channel_routed: *xe_merge_updated
+  register: nm_xe_update
+
+- name: "XE MERGED UPDATE: Verify"
+  vars:
+    pc110: "{{ nm_xe_update.after | selectattr('interface_name', 'equalto', 'port-channel110') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_update is changed
+      - nm_xe_update is changed
+      - pc110.config_data.network_os.policy.ip == "10.49.110.5"
+      - pc110.config_data.network_os.policy.description == "Updated XE routed PC 110"
+
+- name: "XE MERGED UPDATE IDEMPOTENT: Re-apply"
+  cisco.nd.nd_interface_port_channel_routed: *xe_merge_updated
+  register: nm_xe_update_idem
+
+- name: "XE MERGED UPDATE IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_update_idem is not changed
+
+# --- XE REPLACED ---
+
+- name: "XE REPLACED: Replace port-channel110 back to the base config (check mode)"
+  cisco.nd.nd_interface_port_channel_routed: &xe_replace
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_pc_110 }}"
+    config_actions:
+      deploy: true
+    state: replaced
+  check_mode: true
+  register: cm_xe_replaced
+
+- name: "XE REPLACED: Replace port-channel110 back to the base config (normal mode)"
+  cisco.nd.nd_interface_port_channel_routed: *xe_replace
+  register: nm_xe_replaced
+
+- name: "XE REPLACED: Verify the base config is restored"
+  vars:
+    pc110: "{{ nm_xe_replaced.after | selectattr('interface_name', 'equalto', 'port-channel110') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_replaced is changed
+      - nm_xe_replaced is changed
+      - pc110.config_data.network_os.policy.ip == "10.49.110.1"
+      - pc110.config_data.network_os.policy.description == "Ansible integration test XE routed PC 110"
+
+# --- XE DISCOVERY WAIT (before overridden) ---
+# ND generates the switch-side `no interface Port-channel<N>` for an IOS-XE port-channel only once it has discovered the deployed
+# interface (operData leaves `unknown` 25-45 s after the create deploy); a removal before that drops the intent and pushes nothing,
+# leaving the interface on the Catalyst. Real playbooks delete long after creating; this scenario does both in one run, so wait here.
+
+- name: "XE DISCOVERY WAIT: Wait until ND has discovered port-channel110 and port-channel111 on the Catalyst"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_switch_id }}/interfaces"
+    method: get
+  register: xe_discovery
+  until: >-
+    xe_discovery.jsondata.interfaces | default([])
+    | selectattr('interfaceName', 'in', ['port-channel110', 'port-channel111'])
+    | selectattr('operData.operationalStatus', 'defined')
+    | rejectattr('operData.operationalStatus', 'equalto', 'unknown')
+    | list | length == 2
+  retries: 12
+  delay: 10
+
+# --- XE OVERRIDDEN ---
+
+- name: "XE OVERRIDDEN: Keep only port-channel110 (check mode)"
+  cisco.nd.nd_interface_port_channel_routed: &xe_override
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_pc_110 }}"
+    config_actions:
+      deploy: true
+    state: overridden
+  check_mode: true
+  register: cm_xe_overridden
+
+- name: "XE OVERRIDDEN: Keep only port-channel110 (normal mode)"
+  cisco.nd.nd_interface_port_channel_routed: *xe_override
+  register: nm_xe_overridden
+
+- name: "XE OVERRIDDEN: Verify port-channel111 was removed and 110 kept"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_overridden is changed
+      - nm_xe_overridden is changed
+      - nm_xe_overridden.after | selectattr('interface_name', 'equalto', 'port-channel111') | list | length == 0
+      - nm_xe_overridden.after | selectattr('interface_name', 'equalto', 'port-channel110') | list | length == 1
+
+- name: "XE OVERRIDDEN IDEMPOTENT: Re-apply"
+  cisco.nd.nd_interface_port_channel_routed: *xe_override
+  register: nm_xe_overridden_idem
+
+- name: "XE OVERRIDDEN IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_overridden_idem is not changed
+
+# --- XE DISCOVERY WAIT (before deleted) ---
+# ND generates the switch-side `no interface Port-channel<N>` for an IOS-XE port-channel only once it has discovered the deployed
+# interface (operData leaves `unknown` 25-45 s after the create deploy); a removal before that drops the intent and pushes nothing,
+# leaving the interface on the Catalyst. Real playbooks delete long after creating; this scenario does both in one run, so wait here.
+
+- name: "XE DISCOVERY WAIT: Wait until ND has discovered port-channel110 on the Catalyst"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_switch_id }}/interfaces"
+    method: get
+  register: xe_discovery
+  until: >-
+    xe_discovery.jsondata.interfaces | default([])
+    | selectattr('interfaceName', 'in', ['port-channel110'])
+    | selectattr('operData.operationalStatus', 'defined')
+    | rejectattr('operData.operationalStatus', 'equalto', 'unknown')
+    | list | length == 1
+  retries: 12
+  delay: 10
+
+# --- XE DELETED ---
+
+- name: "XE DELETED: Delete port-channel110 (check mode)"
+  cisco.nd.nd_interface_port_channel_routed: &xe_delete
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_xe_switch_ip }}"
+        interface_name: port-channel110
+    config_actions:
+      deploy: true
+    state: deleted
+  check_mode: true
+  register: cm_xe_deleted
+
+- name: "XE DELETED: Delete port-channel110 (normal mode)"
+  cisco.nd.nd_interface_port_channel_routed: *xe_delete
+  register: nm_xe_deleted
+
+- name: "XE DELETED: Verify"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_deleted is changed
+      - nm_xe_deleted is changed
+      - nm_xe_deleted.after | selectattr('interface_name', 'equalto', 'port-channel110') | list | length == 0
+
+- name: "XE DELETED IDEMPOTENT: Re-delete"
+  cisco.nd.nd_interface_port_channel_routed: *xe_delete
+  register: nm_xe_deleted_idem
+
+- name: "XE DELETED IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_deleted_idem is not changed
+
+# --- XE CLEANUP: members back to the fabric-default trunk host ---
+# Removing the port-channel releases its members as routed hosts, and the routed ethernet module's IOS-XE reset target is a
+# defaults-only routed host, so neither returns a Catalyst leaf port to its fabric default. The trunk-host module manages only
+# interfaces that already carry a trunk-host policy, so the members are first converged back into IOS-XE trunk hosts (replaced) and
+# then reset to the defaults-only fabric default (deleted), both deployed.
+
+# The ethernet modules treat a port as a port-channel member while ND reports a positive `operData.portChannelId`, and that
+# operational value lags the removal deploy (seconds on ND 4.2.1, more than two minutes observed on 4.3.1). Wait for ND to report the
+# members as unbundled instead of retrying the conversion blindly.
+- name: "XE CLEANUP: Wait until ND no longer reports the member ports as bundled"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_switch_id }}/interfaces"
+    method: get
+  register: xe_cleanup_members
+  until: >-
+    xe_cleanup_members.jsondata.interfaces | default([])
+    | selectattr('interfaceName', 'in', xe_member_names)
+    | selectattr('operData.portChannelId', 'defined')
+    | selectattr('operData.portChannelId', 'gt', 0)
+    | list | length == 0
+  retries: 30
+  delay: 10
+
+- name: "XE CLEANUP: Convert the member ports back to IOS-XE trunk hosts"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_xe_switch_ip }}"
+        interface_names: "{{ xe_member_names }}"
+        config_data:
+          network_os:
+            network_os_type: ios-xe
+            policy:
+              admin_state: true
+    config_actions:
+      deploy: true
+    state: replaced
+
+- name: "XE CLEANUP: Reset the member ports to the fabric default"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_xe_switch_ip }}"
+        interface_names: "{{ xe_member_names }}"
+    config_actions:
+      deploy: true
+    state: deleted
+
+- name: "XE CLEANUP: Read the Catalyst interface inventory"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_switch_id }}/interfaces"
+    method: get
+  register: xe_cleanup_inventory
+
+# The switch's running config as ND holds it is the source of truth for "the interface is gone": after a deletion ND 4.3.1 can keep
+# a stale policy-less discovered record for a port-channel that no longer exists on the Catalyst (4.2.1 drops it), so the interface
+# inventory alone cannot tell a removed port-channel from one left behind on the switch.
+- name: "XE CLEANUP: Wait until the Catalyst running config carries no test port-channel"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_xe_fabric_name }}/switches/{{ xe_switch_id }}/diff"
+    method: get
+  register: xe_cleanup_running_config
+  until: >-
+    xe_cleanup_running_config.jsondata.diffConfigs | default([])
+    | map(attribute='runningConfig') | select('search', '(?i)port-channel *11[0-2]\\b') | list | length == 0
+  retries: 12
+  delay: 10
+
+- name: "XE CLEANUP: Verify the members are fabric-default trunk hosts and no test port-channel is left"
+  vars:
+    inventory: "{{ xe_cleanup_inventory.jsondata.interfaces | default([]) }}"
+    member_policy_types: >-
+      {{ inventory | selectattr('interfaceName', 'in', xe_member_names)
+         | map(attribute='configData.networkOS.policy.policyType') | list | unique }}
+    port_channels_with_intent: >-
+      {%- set found = [] -%}
+      {%- for item in inventory
+            if item.interfaceName | lower in ['port-channel110', 'port-channel111', 'port-channel112']
+            and ((item.configData | default({}, true)).networkOS | default({}, true)).policy | default(none, true) is not none -%}
+      {%- set appended = found.append(item.interfaceName) -%}
+      {%- endfor -%}
+      {{ found }}
+  ansible.builtin.assert:
+    that:
+      - member_policy_types == ['iosXeTrunkHost']
+      - port_channels_with_intent | length == 0
+      - xe_cleanup_running_config.jsondata.diffConfigs | length > 0
