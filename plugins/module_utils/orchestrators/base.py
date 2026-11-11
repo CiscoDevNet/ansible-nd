@@ -9,11 +9,21 @@ from collections.abc import Sequence
 from functools import wraps
 from typing import Any, ClassVar, Dict, Generic, Optional, TypeVar
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict, model_validator
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    BaseModel,
+    ConfigDict,
+    model_validator,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.enums import (
+    HttpVerbEnum,
+    OperationType,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import MutationResponseType, ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
+    MutationResponseType,
+    ResponseType,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
@@ -54,6 +64,12 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     # TODO: Remove this compatibility bridge when PR #525 unifies execution.
     supports_mutation_outcomes: ClassVar[bool] = False
 
+    # Opt-in. Existing orchestrators do not receive gathered filters.
+    supports_gathered_server_filtering: ClassVar[bool] = False
+    # States that never mutate controller configuration. Unknown or absent states
+    # deliberately use mutation validation, which is the safer default.
+    read_only_states: ClassVar[frozenset[str]] = frozenset({"gathered"})
+
     # bulk_payload_key is the JSON wrapper key the bulk endpoint expects,
     # e.g. "links" for /api/v1/manage/links POST.
     bulk_payload_key: ClassVar[str] = "items"
@@ -73,7 +89,25 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     rest_send: RestSend
     results: Optional[Results] = None
 
-    def _register_api_call(self, path: str, verb: HttpVerbEnum, operation_type: OperationType, payload: Optional[Dict[str, Any]] = None) -> None:
+    @property
+    def is_read_only_operation(self) -> bool:
+        """
+        Return whether the current module state performs no configuration
+        mutations.
+
+        Unknown or absent states return False so that callers retain the stricter
+        mutation preflight.
+        """
+        params = self.rest_send.params if self.rest_send else None
+        return bool(params) and params.get("state") in self.read_only_states
+
+    def _register_api_call(
+        self,
+        path: str,
+        verb: HttpVerbEnum,
+        operation_type: OperationType,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """Register the most recent REST call with Results for observability."""
         if self.results is None:
             return
@@ -246,11 +280,47 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
 
         return False
 
+    def accepted_mutations(self, model_instances: Sequence[ModelType]) -> list[ModelType]:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Failure-path hook consulted by `NDStateMachine` after a bulk create raised (or was swallowed by `ignore_errors`): return the
+        subset of `model_instances` the controller nevertheless accepted, so only those appear in the module's `after` and `sent`
+        (issue #597). The base implementation reports nothing accepted, the conservative answer for endpoints whose partial-commit
+        behavior is uncharacterized. Interface orchestrators answer from their deploy queue.
+
+        ## Raises
+
+        None
+        """
+        return []
+
+    def unaccepted_removals(self, model_instances: Sequence[ModelType]) -> list[ModelType]:  # pylint: disable=unused-argument
+        """
+        # Summary
+
+        Failure-path hook consulted by `NDStateMachine.reconcile_after_failure`: return the subset of `model_instances` (the items the
+        state machine recorded as removed) whose delete-side request the controller has not accepted, so they are restored to the
+        module's `after` (issue #597). The base implementation reports none: its `delete` / `delete_bulk` send the request
+        synchronously, so a removal the state machine recorded is one the controller accepted. Interface orchestrators, whose
+        `delete_bulk` only queues the removal for `remove_pending`, answer from their delete-side queues.
+
+        ## Raises
+
+        None
+        """
+        return []
+
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
     def create(self, model_instance: ModelType, **kwargs) -> MutationResponseType:
         try:
             api_endpoint = self.create_endpoint()
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=model_instance.to_payload(), operation_type=OperationType.CREATE)
+            return self._request(
+                path=api_endpoint.path,
+                verb=api_endpoint.verb,
+                data=model_instance.to_payload(),
+                operation_type=OperationType.CREATE,
+            )
         except Exception as e:
             raise Exception(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -258,7 +328,12 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         try:
             api_endpoint = self.update_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=model_instance.to_payload(), operation_type=OperationType.UPDATE)
+            return self._request(
+                path=api_endpoint.path,
+                verb=api_endpoint.verb,
+                data=model_instance.to_payload(),
+                operation_type=OperationType.UPDATE,
+            )
         except Exception as e:
             raise Exception(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -266,7 +341,11 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         try:
             api_endpoint = self.delete_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, operation_type=OperationType.DELETE)
+            return self._request(
+                path=api_endpoint.path,
+                verb=api_endpoint.verb,
+                operation_type=OperationType.DELETE,
+            )
         except Exception as e:
             raise Exception(f"Delete failed for {model_instance.get_identifier_value()}: {e}") from e
 

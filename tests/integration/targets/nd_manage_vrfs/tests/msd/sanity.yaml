@@ -32,9 +32,6 @@
           - "65000:50550"
         export_evpn_rt:
           - "65000:50550"
-        adv_host_routes: true
-        adv_default_routes: false
-        static_default_route: false
         deploy: false
         child_fabric_config:
           - fabric_name: "{{ nd_vrf_msd_child_fabric }}"
@@ -42,14 +39,10 @@
             adv_default_routes: false
             static_default_route: false
             bgp_password: abcdef12
-            bgp_passwd_encrypt: 3
+            bgp_passwd_encrypt: 3des
       - vrf_name: ansible-msd-sanity-b
         vrf_id: "{{ nd_vrf_base_id + 51 }}"
-        l3vni_wo_vlan: true
         vrf_description: Ansible ND VRF MSD sanity L3VNI without VLAN
-        adv_host_routes: false
-        adv_default_routes: true
-        static_default_route: true
         deploy: false
         child_fabric_config:
           - fabric_name: "{{ nd_vrf_msd_child_fabric }}"
@@ -64,9 +57,6 @@
         vrf_description: Ansible ND VRF MSD sanity replaced
         max_bgp_paths: 4
         max_ibgp_paths: 4
-        adv_host_routes: false
-        adv_default_routes: true
-        static_default_route: true
         deploy: false
         child_fabric_config:
           - fabric_name: "{{ nd_vrf_msd_child_fabric }}"
@@ -78,9 +68,6 @@
         vrf_id: "{{ nd_vrf_base_id + 52 }}"
         vlan_id: "{{ nd_vrf_base_vlan + 52 }}"
         vrf_description: Ansible ND VRF MSD sanity overridden
-        adv_host_routes: true
-        adv_default_routes: false
-        static_default_route: false
         deploy: false
         child_fabric_config:
           - fabric_name: "{{ nd_vrf_msd_child_fabric }}"

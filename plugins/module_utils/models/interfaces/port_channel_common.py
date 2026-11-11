@@ -13,7 +13,7 @@ normalizer, the `policy_type` accessor, and the IOS-XE create-name rewrite. Subc
 from __future__ import annotations
 
 import re
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -107,6 +107,20 @@ class PortChannelInterfaceBaseModel(NDBaseModel):
     switch_ip: str = Field(alias="switchIp")
     interface_name: str = Field(alias="interfaceName")
     interface_type: Literal["portChannel"] = Field(default="portChannel", alias="interfaceType", frozen=True)
+
+    def to_diff_dict(self, **kwargs) -> dict[str, Any]:
+        """Compare an explicitly cleared NX-OS description with its absent echo.
+
+        PUT omits the API-invalid empty string and ND clears the description by
+        removing it. Nonempty observed descriptions remain in the reverse diff,
+        so an explicit clear still requires an update until that readback.
+        """
+        data = super().to_diff_dict(**kwargs)
+        network_os = (data.get("configData") or {}).get("networkOS") or {}
+        policy = network_os.get("policy") or {}
+        if network_os.get("networkOSType") == "nx-os" and policy.get("description") == "":
+            policy.pop("description")
+        return data
 
     @property
     def policy_type(self) -> str | None:

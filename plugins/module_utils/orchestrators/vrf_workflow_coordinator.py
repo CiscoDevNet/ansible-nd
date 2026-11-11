@@ -52,6 +52,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_fabric_
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_state_machine import (
     VrfStateMachine,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.overlay_deletion_finalizer import (
+    OverlayDeletionFinalizer,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.fabric_feature_preflight import (
     preflight_child_feature_tasks,
     preflight_workflow_features,
@@ -132,7 +135,9 @@ class VrfWorkflowCoordinator:
             fabric_type: str = self.strategy.fabric_type
             self._validate_topology_argument_scope(module_args, fabric_type)
 
-            if self.strategy.is_child:
+            if module_args.get("deletion_mode", "standard") == "finalize":
+                result = OverlayDeletionFinalizer(self, "vrf").run(module_args, self.strategy)
+            elif self.strategy.is_child:
                 result = self._handle_child_workflow(module_args, fabric_type)
             elif self.strategy.is_parent:
                 result = self._handle_parent_workflow(module_args, fabric_type)
@@ -201,15 +206,24 @@ class VrfWorkflowCoordinator:
         """
         # Summary
 
-        Validate actionable VRF features against the owning fabric before writes.
+        Validate effective VRF payloads and fabric features before any workflow writes.
 
         ## Raises
 
         ### NDStateMachineError
 
-        - If a requested feature is unavailable on the effective fabric.
+        - If an effective write payload or requested feature is unsupported.
         """
         try:
+            state = module_args.get("state", "merged")
+            if state not in ("gathered", "deleted"):
+                # Use the CRUD planner's effective merged/replacement models, not
+                # raw intent or every existing VRF. Child tasks also reach this
+                # boundary before the parent can detach, deploy, or write CRUD.
+                plan = sm._build_plan(state="replaced" if state == "staged" else state)  # pylint: disable=protected-access
+                for items, updating in ((plan.creates, False), (plan.updates, True)):
+                    for item in items:
+                        sm.model_orchestrator.validate_write_payload(item, updating=updating)
             preflight_workflow_features(
                 self, sm, module_args, strategy, "VRF", current_attachments=current_attachments, desired_attachments=desired_attachments
             )

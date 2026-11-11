@@ -93,7 +93,8 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
     ### RuntimeError
 
-    - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
+    - Via `validate_prerequisites` if the fabric does not exist, or is in deployment-freeze mode for a state
+      that mutates configuration.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `preflight` if a proposed member ethernet is already owned by a different port-channel.
     - Via `preflight` if a proposed IOS-XE member's current policy mode does not match the port-channel mode.
@@ -369,6 +370,13 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             api_endpoint.set_identifiers(model_instance.interface_name)
             payload = model_instance.to_payload()
             payload["switchId"] = switch_id
+            # The API's interfaceDescription schema has minLength: 1. Keep an
+            # explicit blank in desired intent, but omit it from the NX-OS PUT
+            # body; actual readback must still prove that description cleared.
+            network_os = (payload.get("configData") or {}).get("networkOS") or {}
+            policy = network_os.get("policy") or {}
+            if network_os.get("networkOSType") == "nx-os" and policy.get("description") == "":
+                policy.pop("description")
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
             # The PUT is accepted before the optional member preview. Preserve
             # that evidence even if the later read-only preview fails.
@@ -1111,7 +1119,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         ### RuntimeError
 
         - If the fabric does not exist on the target ND node.
-        - If the fabric is in deployment-freeze mode.
+        - If the fabric is in deployment-freeze mode and the state mutates configuration.
         - If the query API request fails.
         """
         managed_types = self._managed_policy_types()

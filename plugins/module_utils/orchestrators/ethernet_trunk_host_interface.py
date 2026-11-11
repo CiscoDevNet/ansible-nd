@@ -17,6 +17,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import ClassVar
 
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import GatheredLuceneSpec
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
     TrunkHostPolicyTypeEnum,
@@ -24,10 +25,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
     EthernetTrunkHostInterfaceModel,
+    EthernetTrunkHostPolicyModel,
     XeEthernetTrunkHostPolicyModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import (
     InterfaceDefaultConfig,
+    ROUTED_SIBLING_RESET_FIELDS,
+    has_typed_routed_sibling_residue,
+    has_retained_reset_auto_negotiation,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import (
     EthernetBaseOrchestrator,
@@ -87,6 +92,14 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
     model_class: ClassVar[type[NDBaseModel]] = EthernetTrunkHostInterfaceModel
     MEMBER_FAMILY: ClassVar[str] = "trunk"
 
+    supports_gathered_server_filtering: ClassVar[bool] = True
+    gathered_lucene_spec: ClassVar[GatheredLuceneSpec] = GatheredLuceneSpec(
+        base_terms=(("interfaceType", "ethernet"),),
+        field_map={
+            ("interface_name",): "interfaceName",
+        },
+    )
+
     def _managed_policy_types(self) -> set[str]:
         """
         # Summary
@@ -99,6 +112,44 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         None
         """
         return {e.value for e in TrunkHostPolicyTypeEnum} | {e.value for e in XeTrunkHostPolicyTypeEnum}
+
+    @staticmethod
+    def unsupported_nx_reset_fields(iface: dict) -> tuple[str, ...]:
+        """Identify fields a modeled NX trunk reset cannot safely account for.
+
+        Check raw containers before response-model parsing can discard unknown
+        keys. Recognized nondefault policy fields still follow the normal reset
+        paths, including the separate Class C replacement correction.
+        """
+        config = iface.get("configData")
+        if config is None:
+            config = {}
+        if not isinstance(config, dict):
+            return ("configData",)
+        network = config.get("networkOS")
+        if network is None:
+            network = {}
+        if not isinstance(network, dict):
+            return ("configData.networkOS",)
+        policy = network.get("policy")
+        if policy is None:
+            policy = {}
+        if not isinstance(policy, dict):
+            return ("configData.networkOS.policy",)
+        fields = ["configData." + str(key) for key in config if key not in {"mode", "networkOS"}]
+        if "mode" in config and config["mode"] != "trunk":
+            fields.append("configData.mode")
+        fields.extend("configData.networkOS." + str(key) for key in network if key not in {"networkOSType", "policy"})
+        if "networkOSType" in network and network["networkOSType"] != "nx-os":
+            fields.append("configData.networkOS.networkOSType")
+        known_policy = {field.alias or name for name, field in EthernetTrunkHostPolicyModel.model_fields.items()}
+        known_policy.update(_default_interface_policy())
+        # TODO(4.3.1) interface-get-undocumented-ptp-field
+        known_policy.add("ptp")  # Qualified false echo on normalized ND 4.3.1 NX-OS hosts.
+        if iface.get("interfaceType") == "ethernet" and has_typed_routed_sibling_residue(config):
+            known_policy.update(ROUTED_SIBLING_RESET_FIELDS)
+        fields.extend("configData.networkOS.policy." + str(key) for key in policy if key not in known_policy)
+        return tuple(sorted(fields))
 
     @staticmethod
     def _is_unconfigured_default(iface: dict) -> bool:
@@ -130,6 +181,26 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
             return False
         if policy.get("policyType") == XeTrunkHostPolicyTypeEnum.IOS_XE_TRUNK_HOST.value:
             return EthernetTrunkHostInterfaceOrchestrator._is_unconfigured_xe_default(policy)
+        if EthernetTrunkHostInterfaceOrchestrator.unsupported_nx_reset_fields(iface):
+            return False
+        reset_fields = (
+            set(_default_interface_policy())
+            | {
+                "policyType",
+                "description",
+                "allowedVlans",
+                "nativeVlan",
+                "vlanMappingEntries",
+                "ptp",
+            }
+            | InterfaceDefaultConfig.UNRESETTABLE_FIELDS
+            | InterfaceDefaultConfig.STORM_THRESHOLD_FIELDS
+        )
+        if any(key not in reset_fields for key in policy):
+            return False
+        ptp = policy.get("ptp")
+        if ptp is not None and not (ptp is False or isinstance(ptp, str) and ptp == "false"):
+            return False
         allowed_vlans = policy.get("allowedVlans")
         if allowed_vlans not in (None, "none"):
             return False
@@ -142,14 +213,19 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         for field, default in _default_interface_policy().items():
             if field not in policy or policy[field] is None:
                 continue
+            if field == "extraConfig" and has_retained_reset_auto_negotiation(iface.get("configData") or {}):
+                continue
             if not _wire_value_matches_default(policy[field], default):
                 return False
         # TODO(4.2.1) normalize-unresettable-policy-fields
         # Class C fields (bandwidth, debounceLinkupTimer, inheritBandwidth) survive interfaceActions/normalize because
         # ND's validator rejects 0/null for them, so a normalized interface still carries any prior value. We must treat
         # such an interface as configured (not an unconfigured default) so `state: deleted` keeps it in scope and routes
-        # it to the per-interface PUT-as-replace reset path. See InterfaceDefaultConfig.UNRESETTABLE_FIELDS for the set.
-        if any(policy.get(field) is not None for field in InterfaceDefaultConfig.UNRESETTABLE_FIELDS):
+        # it to the per-interface PUT-as-replace reset path. See InterfaceDefaultConfig.UNRESETTABLE_FIELDS for this set.
+        # TODO(4.3.1) TBD
+        # STORM_THRESHOLD_FIELDS need the same replacement path: zero-level thresholds generate real storm CLI even
+        # with stormControl disabled. This is a separate observed behavior from the ND 4.2.1 Class C fields above.
+        if any(policy.get(field) is not None for field in InterfaceDefaultConfig.UNRESETTABLE_FIELDS | InterfaceDefaultConfig.STORM_THRESHOLD_FIELDS):
             return False
         if policy.get("vlanMappingEntries"):
             return False
@@ -177,13 +253,16 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
                 return False
         return True
 
-    def query_all(self, model_instance: NDBaseModel | None = None, **kwargs) -> ResponseType:
+    def query_all(self, model_instance: NDBaseModel | None = None, gathered_filters: list[dict] | None = None, **kwargs) -> ResponseType:
         """
         # Summary
 
         Query all trunkHost interfaces in the fabric via the base orchestrator, then filter out interfaces
         that match the unconfigured `int_trunk_host` default signature. This keeps default-configured
         interfaces out of `before`, so `state: overridden` idempotency holds across re-runs.
+
+        For `state: gathered`, every unconfigured default is excluded so gathered output contains only
+        user-managed trunkHost interfaces.
 
         An interface the task names explicitly is retained even when it matches the default signature, for every state except
         `deleted` (PR #558 review). A deliberately defaults-only desired config must read back as existing so the state machine
@@ -197,9 +276,11 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
 
         - Propagated from `EthernetBaseOrchestrator.query_all` on query failure.
         """
-        result = super().query_all(model_instance=model_instance, **kwargs)
+        result = super().query_all(model_instance=model_instance, gathered_filters=gathered_filters, **kwargs)
         if not isinstance(result, list):
             return result
+        if self.rest_send.params.get("state") == "gathered":
+            return [iface for iface in result if not self._is_unconfigured_default(iface)]
         named = self._named_interfaces() if self.rest_send.params.get("state") != "deleted" else set()
         filtered = [iface for iface in result if (iface.get("switchIp"), iface.get("interfaceName")) in named or not self._is_unconfigured_default(iface)]
         return self._append_named_member_projections(filtered)
