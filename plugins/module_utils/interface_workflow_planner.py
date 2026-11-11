@@ -1478,9 +1478,14 @@ class InterfaceWorkflowPlanner:
             or current.get("switchId") != switch_id
             or self._canonical_interface_type(current.get("interfaceType")) not in resource.adapter.interface_types
             or not self._logical_delete_replay_supported(family, self._wire_network_os_type(current))
-            or policy.get("policyType") != "userDefined"
-            or policy.get("templateName") != "interface_delete"
         ):
+            return False
+        tombstone = policy.get("policyType") == "userDefined" and policy.get("templateName") == "interface_delete"
+        # TODO(4.2.1) staged-removal-before-discovery-lists-policyless-row
+        # A removal staged within seconds of the create deploy is listed as a loopback or SVI row with no policy instead of the
+        # tombstone, while the preview still reports `no interface` pending (lab 2026-11-10, 4.2.1.10 and 4.3.1.175). The same
+        # exact-preview proof therefore applies to that row; the switch `configSyncStatus` is optional and cannot stand in for it.
+        if not tombstone and (policy or family not in {"loopback", "svi"}):
             return False
         orchestrator = resource.orchestrator
         preview = orchestrator._preview_interfaces({"interfaces": [{"interfaceName": name, "switchId": switch_id}]})
@@ -1488,8 +1493,10 @@ class InterfaceWorkflowPlanner:
         if error is None and not pending_pairs:
             # TODO(4.2.1) interface-list-lags-deployed-logical-removal
             # ND keeps listing the tombstone for a few seconds after the deploy that pushed its removal, while interfacesSummary
-            # already reports no policy for it. A valid preview with zero pending lines proves nothing is left to deploy, so the
-            # delete is already satisfied: no staged target, no proof (lab 2026-11-10, 4.2.1.10 and 4.3.1.175, issue #688).
+            # already reports no policy for it, and keeps a removed loopback or SVI as a row without a policy (`mode: unknown`,
+            # stale operData) for minutes; unmanaged interfaces (`Vlan1`) are listed the same way. A valid preview with zero
+            # pending lines proves nothing is left to deploy, so the delete is already satisfied: no staged target, no proof
+            # (lab 2026-11-10, 4.2.1.10 and 4.3.1.175, NX-OS and IOS-XE, issue #688).
             return True
         if error is not None or pending_pairs != {orchestrator._normalized_interface_pair(name, switch_id)}:
             return False
@@ -1891,12 +1898,13 @@ class InterfaceWorkflowPlanner:
                     )
                 )
                 current_policy_type = InterfaceStateSnapshot.policy_type(current_records[0][1])
-                # TODO(4.2.1) interface-list-lags-deployed-logical-removal
-                # ND keeps listing a removed loopback or SVI as a row without a policy (`mode: unknown`, stale operData) for minutes
-                # after the deploy that pushed `no interface` (lab 2026-11-10, 4.2.1.10 and 4.3.1.175, NX-OS and IOS-XE, issue #688).
-                # The row is not intent this family owns, and unmanaged interfaces (`Vlan1`) are listed the same way. The standalone
-                # modules never see it (`query_all` filters by policy type) and report no change, so an explicit delete does the same.
                 if current_policy_type is None and resource.adapter.resource_type in {"loopback", "svi"}:
+                    # `_staged_logical_delete_echo` accepts a row without a policy only when the preview of that exact name proves
+                    # nothing is pending or only its own removal is. Reaching here means the preview proved neither.
+                    errors.append(
+                        f"resources[{resource.resource_index}] cannot delete {getattr(desired, 'interface_name')}: ND lists it without a policy and "
+                        "its configuration preview does not show either nothing pending or only the removal of that interface."
+                    )
                     continue
                 if current_policy_type in resource.adapter.policy_types:
                     deletes_by_index[resource.resource_index].append(self._port_channel_delete_model(resource, desired, current_records))

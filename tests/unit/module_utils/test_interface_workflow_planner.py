@@ -3983,6 +3983,36 @@ def test_deleted_ios_xe_port_channel_tombstone_is_not_replayed(monkeypatch) -> N
     assert not previews
 
 
+def _nothing_pending_preview(name: str) -> dict[str, Any]:
+    """Return an `interfaceActions/preview` body that succeeds with zero pending lines (lab capture 2026-11-10, ND 4.2.1.10, issue #688)."""
+    return {
+        "configurationDiffs": [
+            {
+                "adminStatus": "up",
+                "combinedConfigs": [{"config": "", "configType": "PENDING", "lines": 0}, {"config": "", "configType": "EXPECTED", "lines": 0}],
+                "fabricName": "fabric_1",
+                "interfaceName": name,
+                "message": "",
+                "operationalStatus": "up",
+                "status": "success",
+                "switchId": "SERIAL1",
+                "switchName": "C1_LE1",
+            }
+        ]
+    }
+
+
+def _policyless_row(name: str, interface_type: str, network_os_type: str) -> dict[str, Any]:
+    """Return a loopback or SVI row as ND lists it without a policy (`mode: unknown`, stale `operData`)."""
+    return {
+        "configData": {"mode": "unknown", "networkOS": {"networkOSType": network_os_type}},
+        "interfaceName": name,
+        "interfaceType": interface_type,
+        "operData": {"adminStatus": "up", "ipAddress": "10.100.207.1/32", "operationalStatus": "up"},
+        "switchId": "SERIAL1",
+    }
+
+
 @pytest.mark.parametrize(
     "family,name,interface_type,network_os_type",
     [
@@ -3992,7 +4022,7 @@ def test_deleted_ios_xe_port_channel_tombstone_is_not_replayed(monkeypatch) -> N
         ("svi", "Vlan1", "svi", "ios-xe"),
     ],
 )
-def test_deleted_policyless_logical_row_is_already_absent(family, name, interface_type, network_os_type) -> None:
+def test_deleted_policyless_logical_row_is_already_absent(monkeypatch, family, name, interface_type, network_os_type) -> None:
     """
     # Summary
 
@@ -4001,21 +4031,23 @@ def test_deleted_policyless_logical_row_is_already_absent(family, name, interfac
     ## Test
 
     - ND lists the interface with `mode: unknown`, no `policy`, and stale `operData` (the row it keeps after a deployed removal)
+    - The scoped preview of that exact name succeeds and reports zero pending lines
     - `plan()` reports no mutation, no staged delete target, and raises no safety validation error
-    - No interface summary and no preview is requested for the row
+    - Exactly one preview is requested for the row, and no interface summary
 
     ## Classes and Methods
 
     - InterfaceWorkflowPlanner.plan()
-    - InterfaceWorkflowPlanner._rewrite_policy_operations()
+    - InterfaceWorkflowPlanner._staged_logical_delete_echo()
     """
-    row = {
-        "configData": {"mode": "unknown", "networkOS": {"networkOSType": network_os_type}},
-        "interfaceName": name,
-        "interfaceType": interface_type,
-        "operData": {"adminStatus": "up", "ipAddress": "10.100.207.1/32", "operationalStatus": "up"},
-        "switchId": "SERIAL1",
-    }
+    row = _policyless_row(name, interface_type, network_os_type)
+    previews: list[Any] = []
+
+    def preview(_self, payload):
+        previews.append(payload)
+        return _nothing_pending_preview(name)
+
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", preview)
     planner, recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": [row]}])
 
     plan = planner.plan([{"type": family, "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": name.lower()}]}])
@@ -4023,7 +4055,79 @@ def test_deleted_policyless_logical_row_is_already_absent(family, name, interfac
     assert not plan.changed
     assert not plan.staged_delete_targets
     assert not plan.resources[0].operations.deletes
+    assert previews == [{"interfaces": [{"interfaceName": name.lower(), "switchId": "SERIAL1"}]}]
     assert len(recorder.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "family,requested,wire_name,interface_type,network_os_type,running,pending",
+    [
+        ("loopback", "loopback207", "loopback207", "loopback", "nx-os", "interface loopback207\n  ip address 10.100.207.1/32\n", "no interface loopback207\n"),
+        ("svi", "vlan983", "Vlan983", "svi", "ios-xe", "interface Vlan983\r\n no ip address\r\nend\r\n", "no interface Vlan983\nno vlan 983\n"),
+    ],
+)
+def test_deleted_policyless_logical_row_with_pending_removal_is_staged(
+    monkeypatch, family, requested, wire_name, interface_type, network_os_type, running, pending
+) -> None:
+    """
+    # Summary
+
+    Verify a policy-less loopback or SVI row whose removal is still pending is named as a staged delete target, whatever the switch sync status says.
+
+    ## Test
+
+    - ND lists the interface without a policy (a removal staged before ND discovered the interface)
+    - The scoped preview shows the running header and the pending `no interface` (plus `no vlan` for the SVI)
+    - The switch inventory carries no `configSyncStatus`
+    - `plan()` reports no mutation and names the interface as a staged delete target, so the coordinator deploys it
+
+    ## Classes and Methods
+
+    - InterfaceWorkflowPlanner.plan()
+    - InterfaceWorkflowPlanner._staged_logical_delete_echo()
+    """
+    row = _policyless_row(wire_name, interface_type, network_os_type)
+    preview = _xe_preview(wire_name, running, pending, "", 0)
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", lambda _self, _payload: preview)
+    planner, recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": [row]}])
+
+    plan = planner.plan([{"type": family, "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": requested}]}])
+
+    assert not plan.changed
+    assert plan.staged_delete_targets == ((requested, "SERIAL1"),)
+    assert not plan.logical_staged_deletions
+    assert not plan.resources[0].operations.deletes
+    assert not any("/interfacesSummary" in str(call.get("path")) for call in recorder.calls)
+
+
+@pytest.mark.parametrize(
+    "pending",
+    ["no interface loopback207\ninterface Ethernet1/7\nshutdown\n", "interface loopback207\n  ip address 10.100.207.9/32\n"],
+)
+def test_deleted_policyless_logical_row_with_foreign_pending_command_is_rejected(monkeypatch, pending) -> None:
+    """
+    # Summary
+
+    Verify a policy-less loopback row is neither skipped nor deployed when its preview carries pending commands other than its own removal.
+
+    ## Test
+
+    - ND lists the loopback without a policy
+    - The scoped preview carries a pending command that is not the removal of that interface
+    - `plan()` raises `InterfaceWorkflowValidationError` naming the interface
+
+    ## Classes and Methods
+
+    - InterfaceWorkflowPlanner.plan()
+    - InterfaceWorkflowPlanner._staged_logical_delete_echo()
+    """
+    row = _policyless_row("loopback207", "loopback", "nx-os")
+    preview = _xe_preview("loopback207", "interface loopback207\n", pending, "", 0)
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", lambda _self, _payload: preview)
+    planner, _recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": [row]}])
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="cannot delete loopback207: ND lists it without a policy"):
+        planner.plan([{"type": "loopback", "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": "loopback207"}]}])
 
 
 def test_deleted_policyless_port_channel_row_still_fails_safety_validation() -> None:
