@@ -26,15 +26,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import (
     OperationType,
     PlatformType,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import (
-    FabricContext,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_breakout_interfaces.breakout_interface import (
     BreakoutInterfaceModel,
     validate_module_params,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
     NDBaseOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.breakout_fabric_context import (
+    BreakoutFabricContext,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_strategies.nd_v1_strategy import (
     NdV1Strategy,
@@ -99,7 +99,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
     delete_endpoint: type = EpManageInterfacesRemove
     query_one_endpoint: type = EpManageInterfacesSummaryGet
     query_all_endpoint: type = EpManageInterfacesSummaryGet
-    _fabric_context: FabricContext | None = PrivateAttr(default=None)
+    _fabric_context: BreakoutFabricContext | None = PrivateAttr(default=None)
     _api_calls: list[dict[str, Any]] = PrivateAttr(default_factory=list)
     _action_changed: bool = PrivateAttr(default=False)
     _last_action_completed: bool = PrivateAttr(default=False)
@@ -128,10 +128,10 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
         return self.rest_send.params["fabric_name"]
 
     @property
-    def fabric_context(self) -> FabricContext:
-        """Lazily create the shared, targeted switch identity/platform cache."""
+    def fabric_context(self) -> BreakoutFabricContext:
+        """Reuse shared inventory with breakout-specific validation and reporting."""
         if self._fabric_context is None:
-            self._fabric_context = FabricContext(
+            self._fabric_context = BreakoutFabricContext(
                 rest_send=self.rest_send,
                 fabric_name=self.fabric_name,
                 query_observer=self._observe_resolution_query,
@@ -143,8 +143,8 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
         """Require NX-OS for every selected switch before topology reads or writes.
 
         Campus fabrics may contain both NX-OS and IOS-XE switches. The fabric
-        type is therefore not a proxy for breakout support. Reuse IP-resolution
-        metadata and query only serials whose platform has not been fetched.
+        type is therefore not a proxy for breakout support. Reuse the same cached
+        inventory for IP translation and platform metadata for all selected switches.
         Missing/unknown metadata cannot establish that an operation is supported.
         """
         self._validate_platform_ids(dict.fromkeys(model.switch_id for model in models))
@@ -166,7 +166,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
             raise RuntimeError(" ".join(errors) + " This module requires NX-OS switches; no breakout or unbreakout request was sent.")
 
     def _observe_resolution_query(self, path: str) -> None:
-        """Record shared switch metadata reads without copying response history."""
+        """Record cached inventory reads without copying response history."""
         self._register_api_call(path, HttpVerbEnum.GET, OperationType.QUERY)
         self._api_calls.append(
             {
@@ -180,7 +180,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
         )
 
     def _observe_resolution_error(self, path: str, error: Exception, response_received: bool) -> None:
-        """Include failed shared IP lookups without reusing an older query's response."""
+        """Include failed metadata reads without reusing an older query's response."""
         self._register_unanswered_request(
             path,
             HttpVerbEnum.GET,
@@ -324,6 +324,9 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
 
     def _query_group_pages(self, switch_id: str | None, filter_text: str) -> list[dict[str, Any]]:
         """Read a filtered interface family/group, following bounded pagination."""
+        # TODO(4.2.1) TBD
+        # Recheck interfacesSummary vPC peer expansion before removing
+        # the exact switchId filter.
         # NDFC can expand switchId to its vPC peer; the filter keeps the wire
         # response scoped to the exact requested serial on every page.
         wire_filter = f"{filter_text} AND switchId:{switch_id}" if switch_id is not None else filter_text
@@ -687,6 +690,8 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
             if lane is not None and int(slot) >= 100:
                 continue
             policy_id = row.get("policyId")
+            # Active policy-backed interface names can appear before physical discovery.
+            # Retain them for collateral checks; inverse actions apply separate readiness checks.
             active_intent = allow_intent and isinstance(policy_id, str) and bool(policy_id.strip()) and row.get("markDeleted") is False
             if lane is not None and not physical and not active_intent:
                 continue
@@ -991,7 +996,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
         return reports
 
     def _compensate(self, result, submitted, before, after, state, maps, offenders, completed):
-        """Invert changed original entries on violating switches, without any recovery GET."""
+        """Attempt phase-scoped inverse actions without post-recovery verification."""
         submitted_by_switch = defaultdict(list)
         if completed:
             for item in submitted:
@@ -1279,7 +1284,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
             result["api_calls"] = list(self._api_calls)
 
     def _run_response_only(self) -> dict[str, Any]:
-        """Run merged/deleted with response-based and optional observed results."""
+        """Run merged/deleted using initial discovery and API acknowledgements."""
         params = self.rest_send.params
         self._action_changed = False
         self._api_calls.clear()

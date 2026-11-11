@@ -2,7 +2,18 @@
 # Copyright: (c) 2026, L Nikhil Sri Krishna (@nisaikri) <nisaikri@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-"""Manage breakout parent families with optional collateral topology checks."""
+"""Manage breakout topology through a dedicated bulk-action workflow.
+
+This module deliberately uses ManageBreakoutInterfacesOrchestrator rather than
+NDStateMachine for state execution. The dedicated workflow does not update maps
+of existing breakout families and, with verification enabled, checks each action
+phase for collateral topology changes before continuing. Unexpected collateral
+changes can trigger phase-specific, switch-scoped recovery attempts. In overridden state,
+creation and its optional verification precede removal of omitted families.
+
+The module continues to use the shared orchestrator base, REST transport,
+response handling, Results, and NDOutput.
+"""
 
 from __future__ import annotations
 
@@ -16,10 +27,9 @@ short_description: Break out and unbreak interfaces on Cisco Nexus Dashboard
 description:
 - Manage interface breakout on switches in a standalone fabric.
 - Use a native parent for breakout. Unbreakout accepts the native parent or a breakout child selector and removes the whole breakout family.
-- Nexus Dashboard applies breakout and unbreakout configuration internally without a separate deployment call.
-  These topology operations cannot be staged by this module.
+- Breakout and unbreakout cannot be staged through this module.
 - Hardware may couple several breakout parents. With verification enabled, unexpected changes to other breakout families
-  fail the task and trigger an attempt to undo the affected changes.
+  fail the task and may trigger an attempt to undo the affected changes.
 - Only NX-OS switches are supported. IOS-XE switches are rejected before changes, including in check mode.
 author:
 - L Nikhil Sri Krishna (@nisaikri)
@@ -53,8 +63,7 @@ options:
           when its combined desired interface list across all config entries is empty.
         - O(state=deleted) also accepts children such as C(Ethernet1/50/2),
           as aliases for unbreaking the whole parent family.
-        - When the family is broken out, a supplied child must be an observed member of that family.
-          With verification enabled, an active child recorded by Nexus Dashboard may be accepted before physical discovery finishes.
+        - When a family is broken out, a supplied child must belong to that family in Nexus Dashboard.
           When the parent is already native, deletion is a no-op even if the child no longer exists.
         - Repeating deletion with the former child, or alternating parent and child selectors across tasks, is a no-op once the parent is native.
           An entirely missing family is an error, not a no-op.
@@ -85,13 +94,11 @@ options:
   verify:
     description:
     - Check for unintended breakout changes after each operation. Enabled by default.
-    - Checks cover breakout parents and their child interfaces on each affected switch.
-      Unexpected changes fail the task and trigger an attempt to undo the affected operation.
+    - Checks compare the breakout parent and child interface names reported by Nexus Dashboard on each affected switch.
+      Unexpected changes fail the task and may trigger an attempt to undo the affected operation.
     - If all API results succeed but the expected changes are not yet visible, the module checks again every five seconds for up to 30 seconds,
       provided no unintended changes are found. Checks stop when the expected changes appear, unintended changes are found,
       an interface read fails, or time runs out. An interface read already in progress may finish after this limit.
-    - Nexus Dashboard may record active breakout interfaces before switch discovery finishes.
-      Verification uses these records without waiting for physical discovery to complete.
     - When disabled, the module skips post-change interface checks, discovery waiting and automatic recovery.
       It still reads current state, validates inputs and platforms, skips operations already satisfied and checks API results.
     - No post-change verification runs when no changes are needed or in check mode.
@@ -119,8 +126,8 @@ notes:
 - For V(merged), unchanged unlisted breakout families are allowed. For V(overridden), include all coupled parents intended to remain broken out;
   unbreaking an omitted sibling must not remove or alter a retained desired family. For V(deleted), list every family intended to be unbroken.
 - Listing all intended parents does not guarantee controller acceptance of redundant coupled requests.
-- With verification enabled, the module checks breakout parents and child interface names, not existing profile maps,
-  interface settings, link state or collateral native-port presence.
+- With verification enabled, the module checks breakout parent and child interface names reported by Nexus Dashboard.
+  It does not check existing profile maps, interface settings, link state, switch running configuration or collateral native-port presence.
 - When unintended changes are found, the module attempts to undo changes from that operation on the affected switch.
   Earlier successful operations and safe changes on other switches remain. Recovery does not undo the entire task.
 - With verification enabled, unbreakout requires a discovered child interface and a breakout map that can be used for recovery.
@@ -253,105 +260,270 @@ EXAMPLES = r"""
 
 RETURN = r"""
 output_level:
-  description: Selected collection output level.
+  description: Selected collection output level, as specified by O(output_level).
   returned: always
   type: str
   sample: normal
 changed:
-  description: Whether workflow evidence confirms a mutation, or whether check mode predicts a mutation.
+  description:
+  - Whether the workflow detected a change, or predicts a change in check mode.
+  - Can remain V(true) when the task fails or attempts recovery; it does not describe only the net final difference.
   returned: always
   type: bool
+  sample: true
+failed:
+  description: Whether the task failed, including incomplete API results or unsuccessful verification.
+  returned: always
+  type: bool
+  sample: false
+msg:
+  description: Human-readable failure details. Inspect C(api_outcomes), C(verification) and C(recovery), when present, for additional context.
+  returned: on failure
+  type: str
+  sample: "Configuration error: config must be a non-empty list"
 before:
   description:
-  - Canonical parent-family state read before any action, including when a child was supplied.
-  - Guarded snapshots include scoped broken families and requested native parents, not every unrelated native Ethernet interface.
-  - Policy-backed intent-only families are included and identified by C(evidence=controller_intent).
-  - An empty list alone does not prove that a requested family is native; discovery may not have completed.
+  - Parent-family records read before any breakout or unbreakout action. C(interface_name) is the parent name even when deletion selects a child.
+  - Contains requested parents and, when required for reconciliation or verification, other existing breakout families in scope.
+    It is not a complete interface inventory.
+  - Each record includes C(switch_id), C(interface_name), C(broken_out), C(children) and C(evidence).
+    C(evidence=controller_intent) identifies interfaces recorded by Nexus Dashboard whose physical discovery is not confirmed.
+  - Can be empty when discovery has not completed or no scoped records exist. An empty list alone does not prove that a requested parent is native.
   returned: always
   type: list
+  elements: dict
+  sample:
+  - switch_id: FDO28481BXX
+    interface_name: Ethernet1/50
+    broken_out: false
+    children: []
+    evidence: initial_discovery
 after_status:
   description:
-  - Provenance of the final state, one of C(unchanged), C(predicted), C(response_confirmed), C(observed), C(partially_observed) or C(unknown).
-  - C(response_confirmed) is not an independent topology observation.
-    An observation made before compensation is not verified final state after compensation.
-  - C(partially_observed) combines fresh action-phase observations with initial-discovery evidence for switches not acted on.
-  - C(observed) may include controller-intent records whose physical discovery is still pending; inspect each record's C(evidence).
-  - C(observed) identifies the snapshot's provenance, not successful desired-state convergence.
-    The task may still fail when a verification phase reports C(topology_matches=false).
+  - Describes the source of C(after), not whether the task succeeded.
+  - C(unchanged) uses the initial state when no action was needed. C(predicted) identifies check-mode output, including check-mode no-ops.
+  - C(response_confirmed) derives changed records from successful API results without an independent post-action interface read.
+  - C(observed) uses post-action interface reads. C(partially_observed) combines fresh action-phase observations with
+    initial-discovery evidence for switches not acted on.
+  - Observations may include C(evidence=controller_intent) records whose physical discovery is not confirmed.
+    C(observed) can accompany a failed task; consult C(failed) and C(verification).
+  - C(unknown) means no reliable final snapshot is available. An observation made before recovery does not verify the state after recovery.
   returned: always
   type: str
-  sample: response_confirmed
+  sample: observed
 after:
   description:
-  - Final canonical parent state with its evidence source when sufficiently known. Empty when the response leaves affected state unknown.
+  - Parent-family records representing the final state supported by the available evidence, or the predicted state in check mode.
+    Uses singular C(interface_name), as in C(before).
+  - C(evidence) identifies the source of each record as C(initial_discovery), C(post_action_discovery), C(controller_intent),
+    C(api_response) or C(prediction). Controller intent does not confirm physical discovery or switch running configuration.
+  - C(children) is optional and lists the identified child interfaces when included.
+    It can be omitted in API-derived or predicted records, including a successful unbreakout with verification disabled.
+  - C(requested_breakout_map), when present, records the requested map; it is not an independently observed existing map.
   - An empty list with C(after_status=unknown) means no reliable snapshot is available, not an empty or restored interface inventory.
-  - C(requested_breakout_map) records the submitted map, not an observed existing map. An unknown actual map is not fabricated.
-  - C(evidence) identifies initial discovery, post-action discovery, controller intent, API response or prediction for each record.
-    C(controller_intent) confirms known interface-policy identities, not physical discovery or switch running configuration.
-    After API-confirmed creation, unknown child identities are omitted rather than represented as a fabricated empty child list.
   returned: always
   type: list
+  elements: dict
+  sample:
+  - switch_id: FDO28481BXX
+    interface_name: Ethernet1/50
+    broken_out: true
+    children: [Ethernet1/50/1, Ethernet1/50/2, Ethernet1/50/3, Ethernet1/50/4]
+    evidence: post_action_discovery
 diff:
-  description: Planned actionable delta. This is not a list of proven successful mutations; consult C(api_outcomes) and C(after_status).
+  description:
+  - Groups of interfaces planned for breakout or unbreakout, using C(switch_id), plural C(interface_names) and, for breakout, C(breakout_map).
+  - Excludes no-op parents. In C(overridden), may contain both creation and removal groups.
+  - Describes planned actions, not proven successful changes; consult C(api_outcomes), C(after_status) and C(failed).
   returned: always
   type: list
+  elements: dict
+  sample:
+  - switch_id: FDO28481BXX
+    interface_names: [Ethernet1/50]
+    breakout_map: 25g-4x
 proposed:
-  description: Grouped requested intent, including no-op parents and normalized child selectors.
-    Requested maps are input intent, not independently observed existing maps.
-  returned: when output_level is info or debug
+  description:
+  - Grouped requested configuration, including no-op parents and normalized child selectors.
+  - Uses plural C(interface_names), unlike the parent records in C(before) and C(after).
+    Requested maps describe input intent, not independently observed existing maps.
+  - For switch-scoped C(overridden), an empty C(interface_names) list represents a selected switch with no desired breakouts.
+  returned: when O(output_level) is V(info) or V(debug)
   type: list
+  elements: dict
+  sample:
+  - switch_id: FDO28481BXX
+    interface_names: [Ethernet1/50]
+    breakout_map: 25g-4x
 logs:
-  description: Collection diagnostic logs.
-  returned: when output_level is debug
+  description: Diagnostic messages supplied to the collection output formatter. This module currently returns an empty list.
+  returned: when O(output_level) is V(debug)
   type: list
+  elements: str
+  sample: []
 api_outcomes:
   description:
-  - Parent-oriented action outcomes with the switch identity and the actual parent or child API interface name.
-  - For child inputs, C(requested_interface_name) preserves the normalized supplied selector while C(interface_name) remains the canonical parent.
-  - A successful API acknowledgement does not establish the requested topology. With verification enabled,
-    the task can fail if the requested changes cannot be confirmed.
+  - Forward-action results identified by C(switch_id) and the canonical parent C(interface_name).
+    C(api_interface_name) identifies the parent or child used for the API request, or is null for a no-op.
+  - C(outcome) is C(success), C(failed), C(unknown), C(noop) or C(planned). C(planned) identifies an action predicted in check mode.
+  - For child inputs, C(requested_interface_name) preserves the normalized supplied selector.
+    A C(breakout_map), when present, is the requested map.
+  - A successful API acknowledgement does not establish the requested topology or overall task success.
+    Recovery results are reported separately under C(recovery).
   returned: always
   type: list
   elements: dict
+  sample:
+  - switch_id: FDO28481BXX
+    interface_name: Ethernet1/50
+    api_interface_name: Ethernet1/50
+    breakout_map: 25g-4x
+    action: breakout
+    outcome: success
+    message: Action completed
 may_have_changed:
-  description: Whether an uncertain outcome may have modified controller or device state.
+  description:
+  - Whether the workflow reports that an uncertain outcome or recovery attempt may have changed controller or device state.
+  - This flag is independent of C(changed). A successful task can return C(changed=true) and C(may_have_changed=false).
   returned: always
   type: bool
+  sample: false
 api_calls:
   description:
-  - Method, path, HTTP status and timing for workflow API calls. Switch-resolution entries identify their purpose and may omit timing.
-  - CLI verbosity C(-vv) adds write API paths and verbs; C(-vvv) adds full API diagnostics and the compact C(api_calls) trace.
-  returned: at CLI verbosity three or higher
+  - Compact workflow API trace with C(method), C(path), C(http_status), C(elapsed_seconds) and C(response_received).
+    Entries for switch metadata can also include C(purpose) and C(transport_error).
+  - An unavailable HTTP status or timing can be null. An empty trace means no workflow requests were recorded.
+  returned: at CLI verbosity C(-vvv) or higher, when a workflow API trace is available
   type: list
   elements: dict
+  sample:
+  - method: POST
+    path: /api/v1/manage/fabrics/fab1/interfaceActions/breakout
+    http_status: 207
+    elapsed_seconds: 0.001
+    response_received: true
+api_paths:
+  description:
+  - Paths of recorded API requests. At C(-vv), includes qualifying write requests; at C(-vvv) or higher, includes reads and writes.
+  - Corresponding entries in C(api_verbs), C(api_response), C(api_result), C(api_diff), C(api_metadata) and C(api_payload)
+    refer to the same recorded request.
+  returned: at CLI verbosity C(-vv) or higher, when qualifying API diagnostics are available
+  type: list
+  elements: str
+  sample: [/api/v1/manage/fabrics/fab1/interfaceActions/breakout]
+api_verbs:
+  description: HTTP methods corresponding to C(api_paths), with the same verbosity filtering.
+  returned: at CLI verbosity C(-vv) or higher, when qualifying API diagnostics are available
+  type: list
+  elements: str
+  sample: [POST]
+api_response:
+  description: Response dictionaries for recorded API requests. Discovery responses may be compacted in the collection diagnostics.
+  returned: at CLI verbosity C(-vvv) or higher, when qualifying API diagnostics are available
+  type: list
+  elements: dict
+  sample:
+  - RETURN_CODE: 207
+    METHOD: POST
+    REQUEST_PATH: /api/v1/manage/fabrics/fab1/interfaceActions/breakout
+    MESSAGE: OK
+    DATA:
+      results:
+      - switchId: FDO28481BXX
+        interfaceName: Ethernet1/50
+        status: Success
+        message: Action completed
+    sequence_number: 3
+api_result:
+  description:
+  - Shared response-handler results for recorded requests.
+  - Use top-level C(changed), C(failed) and C(api_outcomes) for the workflow result.
+  returned: at CLI verbosity C(-vvv) or higher, when qualifying API diagnostics are available
+  type: list
+  elements: dict
+  sample:
+  - success: true
+    changed: true
+    retryable: false
+    sequence_number: 3
+api_diff:
+  description: Per-request diagnostic differences from the collection result accumulator, separate from the planned actions in C(diff).
+  returned: at CLI verbosity C(-vvv) or higher, when qualifying API diagnostics are available
+  type: list
+  elements: dict
+  sample:
+  - sequence_number: 3
+api_metadata:
+  description: Action, state, check-mode and sequence metadata for recorded API requests.
+  returned: at CLI verbosity C(-vvv) or higher, when qualifying API diagnostics are available
+  type: list
+  elements: dict
+  sample:
+  - action: create
+    check_mode: false
+    sequence_number: 3
+    state: merged
+api_payload:
+  description: Payloads for recorded API requests. Each entry can be a dictionary, a list or null, including null for GET requests.
+  returned: at CLI verbosity C(-vvv) or higher, when qualifying API diagnostics are available
+  type: list
+  elements: raw
+  sample:
+  - interfaces:
+    - switchId: FDO28481BXX
+      interfaceName: Ethernet1/50
+      breakoutMap: 25g-4x
 verification:
   description:
-  - Reports whether verification is enabled, whether requested changes were observed and whether unintended changes were found.
-  - Covers breakout and unbreakout checks. Recovery is reported separately under C(recovery).
-  - Checks may use active breakout records before discovery finishes. No-op parents retain their initial evidence.
-  returned: after an action phase
+  - Post-action interface-check results. Returned only after a submitted action with O(verify.enabled=true), including actions with failed API results.
+  - C(enabled) is V(true). C(complete) indicates whether the interface snapshots needed for verification were obtained;
+    it does not mean that the requested topology matched or that the task succeeded.
+  - C(phases) contains per-switch records with C(phase) set to C(breakout) or C(unbreakout), C(topology_matches),
+    and a C(collateral) list describing unintended changes.
+  - Check results can use C(controller_intent) records. No-op parents retain their initial evidence. Recovery is reported under C(recovery).
+  returned: after an action is submitted with O(verify.enabled=true); omitted for no-op runs, check mode and disabled verification
   type: dict
+  sample:
+    enabled: true
+    complete: true
+    phases:
+    - switch_id: FDO28481BXX
+      phase: breakout
+      collateral: []
+      topology_matches: true
 recovery:
   description:
-  - Direct inverse attempts for changed entries of a violating phase on an affected switch.
-  - Per-item statuses are API acknowledgements, not independently verified restoration.
-  - A single inverse target can accept one successful same-switch result under a different interface name.
-    Such an outcome includes C(reported_interface_name) and C(identity_matched=false); C(topology_verified) remains false.
-    Forward actions and multiple-target inverse batches retain strict identity matching.
-  - Empty when no compensation is attempted. Successful recovery responses do not erase the original task failure or prove full configuration restoration.
-  - C(not_attempted) means that no recovery request was submitted for that target.
+  - Per-switch recovery records created when verification detects unintended changes. Empty when no such recovery records were created.
+  - C(phase) identifies the original operation and C(action) its inverse. C(status) is C(not_attempted), C(unknown), C(failed) or C(response_confirmed).
+  - C(not_attempted) means no inverse request was submitted; a record can exist with an empty C(api_outcomes) list.
+    C(response_confirmed) means the inverse API reported success. C(msg), when present, explains the result.
+  - C(topology_verified) remains V(false). Recovery is not independently verified and does not clear the original task failure.
+  - A successful single-target inverse result can include C(reported_interface_name) and C(identity_matched=false)
+    when Nexus Dashboard reports another interface on the same switch. This is an API acknowledgement, not proof of restoration.
   returned: always
   type: list
   elements: dict
+  sample: []
 observed_before_recovery:
   description:
-  - Last forward-action controller observation when collateral was detected, before any inverse request.
-  - May include active breakout records whose physical discovery is still pending.
-  - Contains scoped broken families and requested parents present in that observation, not every native Ethernet interface.
-  - This is historical observation evidence, not the current topology after compensation. No recovery readback is performed.
-  returned: when collateral topology is observed
+  - Parent-family records available when unintended changes were detected, before any inverse request, using the same record shape as C(before).
+  - Includes scoped breakout families and requested parents present in that snapshot. Untouched switches can retain initial-discovery evidence;
+    records with C(evidence=controller_intent) do not confirm physical discovery.
+  - This is historical observation evidence, not the current topology after compensation. It can be returned even when no inverse could be submitted.
+  returned: when verification detects unintended topology changes
   type: list
   elements: dict
+  sample:
+  - switch_id: FDO28481BXX
+    interface_name: Ethernet1/21
+    broken_out: true
+    children: [Ethernet1/21/1, Ethernet1/21/2, Ethernet1/21/3, Ethernet1/21/4]
+    evidence: post_action_discovery
+  - switch_id: FDO28481BXX
+    interface_name: Ethernet1/23
+    broken_out: true
+    children: [Ethernet1/23/1, Ethernet1/23/2, Ethernet1/23/3, Ethernet1/23/4]
+    evidence: post_action_discovery
 """
 
 from typing import Any
@@ -415,7 +587,7 @@ def _finish(module: AnsibleModule, report: dict[str, Any], results: Results | No
 
 
 def main() -> None:
-    """Run the breakout workflow without generic planned-state reconciliation."""
+    """Run the dedicated breakout workflow described in the module docstring."""
     argument_spec = nd_argument_spec()
     argument_spec.update(BreakoutInterfaceModel.get_argument_spec())
     module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=True)
@@ -436,9 +608,6 @@ def main() -> None:
         rest_send = RestSend(params)
         rest_send.sender = sender
         rest_send.response_handler = ResponseHandler()
-        # The orchestrator guards every write itself. Real discovery GETs remain
-        # necessary in check mode; RestSend's simulated response cannot classify them.
-        rest_send.check_mode = False
         results = Results()
         results.state = params["state"]
         results.check_mode = module.check_mode

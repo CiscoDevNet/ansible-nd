@@ -22,6 +22,7 @@ READ = "tasks/fabric_clear_read.yaml"
 CASE = "tasks/fabric_clear_case.yaml"
 CLEANUP = "tasks/fabric_clear_cleanup.yaml"
 CHECK_MODE = "tests/check_mode.yaml"
+CHECK_MODE_ASSERT = "tasks/assert_check_mode.yaml"
 
 
 def tasks(path):
@@ -217,7 +218,7 @@ def test_global_classification_uses_physical_child_identity_not_native_ghost_fex
     assert values["breakout_fabric_broken_keys"] == ["S1/Ethernet1/53", "S2/Ethernet1/53"]
 
 
-@pytest.mark.parametrize("changed,rounds,metadata", [(True, 3, 2), (False, 1, 0)])
+@pytest.mark.parametrize("changed,rounds,metadata", [(True, 3, 1), (False, 1, 0)])
 def test_clear_and_empty_noop_have_distinct_pagination_safe_query_budgets(changed, rounds, metadata):
     values = {"breakout_fabric_case": {"changed": changed}, "breakout_fabric_switches": ["S1", "S2"], "breakout_fabric_fixtures": [{}, {}]}
     args = render(task(CASE, "Require complete identity-based")["vars"], values)
@@ -420,3 +421,57 @@ def test_every_module_call_in_standalone_checkmode_suite_is_forced_readonly():
     calls = [item for item in tasks(CHECK_MODE) if "cisco.nd.nd_manage_breakout_interfaces" in item]
     assert calls
     assert all(item["check_mode"] is True for item in calls)
+
+
+def check_mode_trace():
+    """A prediction retains real GET evidence and the invocation's check-mode flag."""
+    return {
+        "after_status": "predicted",
+        "recovery": [],
+        "may_have_changed": False,
+        "api_calls": [{"method": "GET", "path": "/api/v1/manage/fabrics/shared/interfacesSummary"}],
+        "api_verbs": ["GET"],
+        "api_metadata": [{"check_mode": True}],
+    }
+
+
+def test_checkmode_trace_requires_actual_discovery_and_retains_checkmode_metadata():
+    values = {"breakout_check_result": check_mode_trace(), "ansible_verbosity": 3}
+    assert assertions(task(CHECK_MODE_ASSERT, "Require predictions"), values)
+    assert assertions(task(CHECK_MODE_ASSERT, "Require actual discovery"), values)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"api_calls": []},
+        {"api_calls": [{"method": "POST", "path": "/interfaceActions/breakout"}]},
+        {"api_verbs": ["POST"]},
+        {"api_metadata": []},
+        {"api_metadata": [{"check_mode": False}]},
+        {"api_metadata": [{}]},
+    ],
+)
+def test_checkmode_trace_rejects_empty_evidence_writes_or_disabled_guard_metadata(changes):
+    result = {**check_mode_trace(), **changes}
+    assert not assertions(task(CHECK_MODE_ASSERT, "Require actual discovery"), {"breakout_check_result": result})
+
+
+def test_checkmode_trace_is_required_only_at_verbosity_three():
+    guard = task(CHECK_MODE_ASSERT, "Require actual discovery")["when"]
+    assert evaluate(guard, {"ansible_verbosity": 0}) is False
+    assert evaluate(guard, {"ansible_verbosity": 2}) is False
+    assert evaluate(guard, {"ansible_verbosity": 3}) is True
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_fabric_clear_reuses_one_inventory_get_for_all_switches(changed):
+    calls = [{"method": "GET", "path": "/api/v1/manage/fabrics/shared/interfacesSummary?filter=interfaceType:ethernet"}]
+    if changed:
+        calls.append({"method": "GET", "path": "/api/v1/manage/fabrics/shared/switches", "purpose": "switch_metadata"})
+    values = {"test_fabric_name": "shared", "breakout_fabric_case": {"changed": changed}, "breakout_result": {"api_calls": calls}}
+    guard = task(CASE, "Require global initial discovery")
+    assert assertions(guard, values)
+    if changed:
+        calls[-1]["path"] += "/S1"
+        assert not assertions(guard, values)

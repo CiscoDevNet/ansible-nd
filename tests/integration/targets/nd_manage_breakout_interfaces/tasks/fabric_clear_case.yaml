@@ -27,7 +27,7 @@
     breakout_expected_write_actions: []
     breakout_expected_after_status: predicted
     breakout_expected_discovery_rounds: 1
-    breakout_expected_metadata_count: "{{ breakout_fabric_switches | length if breakout_fabric_case.changed else 0 }}"
+    breakout_expected_metadata_count: "{{ 1 if breakout_fabric_case.changed else 0 }}"
 
 - name: Independently prove fabric-wide check mode did not perform the clear
   ansible.builtin.include_tasks: fabric_clear_observe.yaml
@@ -54,7 +54,7 @@
     breakout_expected_write_actions: "{{ ['remove'] if breakout_fabric_case.changed else [] }}"
     breakout_expected_after_status: "{{ 'observed' if breakout_fabric_case.changed else 'unchanged' }}"
     breakout_expected_discovery_rounds: "{{ 1 + breakout_fabric_switches | length if breakout_fabric_case.changed else 1 }}"
-    breakout_expected_metadata_count: "{{ breakout_fabric_switches | length if breakout_fabric_case.changed else 0 }}"
+    breakout_expected_metadata_count: "{{ 1 if breakout_fabric_case.changed else 0 }}"
     breakout_allow_guard_settling: "{{ breakout_fabric_case.changed | bool }}"
 
 - name: Match every removed family by composite identity, never list position
@@ -73,7 +73,7 @@
     index_var: fabric_removed_index
     label: "{{ item.switch_id }}/{{ item.control_parent }}"
 
-- name: Require global initial discovery and switch metadata only for switches with breakouts
+- name: Require global initial discovery and one cached inventory read only when breakouts exist
   ansible.builtin.assert:
     that:
       - >-
@@ -82,12 +82,12 @@
       - >-
         breakout_result.api_calls | selectattr('purpose', 'defined') |
         selectattr('purpose', 'equalto', 'switch_metadata') | list | length
-        == (breakout_fabric_switches | length if breakout_fabric_case.changed else 0)
+        == (1 if breakout_fabric_case.changed else 0)
       - >-
         breakout_result.api_calls | selectattr('purpose', 'defined') |
         selectattr('purpose', 'equalto', 'switch_metadata') | map(attribute='path') |
-        map('regex_replace', '^.*/switches/', '') | sort | list
-        == (breakout_fabric_switches | sort if breakout_fabric_case.changed else [])
+        list == (['/api/v1/manage/fabrics/' ~ (test_fabric_name | urlencode | replace('/', '%2F')) ~ '/switches']
+        if breakout_fabric_case.changed else [])
   when: ansible_verbosity | int >= 3
 
 - name: Declare every owned footprint native after the clear

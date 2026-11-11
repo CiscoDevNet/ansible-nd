@@ -52,6 +52,12 @@
             selectattr('method', 'equalto', 'GET') | selectattr('path', 'search', '/interfacesSummary') | list | length) == 1
   when: ansible_verbosity | int >= 3
 
+- name: Validate authoritative check-mode discovery and prediction metadata
+  ansible.builtin.include_tasks: assert_check_mode.yaml
+  vars:
+    breakout_check_result: "{{ breakout_matrix_last_result }}"
+  when: breakout_override_case.check_mode | default(false)
+
 - name: Validate the actual desired family set and preserved outside scope
   ansible.builtin.include_tasks: matrix_observe.yaml
   vars:

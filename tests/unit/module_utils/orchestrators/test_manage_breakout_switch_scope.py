@@ -19,11 +19,13 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.orchestrators.test_man
     OTHER_SERIAL,
     SERIAL,
     action,
+    assert_switch_inventory_get,
     group,
     inventory,
     item,
     response,
     run,
+    switch_inventory,
     writes,
 )
 
@@ -44,7 +46,7 @@ def test_vpc_leaf_request_filters_both_switch_parameter_and_explicit_query_ident
         script,
         config=[group(PARENT)],
         verify={"enabled": verify},
-        platform_inventory=[inventory(vpcConfigured=True)],
+        platform_inventory=switch_inventory(inventory(vpcConfigured=True)["DATA"]),
     )
     assert report["failed"] is False and report["changed"] is True
     assert len(writes(calls)) == 1
@@ -66,7 +68,7 @@ def test_explicit_scope_is_present_on_every_page_of_a_paired_leaf_inventory():
         [*pages, action(item(PARENT)), topology(PARENT, native=tuple(port for port in PORTS if port != PARENT))],
         config=[group(PARENT)],
         verify={"enabled": True},
-        platform_inventory=[inventory(vpcConfigured=True)],
+        platform_inventory=switch_inventory(inventory(vpcConfigured=True)["DATA"]),
     )
     assert report["failed"] is False
     assert [parse_qs(urlsplit(call["path"]).query)["offset"] for call in summary_calls(calls)] == [["0"], ["27"], ["0"]]
@@ -79,7 +81,7 @@ def test_a_controller_still_returning_the_vpc_peer_is_rejected_not_silently_filt
         script = [combined(topology(native=PORTS), topology(native=PORTS, switch=OTHER_SERIAL))]
     else:
         script = [topology(native=PORTS), action(item(PARENT)), combined(topology(PARENT), topology(PARENT, switch=OTHER_SERIAL))]
-    report, calls = run(script, config=[group(PARENT)], verify={"enabled": True}, platform_inventory=[inventory(vpcConfigured=True)])
+    report, calls = run(script, config=[group(PARENT)], verify={"enabled": True}, platform_inventory=switch_inventory(inventory(vpcConfigured=True)["DATA"]))
     assert report["failed"] is True
     assert "unexpected switch identity" in report["msg"]
     assert len(writes(calls)) == (0 if stage == "initial" else 1)
@@ -95,8 +97,7 @@ def test_global_override_discovery_remains_unscoped_but_each_action_guard_is_sco
     report, calls = run(
         [
             combined(topology(PARENT), topology(PARENT, switch=OTHER_SERIAL)),
-            inventory(),
-            inventory(OTHER_SERIAL),
+            switch_inventory(inventory()["DATA"], inventory(OTHER_SERIAL)["DATA"]),
             action(item(PARENT + "/1"), item(PARENT + "/1", switch=OTHER_SERIAL)),
             topology(native=(PARENT,)),
             topology(native=(PARENT,), switch=OTHER_SERIAL),
@@ -107,6 +108,9 @@ def test_global_override_discovery_remains_unscoped_but_each_action_guard_is_sco
         platform_inventory=None,
     )
     assert report["failed"] is False and report["changed"] is True
+    inventory_calls = [call for call in calls if urlsplit(call["path"]).path.endswith("/switches")]
+    assert len(inventory_calls) == 1
+    assert_switch_inventory_get(inventory_calls[0])
     queries = [parse_qs(urlsplit(call["path"]).query) for call in summary_calls(calls)]
     assert "switchId" not in queries[0] and queries[0]["filter"] == ["interfaceType:ethernet"]
     assert [query["switchId"] for query in queries[1:]] == [[SERIAL], [OTHER_SERIAL]]

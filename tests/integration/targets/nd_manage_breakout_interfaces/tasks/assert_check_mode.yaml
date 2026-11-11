@@ -1,0 +1,20 @@
+---
+- name: Require predictions without verification, recovery or mutation uncertainty
+  ansible.builtin.assert:
+    that:
+      - breakout_check_result.after_status == 'predicted'
+      - breakout_check_result.verification is not defined
+      - breakout_check_result.recovery == []
+      - not (breakout_check_result.may_have_changed | bool)
+
+- name: Require actual discovery records and consistent check-mode metadata when trace is available
+  ansible.builtin.assert:
+    that:
+      - breakout_check_result.api_calls is defined
+      - breakout_check_result.api_calls | length > 0
+      - breakout_check_result.api_calls | map(attribute='method') | unique | list == ['GET']
+      - breakout_check_result.api_verbs | unique | list == ['GET']
+      - breakout_check_result.api_metadata | length == breakout_check_result.api_calls | length
+      - breakout_check_result.api_metadata | map(attribute='check_mode') | unique | list == [true]
+    fail_msg: Check mode must perform discovery reads while retaining the module's check-mode metadata; no write may be dispatched.
+  when: ansible_verbosity | int >= 3

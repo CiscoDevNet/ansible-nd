@@ -14,15 +14,12 @@ the `local` and `fabricStatus` fields used by the pre-flight checks.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
-from copy import deepcopy
+from collections.abc import Mapping
 from enum import Enum
-from ipaddress import ip_address
-import time
 from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import EpManageFabricsSummaryGet
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import EpManageSwitchesGet, EpManageSwitchesListGet
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import EpManageSwitchesListGet
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, PlatformType
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 
@@ -65,28 +62,16 @@ class FabricContext:
     - Via `validate_for_mutation` if the fabric does not exist on any ND node.
     - Via `get_switch_id` if no switch matches the given management IP.
     - Via `get_switch_ip` if no switch matches the given switch ID.
-    - Via `resolve_switch_identifiers` if a filtered IP lookup is malformed, missing, or ambiguous.
     - Via `get_platform_type` if no switch matches the given management IP.
     - Via `fabric_summary` if the summary payload carries an embedded `code` error key.
     - Via the `switches` / `switch_map` accessors if the fabric does not exist.
     """
 
-    def __init__(
-        self,
-        rest_send: RestSend,
-        fabric_name: str,
-        query_observer: Callable[[str], None] | None = None,
-        query_error_observer: Callable[[str, Exception, bool], None] | None = None,
-    ):
+    def __init__(self, rest_send: RestSend, fabric_name: str):
         """
         # Summary
 
-        Initialize with `RestSend` and a fabric name; metadata is not fetched until needed.
-        The optional observer receives each completed GET path before response-status handling, allowing callers to
-        register the current response without copying request history or issuing additional queries.
-        The optional error observer receives the path, original commit exception, and whether the GET added a
-        completed response to the existing transport history. It is best-effort diagnostics:
-        observer errors never replace the original query exception.
+        Initialize `FabricContext` with a `RestSend` instance and fabric name. Metadata is not fetched until needed.
 
         ## Raises
 
@@ -94,9 +79,6 @@ class FabricContext:
         """
         self._rest_send = rest_send
         self._fabric_name = fabric_name
-        self._query_observer = query_observer
-        self._query_error_observer = query_error_observer
-        self._last_query_elapsed_seconds: float = 0.0
         # `_Sentinel.UNSET` distinguishes "not yet fetched" from "fetched but the fabric does not exist" (None).
         self._fabric_summary: dict | None | Literal[_Sentinel.UNSET] = _Sentinel.UNSET
         self._switches: list[dict] | None = None
@@ -104,10 +86,6 @@ class FabricContext:
         self._switch_map_by_id: dict[str, str] | None = None
         self._platform_map: dict[str, PlatformType | None] | None = None
         self._switch_records_by_id: dict[str, dict] | None = None
-        # Targeted IP lookups are partial inventory, never a complete switch map.
-        self._resolved_switch_ips: dict[str, str] = {}
-        # Exact targeted records do not make the fabric inventory complete.
-        self._resolved_switch_records: dict[str, dict] = {}
 
     def _fabric_not_found_message(self) -> str:
         """
@@ -127,8 +105,6 @@ class FabricContext:
         # Summary
 
         Issue a GET request via `RestSend` and return the `DATA` dict from the response. Returns `{}` on HTTP 404.
-        Commit exceptions notify the optional error observer, then propagate unchanged. Completed-query observer and
-        HTTP-status handling remain separate; an error observer does not run for an ordinary completed HTTP failure.
 
         ## Raises
 
@@ -138,32 +114,12 @@ class FabricContext:
         """
         self._rest_send.path = path
         self._rest_send.verb = HttpVerbEnum.GET
-        response_count = self._rest_send.response_count
-        started = time.monotonic()
-        try:
-            self._rest_send.commit()
-        except Exception as error:  # pylint: disable=broad-except
-            self._last_query_elapsed_seconds = round(time.monotonic() - started, 3)
-            if self._query_error_observer is not None:
-                try:
-                    self._query_error_observer(path, error, self._rest_send.response_count > response_count)
-                except Exception:  # pylint: disable=broad-except
-                    # Diagnostics must never mask the primary GET error.
-                    pass
-            raise
-        self._last_query_elapsed_seconds = round(time.monotonic() - started, 3)
-        if self._query_observer is not None:
-            self._query_observer(path)
+        self._rest_send.commit()
         if self._rest_send.return_code == 404:
             return {}
         if not self._rest_send.success:
             raise RuntimeError(f"GET {path} failed {self._rest_send.error_summary}")
         return self._rest_send.response_current.get("DATA", {})
-
-    @property
-    def last_query_elapsed_seconds(self) -> float:
-        """Elapsed time for the latest GET, available before its observer runs."""
-        return self._last_query_elapsed_seconds
 
     @property
     def fabric_name(self) -> str:
@@ -273,8 +229,7 @@ class FabricContext:
         # Summary
 
         Drop all cached state so the next access to `fabric_summary`, `switches`, switch lookup, platform type, or
-        switch synchronization status re-fetches from the API. Targeted IP resolution and exact switch-record caches
-        are also cleared. Useful after a mutation that should be reflected on subsequent reads.
+        switch synchronization status re-fetches from the API. Useful after a mutation that should be reflected on subsequent reads.
 
         ## Raises
 
@@ -286,200 +241,6 @@ class FabricContext:
         self._switch_map_by_id = None
         self._platform_map = None
         self._switch_records_by_id = None
-        self._resolved_switch_ips.clear()
-        self._resolved_switch_records.clear()
-
-    def resolve_switch_identifiers(self, identifiers: Iterable[str]) -> dict[str, str]:
-        """Resolve management IPs with filtered GETs; pass serial numbers through.
-
-        Return a mapping keyed by each original selector. Equivalent IP spellings
-        share a cache entry, while serial inputs make no inventory or fabric-summary
-        calls. Filtered results do not populate the complete-inventory caches used
-        by ``get_switch_id`` and ``get_switch_ip``.
-
-        Raises ``ValueError`` for blank/non-string selectors, and ``RuntimeError``
-        for malformed, missing, or ambiguous filtered switch results.
-        """
-        if isinstance(identifiers, (str, bytes)):
-            raise ValueError("switch identifiers must be an iterable of strings, not a single string")
-        resolved: dict[str, str] = {}
-        for identifier in identifiers:
-            if not isinstance(identifier, str) or not identifier.strip():
-                raise ValueError("switch identifiers must be nonblank strings")
-            selector = identifier.strip()
-            try:
-                canonical_ip = str(ip_address(selector))
-            except ValueError:
-                resolved[identifier] = selector
-                continue
-            if canonical_ip not in self._resolved_switch_ips:
-                self._resolved_switch_ips[canonical_ip] = self._resolve_filtered_switch_ip(canonical_ip)
-            resolved[identifier] = self._resolved_switch_ips[canonical_ip]
-        return resolved
-
-    def _resolve_filtered_switch_ip(self, switch_ip: str) -> str:
-        """Require exactly one matching serial across filtered switch-list pages."""
-        page_size = 1000
-        offset = 0
-        matches: list[str] = []
-        matched_record: dict | None = None
-        seen_pages: set[tuple[tuple[str, str], ...]] = set()
-        while True:
-            ep = EpManageSwitchesListGet()
-            ep.fabric_name = self._fabric_name
-            ep.lucene_params.filter = f"fabricManagementIp:{switch_ip}"
-            ep.lucene_params.max = page_size
-            ep.lucene_params.offset = offset
-            result = self._query_get(ep.path)
-            if self._rest_send.return_code == 404:
-                break
-            if not isinstance(result, dict) or not isinstance(result.get("switches"), list):
-                raise RuntimeError(f"Filtered switch lookup for '{switch_ip}' returned a malformed switches list.")
-            page = result["switches"]
-            page_key: list[tuple[str, str]] = []
-            for switch in page:
-                if not isinstance(switch, dict):
-                    raise RuntimeError(f"Filtered switch lookup for '{switch_ip}' returned a malformed switch record.")
-                raw_ip = switch.get("fabricManagementIp")
-                if not isinstance(raw_ip, str) or not raw_ip.strip():
-                    raise RuntimeError(f"Filtered switch lookup for '{switch_ip}' returned a switch without a management IP.")
-                try:
-                    record_ip = str(ip_address(raw_ip.strip()))
-                except ValueError as exc:
-                    raise RuntimeError(f"Filtered switch lookup for '{switch_ip}' returned an invalid management IP '{raw_ip}'.") from exc
-                serial = switch.get("switchId")
-                page_key.append((record_ip, str(serial)))
-                if record_ip != switch_ip:
-                    continue
-                if not isinstance(serial, str) or not serial.strip():
-                    raise RuntimeError(f"Switch with fabricManagementIp '{switch_ip}' has no nonblank switchId in fabric '{self._fabric_name}'.")
-                matches.append(serial.strip())
-                matched_record = switch
-                if len(matches) > 1:
-                    raise RuntimeError(f"Multiple switches match fabricManagementIp '{switch_ip}' in fabric '{self._fabric_name}'.")
-            fingerprint = tuple(page_key)
-            if page and fingerprint in seen_pages:
-                raise RuntimeError(f"Filtered switch lookup for '{switch_ip}' repeated a page; pagination did not advance.")
-            seen_pages.add(fingerprint)
-            if not self._filtered_switch_has_more(result, len(page), offset, page_size):
-                break
-            if not page:
-                raise RuntimeError(f"Filtered switch lookup for '{switch_ip}' returned an empty page with more results remaining.")
-            offset += len(page)
-        if not matches or matched_record is None:
-            raise RuntimeError(f"No switch found with fabricManagementIp '{switch_ip}' in fabric '{self._fabric_name}'.")
-        # Do not retain a record from an ambiguous or incomplete paginated read.
-        serial = matches[0]
-        known = self._cached_switch_records([serial])
-        if serial in known:
-            self._require_consistent_switch_platform(serial, known[serial], matched_record)
-        if serial not in self._resolved_switch_records:
-            self._resolved_switch_records[serial] = deepcopy(matched_record)
-        return serial
-
-    def _switch_record_platform(self, record: dict) -> PlatformType | None:
-        """Parse the same optional metadata consistently across inventory sources."""
-        additional = record.get("additionalData")
-        raw = additional.get("platformType") if isinstance(additional, dict) else None
-        return self._parse_platform_type(raw)
-
-    def _require_consistent_switch_platform(self, serial: str, first: dict, second: dict) -> None:
-        """Reject conflicting evidence, including unknown versus a known platform."""
-        first_platform = self._switch_record_platform(first)
-        second_platform = self._switch_record_platform(second)
-        if first_platform != second_platform:
-            first_label = first_platform.value if first_platform is not None else "unknown"
-            second_label = second_platform.value if second_platform is not None else "unknown"
-            raise RuntimeError(
-                f"Conflicting platform metadata for switchId '{serial}' in fabric '{self._fabric_name}': " f"'{first_label}' versus '{second_label}'."
-            )
-
-    def _cached_switch_records(self, switch_ids: Iterable[str]) -> dict[str, dict]:
-        """Merge requested cached evidence without writes, new GETs or last-write-wins."""
-        requested = set(switch_ids)
-        records = {serial: self._resolved_switch_records[serial] for serial in requested if serial in self._resolved_switch_records}
-        if self._switches is None:
-            return records
-        loaded = set()
-        # Scan an already-loaded snapshot once, not once per requested interface.
-        for record in self._switches:
-            if not isinstance(record, dict):
-                raise RuntimeError("Cached switch inventory contains a malformed switch record.")
-            serial = record.get("switchId")
-            if not isinstance(serial, str) or serial.strip() not in requested:
-                continue
-            serial = serial.strip()
-            if serial in loaded:
-                raise RuntimeError(f"Multiple cached switches match switchId '{serial}' in fabric '{self._fabric_name}'.")
-            loaded.add(serial)
-            if serial in records:
-                self._require_consistent_switch_platform(serial, records[serial], record)
-            else:
-                records[serial] = record
-        return records
-
-    def get_switch_platform_types(self, switch_ids: Iterable[str]) -> dict[str, PlatformType | None]:
-        """Read platform metadata for exactly the supplied switch serials.
-
-        Reuse validated IP lookup records or an already-loaded fabric inventory.
-        Only uncached serials are queried, once each through the exact switch
-        detail endpoint. Multi-ID OR filters are not supported on the verified
-        controller. Exact identity and complete batch coverage are required
-        before any new record enters the partial cache. This never initiates a
-        fabric-summary or full-inventory query.
-        Missing or unrecognized ``additionalData.platformType`` returns ``None``;
-        conflicting evidence from two records for one serial is rejected before
-        cache updates. Deciding which platforms support an operation belongs to
-        its caller.
-        """
-        if isinstance(switch_ids, (str, bytes)):
-            raise ValueError("switch IDs must be an iterable of strings, not a single string")
-        requested: list[str] = []
-        seen_ids: set[str] = set()
-        for switch_id in switch_ids:
-            if not isinstance(switch_id, str) or not switch_id.strip():
-                raise ValueError("switch IDs must be nonblank strings")
-            serial = switch_id.strip()
-            if any(ord(character) < 32 or ord(character) == 127 for character in serial):
-                raise ValueError("switch IDs cannot contain control characters")
-            if serial not in seen_ids:
-                requested.append(serial)
-                seen_ids.add(serial)
-        records = self._cached_switch_records(requested)
-        uncached = [serial for serial in requested if serial not in records]
-        for serial in uncached:
-            ep = EpManageSwitchesGet()
-            ep.fabric_name = self._fabric_name
-            ep.switch_id = serial
-            record = self._query_get(ep.path)
-            if self._rest_send.return_code == 404:
-                raise RuntimeError(f"No switch found with switchId '{serial}' in fabric '{self._fabric_name}'.")
-            if not isinstance(record, dict) or record.get("switchId") != serial:
-                raise RuntimeError(f"Switch platform lookup for '{serial}' returned a malformed or unexpected switch identity.")
-            records[serial] = record
-        # Commit only after the entire requested batch has been validated.
-        self._resolved_switch_records.update({serial: deepcopy(records[serial]) for serial in requested})
-        return {serial: self._switch_record_platform(records[serial]) for serial in requested}
-
-    @staticmethod
-    def _filtered_switch_has_more(result: dict, page_count: int, offset: int, page_size: int) -> bool:
-        """Use switch-list metadata when supplied, otherwise stop on a short page."""
-        meta = result.get("meta", result.get("metadata", {}))
-        if not isinstance(meta, dict):
-            raise RuntimeError("Filtered switch lookup returned malformed pagination metadata.")
-        counts = meta.get("counts", {})
-        if not isinstance(counts, dict):
-            raise RuntimeError("Filtered switch lookup returned malformed pagination counts.")
-        for key in ("remaining", "total"):
-            if key in counts:
-                value = counts[key]
-                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                    raise RuntimeError(f"Filtered switch lookup returned an invalid pagination {key}.")
-        if "remaining" in counts:
-            return counts["remaining"] > 0
-        if "total" in counts:
-            return offset + page_count < counts["total"]
-        return page_count >= page_size
 
     def _load_switch_maps(self) -> None:
         """

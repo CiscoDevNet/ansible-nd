@@ -59,6 +59,15 @@
     loop_var: prediction_result
     label: "{{ prediction_result.native_prediction }}"
 
+- name: CHECK MODE - Require real discovery and guarded metadata for every native prediction
+  ansible.builtin.include_tasks: ../tasks/assert_check_mode.yaml
+  vars:
+    breakout_check_result: "{{ prediction_result }}"
+  loop: "{{ breakout_native_prediction_results.results }}"
+  loop_control:
+    loop_var: prediction_result
+    label: "{{ prediction_result.native_prediction }}"
+
 - name: CHECK MODE - Independently prove no prediction changed topology, speeds or policy intent
   ansible.builtin.include_tasks: ../tasks/observe.yaml
   vars:
@@ -129,6 +138,15 @@
       - clear_result.verification is not defined
       - clear_result.recovery == []
       - clear_result.api_calls | default([]) | rejectattr('method', 'equalto', 'GET') | list | length == 0
+  loop: "{{ breakout_clear_prediction_results.results }}"
+  loop_control:
+    loop_var: clear_result
+    label: "{{ clear_result.clear_prediction.name }}"
+
+- name: CHECK MODE - Require real discovery and guarded metadata for every clear prediction
+  ansible.builtin.include_tasks: ../tasks/assert_check_mode.yaml
+  vars:
+    breakout_check_result: "{{ clear_result }}"
   loop: "{{ breakout_clear_prediction_results.results }}"
   loop_control:
     loop_var: clear_result
