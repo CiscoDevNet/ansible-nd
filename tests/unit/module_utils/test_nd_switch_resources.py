@@ -19,6 +19,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils import (
     PayloadUtils,
+    SwitchFabricUtils,
     SwitchWaitUtils,
     SwitchOperationError,
     build_bootstrap_index,
@@ -1313,40 +1314,46 @@ def test_default_ibgp_preserve_config_keeps_poap_reload_observation():
 
 def test_fabric_ops_finalize_honors_switch_and_global_deploy_modes():
     """Finalize chooses save, switch deploy, global deploy, no-target failure, and check-mode correctly."""
-    calls = []
-    fabric_utils = RecordingFinalizeFabricUtils(calls)
+    nd = FakeND(data={"RETURN_CODE": 200, "MESSAGE": "OK"})
+    fabric_utils = SwitchFabricUtils(nd, "FAB1", ListLogger())
     results = Results()
-    ctx = SwitchServiceContext(FakeND(), results, "FAB1", ListLogger(), save_config=True, deploy_config=True, deploy_type="switch")
-    ctx.nd.rest_send.response_current = {"RETURN_CODE": 200, "MESSAGE": "full response"}
-    ctx.nd.rest_send.result_current = {"success": True, "changed": True}
+    ctx = SwitchServiceContext(nd, results, "FAB1", ListLogger(), save_config=True, deploy_config=True, deploy_type="switch")
     SwitchFabricOps(ctx, fabric_utils).finalize(["SERIAL1"])
-    assert calls == [("save", None), ("deploy_switches", ["SERIAL1"])]
+    assert [(call["path"], call["verb"], call["data"]) for call in nd.calls] == [
+        ("/api/v1/manage/fabrics/FAB1/actions/configSave", HttpVerbEnum.POST, None),
+        ("/api/v1/manage/fabrics/FAB1/switchActions/deploy", HttpVerbEnum.POST, {"switchIds": ["SERIAL1"]}),
+    ]
     assert [entry["action"] for entry in results.metadata] == ["config_actions"]
     assert results.diffs[-1]["status"] == "completed"
     assert results.diffs[-1]["targets"]["switches"] == ["SERIAL1"]
-    assert [(step["action"], step.get("scope")) for step in results.diffs[-1]["actions"]] == [("save", None), ("deploy", "switch")]
+    steps = results.diffs[-1]["actions"]
+    assert [(step["action"], step.get("scope")) for step in steps] == [("save", None), ("deploy", "switch")]
+    assert [step["response"]["RETURN_CODE"] for step in steps] == [200, 200]
 
-    calls.clear()
+    nd.calls.clear()
     results = Results()
     ctx.deploy_type = "global"
     ctx.results = results
-    ctx.nd.rest_send.response_current = {"RETURN_CODE": 200, "MESSAGE": "full response"}
-    ctx.nd.rest_send.result_current = {"success": True, "changed": True}
     SwitchFabricOps(ctx, fabric_utils).finalize(["SERIAL1"])
-    assert calls == [("save", None), ("deploy_config", None)]
+    assert [(call["path"], call["verb"], call["data"]) for call in nd.calls] == [
+        ("/api/v1/manage/fabrics/FAB1/actions/configSave", HttpVerbEnum.POST, None),
+        ("/api/v1/manage/fabrics/FAB1/actions/configDeploy", HttpVerbEnum.POST, None),
+    ]
     assert [entry["action"] for entry in results.metadata] == ["config_actions"]
-    assert [(step["action"], step.get("scope")) for step in results.diffs[-1]["actions"]] == [("save", None), ("deploy", "global")]
+    steps = results.diffs[-1]["actions"]
+    assert [(step["action"], step.get("scope")) for step in steps] == [("save", None), ("deploy", "global")]
+    assert [step["response"]["RETURN_CODE"] for step in steps] == [200, 200]
 
-    calls.clear()
+    nd.calls.clear()
     ctx.deploy_type = "switch"
     with pytest.raises(SwitchOperationError, match="Switch-level deploy requested but no serial numbers were resolved"):
         SwitchFabricOps(ctx, fabric_utils).finalize([])
-    assert calls == []
+    assert nd.calls == []
 
-    calls.clear()
+    nd.calls.clear()
     ctx.nd.module.check_mode = True
     SwitchFabricOps(ctx, fabric_utils).finalize(["SERIAL1"])
-    assert calls == []
+    assert nd.calls == []
 
 
 def test_idempotent_sync_serials_require_resolved_switch_targets():
