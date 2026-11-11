@@ -21,7 +21,7 @@
     vpc_pair_conf:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
-        use_virtual_peer_link: true
+        use_virtual_peer_link: "{{ supports_vpc_fabric_peering | bool }}"
   delegate_to: localhost
   tags: override
 
