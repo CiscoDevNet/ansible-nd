@@ -25,6 +25,7 @@ from __future__ import annotations
 import enum
 import types
 import typing
+from collections.abc import Mapping
 from typing import Any, ClassVar, Literal, get_args, get_origin
 
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_spec import config_actions_spec
@@ -37,6 +38,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     ConfigDict,
     Field,
     SecretStr,
+    field_validator,
     model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
@@ -51,6 +53,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     LocationModel,
     TelemetrySettingsModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 
 
 def _is_single_literal(annotation) -> bool:
@@ -97,6 +100,13 @@ def _is_pydantic_model(annotation) -> bool:
     return isinstance(annotation, type) and issubclass(annotation, BaseModel)
 
 
+def _is_mapping_type(annotation) -> bool:
+    """Return whether an annotation represents a generic mapping."""
+    origin = get_origin(annotation)
+    candidate = origin or annotation
+    return isinstance(candidate, type) and issubclass(candidate, Mapping)
+
+
 def _is_secret_field(field_info, inner_type) -> bool:
     """True when a field is declared secret via metadata (authoritative) or typed as SecretStr (backstop)."""
     extra = getattr(field_info, "json_schema_extra", None)
@@ -131,9 +141,40 @@ def _python_type_to_ansible(annotation) -> str:
         return "float"
     if annotation is str:
         return "str"
+    if _is_mapping_type(annotation):
+        return "dict"
     if _is_pydantic_model(annotation):
         return "dict"
     return "str"
+
+
+def _project_value_to_argument_spec(value: Any, spec: dict[str, Any]) -> Any:
+    """Project config output through one generated Ansible option specification.
+
+    A dict with nested ``options`` is a closed public model surface, so response-
+    only fields and retained pydantic extras must be removed recursively. A dict
+    without ``options`` is an intentionally opaque mapping and must retain its
+    complete structure. The same rules apply to lists whose elements are dicts.
+    """
+    option_type = spec.get("type")
+    nested_options = spec.get("options")
+
+    if option_type == "dict" and isinstance(value, Mapping):
+        if not isinstance(nested_options, dict):
+            return dict(value)
+        return {key: _project_value_to_argument_spec(value[key], nested_options[key]) for key in nested_options if key in value}
+
+    if option_type == "list" and isinstance(value, list):
+        if spec.get("elements") != "dict" or not isinstance(nested_options, dict):
+            return value
+        return [(_project_value_to_argument_spec(item, {"type": "dict", "options": nested_options}) if isinstance(item, Mapping) else item) for item in value]
+
+    return value
+
+
+def _project_config_to_argument_spec(config: dict[str, Any], options: dict[str, Any]) -> dict[str, Any]:
+    """Return only replayable fields declared by the public config options."""
+    return {key: _project_value_to_argument_spec(config[key], options[key]) for key in options if key in config}
 
 
 def _build_options_from_model(model_cls, exclude_fields: set[str] | None = None) -> dict[str, Any]:
@@ -183,6 +224,8 @@ def _build_options_from_model(model_cls, exclude_fields: set[str] | None = None)
                     nested_options = _build_options_from_model(element_type)
                     if nested_options:
                         spec["options"] = nested_options
+                elif _is_mapping_type(element_type):
+                    spec["elements"] = "dict"
                 elif element_type is int:
                     spec["elements"] = "int"
                 elif element_type is float:
@@ -219,8 +262,12 @@ def _build_options_from_model(model_cls, exclude_fields: set[str] | None = None)
         # - Pydantic uses its own defaults (not Ansible-injected values)
         # - Fields not provided by the user stay out of model_fields_set
         # - Merged state only diffs/merges user-specified fields
-        if field_info.is_required():
-            if not is_optional:
+        if field_info.is_required() and not is_optional:
+            identifiers = getattr(model_cls, "identifiers", None) or []
+            gathered_filter_properties = getattr(model_cls, "gathered_filter_properties", ())
+            supports_gathered_filtering = getattr(model_cls, "supports_gathered_filtering", False)
+            identifier_is_gathered_filter = supports_gathered_filtering and field_name in identifiers and field_name in gathered_filter_properties
+            if not identifier_is_gathered_filter:
                 spec["required"] = True
 
         # Secrets: metadata {"secret": True} is authoritative; SecretStr is a backstop.
@@ -231,6 +278,35 @@ def _build_options_from_model(model_cls, exclude_fields: set[str] | None = None)
         options[field_name] = spec
 
     return options
+
+
+class _FabricNameGatheredFilterModel(NDNestedModel):
+    """Validate the shared fabric-name type without requiring a complete fabric."""
+
+    fabric_name: NdFabricName
+
+
+class FabricGatheredFilterModel(NDNestedModel):
+    """Validate scalar properties supported by partial fabric filters."""
+
+    fabric_name: str | None = Field(default=None)
+    license_tier: LicenseTierEnum | None = Field(default=None)
+    security_domain: str | None = Field(default=None)
+    alert_suspend: AlertSuspendEnum | None = Field(default=None)
+    telemetry_collection: bool | None = Field(default=None)
+
+    @field_validator("fabric_name")
+    @classmethod
+    def validate_fabric_name(cls, value: str | None) -> str | None:
+        """Apply the canonical `NdFabricName` constraints to partial filters."""
+        if value is None:
+            return value
+        validated = _FabricNameGatheredFilterModel.model_validate(
+            {"fabric_name": value},
+            by_name=True,
+            context={"mode": "config", "state": "gathered"},
+        )
+        return validated.fabric_name
 
 
 class FabricBaseModel(NDBaseModel):
@@ -258,14 +334,49 @@ class FabricBaseModel(NDBaseModel):
         if not hasattr(cls, "_fabric_type"):
             raise TypeError(f"{cls.__name__} must define a '_fabric_type' ClassVar with a FabricTypeEnum value")
 
-    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        validate_assignment=True,
+        populate_by_name=True,
+        extra="allow",
+    )
 
     # ── ClassVars (shared across all fabric models) ──
     identifiers: ClassVar[list[str] | None] = ["fabric_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        "location": {"latitude": 37.33939, "longitude": -121.89496},
+    }
 
     # Subclass must set this to the appropriate FabricTypeEnum member
     _fabric_type: ClassVar[FabricTypeEnum]
+
+    # -─ Gathered state filtering ──
+    # Concrete families opt in explicitly.  Keeping the shared base disabled
+    # prevents newer fabric types from exposing gathered before their module,
+    # orchestrator, documentation, and tests implement the full contract.
+    supports_gathered_filtering: ClassVar[bool] = False
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "fabric_name",
+        "license_tier",
+        "security_domain",
+        "alert_suspend",
+        "telemetry_collection",
+    )
+
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """Validate and normalize one partial gathered-state fabric filter."""
+        validated = FabricGatheredFilterModel.model_validate(
+            filter_item,
+            by_name=True,
+            context={"mode": "config", "state": "gathered"},
+        )
+        return validated.model_dump(
+            by_alias=False,
+            exclude_none=True,
+            context={"mode": "config"},
+        )
 
     # ── Basic Fabric Properties ──
     category: Literal["fabric"] = Field(description="Resource category", default="fabric")
@@ -273,16 +384,30 @@ class FabricBaseModel(NDBaseModel):
     location: LocationModel | None = Field(description="Geographic location of the fabric", default=None)
 
     # ── License, Telemetry, and Operations ──
-    license_tier: LicenseTierEnum = Field(alias="licenseTier", description="License Tier for fabric.", default=LicenseTierEnum.ESSENTIALS)
-    alert_suspend: AlertSuspendEnum = Field(
-        alias="alertSuspend", description="Alert Suspend state configured on the fabric.", default=AlertSuspendEnum.DISABLED
+    license_tier: LicenseTierEnum = Field(
+        alias="licenseTier",
+        description="License Tier for fabric.",
+        default=LicenseTierEnum.ESSENTIALS,
     )
-    telemetry_collection: bool = Field(alias="telemetryCollection", description="Enable telemetry collection.", default=False)
+    alert_suspend: AlertSuspendEnum = Field(
+        alias="alertSuspend",
+        description="Alert Suspend state configured on the fabric.",
+        default=AlertSuspendEnum.DISABLED,
+    )
+    telemetry_collection: bool = Field(
+        alias="telemetryCollection",
+        description="Enable telemetry collection.",
+        default=False,
+    )
     telemetry_collection_type: TelemetryCollectionTypeEnum = Field(
-        alias="telemetryCollectionType", description="Telemetry collection method.", default=TelemetryCollectionTypeEnum.IN_BAND
+        alias="telemetryCollectionType",
+        description="Telemetry collection method.",
+        default=TelemetryCollectionTypeEnum.IN_BAND,
     )
     telemetry_streaming_protocol: TelemetryStreamingProtocolEnum = Field(
-        alias="telemetryStreamingProtocol", description="Telemetry Streaming Protocol.", default=TelemetryStreamingProtocolEnum.IPV4
+        alias="telemetryStreamingProtocol",
+        description="Telemetry Streaming Protocol.",
+        default=TelemetryStreamingProtocolEnum.IPV4,
     )
     telemetry_source_interface: str = Field(
         alias="telemetrySourceInterface",
@@ -290,16 +415,24 @@ class FabricBaseModel(NDBaseModel):
         default="loopback0",
     )
     telemetry_source_vrf: str = Field(
-        alias="telemetrySourceVrf", description="VRF over which telemetry is streamed, valid only if Telemetry Collection is set to inBand.", default="default"
+        alias="telemetrySourceVrf",
+        description="VRF over which telemetry is streamed, valid only if Telemetry Collection is set to inBand.",
+        default="default",
     )
-    security_domain: str = Field(alias="securityDomain", description="Security Domain associated with the fabric.", default="all")
+    security_domain: str = Field(
+        alias="securityDomain",
+        description="Security Domain associated with the fabric.",
+        default="all",
+    )
 
     # ── Optional Advanced Settings ──
     # NOTE: `management` is intentionally NOT defined here — subclasses define it
     # with their specific management model type.
     telemetry_settings: TelemetrySettingsModel | None = Field(alias="telemetrySettings", description="Telemetry configuration", default=None)
     external_streaming_settings: ExternalStreamingSettingsModel = Field(
-        alias="externalStreamingSettings", description="External streaming settings", default_factory=ExternalStreamingSettingsModel
+        alias="externalStreamingSettings",
+        description="External streaming settings",
+        default_factory=ExternalStreamingSettingsModel,
     )
 
     # ── Validators ──
@@ -344,6 +477,36 @@ class FabricBaseModel(NDBaseModel):
         """
         pass
 
+    def prepare_for_replacement(self, existing: NDBaseModel) -> NDBaseModel:
+        """Materialize telemetry only when opaque writable state needs preserving.
+
+        ``telemetry_settings`` is optional in public configuration.  If an
+        exact-state proposal omits it, normal recursive preservation cannot
+        reach writable-but-unexposed roots nested below ``flow_collection``.
+        Create the default public telemetry shape only when the existing
+        response actually contains one of those declared opaque roots.  The
+        base implementation then copies only the allowlisted descendants;
+        public telemetry values retain normal exact-state reset semantics.
+        """
+        candidate = self
+        if isinstance(existing, type(self)) and self.telemetry_settings is None and existing.telemetry_settings is not None:
+            existing_flow = existing.telemetry_settings.flow_collection
+            existing_extras = existing_flow.model_extra or {}
+            if existing_flow.replacement_preserve_fields.intersection(existing_extras):
+                candidate = self.model_copy(deep=True)
+                candidate.telemetry_settings = TelemetrySettingsModel()
+        return NDBaseModel.prepare_for_replacement(candidate, existing)
+
+    @classmethod
+    def get_required_if(cls) -> list[tuple[str, str, list[str]]]:
+        """Require config for every mutating fabric state."""
+        return [
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ]
+
     @classmethod
     def get_argument_spec(cls) -> dict:
         """Auto-generate Ansible argument spec from pydantic model fields.
@@ -354,11 +517,14 @@ class FabricBaseModel(NDBaseModel):
         are automatically excluded.
         """
         config_options = _build_options_from_model(cls)
+        states = ["merged", "replaced", "deleted", "overridden"]
+        if cls.supports_gathered_filtering:
+            states.append("gathered")
         return dict(
             state={
                 "type": "str",
                 "default": "merged",
-                "choices": ["merged", "replaced", "deleted", "overridden"],
+                "choices": states,
             },
             config={
                 "required": False,
@@ -368,3 +534,9 @@ class FabricBaseModel(NDBaseModel):
             },
             **config_actions_spec(FABRIC_CONFIG_ACTIONS),
         )
+
+    def to_gathered_config(self, **kwargs) -> dict[str, Any]:
+        """Return configuration limited recursively to public Ansible options."""
+        config = self.to_config(**kwargs)
+        options = type(self).get_argument_spec()["config"]["options"]
+        return _project_config_to_argument_spec(config, options)

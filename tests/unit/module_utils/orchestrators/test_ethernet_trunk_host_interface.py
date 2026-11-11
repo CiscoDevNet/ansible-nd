@@ -35,6 +35,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
     XeEthernetTrunkHostNetworkOSModel,
     XeEthernetTrunkHostPolicyModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import InterfaceDefaultConfig
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_trunk_host_interface import (
     EthernetTrunkHostInterfaceOrchestrator,
 )
@@ -291,6 +292,85 @@ def test_ethernet_trunk_host_orchestrator_00110() -> None:
             },
             False,
         ),
+        (
+            {
+                "configData": {
+                    "networkOS": {
+                        "policy": {
+                            "stormControl": False,
+                            "stormControlAction": "default",
+                            "stormControlBroadcastLevel": "0.0",
+                            "stormControlBroadcastLevelPps": "0",
+                        },
+                    },
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"stormControlBroadcastLevel": "42.5"}},
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"stormControlBroadcastLevelPps": "4200"}},
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"stormControl": True}},
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"stormControlAction": "trap"}},
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"qos": True}},
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"adminState": False}},
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"vlanMappingEntries": [{"providerVlanId": 100}]}},
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"ptp": False}},
+                },
+            },
+            True,
+        ),
     ],
     ids=[
         "empty",
@@ -305,6 +385,15 @@ def test_ethernet_trunk_host_orchestrator_00110() -> None:
         "class_c_bandwidth",
         "class_c_debounce_linkup",
         "class_c_inherit_bandwidth",
+        "storm_defaults_numeric_strings",
+        "storm_percentage_configured",
+        "storm_pps_configured",
+        "storm_enabled",
+        "storm_action_configured",
+        "qos_configured",
+        "admin_state_configured",
+        "vlan_mapping_entries_configured",
+        "unknown_wire_field_ignored",
     ],
 )
 def test_ethernet_trunk_host_orchestrator_00200(iface, expected) -> None:
@@ -606,7 +695,7 @@ def test_ethernet_trunk_host_orchestrator_00440() -> None:
 
     - state is `deleted`; delete_bulk receives one IOS-XE model (the links GET lists no fabric link, so it is not fabric-owned)
     - XE pair in `_pending_xe_resets`, not in `_pending_normalizes`; pair in `_pending_deploys`
-    - `_xe_reset_payload` policy is exactly {policyType: iosXeTrunkHost, adminState: true} in `trunk` mode
+    - `_xe_reset_payload` policy is exactly {policyType: iosXeTrunkHost, adminState: true, allowedVlans: none, mtu: 1500} in `trunk` mode
 
     ## Classes and Methods
 
@@ -636,7 +725,37 @@ def test_ethernet_trunk_host_orchestrator_00440() -> None:
     assert orchestrator._pending_deploys == [("GigabitEthernet1/0/1", "FDO22222BBB")]
     payload = EthernetTrunkHostInterfaceOrchestrator._xe_reset_payload("GigabitEthernet1/0/1", "FDO22222BBB")
     assert payload["configData"]["mode"] == "trunk"
-    assert payload["configData"]["networkOS"] == {"networkOSType": "ios-xe", "policy": {"policyType": "iosXeTrunkHost", "adminState": True}}
+    # The reset body carries the iosXeTrunkHost template-required defaults (issue #564; ND 4.3.1 rejects the PUT without them).
+    assert payload["configData"]["networkOS"] == {
+        "networkOSType": "ios-xe",
+        "policy": {"policyType": "iosXeTrunkHost", "adminState": True, "allowedVlans": "none", "mtu": 1500},
+    }
+
+
+def test_ethernet_trunk_host_orchestrator_00445() -> None:
+    """
+    # Summary
+
+    Verify the NX-OS Class C reset body (`InterfaceDefaultConfig.to_reset_payload`, the per-interface PUT-as-replace used when
+    `interfaceActions/normalize` cannot clear `bandwidth` / `debounceLinkupTimer` / `inheritBandwidth`) carries `allowedVlans`.
+    ND 4.3.1 rejects the PUT without it ("Validation failed for following fields: [allowedVlans]", lab-verified 2026-09-14 on
+    S3_BG1 Ethernet1/48) where 4.2.1 defaulted it to `none` (issue #564). The value is the template default, so the reset lands
+    on the same state on both releases.
+
+    ## Test
+
+    - Build the reset body for one interface
+    - The policy is exactly `{"adminState": True, "policyType": "trunkHost", "allowedVlans": "none"}`
+
+    ## Classes and Methods
+
+    - InterfaceDefaultConfig.to_reset_payload()
+    - EthernetTrunkHostPolicyModel.payload_defaults
+    """
+    payload = InterfaceDefaultConfig.to_reset_payload("Ethernet1/48", "FDO11111AAA")
+    assert payload["interfaceName"] == "Ethernet1/48"
+    assert payload["switchId"] == "FDO11111AAA"
+    assert payload["configData"]["networkOS"]["policy"] == {"adminState": True, "policyType": "trunkHost", "allowedVlans": "none"}
 
 
 # =============================================================================
@@ -704,7 +823,8 @@ def test_ethernet_trunk_host_orchestrator_00800() -> None:
     with pytest.raises(
         RuntimeError,
         match=r"Bulk create failed: Interface GigabitEthernet1/0/48 on switch 192\.168\.2\.1 is an endpoint of fabric link LINK-UUID-1 "
-        r"\(numbered: C1_LE1 GigabitEthernet1/0/48 -> C1_CORE1 GigabitEthernet1/0/1\)\. Refusing to overwrite fabric-owned intent with policy 'iosXeTrunkHost'",
+        r"\(numbered: C1_LE1 GigabitEthernet1/0/48 -> C1_CORE1 GigabitEthernet1/0/1\)\. "
+        r"Refusing to overwrite fabric-owned intent with policy 'iosXeTrunkHost'",
     ):
         orchestrator.create_bulk([model], existing_data=_xe_routed_wire("GigabitEthernet1/0/48"))
     assert orchestrator._pending_deploys == []
@@ -1112,3 +1232,86 @@ def test_ethernet_trunk_host_orchestrator_00480() -> None:
         result = orchestrator.query_all()
 
     assert result == []
+
+
+def test_ethernet_trunk_host_orchestrator_00930(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify `unaccepted_removals` on an ethernet orchestrator honors every delete-side queue its `_unsent_delete_pairs` unions
+    (remove, normalize, reset, IOS-XE reset), not only the base remove queue (issue #597 delete side).
+
+    ## Test
+
+    - One pair queued in each of `_pending_removes`, `_pending_normalizes`, `_pending_resets`, `_pending_xe_resets`; a fifth interface
+      is in no queue
+    - Submitted: all five identifier-only models on 192.168.2.1
+    - Returned: the four queued interfaces, in submission order
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator._unsent_delete_pairs()
+    - NDBaseInterfaceOrchestrator.unaccepted_removals()
+    """
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+    monkeypatch.setattr(EthernetTrunkHostInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    instance._pending_removes.append(("Ethernet1/1", "FDO12345ABC"))
+    instance._pending_normalizes.append(("Ethernet1/2", "FDO12345ABC"))
+    instance._pending_resets.append(("Ethernet1/3", "FDO12345ABC"))
+    instance._pending_xe_resets.append(("GigabitEthernet1/0/4", "FDO12345ABC"))
+    names = ["Ethernet1/1", "Ethernet1/2", "Ethernet1/3", "GigabitEthernet1/0/4", "Ethernet1/5"]
+    removed = [EthernetTrunkHostInterfaceModel.from_config({"switch_ip": "192.168.2.1", "interface_name": name}) for name in names]
+
+    with does_not_raise():
+        unaccepted = instance.unaccepted_removals(removed)
+
+    assert [item.interface_name for item in unaccepted] == names[:4]
+
+
+def test_ethernet_trunk_host_orchestrator_02000(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `query_all` under `state: gathered` excludes factory-default trunkHost
+    interfaces while retaining user-managed interfaces, and passes gathered filters
+    through to the shared Ethernet query implementation (PR #507 review).
+
+    ## Test
+
+    - Parent query returns one factory-default and one user-managed trunkHost interface
+    - `query_all(gathered_filters=[])` returns only the user-managed interface
+    - The empty gathered filter list is forwarded unchanged to the parent
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceOrchestrator.query_all()
+    - EthernetTrunkHostInterfaceOrchestrator._is_unconfigured_default()
+    """
+
+    factory_default = {
+        "interfaceName": "Ethernet1/1",
+        "configData": {"networkOS": {"policy": {"allowedVlans": "none"}}},
+    }
+    user_managed = {
+        "interfaceName": "Ethernet1/2",
+        "configData": {"networkOS": {"policy": {"allowedVlans": "10"}}},
+    }
+    forwarded: dict[str, list[dict] | None] = {}
+
+    def fake_parent_query_all(self, model_instance=None, gathered_filters=None, **kwargs):  # pylint: disable=unused-argument
+        forwarded["gathered_filters"] = gathered_filters
+        return [factory_default, user_managed]
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base.EthernetBaseOrchestrator.query_all",
+        fake_parent_query_all,
+    )
+
+    def responses():
+        yield {}
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "gathered", "config": []})
+    result = orchestrator.query_all(gathered_filters=[])
+
+    assert result == [user_managed]
+    assert forwarded["gathered_filters"] == []

@@ -27,6 +27,8 @@ Uses the file-based `Sender` from `tests/unit/module_utils/sender_file.py` as th
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_routed_interface import (
@@ -383,15 +385,16 @@ def test_ethernet_routed_orchestrator_00315() -> None:
     """
     # Summary
 
-    Verify the XE reset payload is the lab-verified C8000V-safe body: a defaults-only `iosXeRoutedHost` policy with NO
-    `mtu` key anywhere (probe 2026-07-27: the mtu-less PUT returns 204 and ND injects the schema defaults, landing the
-    interface on the unconfigured-default signature so it leaves managed scope).
+    Verify the XE reset payload is a defaults-only `iosXeRoutedHost` policy carrying the template default `mtu: 1500`. The
+    2026-07-27 C8000V probe used an mtu-less body (ND 4.2.1 injects the schema defaults on the echo), but ND 4.3.1 rejects that
+    PUT ("Validation failed for following fields: [mtu]", lab-verified 2026-09-14 on the CAMPUS1 Catalyst 9000v), so the body now
+    carries the template default from `XeEthernetRoutedPolicyModel.payload_defaults` (issue #564); both releases land the
+    interface on the same unconfigured-default signature so it leaves managed scope.
 
     ## Test
 
     - Payload carries interfaceName/interfaceType/switchId and mode "routed" / networkOSType "ios-xe"
-    - Policy is exactly {policyType: iosXeRoutedHost, adminState: true}
-    - No "mtu" key appears anywhere in the payload
+    - Policy is exactly {policyType: iosXeRoutedHost, adminState: true, mtu: 1500}
 
     ## Classes and Methods
 
@@ -403,8 +406,9 @@ def test_ethernet_routed_orchestrator_00315() -> None:
     assert payload["switchId"] == "FDO22222BBB"
     assert payload["configData"]["mode"] == "routed"
     assert payload["configData"]["networkOS"]["networkOSType"] == "ios-xe"
-    assert payload["configData"]["networkOS"]["policy"] == {"policyType": "iosXeRoutedHost", "adminState": True}
-    assert "mtu" not in str(payload)
+    # ND 4.3.1 rejects the reset PUT without `mtu` (issue #564; lab-verified 2026-09-14), so the body carries the template
+    # default from `XeEthernetRoutedPolicyModel.payload_defaults`; 4.2.1 stores 1500 either way.
+    assert payload["configData"]["networkOS"]["policy"] == {"policyType": "iosXeRoutedHost", "adminState": True, "mtu": 1500}
 
 
 def test_ethernet_routed_orchestrator_00320() -> None:
@@ -648,8 +652,11 @@ def _user_nx_model(policy_kwargs: dict, interface_name: str = "Ethernet1/7", swi
     )
 
 
-def _pc_member_wire(policy: dict, interface_name: str = "Ethernet1/7", port_channel_id: int = 10) -> dict:
-    """Build the wire-state dict of a routed port-channel member carrying `policy` (policyType added)."""
+# This is deliberately not an authentic member record. It exercises the fail-closed
+# path for contradictory evidence; authentic routed member policies are covered in
+# test_ethernet_member_updates.py.
+def _inconsistent_routed_host_wire(policy: dict, interface_name: str = "Ethernet1/7", port_channel_id: int = 10) -> dict:
+    """Build stale evidence: routedHost policy plus an operational port-channel ID."""
     return {
         "interfaceName": interface_name,
         "interfaceType": "ethernet",
@@ -682,10 +689,10 @@ def test_ethernet_routed_orchestrator_00600() -> None:
         yield responses_ethernet_routed("test_update_pc_member_replaced_00600a")
 
     orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "replaced"})
-    existing = _pc_member_wire({"adminState": True, "description": "Old description", "ip": "10.10.10.1", "prefix": 30, "mtu": 9000})
+    existing = _inconsistent_routed_host_wire({"adminState": True, "description": "Old description", "ip": "10.10.10.1", "prefix": 30, "mtu": 9000})
     model = _user_nx_model({"description": "New description"})
 
-    with pytest.raises(RuntimeError, match=r"Update failed for.*member of port-channel 10.*\['ip', 'mtu', 'prefix'\]"):
+    with pytest.raises(RuntimeError, match=r"Update failed for.*operational port-channel membership 10.*configured policy is 'routedHost'.*inconsistent"):
         orchestrator.update(model, existing_data=existing)
     assert orchestrator._pending_deploys == []
 
@@ -694,15 +701,15 @@ def test_ethernet_routed_orchestrator_00610() -> None:
     """
     # Summary
 
-    Verify `update` under `state: replaced` allows a replacement of a port-channel member when every omitted field already sits
-    at its template default (clearing a default is a no-op, mirroring the reverse-diff scrub in `get_diff`) and the carried
-    fields are unchanged or whitelisted.
+    Verify `update` under `state: replaced` rejects contradictory membership evidence even when carried routed-host fields are
+    unchanged and omitted values sit at defaults. A `routedHost` policy with a positive operational port-channel ID is not an
+    authentic member and must fail closed before PUT.
 
     ## Test
 
-    - state is `replaced`; existing member carries ip/prefix, default mtu 9216, and an old description
-    - Proposed model carries the same ip/prefix and a new description (mtu omitted)
-    - `update` does not raise; the PUT is issued and a deploy is queued
+    - Existing state carries `routedHost`, ip/prefix/default MTU, and operational port-channel 10
+    - Proposed model carries the same ip/prefix and a new description
+    - `update` rejects the evidence mismatch without PUT or deploy
 
     ## Classes and Methods
 
@@ -715,27 +722,27 @@ def test_ethernet_routed_orchestrator_00610() -> None:
         yield responses_ethernet_routed("test_update_pc_member_replaced_00610b")
 
     orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "replaced"})
-    existing = _pc_member_wire({"adminState": True, "description": "Old description", "ip": "10.10.10.1", "prefix": 30, "mtu": 9216})
+    existing = _inconsistent_routed_host_wire({"adminState": True, "description": "Old description", "ip": "10.10.10.1", "prefix": 30, "mtu": 9216})
     model = _user_nx_model({"description": "New description", "ip": "10.10.10.1", "prefix": 30})
 
-    with does_not_raise():
+    with pytest.raises(RuntimeError, match=r"Update failed for.*operational port-channel membership 10.*configured policy is 'routedHost'.*inconsistent"):
         orchestrator.update(model, existing_data=existing)
-    assert orchestrator.rest_send.verb == HttpVerbEnum.PUT.value
-    assert orchestrator._pending_deploys == [("Ethernet1/7", "FDO11111AAA")]
+    assert orchestrator.rest_send.verb != HttpVerbEnum.PUT.value
+    assert orchestrator._pending_deploys == []
 
 
 def test_ethernet_routed_orchestrator_00620() -> None:
     """
     # Summary
 
-    Verify the removal-aware check does NOT apply under `state: merged`: an omitted field is not a removal there (the state
-    machine merges it from existing state), so a description-only merge on a member carrying ip/prefix/mtu is allowed.
+    Verify `state: merged` also rejects a `routedHost` record whose operData claims membership; merge semantics cannot make
+    contradictory ownership evidence safe.
 
     ## Test
 
-    - state is `merged`; existing member carries ip/prefix/mtu 9000
+    - Existing state carries `routedHost`, ip/prefix/MTU, and operational port-channel 10
     - Proposed model carries only a new description
-    - `update` does not raise; the PUT is issued and a deploy is queued
+    - `update` rejects the evidence mismatch without PUT or deploy
 
     ## Classes and Methods
 
@@ -748,12 +755,12 @@ def test_ethernet_routed_orchestrator_00620() -> None:
         yield responses_ethernet_routed("test_update_pc_member_merged_00620b")
 
     orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
-    existing = _pc_member_wire({"adminState": True, "description": "Old description", "ip": "10.10.10.1", "prefix": 30, "mtu": 9000})
+    existing = _inconsistent_routed_host_wire({"adminState": True, "description": "Old description", "ip": "10.10.10.1", "prefix": 30, "mtu": 9000})
     model = _user_nx_model({"description": "New description"})
 
-    with does_not_raise():
+    with pytest.raises(RuntimeError, match=r"Update failed for.*operational port-channel membership 10.*configured policy is 'routedHost'.*inconsistent"):
         orchestrator.update(model, existing_data=existing)
-    assert orchestrator._pending_deploys == [("Ethernet1/7", "FDO11111AAA")]
+    assert orchestrator._pending_deploys == []
 
 
 # =============================================================================
@@ -800,8 +807,8 @@ def test_ethernet_routed_orchestrator_00710() -> None:
     ## Test
 
     - interfaceList reports Ethernet1/7 as a member of port-channel 10 with ip/prefix
-    - Proposed model changes `mtu` (not whitelisted) under `merged`
-    - `preflight` raises `RuntimeError` naming the port-channel and `mtu`
+    - Proposed model changes `ip` (not whitelisted) under `merged`; it is not a staged default-MTU correction
+    - `preflight` raises `RuntimeError` naming the inconsistent port-channel membership
 
     ## Classes and Methods
 
@@ -814,24 +821,90 @@ def test_ethernet_routed_orchestrator_00710() -> None:
         yield responses_ethernet_routed("test_preflight_00710b")
 
     orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
-    model = _user_nx_model({"mtu": 9000})
+    model = _user_nx_model({"ip": "198.51.100.1"})
 
-    with pytest.raises(RuntimeError, match=r"member of port-channel 10.*\['mtu'\]"):
+    with pytest.raises(RuntimeError, match=r"operational port-channel membership 10.*configured policy is 'routedHost'.*inconsistent"):
         orchestrator.preflight([model])
+
+
+def test_ethernet_routed_orchestrator_00711() -> None:
+    """
+    # Summary
+
+    Verify preflight permits an exact, undeployed replay of a contradictory
+    routed-host bystander so fabric-wide overridden can preserve it without a
+    PUT.
+
+    ## Test
+
+    - interfaceList reports routedHost intent plus stale portChannelId 10
+    - Proposed overridden intent exactly matches the current routed policy
+    - deploy is false, so preflight succeeds and no PUT is attempted
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.preflight()
+    - EthernetBaseOrchestrator._host_policy_replay_is_noop()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_preflight_00710a")
+        yield responses_ethernet_routed("test_preflight_00710b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "overridden"})
+    orchestrator.apply_config_actions({"config_actions": {"deploy": False}})
+    model = _user_nx_model({"admin_state": True, "ip": "10.10.10.1", "prefix": 30})
+
+    with does_not_raise():
+        orchestrator.preflight([model])
+    assert orchestrator.rest_send.verb != HttpVerbEnum.PUT.value
+
+
+def test_ethernet_routed_orchestrator_00712() -> None:
+    """
+    # Summary
+
+    Verify an exact replay of contradictory routed-host evidence still fails
+    closed when deployment is requested, because a no-diff item can be sent to
+    the switch during deploy reconciliation.
+
+    ## Test
+
+    - interfaceList reports routedHost intent plus stale portChannelId 10
+    - Proposed overridden intent exactly matches the current routed policy
+    - deploy is true, so preflight rejects the inconsistent evidence
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.preflight()
+    - EthernetBaseOrchestrator._check_port_channel_restrictions()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_preflight_00710a")
+        yield responses_ethernet_routed("test_preflight_00710b")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "overridden"})
+    orchestrator.apply_config_actions({"config_actions": {"deploy": True}})
+    model = _user_nx_model({"admin_state": True, "ip": "10.10.10.1", "prefix": 30})
+
+    with pytest.raises(RuntimeError, match=r"operational port-channel membership 10.*configured policy is 'routedHost'.*inconsistent"):
+        orchestrator.preflight([model])
+    assert orchestrator.rest_send.verb != HttpVerbEnum.PUT.value
 
 
 def test_ethernet_routed_orchestrator_00720() -> None:
     """
     # Summary
 
-    Verify `preflight_delete` refuses an explicitly named port-channel member, so a `--check` `state: deleted` run fails the
-    same way the normal run's `delete_bulk` would.
+    Verify `preflight_delete` permits current routed-host intent with no parent
+    claim despite a stale positive operational port-channel ID.
 
     ## Test
 
-    - interfaceList reports Ethernet1/7 as a member of port-channel 10
+    - interfaceList reports `routedHost`, no parent claim, and stale `portChannelId: 10`
     - `preflight_delete` receives the existing model for Ethernet1/7
-    - `RuntimeError` refuses to normalize the member
+    - preflight succeeds, matching normal intent-first deletion
 
     ## Classes and Methods
 
@@ -845,7 +918,7 @@ def test_ethernet_routed_orchestrator_00720() -> None:
 
     orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
 
-    with pytest.raises(RuntimeError, match=r"member of port-channel 10. Refusing to normalize a port-channel member"):
+    with does_not_raise():
         orchestrator.preflight_delete([_nx_model("Ethernet1/7")])
 
 
@@ -926,6 +999,59 @@ def test_ethernet_routed_orchestrator_00800() -> None:
         deployed = orchestrator.deploy_accepted_mutations()
     assert deployed == [("Ethernet1/7", "FDO11111AAA")]
     assert orchestrator.rest_send.committed_payload == {"interfaces": [{"interfaceName": "Ethernet1/7", "switchId": "FDO11111AAA"}]}
+    assert orchestrator._pending_deploys == []
+
+
+def test_ethernet_routed_orchestrator_00810(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify a second same-name bulk create that fails before response cannot reuse the first switch's successful HTTP 207.
+
+    ## Test
+
+    - Ethernet1/7 is submitted in separate per-switch POST groups and the first returns an all-success HTTP 207
+    - The second request raises from sender.commit() before recording a response
+    - Only the first switch target is queued and deployed; the unsent second target is never inferred from stale response state
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.create_bulk()
+    - EthernetBaseOrchestrator._post_bulk_group()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_names()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_remove_pending_00360a")
+        yield responses_ethernet_routed("test_remove_pending_00360b")
+        yield responses_ethernet_routed("test_remove_pending_00360d")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "merged"})
+    orchestrator.deploy = True
+    assert orchestrator.fabric_context.get_switch_id("192.168.1.1") == "FDO11111AAA"
+    sender = orchestrator.rest_send.sender
+    original_commit = sender.commit
+    commit_count = 0
+
+    def fail_second_commit() -> None:
+        nonlocal commit_count
+        commit_count += 1
+        if commit_count == 2:
+            raise ValueError("second bulk create failed before response")
+        original_commit()
+
+    monkeypatch.setattr(sender, "commit", fail_second_commit)
+    models = [
+        _user_nx_model({"ip": "10.10.7.1", "prefix": 30}, switch_ip="192.168.1.1"),
+        _user_nx_model({"ip": "10.10.8.1", "prefix": 30}, switch_ip="192.168.1.2"),
+    ]
+    with pytest.raises(RuntimeError, match=r"Bulk create failed: .*second bulk create failed before response") as exc_info:
+        orchestrator.create_bulk(models, existing_data={"interfaceName": "probe"})
+
+    assert "The controller accepted" not in str(exc_info.value)
+    assert orchestrator._pending_deploys == [("Ethernet1/7", "FDO11111AAA")]
+    monkeypatch.setattr(sender, "commit", original_commit)
+    assert orchestrator.deploy_accepted_mutations() == [("Ethernet1/7", "FDO11111AAA")]
     assert orchestrator._pending_deploys == []
 
 
@@ -1054,6 +1180,7 @@ def test_ethernet_routed_orchestrator_00340() -> None:
 
     def responses():
         yield responses_ethernet_routed("test_remove_pending_00340a")
+        yield responses_ethernet_routed("nx_normalize_before_31_32")
         yield responses_ethernet_routed("test_remove_pending_00340b")
 
     orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
@@ -1097,7 +1224,9 @@ def test_ethernet_routed_orchestrator_00350() -> None:
 
     def responses():
         yield responses_ethernet_routed("test_remove_pending_00350a")
+        yield responses_ethernet_routed("nx_normalize_before_31_32")
         yield responses_ethernet_routed("test_remove_pending_00350b")
+        yield responses_ethernet_routed("nx_normalize_after_31_only")
         yield responses_ethernet_routed("test_remove_pending_00350c")
 
     orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
@@ -1144,7 +1273,10 @@ def test_ethernet_routed_orchestrator_00360() -> None:
 
     def responses():
         yield responses_ethernet_routed("test_remove_pending_00360a")
+        yield responses_ethernet_routed("nx_normalize_before_31")
+        yield responses_ethernet_routed("nx_normalize_before_peer_31")
         yield responses_ethernet_routed("test_remove_pending_00360b")
+        yield responses_ethernet_routed("nx_normalize_after_31")
         yield responses_ethernet_routed("test_remove_pending_00360c")
         yield responses_ethernet_routed("test_remove_pending_00360d")
 
@@ -1165,6 +1297,62 @@ def test_ethernet_routed_orchestrator_00360() -> None:
     with does_not_raise():
         deployed = orchestrator.deploy_accepted_mutations()
     assert deployed == [("Ethernet1/31", "FDO11111AAA")]
+    assert orchestrator._pending_deploys == [("Ethernet1/31", "FDO22222BBB")]
+
+
+def test_ethernet_routed_orchestrator_00370(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify a second same-name normalize that fails before receiving a response cannot reuse the first switch's successful HTTP 207.
+
+    ## Test
+
+    - Ethernet1/31 is queued on two switches and the first per-switch normalize returns an all-success HTTP 207
+    - The second request raises from sender.commit() before recording a response
+    - Only the first pair is accepted/deployable; the second pair remains pending and is never inferred from stale response state
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator._normalize_interfaces()
+    - NDBaseInterfaceOrchestrator._accepted_multistatus_names()
+    - NDBaseInterfaceOrchestrator.deploy_accepted_mutations()
+    """
+
+    def responses():
+        yield responses_ethernet_routed("test_remove_pending_00360a")
+        yield responses_ethernet_routed("nx_normalize_before_31")
+        yield responses_ethernet_routed("nx_normalize_before_peer_31")
+        yield responses_ethernet_routed("test_remove_pending_00360b")
+        yield responses_ethernet_routed("nx_normalize_after_31")
+        yield responses_ethernet_routed("test_remove_pending_00360d")
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
+    orchestrator.deploy = True
+    orchestrator.delete_bulk(
+        [_nx_model("Ethernet1/31", switch_ip="192.168.1.1"), _nx_model("Ethernet1/31", switch_ip="192.168.1.2")],
+        existing_data={"interfaceName": "probe"},
+    )
+    sender = orchestrator.rest_send.sender
+    original_commit = sender.commit
+    commit_count = 0
+
+    def fail_second_commit() -> None:
+        nonlocal commit_count
+        if sender.verb == HttpVerbEnum.POST and sender.path.endswith("/interfaceActions/normalize"):
+            commit_count += 1
+            if commit_count == 2:
+                raise ValueError("second normalize failed before response")
+        original_commit()
+
+    monkeypatch.setattr(sender, "commit", fail_second_commit)
+    with pytest.raises(RuntimeError, match=r"Bulk normalize failed for \['Ethernet1/31'\].*None of these interfaces were reset"):
+        orchestrator.remove_pending()
+
+    assert orchestrator._accepted_multistatus_names(None) == set()
+    assert orchestrator._pending_normalizes == [("Ethernet1/31", "FDO22222BBB")]
+    monkeypatch.setattr(sender, "commit", original_commit)
+    assert orchestrator.deploy_accepted_mutations() == [("Ethernet1/31", "FDO11111AAA")]
     assert orchestrator._pending_deploys == [("Ethernet1/31", "FDO22222BBB")]
 
 
@@ -1507,7 +1695,7 @@ def test_ethernet_routed_orchestrator_00980() -> None:
     assert orchestrator._pending_deploys == []
 
 
-def test_ethernet_routed_orchestrator_00990() -> None:
+def test_ethernet_routed_orchestrator_00990(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     # Summary
 
@@ -1520,8 +1708,8 @@ def test_ethernet_routed_orchestrator_00990() -> None:
     - `delete_bulk` queues Ethernet1/31 and Ethernet1/32 for normalize and deploy
     - The first normalize POST returns 400 naming `/configData/networkOS/policy/description`; the resend returns 207 success for both
     - `remove_pending` does not raise; `_pending_normalizes` is empty; `_pending_deploys` still holds both pairs
-    - The last committed payload carries no `description`; `_normalize_omits_description` is set for the rest of the run
-    - Exactly three responses were consumed (switch list, rejection, resend)
+    - The last normalize payload carries no `description`; `_normalize_omits_description` is set for the rest of the run
+    - Five responses were consumed (switch list, initial inventory, rejection, resend, fresh reset inventory)
 
     ## Classes and Methods
 
@@ -1533,11 +1721,23 @@ def test_ethernet_routed_orchestrator_00990() -> None:
 
     def responses():
         yield responses_ethernet_routed("test_remove_pending_00990a")
+        yield responses_ethernet_routed("nx_normalize_before_31_32")
         yield responses_ethernet_routed("test_remove_pending_00990b")
         yield responses_ethernet_routed("test_remove_pending_00990c")
+        yield responses_ethernet_routed("nx_normalize_after_31_32")
 
     orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
     orchestrator.deploy = True
+    sender = orchestrator.rest_send.sender
+    original_commit = sender.commit
+    normalize_payloads = []
+
+    def record_normalize_payload() -> None:
+        if sender.verb == HttpVerbEnum.POST and sender.path.endswith("/interfaceActions/normalize"):
+            normalize_payloads.append(deepcopy(sender.payload))
+        original_commit()
+
+    monkeypatch.setattr(sender, "commit", record_normalize_payload)
     with does_not_raise():
         orchestrator.delete_bulk([_nx_model("Ethernet1/31"), _nx_model("Ethernet1/32")], existing_data={"interfaceName": "probe"})
     assert orchestrator._normalize_omits_description is False
@@ -1549,12 +1749,14 @@ def test_ethernet_routed_orchestrator_00990() -> None:
     assert not orchestrator._pending_normalizes
     assert orchestrator._pending_deploys == [("Ethernet1/31", "FDO11111AAA"), ("Ethernet1/32", "FDO11111AAA")]
     assert orchestrator._normalize_omits_description is True
-    assert len(orchestrator.rest_send.responses) == 3
-    policy = orchestrator.rest_send.committed_payload["configData"]["networkOS"]["policy"]
+    assert len(orchestrator.rest_send.responses) == 5
+    assert len(normalize_payloads) == 2
+    assert normalize_payloads[0]["configData"]["networkOS"]["policy"]["description"] == ""
+    policy = normalize_payloads[-1]["configData"]["networkOS"]["policy"]
     assert "description" not in policy
     assert policy["policyType"] == "trunkHost"
     assert policy["extraConfig"] == ""
-    assert orchestrator.rest_send.committed_payload["switchInterfaces"] == [
+    assert normalize_payloads[-1]["switchInterfaces"] == [
         {"interfaceName": "Ethernet1/31", "switchId": "FDO11111AAA"},
         {"interfaceName": "Ethernet1/32", "switchId": "FDO11111AAA"},
     ]
@@ -1573,7 +1775,7 @@ def test_ethernet_routed_orchestrator_01000() -> None:
     - `delete_bulk` queues Ethernet1/31 for normalize and deploy
     - The normalize POST returns 400 naming `/configData/networkOS/policy/mtu`
     - `remove_pending` raises `Bulk normalize failed` with `None of these interfaces were reset`
-    - `_pending_normalizes` still holds the pair; `_normalize_omits_description` stays `False`; two responses consumed
+    - `_pending_normalizes` still holds the pair; `_normalize_omits_description` stays `False`; three responses consumed (switch list, inventory, rejection)
 
     ## Classes and Methods
 
@@ -1584,6 +1786,7 @@ def test_ethernet_routed_orchestrator_01000() -> None:
 
     def responses():
         yield responses_ethernet_routed("test_remove_pending_01000a")
+        yield responses_ethernet_routed("nx_normalize_before_31")
         yield responses_ethernet_routed("test_remove_pending_01000b")
 
     orchestrator = _build_orchestrator(ResponseGenerator(responses()), params={"state": "deleted"})
@@ -1596,7 +1799,7 @@ def test_ethernet_routed_orchestrator_01000() -> None:
 
     assert orchestrator._pending_normalizes == [("Ethernet1/31", "FDO11111AAA")]
     assert orchestrator._normalize_omits_description is False
-    assert len(orchestrator.rest_send.responses) == 2
+    assert len(orchestrator.rest_send.responses) == 3
     assert orchestrator.rest_send.committed_payload["configData"]["networkOS"]["policy"]["description"] == ""
 
 
@@ -1619,13 +1822,19 @@ def _switch_inventory_response(switch_id: str) -> dict:
 def _scale_normalize_orchestrator(switch_count: int) -> EthernetRoutedInterfaceOrchestrator:
     """
     Build an orchestrator whose `_pending_normalizes` holds the SAME interface name on `switch_count` switches (so
-    `_normalize_groups` falls back to one request per switch) and whose RestSend history already holds one inventory response per
-    switch, mirroring the state after `query_all` on a fabric where every leaf has that port.
+    `_normalize_groups` falls back to one request per switch). Both the current snapshot and RestSend history contain each
+    complete inventory, mirroring the state after `query_all` on a fabric where every leaf has that port.
     """
     orchestrator = _build_orchestrator(ResponseGenerator(iter(())), params={"state": "deleted"})
     for index in range(switch_count):
         switch_id = f"FDO{index:08d}"
-        orchestrator.rest_send.add_response(_switch_inventory_response(switch_id))
+        response = _switch_inventory_response(switch_id)
+        orchestrator.rest_send.add_response(response)
+        inventory = {row["interfaceName"].lower(): row for row in response["DATA"]["interfaces"]}
+        snapshot = orchestrator.state_snapshot
+        snapshot._interfaces_by_switch[switch_id] = deepcopy(inventory)
+        snapshot._original_interfaces_by_switch[switch_id] = deepcopy(inventory)
+        snapshot._revisions_by_switch[switch_id] = 1
         orchestrator._pending_normalizes.append(("Ethernet1/1", switch_id))
     return orchestrator
 

@@ -13,7 +13,9 @@
         "  - POST /api/v1/manage/fabrics/{fabric}/interfaceActions/deploy"
     ],
     "test_query_all_happy_path_00400a": {
-        "TEST_NOTES": ["Fabric summary: fabric exists (for validate_prerequisites)"],
+        "TEST_NOTES": [
+            "Fabric summary: fabric exists (for validate_prerequisites)"
+        ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
@@ -24,15 +26,23 @@
         }
     },
     "test_query_all_happy_path_00400b": {
-        "TEST_NOTES": ["Switch list: two switches"],
+        "TEST_NOTES": [
+            "Switch list: two switches"
+        ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
         "MESSAGE": "OK",
         "DATA": {
             "switches": [
-                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"},
-                {"fabricManagementIp": "192.168.1.2", "switchId": "FDO22222BBB"}
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDO22222BBB"
+                }
             ]
         }
     },
@@ -51,7 +61,13 @@
                     "interfaceType": "subInterface",
                     "configData": {
                         "mode": "managed",
-                        "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "subinterface", "description": "kept"}}
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "subinterface",
+                                "description": "kept"
+                            }
+                        }
                     }
                 },
                 {
@@ -59,7 +75,12 @@
                     "interfaceType": "ethernet",
                     "configData": {
                         "mode": "access",
-                        "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "accessHost"}}
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost"
+                            }
+                        }
                     }
                 },
                 {
@@ -67,14 +88,21 @@
                     "interfaceType": "subInterface",
                     "configData": {
                         "mode": "unmanaged",
-                        "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "monitorSubinterface"}}
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "monitorSubinterface"
+                            }
+                        }
                     }
                 }
             ]
         }
     },
     "test_query_all_happy_path_00400d": {
-        "TEST_NOTES": ["Switch FDO22222BBB: one managed subinterface on a Port-channel parent"],
+        "TEST_NOTES": [
+            "Switch FDO22222BBB: one managed subinterface on a Port-channel parent"
+        ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
@@ -86,14 +114,22 @@
                     "interfaceType": "subInterface",
                     "configData": {
                         "mode": "managed",
-                        "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "subinterface", "description": "switch-2"}}
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "subinterface",
+                                "description": "switch-2"
+                            }
+                        }
                     }
                 }
             ]
         }
     },
     "test_query_all_fabric_not_found_00420a": {
-        "TEST_NOTES": ["Fabric summary 404 — drives validate_for_mutation to raise"],
+        "TEST_NOTES": [
+            "Fabric summary 404 \u2014 drives validate_for_mutation to raise"
+        ],
         "RETURN_CODE": 404,
         "METHOD": "GET",
         "REQUEST_PATH": "/api/v1/manage/fabrics/missing_fabric/summary",
@@ -101,7 +137,9 @@
         "DATA": {}
     },
     "test_query_all_config_scoped_00440a": {
-        "TEST_NOTES": ["Fabric summary: fabric exists (for validate_prerequisites)"],
+        "TEST_NOTES": [
+            "Fabric summary: fabric exists (for validate_prerequisites)"
+        ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
@@ -122,8 +160,14 @@
         "MESSAGE": "OK",
         "DATA": {
             "switches": [
-                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"},
-                {"fabricManagementIp": "192.168.1.2", "switchId": "FDO22222BBB"}
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDO22222BBB"
+                }
             ]
         }
     },
@@ -143,26 +187,39 @@
                     "interfaceType": "subInterface",
                     "configData": {
                         "mode": "managed",
-                        "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "subinterface", "description": "kept"}}
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "subinterface",
+                                "description": "kept"
+                            }
+                        }
                     }
                 }
             ]
         }
     },
     "test_query_one_happy_path_00500a": {
-        "TEST_NOTES": ["Switch list for switch_id resolution"],
+        "TEST_NOTES": [
+            "Switch list for switch_id resolution"
+        ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
         "MESSAGE": "OK",
         "DATA": {
             "switches": [
-                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
             ]
         }
     },
     "test_query_one_happy_path_00500b": {
-        "TEST_NOTES": ["GET /interfaces/Ethernet1/3.2 — returns single managed subinterface"],
+        "TEST_NOTES": [
+            "GET /interfaces/Ethernet1/3.2 \u2014 returns single managed subinterface"
+        ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/Ethernet1/3.2",
@@ -173,72 +230,107 @@
             "switchId": "FDO11111AAA",
             "configData": {
                 "mode": "managed",
-                "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "subinterface", "description": "exists"}}
+                "networkOS": {
+                    "networkOSType": "nx-os",
+                    "policy": {
+                        "policyType": "subinterface",
+                        "description": "exists"
+                    }
+                }
             }
         }
     },
     "test_create_happy_path_00600a": {
-        "TEST_NOTES": ["Switch list for switch_id resolution"],
+        "TEST_NOTES": [
+            "Switch list for switch_id resolution"
+        ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
         "MESSAGE": "OK",
         "DATA": {
             "switches": [
-                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
             ]
         }
     },
     "test_create_happy_path_00600b": {
-        "TEST_NOTES": ["POST /interfaces — create response (all items success)"],
+        "TEST_NOTES": [
+            "POST /interfaces \u2014 create response (all items success)"
+        ],
         "RETURN_CODE": 200,
         "METHOD": "POST",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
         "MESSAGE": "OK",
         "DATA": {
             "results": [
-                {"name": "Ethernet1/3.2", "status": "success", "message": "Interface added successfully"}
+                {
+                    "name": "Ethernet1/3.2",
+                    "status": "success",
+                    "message": "Interface added successfully"
+                }
             ]
         }
     },
     "test_create_multi_status_failure_00610a": {
-        "TEST_NOTES": ["Switch list for switch_id resolution"],
+        "TEST_NOTES": [
+            "Switch list for switch_id resolution"
+        ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
         "MESSAGE": "OK",
         "DATA": {
             "switches": [
-                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
             ]
         }
     },
     "test_create_multi_status_failure_00610b": {
-        "TEST_NOTES": ["POST /interfaces — 207 Multi-Status body with a per-item failure (parent not in routed mode)"],
+        "TEST_NOTES": [
+            "POST /interfaces \u2014 207 Multi-Status body with a per-item failure (parent not in routed mode)"
+        ],
         "RETURN_CODE": 207,
         "METHOD": "POST",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
         "MESSAGE": "Multi-Status",
         "DATA": {
             "results": [
-                {"name": "Ethernet1/3.2", "status": "failed", "message": "parent not in routed mode"}
+                {
+                    "name": "Ethernet1/3.2",
+                    "status": "failed",
+                    "message": "parent not in routed mode"
+                }
             ]
         }
     },
     "test_update_happy_path_00700a": {
-        "TEST_NOTES": ["Switch list for switch_id resolution"],
+        "TEST_NOTES": [
+            "Switch list for switch_id resolution"
+        ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
         "MESSAGE": "OK",
         "DATA": {
             "switches": [
-                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
             ]
         }
     },
     "test_update_happy_path_00700b": {
-        "TEST_NOTES": ["PUT /interfaces/Ethernet1/3.2 — update response"],
+        "TEST_NOTES": [
+            "PUT /interfaces/Ethernet1/3.2 \u2014 update response"
+        ],
         "RETURN_CODE": 200,
         "METHOD": "PUT",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/Ethernet1/3.2",
@@ -246,64 +338,490 @@
         "DATA": {}
     },
     "test_delete_happy_path_00800a": {
-        "TEST_NOTES": ["Switch list for switch_id resolution"],
+        "TEST_NOTES": [
+            "Switch list for switch_id resolution"
+        ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
         "MESSAGE": "OK",
         "DATA": {
             "switches": [
-                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
             ]
         }
     },
     "test_remove_pending_happy_path_00810a": {
-        "TEST_NOTES": ["POST /interfaceActions/remove — bulk remove response"],
+        "TEST_NOTES": [
+            "POST /interfaceActions/remove \u2014 bulk remove response"
+        ],
         "RETURN_CODE": 200,
         "METHOD": "POST",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/remove",
         "MESSAGE": "OK",
         "DATA": {
             "results": [
-                {"interfaceName": "Ethernet1/3.2", "status": "success", "message": "Interface removed", "switchId": "FDO11111AAA"}
+                {
+                    "interfaceName": "Ethernet1/3.2",
+                    "status": "success",
+                    "message": "Interface removed",
+                    "switchId": "FDO11111AAA"
+                }
             ]
         }
     },
     "test_deploy_pending_happy_path_00820a": {
-        "TEST_NOTES": ["POST /interfaceActions/deploy — bulk deploy response"],
+        "TEST_NOTES": [
+            "POST /interfaceActions/deploy \u2014 bulk deploy response"
+        ],
         "RETURN_CODE": 200,
         "METHOD": "POST",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
         "MESSAGE": "OK",
         "DATA": {
             "results": [
-                {"interfaceName": "Ethernet1/3.2", "status": "success", "message": "Interface deployed", "switchId": "FDO11111AAA"}
+                {
+                    "interfaceName": "Ethernet1/3.2",
+                    "status": "success",
+                    "message": "Interface deployed",
+                    "switchId": "FDO11111AAA"
+                }
             ]
         }
     },
     "test_create_bulk_happy_path_00900a": {
-        "TEST_NOTES": ["Switch list for switch_id resolution (switch_map cached after first call)"],
+        "TEST_NOTES": [
+            "Switch list for switch_id resolution (switch_map cached after first call)"
+        ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
         "MESSAGE": "OK",
         "DATA": {
             "switches": [
-                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
             ]
         }
     },
     "test_create_bulk_happy_path_00900b": {
-        "TEST_NOTES": ["POST /interfaces with two subinterfaces in the array"],
+        "TEST_NOTES": [
+            "POST /interfaces with two subinterfaces in the array"
+        ],
         "RETURN_CODE": 200,
         "METHOD": "POST",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
         "MESSAGE": "OK",
         "DATA": {
             "results": [
-                {"name": "Ethernet1/3.2", "status": "success"},
-                {"name": "Ethernet1/3.3", "status": "success"}
+                {
+                    "name": "Ethernet1/3.2",
+                    "status": "success"
+                },
+                {
+                    "name": "Ethernet1/3.3",
+                    "status": "success"
+                }
             ]
+        }
+    },
+    "test_query_all_xe_00450a": {
+        "TEST_NOTES": [
+            "Fabric summary: fabric exists (for validate_prerequisites)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_query_all_xe_00450b": {
+        "TEST_NOTES": [
+            "Switch list: one Catalyst leaf"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                }
+            ]
+        }
+    },
+    "test_query_all_xe_00450c": {
+        "TEST_NOTES": [
+            "Catalyst CAT9KV1701 interface list (shapes per the SVI lab capture 2026-09-16): GigabitEthernet1/0/2.100 iosXeSubinterface (kept), GigabitEthernet1/0/2.101 iosXeSubinterfaceShutNoshut (kept), GigabitEthernet1/0/2.102 userDefined (filtered), GigabitEthernet1/0/2.103 iosXeInternalSubinterface (filtered), GigabitEthernet1/0/2.104 with policy null (filtered without raising), GigabitEthernet1/0/2.105 with no configData (filtered without raising), GigabitEthernet1/0/2 routed parent (filtered by interfaceType)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet1/0/2.100",
+                    "interfaceType": "subInterface",
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeSubinterface",
+                                "adminState": true,
+                                "vlanId": 100,
+                                "ip": "10.99.100.1",
+                                "prefix": 24
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/2.101",
+                    "interfaceType": "subInterface",
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeSubinterfaceShutNoshut",
+                                "adminState": false
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/2.102",
+                    "interfaceType": "subInterface",
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "userDefined",
+                                "templateName": "custom"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/2.103",
+                    "interfaceType": "subInterface",
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeInternalSubinterface",
+                                "adminState": true
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/2.104",
+                    "interfaceType": "subInterface",
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": null
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/2.105",
+                    "interfaceType": "subInterface"
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeRoutedHost"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_create_bulk_grouped_00910a": {
+        "TEST_NOTES": [
+            "Switch list: the Catalyst leaf and a Nexus leaf (switch_map cached after first call)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_create_bulk_grouped_00910b": {
+        "TEST_NOTES": [
+            "POST /interfaces group (CAT9KV1701, iosXeSubinterface)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "results": [
+                {
+                    "name": "GigabitEthernet1/0/2.100",
+                    "status": "success"
+                }
+            ]
+        }
+    },
+    "test_create_bulk_grouped_00910c": {
+        "TEST_NOTES": [
+            "POST /interfaces group (CAT9KV1701, iosXeSubinterfaceShutNoshut)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "results": [
+                {
+                    "name": "GigabitEthernet1/0/2.101",
+                    "status": "success"
+                }
+            ]
+        }
+    },
+    "test_create_bulk_grouped_00910d": {
+        "TEST_NOTES": [
+            "POST /interfaces group (FDO11111AAA, subinterface)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "results": [
+                {
+                    "name": "Ethernet1/3.2",
+                    "status": "success"
+                }
+            ]
+        }
+    },
+    "test_bulk_create_groups_00920a": {
+        "TEST_NOTES": [
+            "Switch list: the Catalyst leaf and a Nexus leaf"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_subinterface_managed_orchestrator_00930a": {
+        "TEST_NOTES": [
+            "create_bulk mixed 207 inside one IOS-XE group (PR #570 / #571 review): switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                }
+            ]
+        }
+    },
+    "test_subinterface_managed_orchestrator_00930b": {
+        "TEST_NOTES": [
+            "POST create, one iosXeSubinterface group: ND echoes gigabitethernet1/0/2.100 (different case) as success and rejects GigabitEthernet1/0/2.101"
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {
+                    "name": "gigabitethernet1/0/2.100",
+                    "status": "success",
+                    "message": "Interface added successfully"
+                },
+                {
+                    "name": "GigabitEthernet1/0/2.101",
+                    "status": "failed",
+                    "message": "VLAN 101 is already in use on the parent"
+                }
+            ]
+        }
+    },
+    "test_subinterface_managed_orchestrator_00940a": {
+        "TEST_NOTES": [
+            "preflight_delete discovery guard: switches list"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.181",
+                    "switchId": "CAT9KV1701"
+                }
+            ]
+        }
+    },
+    "test_subinterface_managed_orchestrator_00940b": {
+        "TEST_NOTES": [
+            "preflight_delete discovery guard: the .100 subinterface is discovered (down), the .101 subinterface is deployed but not discovered (unknown)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "GigabitEthernet1/0/2.100",
+                    "interfaceType": "subInterface",
+                    "operData": {
+                        "operationalStatus": "down"
+                    },
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeSubinterface",
+                                "adminState": true,
+                                "vlanId": 100
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/2.101",
+                    "interfaceType": "subInterface",
+                    "operData": {
+                        "operationalStatus": "unknown"
+                    },
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "policyType": "iosXeSubinterface",
+                                "adminState": true,
+                                "vlanId": 101
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_subinterface_managed_orchestrator_00940c": {
+        "TEST_NOTES": [
+            "preflight_delete discovery guard: the .101 subinterface's newest push is its create (deployed, not yet discovered; entity keyed by the switch spelling, record shape lab-verified 2026-09-22)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/deploymentHistory?filter=entityName%3Agigabitethernet1%2F0%2F2.101&sort=completeTimestamp%3Adesc&max=10",
+        "MESSAGE": "OK",
+        "DATA": {
+            "deploymentRecords": [
+                {
+                    "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                    "configCommandResponses": [
+                        {
+                            "cliResponse": "",
+                            "command": "interface GigabitEthernet1/0/2.101",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " encapsulation dot1q 101",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " ip address 10.99.101.1 255.255.255.0",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        },
+                        {
+                            "cliResponse": "",
+                            "command": " no shutdown",
+                            "commandExecutionStatus": "success",
+                            "completeTimestamp": "2026-09-22T20:45:49.167Z",
+                            "status": "success"
+                        }
+                    ],
+                    "entityName": "GigabitEthernet1/0/2.101",
+                    "entityType": "INTERFACE",
+                    "hostname": "C1_LE1",
+                    "secondaryEntityName": "",
+                    "secondaryEntityType": "",
+                    "source": "GLOBAL_INTERFACE_MANAGER",
+                    "startTimestamp": "2026-09-22T20:45:49.167Z",
+                    "status": "success",
+                    "statusDescription": "Successfully deployed",
+                    "switchId": "CAT9KV1701",
+                    "switchIp": "192.168.12.181",
+                    "ticketId": null,
+                    "username": "admin"
+                }
+            ],
+            "meta": {
+                "counts": {
+                    "remaining": 0,
+                    "total": 1
+                }
+            }
         }
     }
 }

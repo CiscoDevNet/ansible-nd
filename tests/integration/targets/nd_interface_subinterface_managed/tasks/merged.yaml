@@ -4,6 +4,46 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# --- NEGATIVE: UNSUPPORTED AND AMBIGUOUS PARENTS ---
+
+- name: "NEGATIVE: A subinterface on a Loopback parent is refused before any controller call (check mode)"
+  cisco.nd.nd_interface_subinterface_managed: &bad_parent
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: Loopback0.100
+    state: merged
+  check_mode: true
+  register: cm_bad_parent
+  ignore_errors: true
+
+- name: "NEGATIVE: A subinterface on a Loopback parent is refused before any controller call (normal mode)"
+  cisco.nd.nd_interface_subinterface_managed: *bad_parent
+  register: nm_bad_parent
+  ignore_errors: true
+
+- name: "NEGATIVE: An abbreviation that matches several parent kinds is refused before any controller call"
+  cisco.nd.nd_interface_subinterface_managed:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: t1/0/1.5
+    state: deleted
+  register: nm_ambiguous_parent
+  ignore_errors: true
+
+- name: "NEGATIVE: Verify both refusals say why"
+  ansible.builtin.assert:
+    that:
+      - cm_bad_parent is failed
+      - nm_bad_parent is failed
+      - "'is not a supported subinterface parent' in cm_bad_parent.msg"
+      - "'is not a supported subinterface parent' in nm_bad_parent.msg"
+      - nm_ambiguous_parent is failed
+      - "'is ambiguous' in nm_ambiguous_parent.msg"
+
 # --- MERGED CREATE: SINGLE SUBINTERFACE (ETHERNET PARENT) ---
 
 - name: "MERGED CREATE: Create Eth.2 subinterface (check mode)"

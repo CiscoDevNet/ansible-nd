@@ -50,6 +50,7 @@ class SubinterfaceUnmanagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Sub
 
     model_class: ClassVar[type[NDBaseModel]] = SubinterfaceUnmanagedInterfaceModel
     supports_bulk_create: ClassVar[bool] = True
+    supports_bulk_modify_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
@@ -223,7 +224,7 @@ class SubinterfaceUnmanagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Sub
         ### RuntimeError
 
         - If the fabric does not exist on the target ND node.
-        - If the fabric is in deployment-freeze mode.
+        - If the fabric is in deployment-freeze mode and the state mutates configuration.
         - If the query API request fails.
         """
         unmanaged_policy_types = {e.value for e in SubinterfaceUnmanagedPolicyTypeEnum}

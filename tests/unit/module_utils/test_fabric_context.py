@@ -544,6 +544,58 @@ def test_fabric_context_00210() -> None:
         instance.get_switch_ip("FDO99999XYZ")
 
 
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    (
+        ("inSync", True),
+        ("In-Sync", True),
+        ("SYNCHRONIZED", True),
+        ("outOfSync", False),
+        ("Out-of-Sync", False),
+        ("not_synchronized", False),
+        ("pending", False),
+        ("Pending", False),
+        ("NA", None),
+        (None, None),
+    ),
+)
+def test_fabric_context_00211(status, expected) -> None:
+    """Verify in-sync, deploy-needed, and unknown controller synchronization spellings normalize safely."""
+    assert FabricContext._normalize_config_sync_status(status) is expected
+
+
+def test_fabric_context_00212() -> None:
+    """Verify nested and top-level switch status reuse the switch-list cache without another GET."""
+    method_name = "test_fabric_context_00200"
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+
+    assert instance.switch_map["192.168.12.151"] == "FDO12345ABC"
+    assert instance.switch_config_in_sync("FDO12345ABC") is None
+
+    instance._switch_records_by_id = {
+        "FDO12345ABC": {"switchId": "FDO12345ABC", "additionalData": {"configSyncStatus": "Out-of-Sync"}},
+        "FDO12345ABD": {"switchId": "FDO12345ABD", "configSyncStatus": "In_Sync"},
+        "FDO12345ABE": {
+            "switchId": "FDO12345ABE",
+            "additionalData": {"configSyncStatus": "NA"},
+            "configSyncStatus": "outOfSync",
+        },
+        "FDO12345ABF": {"switchId": "FDO12345ABF", "additionalData": {"configSyncStatus": "Pending"}},
+    }
+
+    assert instance.switch_config_in_sync("FDO12345ABC") is False
+    assert instance.switch_config_in_sync("FDO12345ABD") is True
+    assert instance.switch_config_in_sync("FDO12345ABE") is False
+    assert instance.switch_config_in_sync("FDO12345ABF") is False
+    assert instance.switch_config_in_sync("UNKNOWN") is None
+
+
 def test_fabric_context_00220() -> None:
     """
     # Summary
@@ -678,6 +730,46 @@ def test_fabric_context_00250() -> None:
 
 
 # =============================================================================
+# Test: validate_for_read
+# =============================================================================
+
+
+def test_fabric_context_00290(monkeypatch) -> None:
+    """
+    Verify reads are allowed during deployment freeze, writes remain blocked,
+    and both checks reuse the same cached fabric summary.
+    """
+    instance = FabricContext(
+        rest_send=object(),
+        fabric_name="fabric_1",
+    )
+    queried_paths = []
+
+    def fake_query_get(path):
+        queried_paths.append(path)
+        return {
+            "local": True,
+            "fabricStatus": "frozen",
+        }
+
+    monkeypatch.setattr(instance, "_query_get", fake_query_get)
+
+    instance.validate_for_read()
+    instance.validate_for_read()
+
+    assert len(queried_paths) == 1
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"Fabric 'fabric_1' is in deployment freeze mode",
+    ):
+        instance.validate_for_mutation()
+
+    # validate_for_mutation() must reuse the already-cached summary.
+    assert len(queried_paths) == 1
+
+
+# =============================================================================
 # Test: validate_for_mutation
 # =============================================================================
 
@@ -798,3 +890,98 @@ def test_fabric_context_00330() -> None:
     match = r"Fabric 'fabric_1' is owned by a different controller"
     with pytest.raises(RuntimeError, match=match):
         instance.validate_for_mutation()
+
+
+# =============================================================================
+# Test: validate_for_read
+# =============================================================================
+
+
+def test_fabric_context_00400() -> None:
+    """
+    # Summary
+
+    Verify `validate_for_read` does not raise when the fabric is in deployment freeze mode.
+
+    ## Test
+
+    - GET (summary) returns 200 with `local: true` and `fabricStatus: frozen`
+    - `validate_for_read` is a no-op: deployment freeze blocks configuration changes reaching the
+      switches, and does not prevent reading existing configuration
+
+    ## Classes and Methods
+
+    - FabricContext.validate_for_read
+    - FabricContext.fabric_is_deployment_frozen
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+    with does_not_raise():
+        instance.validate_for_read()
+
+
+def test_fabric_context_00410() -> None:
+    """
+    # Summary
+
+    Verify `validate_for_read` raises `RuntimeError` when the fabric does not exist.
+
+    ## Test
+
+    - GET (summary) returns 404
+    - `validate_for_read` raises with a message that mentions the fabric name
+
+    ## Classes and Methods
+
+    - FabricContext.validate_for_read
+    - FabricContext.fabric_exists
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    instance = FabricContext(rest_send=rest_send, fabric_name="missing_fabric")
+    match = r"Fabric 'missing_fabric' not found"
+    with pytest.raises(RuntimeError, match=match):
+        instance.validate_for_read()
+
+
+def test_fabric_context_00420() -> None:
+    """
+    # Summary
+
+    Verify `validate_for_read` raises `RuntimeError` when the fabric is owned by a different controller.
+
+    ## Test
+
+    - GET (summary) returns 200 with `local: false`
+    - `validate_for_read` raises with a message that mentions a different controller and the fabric name
+
+    ## Classes and Methods
+
+    - FabricContext.validate_for_read
+    - FabricContext.fabric_is_local
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+    match = r"Fabric 'fabric_1' is owned by a different controller"
+    with pytest.raises(RuntimeError, match=match):
+        instance.validate_for_read()

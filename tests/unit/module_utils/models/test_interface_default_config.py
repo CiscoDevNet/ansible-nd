@@ -105,7 +105,8 @@ def test_interface_default_config_00110() -> None:
 
     - Build the reset body for one interface
     - `interfaceName`, `switchId`, `interfaceType: ethernet` are set at the top level
-    - The policy is exactly `{"adminState": True, "policyType": "trunkHost"}`
+    - The policy is exactly `{"adminState": True, "policyType": "trunkHost", "allowedVlans": "none"}`: the template-required `allowedVlans`
+      rides along (ND 4.3.1 rejects the PUT without it), nothing else
 
     ## Classes and Methods
 
@@ -118,4 +119,4 @@ def test_interface_default_config_00110() -> None:
     assert payload["interfaceType"] == "ethernet"
     assert payload["configData"]["mode"] == "trunk"
     assert payload["configData"]["networkOS"]["networkOSType"] == "nx-os"
-    assert payload["configData"]["networkOS"]["policy"] == {"adminState": True, "policyType": "trunkHost"}
+    assert payload["configData"]["networkOS"]["policy"] == {"adminState": True, "policyType": "trunkHost", "allowedVlans": "none"}

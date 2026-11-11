@@ -123,8 +123,10 @@ options:
             preserve_config:
                 description:
                 - Set to C(false) for greenfield deployment, C(true) for brownfield.
-                - When omitted, the module derives the value from the target fabric
-                  type after querying the fabric.
+                - When omitted, defaults to C(false), except for External and
+                  Inter-Fabric Connectivity fabrics, which require C(true).
+                - With C(false), ND removes existing switch configuration except
+                  management configuration immediately after import.
                 - Supported explicit values depend on the target fabric type. See
                   C(notes).
                 type: bool
@@ -144,6 +146,7 @@ options:
                 - Bootstrap POAP config for the switch.
                 - C(serial_number) and C(hostname) are mandatory.
                 - Model, version, and config data are sourced from the bootstrap API at runtime.
+                - C(software_image) can be provided to select the software image used during POAP import.
                 - If the bootstrap API reports a different hostname or role, the API value
                   overrides the user-provided value and a warning is logged.
                 - To perform a B(swap) operation, provide both C(poap) and C(preprovision)
@@ -171,9 +174,16 @@ options:
                         description:
                         - Password for device discovery during POAP.
                         type: str
-                    image_policy:
+                    software_image:
                         description:
-                        - Name of the image policy to be applied on the switch.
+                        - Software image filename to use during POAP import.
+                        - The image must already exist in ND and be compatible with the target switch.
+                        - Selecting a different image can install it and reload the switch.
+                          Selecting an older image can downgrade the switch software.
+                        - When omitted, no C(softwareImage) override is sent.
+                        - An omitted, unavailable, or invalid image might leave the imported switch
+                          at the loader after reload. Recovery requires console access
+                          to manually boot an existing image from bootflash.
                         type: str
             preprovision:
                 description:
@@ -214,10 +224,6 @@ options:
                         - Hostname for the switch during pre-provision.
                         type: str
                         required: true
-                    image_policy:
-                        description:
-                        - Image policy to apply during pre-provision.
-                        type: str
                     config_data:
                         description:
                         - Basic configuration data for the switch during Pre-provision.
@@ -252,10 +258,6 @@ options:
                         - Serial number of the replacement switch in the POAP/bootstrap loop.
                         type: str
                         required: true
-                    image_policy:
-                        description:
-                        - Name of the image policy to be applied on the replacement switch.
-                        type: str
                     discovery_username:
                         description:
                         - Username for device discovery during RMA bootstrap.
@@ -302,10 +304,14 @@ notes:
   fabrics.
 - C(preserve_config) can be C(true) or C(false) for Data Center VXLAN iBGP
   fabrics.
-- When C(preserve_config) is omitted, the module derives C(false) for Campus
-  VXLAN and Data Center VXLAN eBGP fabrics. It derives C(true) for Data Center
-  VXLAN iBGP and External and Inter-Fabric Connectivity fabrics.
-- Campus VXLAN supports C(leaf) and C(spine) roles for IOS-XE switches.
+- When C(preserve_config) is omitted, it defaults to C(false) wherever allowed.
+  External and Inter-Fabric Connectivity fabrics require C(true), so omitted
+  values resolve to C(true) there. Explicit values are validated, not overridden.
+- Campus VXLAN supports C(leaf), C(spine), and C(border) roles for IOS-XE switches
+  on ND 4.2.1 and 4.3.1. ND 4.3.1 also supports C(border_spine) for IOS-XE.
+- Catalyst 9000 switches added through in-band PnP cannot use C(border_spine).
+  The module cannot determine a switch's prior onboarding method from its
+  switch configuration; use C(leaf) or C(border) for in-band PnP switches.
 - Campus VXLAN supports C(border_gateway), C(border_gateway_spine), and
   C(border_gateway_super_spine) roles for NX-OS switches.
 - Validation failures include the exact supported platform, provided C(role),
@@ -353,7 +359,6 @@ EXAMPLES = """
           model: N9K-C93180YC-EX
           version: "10.3(1)"
           hostname: leaf-preprov
-          image_policy: my-image-policy
           discovery_username: root
           discovery_password: "{{ discovery_password }}"
           config_data:
@@ -362,6 +367,10 @@ EXAMPLES = """
             gateway: 192.168.10.1/24
     state: merged
 
+# Upload a compatible image to ND before running this task.
+# Selecting a different image can install it and reload the switch; an older image can downgrade the switch software.
+# An omitted, unavailable, or invalid image might leave the switch at the loader after reload.
+# Have console access to manually boot an existing bootflash image if recovery is needed.
 - name: Bootstrap a switch via POAP
   cisco.nd.nd_manage_switches:
     fabric: my-fabric
@@ -373,9 +382,9 @@ EXAMPLES = """
         poap:
           serial_number: SAL5678EFGH
           hostname: leaf-bootstrap
-          image_policy: my-image-policy
           discovery_username: root
           discovery_password: "{{ discovery_password }}"
+          software_image: nxos64-cs.10.6.4.M.bin
     state: merged
 
 - name: Swap serial number on a pre-provisioned switch (POAP swap)
@@ -400,7 +409,6 @@ EXAMPLES = """
         password: "{{ switch_password }}"
         rma:
           - new_serial_number: SAL9999ZZZZ
-            image_policy: my-image-policy
             discovery_username: root
             discovery_password: "{{ discovery_password }}"
     state: merged
@@ -421,6 +429,125 @@ EXAMPLES = """
 """
 
 RETURN = r"""
+changed:
+  description: Whether the module changed switch inventory, credentials, role, save, or deploy state.
+  returned: always
+  type: bool
+  sample: true
+output_level:
+  description: The output verbosity level in effect for the run, echoing the O(output_level) parameter.
+  returned: always
+  type: str
+  sample: normal
+before:
+  description:
+    - Switch inventory present in the fabric before the operation.
+    - Structured in the same user-facing form as O(config) where possible.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+    - seed_ip: 192.0.2.10
+      role: leaf
+      platform_type: nx-os
+after:
+  description:
+    - Switch inventory present in the fabric after the operation.
+    - In check mode, the inventory that would result had the module run outside check mode.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+    - seed_ip: 192.0.2.10
+      role: leaf
+      platform_type: nx-os
+diff:
+  description: Switch inventory changes calculated by the module.
+  returned: when O(state) is not V(gathered)
+  type: list
+  elements: dict
+  sample:
+    - seed_ip: 192.0.2.10
+      role: leaf
+      _action: added
+proposed:
+  description: Switch configuration proposed by the module before reconciliation with the controller.
+  returned: when O(output_level) is V(info) or V(debug)
+  type: list
+  elements: dict
+  sample:
+    - seed_ip: 192.0.2.10
+      role: leaf
+      platform_type: nx-os
+gathered:
+  description: Switch inventory returned by the controller in user-facing config format.
+  returned: when O(state) is V(gathered)
+  type: list
+  elements: dict
+  sample:
+    - seed_ip: 192.0.2.10
+      role: leaf
+      platform_type: nx-os
+msg:
+  description: Human-readable status or failure message.
+  returned: on failure and on selected no-op paths
+  type: str
+  sample: "No switches to merge - fabric already matches desired config"
+api_paths:
+  description: REST API paths called by the module.
+  returned: with verbosity C(-vv) or C(output_level=debug)
+  type: list
+  elements: str
+  sample:
+    - /api/v1/manage/fabrics/fab1/switches
+api_verbs:
+  description: REST API verbs called by the module.
+  returned: with verbosity C(-vv) or C(output_level=debug)
+  type: list
+  elements: str
+  sample:
+    - POST
+api_payload:
+  description: REST request payloads sent to ND, with passwords redacted.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
+  sample:
+    - switches:
+        - switchRole: leaf
+          preserveConfig: false
+api_response:
+  description: Raw normalized REST responses returned by ND.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
+  sample:
+    - RETURN_CODE: 200
+      MESSAGE: OK
+api_result:
+  description: Response-handler result for each REST call.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
+  sample:
+    - success: true
+      changed: true
+api_diff:
+  description: Per-REST-call diff data recorded by the result infrastructure, with passwords redacted.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
+  sample:
+    - seed_ip: 192.0.2.10
+      role: leaf
+api_metadata:
+  description: Per-REST-call metadata recorded by the result infrastructure.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
+  sample:
+    - action: discover
+      state: merged
 """
 
 import logging

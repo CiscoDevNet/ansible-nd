@@ -46,6 +46,7 @@ INTERFACE_MODULES = (
     "nd_interface_ethernet_trunk_host",
     "nd_interface_loopback",
     "nd_interface_port_channel_access",
+    "nd_interface_port_channel_routed",
     "nd_interface_port_channel_trunk_host",
     "nd_interface_subinterface_managed",
     "nd_interface_subinterface_unmanaged",
@@ -105,6 +106,7 @@ class _FakeAnsibleModule:
             "output_level": "normal",
         }
         self.check_mode = check_mode
+        self._verbosity = 0
 
     def fail_json(self, **kwargs: Any) -> None:
         """

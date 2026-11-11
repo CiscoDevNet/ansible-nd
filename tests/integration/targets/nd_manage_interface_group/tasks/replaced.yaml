@@ -1,0 +1,283 @@
+---
+- name: Replace two port-channel associations with one network and member
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: replaced
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config:
+      - "{{ interface_group_pc_one_member }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Fetch authoritatively replaced Interface Group
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+          interface_group_names.port_channel }}
+        method: get
+        expected_status: 200
+  register: interface_group_replaced_partial
+
+- name: >-
+    Confirm replaced used the supplied network and member lists
+    authoritatively
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_replaced_partial.nd_query_results[0].result }}"
+    test_data:
+      - "{{ interface_group_pc_one_member }}"
+    mode: exact
+  when: not ansible_check_mode
+
+- name: Restore two networks and members before omitted-list preservation
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config:
+      - "{{ interface_group_pc_two_members }}"
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: true
+        failed: false
+
+- name: Replace with omitted association collections
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: replaced
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config:
+      - interface_group_name: "{{ interface_group_names.port_channel }}"
+        type: portChannel
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Fetch Interface Group after omitted association collections
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+          interface_group_names.port_channel }}
+        method: get
+        expected_status: 200
+  register: interface_group_replaced_omitted
+
+- name: Confirm omitted replaced collections preserved all associations
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_replaced_omitted.nd_query_results[0].result }}"
+    test_data:
+      - "{{ interface_group_pc_two_members }}"
+    mode: exact
+  when: not ansible_check_mode
+
+- name: Replace with explicit empty association collections
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: replaced
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config:
+      - interface_group_name: "{{ interface_group_names.port_channel }}"
+        type: portChannel
+        networks: []
+        switch_interfaces: []
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Fetch Interface Group after explicit-empty replacement
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+          interface_group_names.port_channel }}
+        method: get
+        expected_status: 200
+  register: interface_group_replaced_explicit_empty
+
+- name: Confirm explicit empty replaced collections cleared all associations
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: >-
+      {{ interface_group_replaced_explicit_empty.nd_query_results[0].result }}
+    test_data:
+      - interface_group_name: "{{ interface_group_names.port_channel }}"
+        type: portChannel
+        networks: []
+        switch_interfaces: []
+    mode: exact
+  when: not ansible_check_mode
+
+- name: Restore source with Network-A and two members before explicit move
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config:
+      - "{{ interface_group_pc_two_members_network_1 }}"
+    check_mode: false
+    idempotency: false
+    expected:
+      apply:
+        changed: true
+        failed: false
+
+- name: Move one member from the Network-A group to a new Network-B group
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: replaced
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config:
+      - "{{ interface_group_pc_one_member }}"
+      - interface_group_name: "{{ interface_group_names.port_channel_target }}"
+        type: portChannel
+        networks:
+          - "{{ test_network_2 }}"
+        switch_interfaces:
+          - switch_id: "{{ test_switch_id }}"
+            interface_names:
+              - "{{ test_port_channel_2 }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Fetch all Interface Groups after explicit network-aware move
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name
+          }}/interfaceGroups?max=10000
+        method: get
+        expected_status: 200
+  register: interface_group_replaced_move
+
+- name: Validate remove-before-add move and distinct network associations
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_replaced_move.nd_query_results[0].result }}"
+    test_data:
+      - "{{ interface_group_pc_one_member }}"
+      - interface_group_name: "{{ interface_group_names.port_channel_target }}"
+        type: portChannel
+        networks:
+          - "{{ test_network_2 }}"
+        switch_interfaces:
+          - switch_id: "{{ test_switch_id }}"
+            interface_names:
+              - "{{ test_port_channel_2 }}"
+    mode: exact
+    scope_prefix: "{{ interface_group_test_prefix }}"
+    invariants:
+      unique_group_names: true
+      unique_members: true
+  when: not ansible_check_mode
+
+- name: Authoritatively replace custom-template inputs and retain membership
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: replaced
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config:
+      - interface_group_name: "{{ interface_group_names.ethernet_custom }}"
+        type: ethernetCustom
+        template_name: "{{ test_custom_template }}"
+        template_config: "{{ interface_group_custom_template_config }}"
+        networks: []
+        switch_interfaces:
+          - switch_id: "{{ test_switch_id }}"
+            interface_names:
+              - "{{ test_ethernet_custom }}"
+    check_mode: false
+    expected:
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Fetch custom group after authoritative template replacement
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+          interface_group_names.ethernet_custom }}
+        method: get
+        expected_status: 200
+  register: interface_group_custom_replaced
+  when: test_ethernet_custom_flow_enabled | bool
+
+- name: Validate authoritative custom-template result
+  cisco.nd.tests.integration.nd_interface_group_validate:
+    nd_data: "{{ interface_group_custom_replaced.nd_query_results[0].result }}"
+    test_data:
+      - interface_group_name: "{{ interface_group_names.ethernet_custom }}"
+        type: ethernetCustom
+        template_name: "{{ test_custom_template }}"
+        template_config: "{{ interface_group_custom_template_config }}"
+        networks: []
+        switch_interfaces:
+          - switch_id: "{{ test_switch_id }}"
+            interface_names:
+              - "{{ test_ethernet_custom }}"
+    mode: exact
+  when:
+    - test_ethernet_custom_flow_enabled | bool
+    - not ansible_check_mode

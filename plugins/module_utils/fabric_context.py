@@ -14,6 +14,7 @@ the `local` and `fabricStatus` fields used by the pre-flight checks.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import Enum
 from typing import Literal
 
@@ -50,15 +51,22 @@ class FabricContext:
 
     Cached fabric metadata with pre-flight validation for fabric-level orchestrators.
 
-    Lazily fetches fabric summary and switch inventory on first access. Provides simple
-    boolean checks and a `validate_for_mutation` method that raises `RuntimeError` with
-    a clear message when the fabric cannot be modified.
+    Lazily fetches fabric summary and switch inventory on first access.
+
+    Provides `validate_for_read` for operations that require an existing, locally
+    owned fabric, and `validate_for_mutation` for operations that additionally
+    require deployment freeze to be disabled. Both methods reuse the cached fabric
+    summary and raise `RuntimeError` with a clear message when their prerequisites
+    are not satisfied.
 
     ## Raises
 
     ### RuntimeError
 
-    - Via `validate_for_mutation` if the fabric does not exist on any ND node.
+    - Via `validate_for_read` if the fabric does not exist or is owned by another
+      controller.
+    - Via `validate_for_mutation` if the read prerequisites fail or deployment
+      freeze is enabled.
     - Via `get_switch_id` if no switch matches the given management IP.
     - Via `get_switch_ip` if no switch matches the given switch ID.
     - Via `get_platform_type` if no switch matches the given management IP.
@@ -84,6 +92,7 @@ class FabricContext:
         self._switch_map: dict[str, str] | None = None
         self._switch_map_by_id: dict[str, str] | None = None
         self._platform_map: dict[str, PlatformType | None] | None = None
+        self._switch_records_by_id: dict[str, dict] | None = None
 
     def _fabric_not_found_message(self) -> str:
         """
@@ -226,8 +235,8 @@ class FabricContext:
         """
         # Summary
 
-        Drop all cached state so the next access to `fabric_summary`, `switches`, `switch_map`, `switch_map_by_id`, or the
-        `platformType` lookup re-fetches from the API. Useful after a mutation that should be reflected on subsequent reads.
+        Drop all cached state so the next access to `fabric_summary`, `switches`, switch lookup, platform type, or
+        switch synchronization status re-fetches from the API. Useful after a mutation that should be reflected on subsequent reads.
 
         ## Raises
 
@@ -238,6 +247,7 @@ class FabricContext:
         self._switch_map = None
         self._switch_map_by_id = None
         self._platform_map = None
+        self._switch_records_by_id = None
 
     def _load_switch_maps(self) -> None:
         """
@@ -259,6 +269,10 @@ class FabricContext:
         - If the fabric does not exist (switches GET 404 confirmed by an absent `fabric_summary`).
         """
         if self._switch_map is not None:
+            # Some injected/shared contexts predate the platform index and carry only the two identity maps. Treat their platform
+            # evidence as unknown rather than asserting: unknown is already the documented safe no-mismatch result.
+            if self._platform_map is None:
+                self._platform_map = {switch_ip: None for switch_ip in self._switch_map}
             return
         ep = EpManageSwitchesListGet()
         ep.fabric_name = self._fabric_name
@@ -277,6 +291,7 @@ class FabricContext:
             for sw in switches
             if sw.get("fabricManagementIp") and sw.get("switchId")
         }
+        self._switch_records_by_id = {sw["switchId"]: sw for sw in switches if sw.get("switchId")}
 
     @staticmethod
     def _parse_platform_type(raw: object) -> PlatformType | None:
@@ -419,6 +434,85 @@ class FabricContext:
             raise RuntimeError(f"No switch found with fabricManagementIp '{switch_ip}' in fabric '{self._fabric_name}'.")
         return self._platform_map[switch_ip]
 
+    @staticmethod
+    def _normalize_config_sync_status(value: object) -> bool | None:
+        """Normalize controller switch synchronization spellings to true, false, or unknown."""
+        if not isinstance(value, str):
+            return None
+        normalized = "".join(character for character in value.casefold() if character.isalnum())
+        if normalized in {"insync", "synced", "synchronized", "synchronised"}:
+            return True
+        if normalized in {"outofsync", "notsync", "notsynced", "notsynchronized", "notsynchronised", "pending"}:
+            return False
+        return None
+
+    def switch_config_in_sync(self, switch_id: str) -> bool | None:
+        """
+        # Summary
+
+        Return the cached switch configuration synchronization state.
+
+        The Manage Switches inventory commonly reports `configSyncStatus` under `additionalData`, with some API
+        variants returning it at the top level. `True` means explicitly synchronized, `False` means explicitly
+        out of sync or pending, and `None` means the controller omitted or returned an unrecognized status. This
+        method reuses the switch inventory already loaded for IP/ID resolution and does not issue a separate request.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the switches API query fails.
+        """
+        self._load_switch_maps()
+        if self._switch_records_by_id is None:
+            raise AssertionError("switch records are None after _load_switch_maps()")
+        record = self._switch_records_by_id.get(switch_id)
+        if not isinstance(record, Mapping):
+            return None
+        additional_data = record.get("additionalData")
+        containers = (additional_data, record)
+        for container in containers:
+            if not isinstance(container, Mapping):
+                continue
+            normalized = self._normalize_config_sync_status(container.get("configSyncStatus"))
+            if normalized is not None:
+                return normalized
+        return None
+
+    def validate_for_read(self) -> None:
+        """
+        # Summary
+
+        Run pre-flight checks required before reading resources from this fabric.
+        Raises `RuntimeError` with a clear, actionable message on the first failing
+        check.
+
+        Deployment freeze is deliberately not checked here. Freeze prevents
+        configuration changes from reaching switches; it does not prevent reading
+        existing controller configuration.
+
+        ## Checks
+
+        1. Fabric exists on a node in the cluster.
+        2. Fabric is owned by the controller this `RestSend` is connected to.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the fabric does not exist.
+        - If the fabric is owned by a different controller in the cluster.
+        """
+        if not self.fabric_exists():
+            raise RuntimeError(self._fabric_not_found_message())
+
+        if not self.fabric_is_local():
+            raise RuntimeError(
+                f"Fabric '{self._fabric_name}' is owned by a different controller "
+                "in this cluster. Connect to the controller that owns this fabric "
+                "before retrying."
+            )
+
     def validate_for_mutation(self) -> None:
         """
         # Summary
@@ -440,15 +534,11 @@ class FabricContext:
         - If the fabric is owned by a different controller in the cluster.
         - If the fabric is in deployment freeze mode.
         """
-        if not self.fabric_exists():
-            raise RuntimeError(self._fabric_not_found_message())
-        if not self.fabric_is_local():
-            raise RuntimeError(
-                f"Fabric '{self._fabric_name}' is owned by a different controller in this cluster. "
-                "Connect to the controller that owns this fabric to make configuration changes."
-            )
+        self.validate_for_read()
         if self.fabric_is_deployment_frozen():
             raise RuntimeError(
-                f"Fabric '{self._fabric_name}' is in deployment freeze mode. Configuration changes cannot be deployed to switches "
-                "while deployment freeze is enabled. Disable deployment freeze on the fabric before retrying."
+                f"Fabric '{self._fabric_name}' is in deployment freeze mode. "
+                "Configuration changes cannot be deployed to switches while "
+                "deployment freeze is enabled. Disable deployment freeze on the "
+                "fabric before retrying."
             )

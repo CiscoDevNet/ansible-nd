@@ -1,0 +1,31 @@
+---
+- name: "Select exact switch {{ nd_iw_staged_switch_id }} from complete inventory"
+  ansible.builtin.set_fact:
+    nd_iw_staged_switch_matches: >-
+      {{ nd_iw_staged_switch_rows | selectattr('switchId', 'equalto', nd_iw_staged_switch_id) | list }}
+
+- name: "Require one exact switch {{ nd_iw_staged_switch_id }} status row"
+  ansible.builtin.assert:
+    that:
+      - nd_iw_staged_switch_matches | length == 1
+
+- name: "Normalize switch {{ nd_iw_staged_switch_id }} sync status"
+  ansible.builtin.set_fact:
+    nd_iw_staged_switch_sync_status: >-
+      {{ (((nd_iw_staged_switch_matches[0].get('additionalData') or {}).get('configSyncStatus')
+           or nd_iw_staged_switch_matches[0].get('configSyncStatus') or '')
+          | lower | regex_replace('[^a-z0-9]', '')) }}
+
+- name: "Require recognized switch {{ nd_iw_staged_switch_id }} sync status"
+  ansible.builtin.assert:
+    that:
+      - >-
+        nd_iw_staged_switch_sync_status in
+        ['insync', 'synced', 'synchronized', 'synchronised',
+         'outofsync', 'notsync', 'notsynced', 'notsynchronized', 'notsynchronised', 'pending']
+
+- name: "Record switch {{ nd_iw_staged_switch_id }} sync classification"
+  ansible.builtin.set_fact:
+    nd_iw_staged_deploy_sync_results: >-
+      {{ nd_iw_staged_deploy_sync_results
+         + [nd_iw_staged_switch_sync_status in ['insync', 'synced', 'synchronized', 'synchronised']] }}

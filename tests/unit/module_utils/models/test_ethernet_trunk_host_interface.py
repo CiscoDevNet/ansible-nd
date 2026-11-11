@@ -1745,6 +1745,47 @@ def test_ethernet_trunk_host_interface_01040():
     assert instance.config_data.network_os.policy.native_vlan == 10
 
 
+def test_ethernet_trunk_host_interface_01041_vlan_mapping_pair_merges_atomically():
+    """A valid VLAN-mapping pair must not fail on the intermediate flag-only state."""
+    existing = EthernetTrunkHostPolicyModel(vlan_mapping=False)
+    proposed = EthernetTrunkHostPolicyModel(
+        vlan_mapping=True,
+        vlan_mapping_entries=[
+            {
+                "customer_inner_vlan_id": 3121,
+                "customer_vlan_id": ["3122-3123"],
+                "dot1q_tunnel": True,
+                "provider_vlan_id": 3120,
+            }
+        ],
+    )
+
+    merged = existing.merge(proposed)
+
+    assert merged is existing
+    assert merged.vlan_mapping is True
+    assert len(merged.vlan_mapping_entries) == 1
+    assert merged.vlan_mapping_entries[0].customer_inner_vlan_id == 3121
+    assert merged.vlan_mapping_entries[0].customer_vlan_id == ["3122-3123"]
+    assert merged.vlan_mapping_entries[0].dot1q_tunnel is True
+    assert merged.vlan_mapping_entries[0].provider_vlan_id == 3120
+
+
+def test_ethernet_trunk_host_interface_01042_invalid_vlan_mapping_merge_is_atomic():
+    """An invalid final VLAN-mapping pair is rejected before existing state changes."""
+    existing = EthernetTrunkHostPolicyModel(
+        vlan_mapping=True,
+        vlan_mapping_entries=[{"customer_vlan_id": ["100"], "provider_vlan_id": 200}],
+    )
+    proposed = EthernetTrunkHostPolicyModel(vlan_mapping_entries=[])
+    original = existing.model_dump()
+
+    with pytest.raises(ValueError, match=r"vlan_mapping_entries must be provided"):
+        existing.merge(proposed)
+
+    assert existing.model_dump() == original
+
+
 def test_ethernet_trunk_host_interface_01050():
     """
     # Summary
@@ -1781,7 +1822,8 @@ def test_ethernet_trunk_host_interface_01100():
     - switch_ip is under config.options, not top-level
     - config.type == "list", elements == "dict"
     - state choices and default
-    - `network_os_type` is exposed (optional, default `nx-os`) and `policy_type` is exposed (optional, derived from `network_os_type`)
+    - `network_os_type` is exposed without an argument-spec default and `policy_type` is exposed (optional, derived from
+      `network_os_type`); the model supplies the backward-compatible `nx-os` default for configuration states
 
     ## Classes and Methods
 
@@ -1795,7 +1837,7 @@ def test_ethernet_trunk_host_interface_01100():
     assert "switch_ip" in spec["config"]["options"]
     assert spec["config"]["type"] == "list"
     assert spec["config"]["elements"] == "dict"
-    assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted"]
+    assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted", "gathered"]
     assert spec["state"]["default"] == "merged"
     # interface_type and mode are hardcoded in the Pydantic model and intentionally absent from the user-facing
     # argument spec. network_os_type / policy_type are the branch discriminators (issue #535).
@@ -1805,7 +1847,7 @@ def test_ethernet_trunk_host_interface_01100():
     assert "mode" not in config_data_spec
     network_os_spec = config_data_spec["network_os"]["options"]
     assert network_os_spec["network_os_type"]["choices"] == ["nx-os", "ios-xe"]
-    assert network_os_spec["network_os_type"]["default"] == "nx-os"
+    assert "default" not in network_os_spec["network_os_type"]
     assert network_os_spec["network_os_type"].get("required") is not True
     policy_spec = network_os_spec["policy"]["options"]
     assert policy_spec["policy_type"]["choices"] == ["trunkHost", "iosXeTrunkHost"]
@@ -2000,6 +2042,31 @@ def test_ethernet_trunk_host_interface_01200():
     assert explicit.policy_type == "iosXeTrunkHost"
 
 
+def test_ethernet_trunk_host_interface_02000():
+    """
+    Verify state choices include ``gathered`` and default is ``merged``.
+
+    ## Test
+
+    - state choices: ["merged", "replaced", "overridden", "deleted", "gathered"]
+    - state default: "merged"
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceModel.get_argument_spec()
+    """
+    spec = EthernetTrunkHostInterfaceModel.get_argument_spec()
+    state_spec = spec["state"]
+    assert state_spec["choices"] == [
+        "merged",
+        "replaced",
+        "overridden",
+        "deleted",
+        "gathered",
+    ]
+    assert state_spec["default"] == "merged"
+
+
 def test_ethernet_trunk_host_interface_01210():
     """
     # Summary
@@ -2090,6 +2157,42 @@ def test_ethernet_trunk_host_interface_01220(field, value, should_raise):
             assert instance.mtu == int(value)
 
 
+def test_ethernet_trunk_host_interface_02010():
+    """
+    Verify ``config`` is optional so ``state=gathered`` can run without input.
+
+    ## Test
+
+    - config required is False
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceModel.get_argument_spec()
+    """
+    spec = EthernetTrunkHostInterfaceModel.get_argument_spec()
+    assert spec["config"].get("required", False) is False
+
+
+def test_ethernet_trunk_host_interface_02020():
+    """
+    # Summary
+
+    Verify gathered filters may omit both identifiers (``switch_ip``, ``interface_names``).
+
+    ## Test
+
+    - switch_ip required is False
+    - interface_names required is False
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceModel.get_argument_spec()
+    """
+    config_options = EthernetTrunkHostInterfaceModel.get_argument_spec()["config"]["options"]
+    assert config_options["switch_ip"].get("required", False) is False
+    assert config_options["interface_names"].get("required", False) is False
+
+
 def test_ethernet_trunk_host_interface_01230():
     """
     # Summary
@@ -2133,6 +2236,27 @@ def test_ethernet_trunk_host_interface_01230():
     assert omitted.to_config()["config_data"]["network_os"]["policy"]["policy_type"] == "iosXeTrunkHost"
 
 
+def test_ethernet_trunk_host_interface_02030():
+    """
+    Verify ``supports_gathered_filtering`` is ``True`` on ``EthernetTrunkHostInterfaceModel``
+    and ``False`` on the base ``NDBaseModel``.
+
+    ## Test
+
+    - NDBaseModel.supports_gathered_filtering is False
+    - EthernetTrunkHostInterfaceModel.supports_gathered_filtering is True
+
+    ## Classes and Methods
+
+    - NDBaseModel.supports_gathered_filtering
+    - EthernetTrunkHostInterfaceModel.supports_gathered_filtering
+    """
+    from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+
+    assert NDBaseModel.supports_gathered_filtering is False
+    assert EthernetTrunkHostInterfaceModel.supports_gathered_filtering is True
+
+
 def test_ethernet_trunk_host_interface_01240():
     """
     # Summary
@@ -2166,6 +2290,28 @@ def test_ethernet_trunk_host_interface_01240():
     assert EthernetTrunkHostInterfaceModel(**base).policy_type is None
 
 
+def test_ethernet_trunk_host_interface_02040():
+    """
+    Verify ``gathered_filter_properties`` contains the expected 5 properties.
+
+    ## Test
+
+    - gathered_filter_properties tuple has exactly 5 entries
+    - Each entry matches the expected dot-path
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceModel.gathered_filter_properties
+    """
+    assert EthernetTrunkHostInterfaceModel.gathered_filter_properties == (
+        "switch_ip",
+        "interface_name",
+        "config_data.network_os.policy.admin_state",
+        "config_data.network_os.policy.allowed_vlans",
+        "config_data.network_os.policy.native_vlan",
+    )
+
+
 def test_ethernet_trunk_host_interface_01250():
     """
     # Summary
@@ -2190,6 +2336,31 @@ def test_ethernet_trunk_host_interface_01250():
         result = EthernetTrunkHostInterfaceModel.from_config(
             {**base, "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": {"policy_type": "trunkHost", "allowed_vlans": "10"}}}}
         )
+
+
+def test_ethernet_trunk_host_interface_02050():
+    """
+    Verify ``normalize_gathered_filter`` normalizes abbreviated interface names
+    to the canonical ``Ethernet`` prefix.
+
+    ## Test
+
+    - ``eth1/1`` normalizes to ``Ethernet1/1``
+    - ``e1/2`` normalizes to ``Ethernet1/2``
+    - ``ETHERNET1/3`` normalizes to ``Ethernet1/3``
+    - ``Ethernet1/4`` is idempotent
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceModel.normalize_gathered_filter()
+    """
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({"interface_name": "eth1/1"}) == {"interface_name": "Ethernet1/1"}
+
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({"interface_name": "e1/2"}) == {"interface_name": "Ethernet1/2"}
+
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({"interface_name": "ETHERNET1/3"}) == {"interface_name": "Ethernet1/3"}
+
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({"interface_name": "Ethernet1/4"}) == {"interface_name": "Ethernet1/4"}
 
 
 def test_ethernet_trunk_host_interface_01260():
@@ -2225,6 +2396,30 @@ def test_ethernet_trunk_host_interface_01260():
     }
 
 
+def test_ethernet_trunk_host_interface_02060():
+    """
+    Verify ``normalize_gathered_filter`` passes through filters without ``interface_name``
+    unchanged.
+
+    ## Test
+
+    - Filter with only switch_ip is returned unchanged
+    - Filter with only policy fields is returned unchanged
+    - Empty filter is returned unchanged
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceModel.normalize_gathered_filter()
+    """
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({"switch_ip": "10.1.1.1"}) == {"switch_ip": "10.1.1.1"}
+
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({"config_data": {"network_os": {"policy": {"admin_state": True}}}}) == {
+        "config_data": {"network_os": {"policy": {"admin_state": True}}}
+    }
+
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({}) == {}
+
+
 def test_ethernet_trunk_host_interface_01270():
     """
     # Summary
@@ -2251,6 +2446,28 @@ def test_ethernet_trunk_host_interface_01270():
     assert existing.get_diff(proposed, exclude_unset=False) is True
     customized = XeEthernetTrunkHostPolicyModel.from_response({"policyType": "iosXeTrunkHost", **XE_TRUNK_TEMPLATE_DEFAULT_ECHO, "allowedVlans": "10"})
     assert customized.get_diff(proposed, exclude_unset=False) is False
+
+
+def test_ethernet_trunk_host_interface_02070():
+    """
+    Verify ``normalize_gathered_filter`` handles edge cases for ``interface_name``:
+    ``None``, empty string, and non-string values.
+
+    ## Test
+
+    - interface_name=None is passed through
+    - interface_name="" is passed through
+    - interface_name=123 is passed through
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceModel.normalize_gathered_filter()
+    """
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({"interface_name": None}) == {"interface_name": None}
+
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({"interface_name": ""}) == {"interface_name": ""}
+
+    assert EthernetTrunkHostInterfaceModel.normalize_gathered_filter({"interface_name": 123}) == {"interface_name": 123}
 
 
 def test_ethernet_trunk_host_interface_01280():
@@ -2283,3 +2500,127 @@ def test_ethernet_trunk_host_interface_01280():
         result = EthernetTrunkHostPolicyModel(speed="noNegotiate")
     with pytest.raises(ValidationError):
         result = XeEthernetTrunkHostPolicyModel(mtu="jumbo")
+
+
+# =============================================================================
+# Test: payload_defaults (issue #564)
+# =============================================================================
+
+
+def test_ethernet_trunk_host_interface_01290():
+    """
+    # Summary
+
+    Verify the NX-OS `trunkHost` payload always carries `allowedVlans`: the template default (`none`) is emitted when the user set
+    nothing, and a user-supplied value wins. ND 4.3.1 rejects a create body that omits `allowedVlans` where 4.2.1 defaulted it
+    (issue #564). `nativeVlan` has no template default and is never injected.
+
+    ## Test
+
+    - `from_config` with no `allowed_vlans` -> `to_payload()` policy carries `allowedVlans: "none"` and no `nativeVlan`
+    - `from_config` with `allowed_vlans: "1-100"` -> `to_payload()` policy carries `allowedVlans: "1-100"`
+    - `to_config()` and `to_diff_dict()` of the unset model do not carry the field (payload-only injection)
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostPolicyModel.payload_defaults
+    - NDBaseModel.to_payload()
+    """
+    config = {
+        "switch_ip": "192.168.1.1",
+        "interface_name": "Ethernet1/1",
+        "config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"description": "uplink to spine"}}},
+    }
+    unset = EthernetTrunkHostInterfaceModel.from_config(config)
+    policy = unset.to_payload()["configData"]["networkOS"]["policy"]
+    assert policy["allowedVlans"] == "none"
+    assert "nativeVlan" not in policy
+    assert "allowedVlans" not in unset.to_diff_dict()["configData"]["networkOS"]["policy"]
+    assert "allowed_vlans" not in unset.to_config()["config_data"]["network_os"]["policy"]
+
+    explicit_config = copy.deepcopy(config)
+    explicit_config["config_data"]["network_os"]["policy"]["allowed_vlans"] = "1-100"
+    explicit = EthernetTrunkHostInterfaceModel.from_config(explicit_config)
+    assert explicit.to_payload()["configData"]["networkOS"]["policy"]["allowedVlans"] == "1-100"
+
+
+def test_ethernet_trunk_host_interface_01300():
+    """
+    # Summary
+
+    Verify the IOS-XE `iosXeTrunkHost` payload always carries `mtu` and `allowedVlans`: the template defaults (1500 / `none`) are
+    emitted when the user set nothing, and a user-supplied value wins. ND 4.3.1 rejects a create body that omits `mtu` and the
+    reset PUT that omits either field, where 4.2.1 defaulted both (issue #564; lab-verified 2026-09-14).
+
+    ## Test
+
+    - `from_config` with no `mtu` -> `to_payload()` policy carries `mtu: 1500`
+    - `from_config` with `mtu: "8000"` (str-typed argspec) -> `to_payload()` policy carries `mtu: 8000`
+    - `from_config` with no `allowed_vlans` -> `to_payload()` policy carries `allowedVlans: "none"`
+    - `to_diff_dict()` of the unset model does not carry `mtu` or `allowedVlans`
+
+    ## Classes and Methods
+
+    - XeEthernetTrunkHostPolicyModel.payload_defaults
+    - NDBaseModel.to_payload()
+    """
+    config = {
+        "switch_ip": "192.168.2.1",
+        "interface_name": "GigabitEthernet1/0/1",
+        "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": {"allowed_vlans": "10,20-30"}}},
+    }
+    unset = EthernetTrunkHostInterfaceModel.from_config(config)
+    assert unset.to_payload()["configData"]["networkOS"]["policy"]["mtu"] == 1500
+    assert "mtu" not in unset.to_diff_dict()["configData"]["networkOS"]["policy"]
+
+    explicit_config = copy.deepcopy(config)
+    explicit_config["config_data"]["network_os"]["policy"]["mtu"] = "8000"
+    explicit = EthernetTrunkHostInterfaceModel.from_config(explicit_config)
+    assert explicit.to_payload()["configData"]["networkOS"]["policy"]["mtu"] == 8000
+
+    no_vlans = EthernetTrunkHostInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.2.1",
+            "interface_name": "GigabitEthernet1/0/1",
+            "config_data": {"network_os": {"network_os_type": "ios-xe", "policy": {"description": "cat trunk"}}},
+        }
+    )
+    assert no_vlans.to_payload()["configData"]["networkOS"]["policy"]["allowedVlans"] == "none"
+    assert "allowedVlans" not in no_vlans.to_diff_dict()["configData"]["networkOS"]["policy"]
+
+
+def test_ethernet_trunk_host_interface_02080():
+    """
+    Verify ``supports_gathered_server_filtering`` is ``True`` and ``gathered_lucene_spec``
+    has the correct base terms and field map on the trunk host orchestrator.
+
+    ## Test
+
+    - supports_gathered_server_filtering is True
+    - gathered_lucene_spec.base_terms limits the query to Ethernet interfaces without excluding IOS-XE trunk-host policies
+    - gathered_lucene_spec.field_map maps interface_name to interfaceName
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceOrchestrator.supports_gathered_server_filtering
+    - EthernetTrunkHostInterfaceOrchestrator.gathered_lucene_spec
+    """
+    from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_trunk_host_interface import EthernetTrunkHostInterfaceOrchestrator
+
+    assert EthernetTrunkHostInterfaceOrchestrator.supports_gathered_server_filtering is True
+
+    spec = EthernetTrunkHostInterfaceOrchestrator.gathered_lucene_spec
+    assert spec is not None
+    assert spec.base_terms == (("interfaceType", "ethernet"),)
+    assert spec.field_map == {("interface_name",): "interfaceName"}
+
+
+def test_ethernet_trunk_host_interface_02090():
+    """Verify gathered output uses the module's plural interface_names field."""
+    instance = EthernetTrunkHostInterfaceModel(switch_ip="192.168.1.1", interface_name="Ethernet1/1")
+
+    gathered = instance.to_gathered_config()
+
+    assert gathered["switch_ip"] == "192.168.1.1"
+    assert gathered["interface_names"] == ["Ethernet1/1"]
+    assert "interface_name" not in gathered

@@ -8,7 +8,11 @@
 
 from __future__ import annotations
 
-ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
+ANSIBLE_METADATA = {
+    "metadata_version": "1.1",
+    "status": ["preview"],
+    "supported_by": "community",
+}
 
 DOCUMENTATION = r"""
 ---
@@ -32,21 +36,35 @@ options:
     - Each item specifies the target switch and interface configuration.
     - Multiple switches can be configured in a single task.
     - The structure mirrors the ND Manage Interfaces API payload.
+    - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+    - Not required for O(state=gathered).
+    - For O(state=gathered), O(config) may be omitted to gather all user-managed loopback interfaces.
+    - Supported gathered filter properties are O(config[].switch_ip), O(config[].interface_name),
+      O(config[].config_data.network_os.policy.admin_state), O(config[].config_data.network_os.policy.ip),
+      O(config[].config_data.network_os.policy.ipv6), and O(config[].config_data.network_os.policy.vrf).
+    - Criteria within one list item use AND semantics, while multiple list items use OR semantics.
+    - Unsupported gathered filter properties are rejected before any controller query.
+    - Switch and interface-name criteria may reduce candidates through server-side Lucene queries. All criteria are
+      evaluated locally as the final correctness layer.
     type: list
     elements: dict
-    required: true
+    required: false
     suboptions:
       switch_ip:
         description:
         - The management IP address of the switch on which to manage this loopback interface.
         - This is resolved to the switch serial number (switchId) internally.
+        - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+        - Optional filter for O(state=gathered).
         type: str
-        required: true
+        required: false
       interface_name:
         description:
         - The name of the loopback interface (e.g., C(loopback0), C(Loopback10)).
+        - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+        - Optional filter for O(state=gathered).
         type: str
-        required: true
+        required: false
       config_data:
         description:
         - The configuration data for the interface, following the ND API structure.
@@ -62,13 +80,19 @@ options:
                 - The network OS (platform) type of the target switch. This is a discriminator that determines which
                   policy templates are applicable, and is required by the ND API schema.
                 - Use V(nx-os) for Nexus switches and V(ios-xe) for Catalyst/CSR IOS-XE devices.
+                - Selects the network OS branch used to validate a loopback configuration.
+                - Required when O(config[].config_data.network_os) is supplied for
+                  O(state=merged), O(state=replaced), or O(state=overridden).
+                - Do not include this field in a partial O(state=gathered) filter.
                 type: str
-                required: true
+                required: false
                 choices: [ nx-os, ios-xe ]
               policy:
                 description:
                 - The policy configuration for the loopback interface.
                 - The policy fields present depend on O(config[].config_data.network_os.policy.policy_type).
+                - Where a suboption names an ND default, that is the value Nexus Dashboard applies when the suboption is omitted on create;
+                  existing values are left unchanged in O(state=merged).
                 type: dict
                 suboptions:
                   policy_type:
@@ -82,16 +106,20 @@ options:
                     - Use V(iosXeLoopbackShutNoshut) to manage only the admin state of an IOS-XE loopback.
                     - Use V(iosXeUnderlayLoopback) for an IOS-XE underlay (NVE source) loopback.
                     - Use V(iosXeInternalLoopback) for an IOS-XE internal loopback (IPv4/IPv6 and PIM options).
-                    - Use V(csrLoopback) for a CSR loopback.
+                    - Use V(csrLoopback) for a CSR loopback. Supported on Nexus Dashboard releases before 4.3.1; on 4.3.1 and later
+                      the module fails before writing.
                     - Use V(csr1kvLoopback) for a CSR1kv loopback (admin state and freeform config only).
+                    - Required when policy configuration is supplied for
+                      O(state=merged), O(state=replaced), or O(state=overridden).
+                    - Do not include this field in a partial O(state=gathered) filter.
                     type: str
-                    required: true
+                    required: false
                     choices: [ loopback, ipfmLoopback, mplsLoopback, iosXeLoopback, iosXeLoopbackShutNoshut, iosXeUnderlayLoopback,
                       iosXeInternalLoopback, csrLoopback, csr1kvLoopback ]
                   admin_state:
                     description:
                     - The administrative state of the loopback interface.
-                    - It defaults to C(true) when unset during creation.
+                    - The ND default is V(true).
                     - Applies to all policy_type values.
                     type: bool
                   ip:
@@ -116,6 +144,7 @@ options:
                     description:
                     - The VRF to which the loopback interface belongs.
                     - Maximum 32 characters.
+                    - The ND default is V(default) for C(ipfmLoopback); the other policy types have none.
                     - Applies when policy_type is C(loopback), C(ipfmLoopback), C(iosXeLoopback), C(iosXeInternalLoopback), or C(csrLoopback).
                     type: str
                   ipv6:
@@ -128,16 +157,20 @@ options:
                   route_map_tag:
                     description:
                     - The route-map tag associated with the interface IP address.
+                    - The ND default is V(12345).
+                    - Decimal strings from older playbooks are accepted and sent to ND as integers.
                     - Applies when policy_type is C(loopback).
-                    type: str
+                    type: int
                   advertise_loopback:
                     description:
                     - Whether to advertise the loopback address via OSPF/IS-IS.
+                    - The ND default is V(true).
                     - Applies when policy_type is C(ipfmLoopback).
                     type: bool
                   is_service_reflect:
                     description:
                     - Whether to use this loopback as the service-reflect source address.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(ipfmLoopback).
                     type: bool
                   routing_tag:
@@ -171,17 +204,20 @@ options:
                   enable_pim:
                     description:
                     - Enable PIM on the interface.
+                    - The ND default is V(false).
                     - Applies when policy_type is C(iosXeInternalLoopback).
                     type: bool
                   dci_routing_protocol:
                     description:
                     - The DCI (Data Center Interconnect) link-state routing protocol.
+                    - The ND default is V(isis).
                     - Applies when policy_type is C(mplsLoopback).
                     type: str
                     choices: [ ospf, isis ]
                   dci_routing_tag:
                     description:
                     - The DCI (Data Center Interconnect) routing tag.
+                    - The ND default is V(MPLS_UNDERLAY).
                     - Applies when policy_type is C(mplsLoopback).
                     type: str
                   ospf_area_id:
@@ -199,7 +235,8 @@ options:
         description:
         - Whether to deploy interface changes after mutations are complete.
         - When V(true), all queued interface changes are deployed in a single bulk API call at the end of module
-          execution via the C(interfaceActions/deploy) API. Only the interfaces modified by this task are deployed.
+          execution via the C(interfaceActions/deploy) API. An explicitly named interface can also be deployed when this task
+          makes no ND intent change, but only if its preview shows pending switch configuration (possibly staged by another task or operator).
         - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
         - When V(true) and the module fails after the controller has already accepted a subset of the requested changes, that
           accepted subset is still deployed and is named in the failure message, so a failed task does not leave accepted
@@ -222,9 +259,11 @@ options:
       Loopback interfaces with any other policy type, such as the system-provisioned NX-OS C(underlayLoopback) or C(userDefined),
       are never modified or deleted by this module.
     - Use O(state=deleted) to remove the resources specified in the configuration from the Cisco Nexus Dashboard.
+    - Use O(state=gathered) to read all user-managed loopback interfaces in the fabric without making changes.
+      The result is returned under C(gathered) in a format that can be reused as O(config).
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -282,7 +321,7 @@ EXAMPLES = r"""
               policy_type: loopback
               ip: 10.2.1.1
               description: VTEP loopback
-              route_map_tag: "12345"
+              route_map_tag: 12345
       - switch_ip: 192.168.1.2
         interface_name: loopback0
         config_data:
@@ -505,6 +544,7 @@ EXAMPLES = r"""
       deploy: true
     state: deleted
 
+# csrLoopback is supported on Nexus Dashboard releases before 4.3.1; on 4.3.1 and later the module fails before writing.
 - name: Merge a CSR loopback
   cisco.nd.nd_interface_loopback:
     fabric_name: fabric-xe
@@ -594,6 +634,21 @@ EXAMPLES = r"""
     config_actions:
       deploy: true
     state: merged
+
+- name: Gather all user-managed loopback interfaces in a fabric
+  cisco.nd.nd_interface_loopback:
+    fabric_name: my_fabric
+    state: gathered
+  register: gathered_loopbacks
+
+- name: Gather one loopback interface from a specific switch
+  cisco.nd.nd_interface_loopback:
+    fabric_name: my_fabric
+    state: gathered
+    config:
+      - switch_ip: 192.168.1.1
+        interface_name: Loopback10
+  register: gathered_loopback10
 """
 
 RETURN = r"""
@@ -609,8 +664,9 @@ output_level:
   sample: normal
 before:
   description:
-  - The existing configuration of the targeted interfaces before the module ran, structured the same as the O(config) parameter.
-  - An empty list when no matching interface configuration existed.
+  - The existing configuration of the targeted interfaces before the module ran, structured the same as O(config).
+  - For O(state=gathered), this is an empty list because gathered resources are returned under C(gathered).
+  - For write states, an empty list means no matching existing interface configuration was found.
   returned: always
   type: list
   elements: dict
@@ -629,8 +685,9 @@ before:
           vrf: management
 after:
   description:
-  - The configuration of the targeted interfaces after the module ran, structured the same as the O(config) parameter.
-  - In check mode, the configuration that would result had the module run outside of check mode.
+  - The resulting interface configuration after reconciliation, structured the same as O(config).
+  - In check mode, this is the configuration that would result if the module ran outside check mode.
+  - For O(state=gathered), this is an empty list because no reconciliation is performed.
   returned: always
   type: list
   elements: dict
@@ -647,9 +704,16 @@ after:
           admin_state: true
           ip: 10.1.1.2
           vrf: management
+gathered:
+  description:
+  - User-managed loopback interfaces matching the supplied O(config) filters.
+  - Returned in reusable Ansible configuration format.
+  returned: when O(state=gathered)
+  type: list
+  elements: dict
 diff:
   description: The per-interface difference between C(before) and C(after).
-  returned: always
+  returned: when O(state) is not V(gathered)
   type: list
   elements: dict
   sample:
@@ -661,7 +725,7 @@ diff:
           ip: 10.1.1.2
 proposed:
   description: The configuration the module proposed to apply, before reconciliation with the controller.
-  returned: when O(output_level) is V(info) or V(debug)
+  returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
   sample:
@@ -687,6 +751,7 @@ msg:
   returned: on failure
   type: str
   sample: "Configuration error: ..."
+
 """
 # pylint: disable=wrong-import-position
 
@@ -721,12 +786,19 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
     )
     require_pydantic(module)
     setup_logging(module)
     module_log = logging.getLogger("nd.nd_interface_loopback")
 
     nd_state_machine = None
+    verbosity = module._verbosity
 
     try:
         # Initialize StateMachine
@@ -751,11 +823,11 @@ def main():
         module_log.debug("manage_state end")
 
         # Execute all queued bulk operations
-        if not module.check_mode:
+        if not module.check_mode and module.params["state"] != "gathered":
             nd_state_machine.model_orchestrator.remove_pending()
             nd_state_machine.model_orchestrator.deploy_pending()
 
-        module.exit_json(**nd_state_machine.output.format())
+        module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))
 
     except Exception as e:  # pylint: disable=broad-except
         fail_from_exception(module, module_log, nd_state_machine, e)
