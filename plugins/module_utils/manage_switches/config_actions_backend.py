@@ -12,6 +12,7 @@ Switch module backend adapter for common config action execution.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActionsContext
@@ -28,7 +29,11 @@ class SwitchConfigActionsBackend:
     None
     """
 
-    def __init__(self, fabric_utils: Any) -> None:
+    def __init__(
+        self,
+        fabric_utils: Any,
+        register_operation: Callable[[Any, dict[str, Any] | None, dict[str, Any], str], None] | None = None,
+    ) -> None:
         """
         # Summary
 
@@ -39,6 +44,20 @@ class SwitchConfigActionsBackend:
         None
         """
         self.fabric_utils = fabric_utils
+        self.register_operation = register_operation
+
+    def _register_operation(self, endpoint: Any, payload: dict[str, Any] | None, response: dict[str, Any], action: str) -> None:
+        """
+        # Summary
+
+        Forward a completed endpoint call to the module result recorder when configured.
+
+        ## Raises
+
+        None
+        """
+        if self.register_operation is not None:
+            self.register_operation(endpoint, payload, response, action)
 
     def save(self, _context: ConfigActionsContext, _fabric_name: str) -> Any:
         """
@@ -52,7 +71,9 @@ class SwitchConfigActionsBackend:
 
         - Raised by the fabric utility when the controller rejects config save.
         """
-        return self.fabric_utils.save_config()
+        response = self.fabric_utils.save_config()
+        self._register_operation(self.fabric_utils.ep_config_save, None, response, "config_save")
+        return response
 
     def deploy_global(self, _context: ConfigActionsContext, _fabric_name: str) -> Any:
         """
@@ -66,7 +87,9 @@ class SwitchConfigActionsBackend:
 
         - Raised by the fabric utility when the controller rejects global deploy.
         """
-        return self.fabric_utils.deploy_config()
+        response = self.fabric_utils.deploy_config()
+        self._register_operation(self.fabric_utils.ep_config_deploy, None, response, "deploy_config")
+        return response
 
     def deploy_switches(self, _context: ConfigActionsContext, _fabric_name: str, switch_ids: tuple[str, ...]) -> Any:
         """
@@ -80,7 +103,10 @@ class SwitchConfigActionsBackend:
 
         - Raised by the fabric utility when the controller rejects switch deploy.
         """
-        return self.fabric_utils.deploy_switches(list(switch_ids))
+        payload = {"switchIds": list(switch_ids)}
+        response = self.fabric_utils.deploy_switches(payload["switchIds"])
+        self._register_operation(self.fabric_utils.ep_switch_deploy, payload, response, "deploy_switches")
+        return response
 
     def deploy_resources(self, _context: ConfigActionsContext, _fabric_name: str, _resources: tuple[str, ...]) -> Any:
         """

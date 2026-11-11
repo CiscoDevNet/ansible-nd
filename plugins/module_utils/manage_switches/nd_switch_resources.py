@@ -1454,7 +1454,6 @@ class SwitchFabricOps:
 
     def _register_fabric_operation(
         self,
-        *,
         endpoint: Any,
         payload: dict[str, Any] | None,
         response: dict[str, Any],
@@ -1505,9 +1504,11 @@ class SwitchFabricOps:
             check_mode=self.ctx.nd.module.check_mode,
             switch_ids=serials,
         )
-        controller = ConfigActionsController(SWITCH_CONFIG_ACTIONS, SwitchConfigActionsBackend(self.fabric_utils))
+        backend = SwitchConfigActionsBackend(self.fabric_utils, self._register_fabric_operation)
+        controller = ConfigActionsController(SWITCH_CONFIG_ACTIONS, backend)
         result = controller.execute(actions, context)
-        self._register_config_actions_result(result)
+        if result.status != "completed" or any(step.status != "completed" for step in result.actions):
+            self._register_config_actions_result(result)
 
         if result.status == "failed":
             failed = next((step for step in result.actions if step.status == "failed"), None)

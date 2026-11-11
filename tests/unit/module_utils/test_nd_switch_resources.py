@@ -1206,9 +1206,9 @@ def test_post_add_processing_waits_saves_updates_roles_and_finalize_paths():
             "skip_greenfield_check": True,
         }
     ]
-    assert [entry["action"] for entry in ctx.results.metadata] == ["save_credentials", "update_role", "config_actions"]
-    assert ctx.results.diffs[-1]["actions"][-1]["scope"] == "switch"
-    assert ctx.results.diffs[-1]["targets"]["switches"] == ["SERIAL1"]
+    assert [entry["action"] for entry in ctx.results.metadata] == ["save_credentials", "update_role", "config_save", "deploy_switches"]
+    assert ctx.results.path[-2:] == ["/config-save", "/switch-deploy"]
+    assert ctx.results.payload[-2:] == [None, {"switchIds": ["SERIAL1"]}]
 
     failing_wait = RecordingWait(manageable=False)
     with pytest.raises(FailJsonError, match="failed to become manageable"):
@@ -1257,8 +1257,8 @@ def test_post_add_processing_splits_reload_waits_by_platform():
             "skip_greenfield_check": True,
         }
     ]
-    assert ctx.results.diffs[-1]["actions"][-1]["scope"] == "switch"
-    assert ctx.results.diffs[-1]["targets"]["switches"] == ["NXOS1", "NXOS2", "IOSXE1", "IOSXR1"]
+    assert ctx.results.metadata[-1]["action"] == "deploy_switches"
+    assert ctx.results.payload[-1] == {"switchIds": ["NXOS1", "NXOS2", "IOSXE1", "IOSXR1"]}
 
 
 def test_post_add_processing_forces_poap_and_swap_nxos_reload_observation():
@@ -1323,12 +1323,15 @@ def test_fabric_ops_finalize_honors_switch_and_global_deploy_modes():
         ("/api/v1/manage/fabrics/FAB1/actions/configSave", HttpVerbEnum.POST, None),
         ("/api/v1/manage/fabrics/FAB1/switchActions/deploy", HttpVerbEnum.POST, {"switchIds": ["SERIAL1"]}),
     ]
-    assert [entry["action"] for entry in results.metadata] == ["config_actions"]
-    assert results.diffs[-1]["status"] == "completed"
-    assert results.diffs[-1]["targets"]["switches"] == ["SERIAL1"]
-    steps = results.diffs[-1]["actions"]
-    assert [(step["action"], step.get("scope")) for step in steps] == [("save", None), ("deploy", "switch")]
-    assert [step["response"]["RETURN_CODE"] for step in steps] == [200, 200]
+    assert [entry["action"] for entry in results.metadata] == ["config_save", "deploy_switches"]
+    assert results.path == [
+        "/api/v1/manage/fabrics/FAB1/actions/configSave",
+        "/api/v1/manage/fabrics/FAB1/switchActions/deploy",
+    ]
+    assert results.verb == ["POST", "POST"]
+    assert results.payload == [None, {"switchIds": ["SERIAL1"]}]
+    assert results.verbosity_level == [2, 2]
+    assert [response["RETURN_CODE"] for response in results.responses] == [200, 200]
 
     nd.calls.clear()
     results = Results()
@@ -1339,10 +1342,14 @@ def test_fabric_ops_finalize_honors_switch_and_global_deploy_modes():
         ("/api/v1/manage/fabrics/FAB1/actions/configSave", HttpVerbEnum.POST, None),
         ("/api/v1/manage/fabrics/FAB1/actions/configDeploy", HttpVerbEnum.POST, None),
     ]
-    assert [entry["action"] for entry in results.metadata] == ["config_actions"]
-    steps = results.diffs[-1]["actions"]
-    assert [(step["action"], step.get("scope")) for step in steps] == [("save", None), ("deploy", "global")]
-    assert [step["response"]["RETURN_CODE"] for step in steps] == [200, 200]
+    assert [entry["action"] for entry in results.metadata] == ["config_save", "deploy_config"]
+    assert results.path == [
+        "/api/v1/manage/fabrics/FAB1/actions/configSave",
+        "/api/v1/manage/fabrics/FAB1/actions/configDeploy",
+    ]
+    assert results.verb == ["POST", "POST"]
+    assert results.payload == [None, None]
+    assert [response["RETURN_CODE"] for response in results.responses] == [200, 200]
 
     nd.calls.clear()
     ctx.deploy_type = "switch"
@@ -1354,6 +1361,7 @@ def test_fabric_ops_finalize_honors_switch_and_global_deploy_modes():
     ctx.nd.module.check_mode = True
     SwitchFabricOps(ctx, fabric_utils).finalize(["SERIAL1"])
     assert nd.calls == []
+    assert results.metadata[-1]["action"] == "config_actions"
 
 
 def test_idempotent_sync_serials_require_resolved_switch_targets():
