@@ -334,6 +334,32 @@
       {%- endif -%}
       {{- {'valid': ns.valid, 'ready': ns.valid and not ns.busy, 'normal': ns.valid and ns.normal,
            'maintenance_ids': ns.maintenance if ns.valid and not ns.busy else []} -}}
+    _nd_predelete_leaf_tor_report: >-
+      {%- set reply = _predelete_leaf_tor_reply -%}
+      {%- set body = reply.current | default(none) -%}
+      {%- set rows = body.get('anomalies') if body is mapping else none -%}
+      {%- set ns = namespace(valid=reply.status | default(0) | int == 200 and not reply.failed | default(false), blocked=[]) -%}
+      {%- if body is not mapping or body.get('error') or body.get('errors') or 'code' in body
+          or rows is not sequence or rows is string or rows is mapping or rows | length >= 200 -%}
+        {%- set ns.valid = false -%}
+      {%- else -%}
+        {%- for anomaly in rows -%}
+          {%- if anomaly is not mapping or anomaly.get('cleared') is not boolean or anomaly.get('anomalyString') is not string -%}
+            {%- set ns.valid = false -%}
+          {%- elif anomaly.get('fabricName') == _predelete_leaf_tor_fabric and anomaly.get('cleared') is sameas false -%}
+            {%- set text = anomaly.anomalyString | lower -%}
+            {%- if 'leaf-tor unpairing' in text and text is search('recalculate\\s+and\\s+deploy') -%}
+              {%- for identity in _predelete_requested_ids -%}
+                {%- if '[' ~ (identity | lower) ~ ']' in text or '/' ~ (identity | lower) ~ ']' in text -%}
+                  {%- set ns.blocked = ns.blocked + [identity] -%}
+                {%- endif -%}
+              {%- endfor -%}
+            {%- endif -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endif -%}
+      {{- {'valid': ns.valid, 'clear': ns.valid and ns.blocked | length == 0,
+           'blocked_switches': ns.blocked | unique | list | length, 'http': reply.status | default(0) | int} -}}
     _nd_predelete_update_idle: >-
       {%- set reply = _predelete_update_reply -%}
       {%- set body = reply.current | default(none) -%}
@@ -499,6 +525,34 @@
     nd_switch_rediscover_delay: "{{ lookup('env', 'ND_SWITCH_REDISCOVER_DELAY') | default(20, true) }}"
     # Compatibility flag only: true is rejected rather than bypassing a refusal.
     nd_switch_rehome_force_delete: false
+    nd_switch_ibgp_to_ebgp_leaf_tor_force_delete: false
+    nd_switch_transfer_phase: ""
+    nd_force_direction_probes: {results: []}
+    _nd_leaf_tor_force_forward_scope: >-
+      {%- set moves = nd_rehome_moves | default([]) -%}
+      {%- set sources = moves | map(attribute='from_fabric') | unique | list -%}
+      {%- set destinations = moves | map(attribute='fabric') | unique | list -%}
+      {%- set replies = nd_force_direction_probes.results | default([]) -%}
+      {%- set ns = namespace(types={}, valid=true) -%}
+      {%- for reply in replies -%}
+        {%- set body = reply.current | default(none) -%}
+        {%- if reply.failed | default(false) or reply.status | default(0) | int != 200
+            or body is not mapping or body.get('error') or body.get('errors') or 'code' in body
+            or body.get('management') is not mapping or body.management.get('type') is not string
+            or reply._force_fabric | default('') in ns.types -%}
+          {%- set ns.valid = false -%}
+        {%- else -%}
+          {%- set ns.types = ns.types | combine({reply._force_fabric: body.management.type | lower}) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{- (nd_switch_ibgp_to_ebgp_leaf_tor_force_delete | default(false) | bool)
+          and (nd_switch_apply | default(false) | bool)
+          and not (ansible_check_mode | default(false) | bool)
+          and nd_switch_transfer_phase | default('') == 'pre'
+          and moves | length > 0 and sources | length == 1 and destinations | length == 1
+          and sources != destinations and replies | length == 2 and ns.valid
+          and ns.types.get(sources | first | default('')) == 'vxlanibgp'
+          and ns.types.get(destinations | first | default('')) == 'vxlanebgp' -}}
 
   tasks:
     - name: Start the bounded switch lifecycle clock
@@ -791,6 +845,27 @@
         - name: Run NDP_INTERFACE_BASELINE_HOOK before source-fabric removal
           ansible.builtin.include_tasks: "{{ playbook_dir }}/nd_prerequisite/interface_baseline.yaml"
           when: nd_interface_baseline_enabled | default(false) | bool
+
+        - &nd_force_direction_probe
+          name: Read fresh source and destination types for the opt-in forward force exception
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ _force_fabric }}"
+          loop: "{{ ((nd_rehome_moves | map(attribute='from_fabric') | list) + (nd_rehome_moves | map(attribute='fabric') | list)) | unique | list }}"
+          loop_control:
+            loop_var: _force_fabric
+            label: forward transfer fabric
+          register: nd_force_direction_probes
+          failed_when: false
+          no_log: true
+          when: nd_switch_ibgp_to_ebgp_leaf_tor_force_delete | default(false) | bool
+
+        - &nd_force_direction_require
+          name: Require an explicitly enabled verified iBGP to eBGP preflight exception
+          ansible.builtin.assert:
+            that: _nd_leaf_tor_force_forward_scope | bool
+            fail_msg: "NDP_SWITCH_FORCE_SCOPE_BLOCKED: force fallback requires one verified iBGP-to-eBGP preflight transfer; no force request is allowed."
+          when: nd_switch_ibgp_to_ebgp_leaf_tor_force_delete | default(false) | bool
 
         - name: Require the pre-delete deployment safety gate for a membership transfer
           ansible.builtin.assert:
@@ -1378,6 +1453,82 @@
                 - *nd_predelete_require_idle
             - *nd_predelete_copy_startup
 
+            - name: Initialize the scoped Leaf-ToR force requirement
+              ansible.builtin.set_fact:
+                _nd_predelete_leaf_tor_force_required: false
+
+            - name: Wait for requested Leaf-ToR unpairing warnings to clear before any removal
+              cisco.nd.nd_rest:
+                method: get
+                path: "/api/v1/analyze/anomalies/details?fabricName={{ _rf | urlencode }}&max=200"
+              register: nd_predelete_leaf_tor
+              failed_when: nd_predelete_leaf_tor.failed | default(false)
+              until: >-
+                (_nd_predelete_leaf_tor_report['clear'] | bool)
+                or ((_nd_leaf_tor_force_forward_scope | bool) and (_nd_predelete_leaf_tor_report.valid | bool))
+                or (not (_nd_predelete_leaf_tor_report.valid | bool) and nd_predelete_leaf_tor.status | default(0) | int == 200)
+                or (nd_predelete_leaf_tor.status | default(0) | int not in [0, 200, 408, 429]
+                    and nd_predelete_leaf_tor.status | default(0) | int < 500)
+                or (_nd_predelete_remaining | float) <= 0
+              retries: "{{ nd_switch_predelete_timeout_seconds | int + 1 }}"
+              delay: "{{ [nd_switch_predelete_poll_seconds | int, [0, _nd_predelete_remaining | float] | max] | min | int }}"
+              timeout: "{{ _nd_predelete_call_limit }}"
+              vars:
+                _predelete_leaf_tor_reply: "{{ nd_predelete_leaf_tor }}"
+                _predelete_leaf_tor_fabric: "{{ _rf }}"
+                _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _rf) | map(attribute='serial') | list }}"
+                ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
+              loop: "{{ nd_rehome_moves | map(attribute='from_fabric') | unique | list }}"
+              loop_control:
+                loop_var: _rf
+                label: "{{ _rf }}"
+              ignore_errors: true
+              no_log: true
+
+            - name: Require a complete Leaf-ToR clearance result for every source fabric
+              ansible.builtin.assert:
+                that:
+                  - nd_predelete_leaf_tor is not failed
+                  - nd_predelete_leaf_tor.results | default([]) | length == (nd_rehome_moves | map(attribute='from_fabric') | unique | list | length)
+                fail_msg: "NDP_SWITCH_PREDELETE_LEAF_TOR_BLOCKED: source anomaly polling failed or returned incomplete results; no switch removal is allowed."
+
+            - name: Require verified Leaf-ToR clearance before removing any source switch
+              ansible.builtin.assert:
+                that:
+                  - _nd_predelete_remaining | float > 0
+                  - _nd_predelete_leaf_tor_report.valid | bool
+                  - (_nd_predelete_leaf_tor_report['clear'] | bool) or (_nd_leaf_tor_force_forward_scope | bool)
+                fail_msg: >-
+                  NDP_SWITCH_PREDELETE_LEAF_TOR_BLOCKED: pending unpairing is active or unverifiable after Recalculate and Deploy;
+                  no source switch was removed and no destination onboarding is allowed.
+                  http={{ _nd_predelete_leaf_tor_report.http }} valid={{ _nd_predelete_leaf_tor_report.valid }}
+                  blocked_switches={{ _nd_predelete_leaf_tor_report.blocked_switches }}.
+              vars:
+                _predelete_leaf_tor_reply: "{{ _leaf_tor_final }}"
+                _predelete_leaf_tor_fabric: "{{ _leaf_tor_final._rf }}"
+                _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _leaf_tor_final._rf) | map(attribute='serial') | list }}"
+              loop: "{{ nd_predelete_leaf_tor.results | default([]) }}"
+              loop_control:
+                loop_var: _leaf_tor_final
+                label: Leaf-ToR clearance
+
+            - name: Record whether verified pending unpairing requires the opt-in force retry
+              ansible.builtin.set_fact:
+                _nd_predelete_leaf_tor_force_required: >-
+                  {{ (_nd_predelete_leaf_tor_force_required | bool)
+                     or ((_nd_leaf_tor_force_forward_scope | bool)
+                         and (_nd_predelete_leaf_tor_report.valid | bool)
+                         and (_nd_predelete_leaf_tor_report.blocked_switches | int > 0)) }}
+              vars:
+                _predelete_leaf_tor_reply: "{{ _leaf_tor_final }}"
+                _predelete_leaf_tor_fabric: "{{ _leaf_tor_final._rf }}"
+                _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _leaf_tor_final._rf) | map(attribute='serial') | list }}"
+              loop: "{{ nd_predelete_leaf_tor.results | default([]) }}"
+              loop_control:
+                loop_var: _leaf_tor_final
+                label: Leaf-ToR force requirement
+              no_log: true
+
             - name: Report the pre-delete Recalculate & Deploy
               ansible.builtin.debug:
                 msg: >-
@@ -1434,7 +1585,7 @@
               name: Remove each switch from the fabric it is leaving
               cisco.nd.nd_rest:
                 method: post
-                path: "/api/v1/manage/fabrics/{{ _rm.key }}/switchActions/remove"
+                path: "/api/v1/manage/fabrics/{{ _rm.key }}/switchActions/remove{{ '?force=true' if (_nd_remove_leaf_tor_force_retry | default(false) | bool) else '' }}"
                 content:
                   switchIds: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _rm.key) | map(attribute='serial') | list }}"
               loop: "{{ dict(nd_rehome_moves | groupby('from_fabric')) | dict2items }}"
@@ -1455,7 +1606,7 @@
               until: >-
                 not (_remove_retryable | bool)
                 or (nd_rehome_removed.attempts | default(1) | int) >= (nd_switch_remove_retries | int) + 1
-              retries: "{{ nd_switch_remove_retries | int }}"
+              retries: "{{ 0 if (_nd_remove_leaf_tor_force_retry | default(false) | bool) else (nd_switch_remove_retries | int) }}"
               delay: "{{ nd_switch_remove_delay | int }}"
               failed_when: false
               no_log: true
@@ -1660,8 +1811,17 @@
             - name: Reconcile Leaf-ToR unpairing and retry only the refused switches once
               vars:
                 nd_rehome_moves: "{{ _nd_remove_retry_moves }}"
+                _nd_remove_leaf_tor_force_retry: >-
+                  {{ (_nd_leaf_tor_force_forward_scope | bool)
+                     and (_nd_predelete_leaf_tor_force_required | default(false) | bool) }}
               block:
                 - *nd_predelete_gate
+                - *nd_force_direction_probe
+                - *nd_force_direction_require
+                - name: Report the single identity-scoped forced forward-transfer retry
+                  ansible.builtin.debug:
+                    msg: "NDP_SWITCH_REMOVE_FORCE_RETRY: one force=true request for verified refused Leaf-ToR identities in an opted-in iBGP-to-eBGP preflight; fresh source absence remains mandatory."
+                  when: _nd_remove_leaf_tor_force_retry | bool
                 - name: Retain accepted fabric outcomes before classifying the retry
                   ansible.builtin.set_fact:
                     nd_rehome_delete_reports: "{{ _nd_remove_original_reports | selectattr('classification', 'equalto', 'accepted') | list }}"

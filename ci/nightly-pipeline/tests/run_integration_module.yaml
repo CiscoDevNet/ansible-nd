@@ -50,6 +50,7 @@
     switch_password: "{{ lookup('env', 'ANSIBLE_NXOS_SWITCH_PASSWORD') }}"
     # ansible-test normally defines this; alias it here since this harness bypasses ansible-test.
     ansible_it_fabric: "{{ fabric_name }}"
+    nd_pipeline_switches_topology: "{{ (nd_test_fabric_switches | default({})).get(fabric_name, []) }}"
     ansible_switch1: 192.0.2.195
     ansible_switch2: 192.0.2.196
     ansible_sno_1: SERIAL00001

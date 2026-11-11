@@ -7,7 +7,7 @@ import re
 import subprocess
 import sys
 
-from ansible.plugins.filter.core import regex_replace, to_bool
+from ansible.plugins.filter.core import combine, regex_replace, to_bool
 from jinja2 import StrictUndefined
 from jinja2.nativetypes import NativeEnvironment
 import pytest
@@ -47,10 +47,16 @@ if a['method']:
                 active = not copies or scenario == 'startup_warning_persists' or s['anomaly_reads'] == 2
                 anomalies = [{'fabricName':'fixture-source', 'cleared':not active,
                               'anomalyString':'Switch [fixture/FIXTURE0006]: ~Periodic "copy run start" has been skipped on the switch due to an active deployment, maintenance mode, or deployment disable mode.'}]
-            if scenario.startswith('leaf_tor_') and s['selected_calls']:
+            if scenario.startswith('predelete_leaf_tor_') or scenario.startswith('leaf_tor_') and s['selected_calls']:
+                deployed = len([path for path in s['rest_writes']
+                                if '/fixture-source/' in path and path.endswith('/actions/deploy')])
+                cleared = (scenario == 'predelete_leaf_tor_clears' and deployed > 0
+                           or scenario in ['leaf_tor_then_success', 'leaf_tor_multi_fabric'] and deployed >= 2)
                 anomalies = [{'fabricName':'fixture-source', 'cleared':False,
                               'anomalyString':'Switch [FIXTURE'+str(index).zfill(4)+']: Please perform Recalculate and Deploy to complete Leaf-ToR unpairing before deleting the leaf switch from the fabric.'}
                              for index in (5, 6)]
+                for anomaly in anomalies:
+                    anomaly['cleared'] = cleared
                 if scenario == 'leaf_tor_foreign_anomaly':
                     for anomaly in anomalies: anomaly['fabricName'] = 'another-fabric'
                 if scenario == 'leaf_tor_cleared':
@@ -109,9 +115,12 @@ if a['method']:
             finish(changed=False, status=403 if scenario == 'predelete_inventory_403' else 200, current=body)
         code = 500 if scenario == 'destination_http_error' else 200
         kind = 'externalConnectivity' if scenario == 'external' else 'vxlanCampus' if scenario == 'campus' else 'vxlanEbgp'
+        if a['path'].endswith('/fixture-source'):
+            kind = s.get('source_type', 'vxlanIbgp')
         finish(changed=False, status=code, current={'management':{'type':kind}})
     s['rest_writes'].append(a['path'])
-    if not a['path'].endswith('/switchActions/remove'):
+    forced = a['path'].endswith('/switchActions/remove?force=true')
+    if not a['path'].endswith('/switchActions/remove') and not forced:
         if '/switchActions/changeSystemMode?' in a['path']:
             assert a['content']['mode'] == 'normal' and not s.get('last_active')
             requested = a['content']['switchIds']
@@ -173,6 +182,10 @@ if a['method']:
             if scenario == 'predelete_deploy_bad_body': finish(changed=True, status=207, current={})
         finish(changed=True, status=200, current={})
     requested = a['content']['switchIds']; s['selected_calls'].append(requested)
+    if forced:
+        s.setdefault('force_requests', []).append(requested)
+        if scenario == 'leaf_tor_force_http_500':
+            fail(status=500, msg='Temporary forced remove failure')
     attempt = len(s['selected_calls'])
     if scenario in ('http_500', 'http_429', 'transport_timeout') and attempt == 1:
         if scenario == 'transport_timeout': fail(msg='Connection timed out')
@@ -185,6 +198,8 @@ if a['method']:
     first_refusal = 2 if scenario == 'leaf_tor_multi_fabric' else 1
     if scenario.startswith('leaf_tor_') and (attempt == first_refusal or scenario == 'leaf_tor_forever'):
         refused = set(requested[-2:])
+    if forced and scenario == 'leaf_tor_force_refused':
+        refused = set(requested)
     items = [{'switchId': identity, 'status':'failed' if identity in refused else 'success',
               'errorCode':'ND-4102' if identity in refused else '0',
               'message': ('Failed to delete the switch['+identity+']. Please check Anomalies for possible reasons. password=DO_NOT_PRINT_ME') if identity in refused else 'Deleted successfully',
@@ -199,13 +214,14 @@ if a['method']:
     if scenario == 'malformed_207': items=[]
     if scenario == 'duplicate_identity': items[-1]=dict(items[0])
     if scenario == 'wrong_identity': items[-1]['switchId']='UNREQUESTED0001'
+    if forced and scenario == 'leaf_tor_force_wrong_identity': items[-1]['switchId']='UNREQUESTED0001'
     if scenario == 'unknown_item_status': items[-1]['status']='pending-unknown'
     if scenario == 'missing_item': items=items[:-1]
     if scenario == 'missing_response': finish(changed=True, status=207)
     body={'items':items}
     if scenario == 'bad_body': body='invalid response shape'
     if scenario == 'body_errors': body={'error':{'message':'Controller rejected operation'},'private':'RAW_PAYLOAD'}
-    accepted = not refused and scenario not in ('malformed_207','duplicate_identity','wrong_identity','unknown_item_status','missing_item','bad_body','body_errors','source_never_absent')
+    accepted = not refused and scenario not in ('malformed_207','duplicate_identity','wrong_identity','unknown_item_status','missing_item','bad_body','body_errors','source_never_absent','leaf_tor_force_never_absent')
     if accepted:
         s['present'] = [address for index, address in enumerate(s['original'])
                         if address in s['present'] and 'FIXTURE'+str(index+1).zfill(4) not in requested]
@@ -299,14 +315,14 @@ def test_unsafe_startup_save_preconditions_never_remove_or_onboard(tmp_path, sce
 def test_leaf_tor_refusal_recalculates_deploys_and_retries_only_refused_switches(tmp_path, scenario):
     completed, state = execute(tmp_path, scenario)
     assert (completed.returncode == 0) is (scenario == 'leaf_tor_then_success'), completed.stdout + completed.stderr
-    assert len(state['selected_calls']) == (1 if scenario == 'leaf_tor_deploy_fails' else 2)
+    assert len(state['selected_calls']) == (2 if scenario == 'leaf_tor_then_success' else 1)
     assert len(state['selected_calls'][0]) == 6
     if len(state['selected_calls']) == 2:
         assert state['selected_calls'][1] == ['FIXTURE0005', 'FIXTURE0006']
     assert state['anomaly_reads'] >= 2
     assert [path.rsplit('/', 1)[-1] for path in state['rest_writes'] if not path.endswith('/actions/copyRunStart')] == (
         ['configSave', 'deploy', 'remove', 'configSave', 'deploy']
-        + ([] if scenario == 'leaf_tor_deploy_fails' else ['remove']))
+        + (['remove'] if scenario == 'leaf_tor_then_success' else []))
     assert all(request == ['FIXTURE0005', 'FIXTURE0006'] for request in state['copy_requests'][2:])
     assert ('DESTINATION_ADD_REACHED' in completed.stdout) is (scenario == 'leaf_tor_then_success')
     assert state['module_delete_calls'] == 0
@@ -339,6 +355,45 @@ def test_leaf_tor_retry_excludes_fabrics_whose_removal_already_succeeded(tmp_pat
     assert [path.rsplit('/', 1)[-1] for path in accepted_fabric_writes] == ['copyRunStart', 'configSave', 'deploy', 'copyRunStart', 'remove']
 
 
+@pytest.mark.parametrize('scenario', ['predelete_leaf_tor_persists', 'predelete_leaf_tor_clears'])
+def test_in_sync_is_not_sufficient_when_leaf_tor_unpairing_is_pending(tmp_path, scenario):
+    completed, state = execute(tmp_path, scenario)
+    assert (completed.returncode == 0) is (scenario == 'predelete_leaf_tor_clears'), completed.stdout + completed.stderr
+    if scenario == 'predelete_leaf_tor_persists':
+        assert state['selected_calls'] == []
+        assert 'NDP_SWITCH_PREDELETE_LEAF_TOR_BLOCKED' in completed.stdout
+        assert 'DESTINATION_ADD_REACHED' not in completed.stdout
+    else:
+        assert len(state['selected_calls']) == 1
+        assert 'DESTINATION_ADD_REACHED' in completed.stdout
+    assert 'DO_NOT_PRINT_ME' not in completed.stdout and 'RAW_PAYLOAD' not in completed.stdout
+
+
+@pytest.mark.parametrize('kind,valid,clear', [
+    ('matching', True, False), ('cleared', True, True), ('other_identity', True, True),
+    ('other_fabric', True, True), ('empty', True, True), ('malformed', False, False),
+    ('truncated', False, False), ('http_error', False, False),
+])
+def test_leaf_tor_clearance_is_identity_scoped_and_fails_closed(kind, valid, clear):
+    anomaly = {'fabricName': 'fixture-source', 'cleared': kind == 'cleared',
+               'anomalyString': 'Switch [fixture/FIXTURE0005]: Please perform Recalculate and Deploy to complete Leaf-ToR unpairing before deleting the leaf switch.'}
+    if kind == 'other_identity':
+        anomaly['anomalyString'] = anomaly['anomalyString'].replace('FIXTURE0005', 'FOREIGN0001')
+    if kind == 'other_fabric':
+        anomaly['fabricName'] = 'another-fabric'
+    rows = [] if kind == 'empty' else [anomaly]
+    if kind == 'malformed':
+        rows = ['RAW_PRIVATE_PAYLOAD']
+    if kind == 'truncated':
+        rows *= 200
+    result = expression_environment().from_string(guard()['vars']['_nd_predelete_leaf_tor_report']).render(
+        _predelete_leaf_tor_reply={'status': 500 if kind == 'http_error' else 200,
+                                  'current': {'anomalies': rows}},
+        _predelete_leaf_tor_fabric='fixture-source', _predelete_requested_ids=['FIXTURE0005', 'FIXTURE0006'])
+    assert result['valid'] is valid and result['clear'] is clear
+    assert 'FIXTURE0005' not in json.dumps(result) and 'RAW_PRIVATE_PAYLOAD' not in json.dumps(result)
+
+
 def named(tasks, prefix):
     for task in tasks:
         if task.get("name", "").startswith(prefix):
@@ -363,6 +418,7 @@ def expression_environment():
     environment.filters["intersect"] = lambda left, right: sorted(set(left) & set(right))
     environment.filters["difference"] = lambda left, right: [value for value in left if value not in right]
     environment.filters["regex_replace"] = regex_replace
+    environment.filters["combine"] = combine
     environment.tests["succeeded"] = lambda result: not result.get("failed", False)
     environment.tests["match"] = lambda value, pattern: bool(re.match(pattern, value))
     environment.tests["search"] = lambda value, pattern: bool(re.search(pattern, value))
@@ -509,11 +565,12 @@ def test_source_absence_requires_successful_well_formed_inventory(result, expect
     assert "ignore_errors" not in wait
 
 
-def execute(tmp_path, scenario, remove_retries=2):
+def execute(tmp_path, scenario, remove_retries=2, force=False, phase='pre', source_type='vxlanIbgp'):
     state = tmp_path / "state.json"
     ips = ["192.0.2." + str(index) for index in range(1, 7)]
     state.write_text(json.dumps({"scenario": scenario, "original": ips, "present": ips,
-                                 "selected_calls": [], "source_gets": 0, "rest_writes": [], "module_delete_calls": 0}))
+                                 "selected_calls": [], "source_gets": 0, "rest_writes": [], "module_delete_calls": 0,
+                                 "source_type": source_type}))
     modules = tmp_path / "collections/ansible_collections/cisco/nd/plugins/modules"
     modules.mkdir(parents=True)
     for module in ("nd_rest", "nd_manage_switches", "nd_manage_vpc_pair"):
@@ -530,15 +587,18 @@ def execute(tmp_path, scenario, remove_retries=2):
               "nd_switch_rehome_supported_types": guard()["vars"]["nd_switch_rehome_supported_types"],
               "nd_switch_predelete_deploy": True, "nd_switch_settle_seconds": 0,
               "nd_switch_rehome_force_delete": False, "nd_switch_remove_retries": remove_retries,
+              "nd_switch_ibgp_to_ebgp_leaf_tor_force_delete": force, "nd_switch_transfer_phase": phase,
+              "nd_force_direction_probes": {"results": []},
               "nd_switch_remove_delay": 0, "nd_switch_rehome_retries": 1, "nd_switch_rehome_delay": 0}
     values.update({key: value for key, value in guard()['vars'].items()
-                   if key.startswith('_nd_predelete_') or key.startswith('nd_switch_predelete_')})
+                   if key.startswith('_nd_predelete_') or key.startswith('nd_switch_predelete_') or key.startswith('_nd_leaf_tor_')})
     values.update(nd_switch_predelete_timeout_seconds=45,
                   nd_switch_predelete_call_timeout_seconds=1, nd_switch_predelete_poll_seconds=0,
                   nd_switch_predelete_deploy=True)
     if scenario in {'predelete_pending_forever', 'predelete_missing_switch', 'predelete_missing_status',
                     'predelete_duplicate_switch', 'predelete_bad_inventory', 'predelete_subset_missing_status',
-                    'predelete_deploy_async_not_ready', 'predelete_deploy_unknown_missing_status', 'leaf_tor_retry_pending'}:
+                    'predelete_deploy_async_not_ready', 'predelete_deploy_unknown_missing_status', 'leaf_tor_retry_pending',
+                    'predelete_leaf_tor_persists', 'leaf_tor_forever'}:
         values['nd_switch_predelete_timeout_seconds'] = 12
     if scenario in {'startup_active_forever', 'startup_maintenance_stuck', 'startup_warning_persists', 'startup_late_out_of_sync'}:
         values['nd_switch_predelete_timeout_seconds'] = 12
@@ -621,6 +681,78 @@ def test_incompatible_or_unreadable_destination_stops_before_any_mutation(tmp_pa
     assert state["selected_calls"] == []
     assert state["rest_writes"] == []
     assert "DESTINATION_ADD_REACHED" not in completed.stdout
+
+
+@pytest.mark.parametrize('enabled,phase,source_type,destination_type,valid_metadata,expected', [
+    (True, 'pre', 'vxlanIbgp', 'vxlanEbgp', True, True),
+    (False, 'pre', 'vxlanIbgp', 'vxlanEbgp', True, False),
+    (True, 'home', 'vxlanIbgp', 'vxlanEbgp', True, False),
+    (True, 'post', 'vxlanIbgp', 'vxlanEbgp', True, False),
+    (True, 'pre', 'vxlanEbgp', 'vxlanIbgp', True, False),
+    (True, 'pre', 'externalConnectivity', 'vxlanEbgp', True, False),
+    (True, 'pre', 'vxlanIbgp', 'externalConnectivity', True, False),
+    (True, 'pre', 'vxlanIbgp', 'vxlanEbgp', False, False),
+])
+def test_force_exception_requires_opt_in_and_verified_forward_transfer(enabled, phase, source_type, destination_type, valid_metadata, expected):
+    probes = [{'_force_fabric': fabric, 'status': 200 if valid_metadata else 403,
+               'current': {'management': {'type': kind}}}
+              for fabric, kind in [('source', source_type), ('destination', destination_type)]]
+    result = expression_environment().from_string(guard()['vars']['_nd_leaf_tor_force_forward_scope']).render(
+        nd_switch_ibgp_to_ebgp_leaf_tor_force_delete=enabled, nd_switch_transfer_phase=phase,
+        nd_switch_apply=True, ansible_check_mode=False, nd_force_direction_probes={'results': probes},
+        nd_rehome_moves=[{'from_fabric': 'source', 'fabric': 'destination'}])
+    assert result is expected
+
+
+def test_opted_in_force_retry_removes_only_the_two_verified_refusals(tmp_path):
+    completed, state = execute(tmp_path, 'leaf_tor_force_success', force=True)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert state['force_requests'] == [['FIXTURE0005', 'FIXTURE0006']]
+    assert state['selected_calls'] == [
+        ['FIXTURE0001', 'FIXTURE0002', 'FIXTURE0003', 'FIXTURE0004', 'FIXTURE0005', 'FIXTURE0006'],
+        ['FIXTURE0005', 'FIXTURE0006']]
+    assert state['source_gets'] > 0
+    assert 'NDP_SWITCH_REMOVE_FORCE_RETRY' in completed.stdout
+    assert 'DESTINATION_ADD_REACHED' in completed.stdout
+    assert 'DO_NOT_PRINT_ME' not in completed.stdout
+
+
+@pytest.mark.parametrize('scenario', ['leaf_tor_force_refused', 'leaf_tor_force_http_500',
+                                     'leaf_tor_force_wrong_identity', 'leaf_tor_force_never_absent'])
+def test_forced_forward_retry_never_onboards_on_refusal_or_unconfirmed_absence(tmp_path, scenario):
+    completed, state = execute(tmp_path, scenario, force=True)
+    assert completed.returncode != 0
+    assert state.get('force_requests') == [['FIXTURE0005', 'FIXTURE0006']]
+    assert 'DESTINATION_ADD_REACHED' not in completed.stdout
+
+
+@pytest.mark.parametrize('phase,source_type', [('home', 'vxlanIbgp'), ('post', 'vxlanIbgp'), ('pre', 'vxlanEbgp')])
+def test_force_option_cannot_mutate_outside_forward_preflight(tmp_path, phase, source_type):
+    completed, state = execute(tmp_path, 'leaf_tor_force_success', force=True, phase=phase, source_type=source_type)
+    assert completed.returncode != 0
+    assert state['selected_calls'] == []
+    assert not state.get('force_requests')
+    assert 'NDP_SWITCH_FORCE_SCOPE_BLOCKED' in completed.stdout
+
+
+@pytest.mark.parametrize('scenario', ['leaf_tor_auth_refusal', 'leaf_tor_other_anomaly',
+                                     'leaf_tor_wrong_identity', 'startup_frozen'])
+def test_force_option_never_bypasses_auth_unrelated_anomalies_identity_or_lock(tmp_path, scenario):
+    completed, state = execute(tmp_path, scenario, force=True)
+    assert completed.returncode != 0
+    assert not state.get('force_requests')
+    assert 'DESTINATION_ADD_REACHED' not in completed.stdout
+
+
+@pytest.mark.parametrize('variant', ['Jenkinsfile_nd_jenkins_script', 'Jenkinsfile_nd_jenkins_script_temp_switches', 'Jenkinsfile_nd_jenkins_script_comm_list'])
+def test_jenkins_force_option_is_disabled_and_forward_preflight_only(variant):
+    source = (ROOT / variant).read_text()
+    assert "name: 'ND_IBGP_TO_EBGP_LEAF_TOR_FORCE_DELETE', defaultValue: false" in source
+    assert "phase == 'pre' && params.ND_IBGP_TO_EBGP_LEAF_TOR_FORCE_DELETE == true" in source
+    assert "(ndfcConfig.primary_fabric_type ?: '').toLowerCase() == 'vxlanebgp'" in source
+    assert 'nd_switch_transfer_phase=${PREFLIGHT_PHASE}' in source
+    assert 'nd_switch_ibgp_to_ebgp_leaf_tor_force_delete=${PREFLIGHT_FORCE_LEAF_TOR}' in source
+    assert 'NDP_SWITCH_FORCE_RUNTIME_MISSING' in source
 
 
 def test_destination_policy_is_checked_before_moves_and_before_missing_add_waits():

@@ -83,7 +83,15 @@ script.binding.env.ND_HOME_RECOVERY_STATUS=scenario=='no-home'?'not_required':sc
 script.binding.env.REQUIRED_FILES_READY=scenario=='missing-inputs'?'false':'true'
 script.binding.setVariable('COLLECTIONS_DIRECTORY','/fixture/collection')
 def calls=[]
-script.metaClass.resetFabricBetweenVersions={Object tag->calls.add('reset')}
+script.metaClass.withEnv={List entries,Closure work->
+    def previous=[:]
+    entries.each{entry->def pair=entry.split('=',2);previous[pair[0]]=script.binding.env[pair[0]];script.binding.env[pair[0]]=pair[1]}
+    try{return work.call()}finally{previous.each{key,value->if(value==null)script.binding.env.remove(key);else script.binding.env[key]=value}}
+}
+script.metaClass.resetFabricBetweenVersions={Object tag->
+    assert script.binding.env.ND_RESET_DEFER_INTERFACE_BASELINE=='true'
+    calls.add('reset')
+}
 script.metaClass.generateDynamicInventory={Object config->calls.add('inventory')}
 script.metaClass.usernamePassword={Map options->options}
 script.metaClass.withCredentials={List bindings,Closure work->work.call()}
@@ -92,6 +100,7 @@ def failure=scenario=='flow-interrupt'?
     scenario=='java-interrupt'?new InterruptedException('injected home abort'):new IllegalStateException('injected home failure')
 script.metaClass.runSwitchMembershipSync={Object config,Object phase,Object roster->
     calls.add('guard')
+    assert script.binding.env.ND_RESET_DEFER_INTERFACE_BASELINE==null
     assert phase=='home' && script.binding.env.ND_HOME_RECOVERY_STATUS=='unverified'
     if(scenario in ['ordinary-failure','flow-interrupt','java-interrupt']){throw failure}
 }

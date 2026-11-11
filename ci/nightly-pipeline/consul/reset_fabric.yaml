@@ -357,4 +357,6 @@
         {{ lookup('ansible.builtin.first_found', {'files': [
              playbook_dir ~ '/nd_prerequisite/interface_baseline.yaml',
              playbook_dir ~ '/../playbooks/nd_prerequisite/interface_baseline.yaml'], 'skip': false}) }}
-      when: nd_interface_baseline_enabled | default(lookup('env', 'ND_INTERFACE_BASELINE_ENABLED') | default(false, true)) | bool
+      when:
+        - nd_interface_baseline_enabled | default(lookup('env', 'ND_INTERFACE_BASELINE_ENABLED') | default(false, true)) | bool
+        - not (nd_reset_defer_interface_baseline | default(false) | bool)

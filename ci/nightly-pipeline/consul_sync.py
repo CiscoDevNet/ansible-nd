@@ -57,6 +57,9 @@ TESTS_KEYS = {
 
 def key_to_local(key):
     """Map a Consul key (base already stripped) to its canonical local path."""
+    if key in {'temp_patches_for_topology/switches_topology.py',
+               'temp_patches_for_topology/nd_manage_switches_counts.patch'}:
+        return os.path.join(ROOT, key)
     if key.startswith("nd_prerequisite/"):
         return os.path.join(ROOT, "playbooks", key)
     if key.startswith("fixtures/nd_prerequisite/"):
@@ -274,7 +277,8 @@ def required_runtime_sources():
     sources = {}
     for name in dict.fromkeys(name for group in groups for name in field(group)):
         if (not isinstance(name, str) or name.startswith("/") or ".." in name.split("/")
-                or not name.endswith((".py", ".yaml", ".yml", ".cfg"))):
+                or not (name.endswith((".py", ".yaml", ".yml", ".cfg"))
+                        or name == 'temp_patches_for_topology/nd_manage_switches_counts.patch')):
             raise ValueError("Unsupported runtime manifest entry")
         key = prefix.group(1) + "/" + name if name in preflight else name
         sources[key] = key_to_local(name)

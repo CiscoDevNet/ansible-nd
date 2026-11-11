@@ -988,6 +988,33 @@ def test_legacy_bringup_requires_used_ports_instead_of_enabling_the_ownership_po
         assert json.loads(ledger.read_text())["detail"]["configData"] == expected
 
 
+@pytest.mark.parametrize('enabled,deferred', [(True, False), (True, True), (False, False), (False, True)])
+def test_reset_baseline_deferral_is_recovery_only_and_default_safe(tmp_path, enabled, deferred):
+    import yaml
+
+    root = PLUGIN.parents[2]
+    hook = yaml.safe_load((root / 'consul/reset_fabric.yaml').read_text())[0]['tasks'][-1]
+    checkpoint = tmp_path / 'checkpoint.yaml'
+    checkpoint.write_text(yaml.safe_dump([{'ansible.builtin.debug': {'msg': 'BASELINE_CHECKPOINT_EXECUTED'}}]))
+    hook['ansible.builtin.include_tasks'] = str(checkpoint)
+    variables = {'nd_interface_baseline_enabled': enabled}
+    if deferred:
+        variables['nd_reset_defer_interface_baseline'] = True
+    playbook = tmp_path / 'reset-hook.yaml'
+    playbook.write_text(yaml.safe_dump([{
+        'hosts': 'localhost', 'connection': 'local', 'gather_facts': False,
+        'vars': variables, 'tasks': [hook]}]))
+    config = tmp_path / 'ansible.cfg'
+    config.write_text('[defaults]\n')
+    environment = dict(os.environ, ANSIBLE_CONFIG=str(config), ANSIBLE_STDOUT_CALLBACK='default',
+                       ANSIBLE_NOCOLOR='1', ANSIBLE_LOCAL_TEMP=str(tmp_path / 'local'),
+                       ANSIBLE_REMOTE_TEMP=str(tmp_path / 'remote'), OBJC_DISABLE_INITIALIZE_FORK_SAFETY='YES')
+    done = subprocess.run([str(Path(sys.executable).with_name('ansible-playbook')), '-i', 'localhost,', str(playbook)],
+                          env=environment, text=True, capture_output=True, timeout=30)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert ('BASELINE_CHECKPOINT_EXECUTED' in done.stdout) is (enabled and not deferred)
+
+
 def test_real_registry_and_all_lifecycle_delivery_hooks_are_complete(baseline):
     import yaml
 
@@ -1005,15 +1032,20 @@ def test_real_registry_and_all_lifecycle_delivery_hooks_are_complete(baseline):
     assert any("NDP_INTERFACE_BASELINE_HOOK after membership" in task.get("name", "") for task in guard["tasks"])
     reset = yaml.safe_load((root / "consul/reset_fabric.yaml").read_text())[0]
     assert "NDP_INTERFACE_BASELINE_HOOK after reset" in reset["tasks"][-1]["name"]
+    assert reset["tasks"][-1]["when"][-1] == "not (nd_reset_defer_interface_baseline | default(false) | bool)"
     assert guard["vars"]["nd_switch_predelete_copy_timeout_seconds"] == 900
     for variant in ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches", "Jenkinsfile_nd_jenkins_script_comm_list"):
         source = (root / variant).read_text()
         assert "'nd_prerequisite/interface_baseline.yaml'" in source
         assert "'action_plugins/nd_interface_baseline.py'" in source
-        expected_default = "true" if variant == "Jenkinsfile_nd_jenkins_script" else "false"
+        expected_default = "false"
         assert "name: 'ND_INTERFACE_BASELINE_ENABLED', defaultValue: " + expected_default in source
         assert "name: 'ND_INTERFACE_BASELINE_APPLY', defaultValue: false" in source
         assert "NDP_INTERFACE_BASELINE_RUNTIME_MISSING" in source
+        home = source.split('def restoreHomeFabric(', 1)[1].split('\ndef recordUnstartedRound(', 1)[0]
+        assert "withEnv(['ND_RESET_DEFER_INTERFACE_BASELINE=true'])" in home
+        assert home.index('resetFabricBetweenVersions(') < home.index("runSwitchMembershipSync(homeConfig, 'home', homeRoster)")
+        assert "nd_reset_defer_interface_baseline=${env.ND_RESET_DEFER_INTERFACE_BASELINE ?: 'false'}" in source
 
 
 @pytest.mark.parametrize("extended", [False, True])

@@ -90,11 +90,27 @@
         path: "/api/v1/manage/fabrics/{{ _auif.fabric }}/switches/{{ _auif.serial }}/interfaces/{{ _auif.ifname | replace('/', '%2F') }}"
         method: get
       register: _auif_accepted
-      failed_when: >-
-        (_auif_accepted.current.switchId | default('')) != _auif.serial or
-        (_auif_accepted.current.interfaceName | default('')) != _auif.ifname or
-        (_auif_accepted.current.configData | default({})) != _auif_expected
+      retries: 12
+      delay: 5
+      until: >-
+        (_auif_accepted.current.switchId | default('')) == _auif.serial and
+        (_auif_accepted.current.interfaceName | default('')) == _auif.ifname and
+        (_auif_accepted.current.configData | default({})) == _auif_expected
+      ignore_errors: true
       no_log: true
+
+    - name: "admin_up require verified acceptance before deploy for {{ _auif.label }}"
+      ansible.builtin.assert:
+        that:
+          - _auif_accepted is not failed
+          - (_auif_accepted.current.switchId | default('')) == _auif.serial
+          - (_auif_accepted.current.interfaceName | default('')) == _auif.ifname
+          - (_auif_accepted.current.configData | default({})) == _auif_expected
+        fail_msg: >-
+          NDP_ADMIN_UP_UNVERIFIED: intent acceptance was not verified; no deploy was requested.
+          switch_matches={{ (_auif_accepted.current.switchId | default('')) == _auif.serial }};
+          interface_matches={{ (_auif_accepted.current.interfaceName | default('')) == _auif.ifname }};
+          intent_matches={{ (_auif_accepted.current.configData | default({})) == _auif_expected }}.
 
     - name: "admin_up deploy only {{ _auif.label }}"
       cisco.nd.nd_rest:

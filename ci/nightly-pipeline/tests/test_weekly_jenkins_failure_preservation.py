@@ -43,11 +43,11 @@ def specification(value):
     return 'def scenario = script.parseReportingJson(' + json.dumps(json.dumps(value)) + ')\n'
 
 
-def test_required_consul_download_has_finite_request_timeout(groovy_runner):
+def test_required_consul_download_uses_five_minute_request_timeout(groovy_runner):
     groovy_runner(r'''
 script.binding.setVariable('CONSUL_URL', 'https://consul.example')
 script.metaClass.httpRequest = { Map options ->
-    assert options.timeout == 60
+    assert options.timeout == 300
     assert options.validResponseCodes == '200'
     return [content: 'offline runtime fixture']
 }
@@ -70,28 +70,23 @@ def test_missing_timeout_tool_stops_before_module_execution(tmp_path, variant):
     assert result.returncode != 0
     assert 'NDP_REQUIRED_TIMEOUT_UNAVAILABLE' in result.stderr
     assert 'MODULE_MUST_NOT_START' not in result.stdout
-    assert '|| true)' not in source.split('TIMEOUT_CMD=', 1)[1].split('\n', 1)[0]
+    assert '                                TIMEOUT_CMD=' not in source
+    assert ' ${TIMEOUT_CMD}' not in source
 
 
 @pytest.mark.parametrize('variant', (*VARIANTS, 'Jenkinsfile_nd_jenkins_script_comm_list'))
-@pytest.mark.parametrize('seconds,allowed', [('2400', True), ('0', False), ('-1', False), ('unlimited', False)])
-def test_module_deadline_cannot_be_disabled_or_invalid(tmp_path, variant, seconds, allowed):
+def test_module_playbooks_have_no_execution_timeout(variant):
     source = (ROOT / variant).read_text()
-    anchor = '                                for bounded_seconds in '
-    assert source.count(anchor) == 1
-    check = anchor + source.split(anchor, 1)[1].split('\n                                done', 1)[0] + '\ndone'
-    environment = dict(os.environ, MODULE_TIMEOUT=seconds, SWITCHES_MODULE_TIMEOUT='5400',
-                       SWITCH_GUARD_TIMEOUT='1800', VPC_PEERLINK_TIMEOUT='180')
-    result = subprocess.run(['/bin/bash'], input='set -e\n' + check + '\nprintf "BOUNDS_READY\\n"\n',
-                            cwd=tmp_path, env=environment, text=True, capture_output=True, timeout=5)
-    assert (result.returncode == 0) is allowed
-    assert ('BOUNDS_READY' in result.stdout) is allowed
-    if not allowed:
-        assert 'NDP_INVALID_RUNTIME_TIMEOUT' in result.stderr
+    assert 'MODULE_TIMEOUT' not in source
+    assert 'SWITCHES_MODULE_TIMEOUT' not in source
+    assert '                                TIMEOUT_CMD=' not in source
+    assert ' ${TIMEOUT_CMD}' not in source
+    assert 'MOD_TIMEOUT_CMD' not in source
+    assert 'run_logged_playbook' in source
 
 
 @pytest.mark.parametrize('variant', (*VARIANTS, 'Jenkinsfile_nd_jenkins_script_comm_list'))
-@pytest.mark.parametrize('mode', ['normal', 'parent_symlink', 'target_symlink', 'absolute_path'])
+@pytest.mark.parametrize('mode', ['normal', 'missing_parent', 'parent_symlink', 'target_symlink', 'absolute_path'])
 def test_archive_receipt_uses_container_shell_and_rejects_unsafe_paths(tmp_path, variant, mode):
     source = (ROOT / variant).read_text()
     writer = source.split('def writeStructuredArchiveReceipt(', 1)[1].split('\ndef publishStructuredArtifacts', 1)[0]
@@ -101,7 +96,9 @@ def test_archive_receipt_uses_container_shell_and_rejects_unsafe_paths(tmp_path,
     target = parent / 'execution.0001.json'
     outside = tmp_path / 'outside.json'
     outside.write_text('unchanged')
-    if mode == 'parent_symlink':
+    if mode == 'missing_parent':
+        parent.rmdir()
+    elif mode == 'parent_symlink':
         parent.rmdir()
         parent.symlink_to(tmp_path, target_is_directory=True)
     elif mode == 'target_symlink':
@@ -115,7 +112,7 @@ def test_archive_receipt_uses_container_shell_and_rejects_unsafe_paths(tmp_path,
                             text=True, capture_output=True, timeout=5)
     assert outside.read_text() == 'unchanged'
     assert 'fixture-run' not in result.stdout + result.stderr
-    if mode == 'normal':
+    if mode in ('normal', 'missing_parent'):
         assert result.returncode == 0, result.stderr
         assert json.loads(target.read_text()) == receipt
         assert target.stat().st_mode & 0o777 == 0o600
@@ -314,6 +311,7 @@ script.metaClass.recordUnstartedRound = { Object round, Object reason ->
 }
 script.metaClass.finishStructuredExecution = { Object status -> calls.add('finish:' + status); failAt('terminal') }
 script.metaClass.foldStructuredResults = { -> calls.add('aggregate'); failAt('aggregate') }
+script.metaClass.preserveModuleLogs = { -> calls.add('raw-logs') }
 script.metaClass.publishModuleActivityReport = { -> calls.add('activity'); failAt('activity') }
 script.metaClass.bundleAllLogs = { -> calls.add('bundle') }
 def caught = null
@@ -323,6 +321,62 @@ assert calls.contains('home')
 assert calls.any { it.startsWith('finish:') }
 if (scenario.primary_site == 'round' && scenario.primary_kind in ['flow', 'java']) { assert calls.contains('finish:interrupted') }
 assert calls.contains('aggregate') && calls.contains('activity')
+assert calls.indexOf('raw-logs') < calls.indexOf('aggregate')
+assert calls.contains('bundle')
 if (scenario.primary_site == 'round') { assert !calls.contains('round:eBGP') }
 '''
     groovy_runner(body)
+
+
+@pytest.mark.parametrize('variant', (*VARIANTS, 'Jenkinsfile_nd_jenkins_script_comm_list'))
+@pytest.mark.parametrize('problem', ['none', 'no_logs', 'log_symlink', 'root_symlink'])
+def test_raw_log_archive_is_independent_of_reporter_and_excludes_private_inputs(tmp_path, variant, problem):
+    import zipfile
+
+    source = (ROOT / variant).read_text()
+    helper = source.split('def preserveModuleLogs()', 1)[1].split('\ndef bundleAllLogs()', 1)[0]
+    shell = helper.split("sh(script: '''", 1)[1].split("'''", 1)[0]
+    root = tmp_path / 'reports'
+    logs = root / 'executions' / 'round-iBGP'
+    logs.mkdir(parents=True)
+    private = root / 'runtime-inputs' / 'inventory.yaml'
+    private.parent.mkdir()
+    private.write_text('PRIVATE_INPUT_MUST_NOT_BE_ARCHIVED')
+    log = logs / 'test_output_fixture_nd_manage_policy.txt'
+    if problem == 'log_symlink':
+        log.symlink_to(private)
+    elif problem != 'no_logs':
+        log.write_text('partial module log without a summary or receipt\n')
+        log.chmod(0o600)
+    if problem == 'root_symlink':
+        linked = tmp_path / 'linked-reports'
+        linked.symlink_to(root, target_is_directory=True)
+        root = linked
+    env = dict(os.environ, WORKSPACE=str(tmp_path), ND_REPORTING_ROOT=str(root),
+               ND_LOG_ARCHIVE_DIR='module_logs_build_147', ND_LOG_ARCHIVE_ZIP='module_logs_build_147.zip')
+    done = subprocess.run(['/bin/bash'], input='umask 077\n' + shell, env=env, text=True, capture_output=True, timeout=15)
+    bundle = tmp_path / 'module_logs_build_147.zip'
+    if problem in ['log_symlink', 'root_symlink']:
+        assert done.returncode != 0
+        assert not bundle.exists()
+    elif problem == 'no_logs':
+        assert done.returncode == 0, done.stderr
+        assert done.stdout.strip() == '0'
+        assert not bundle.exists()
+    else:
+        assert done.returncode == 0, done.stderr
+        assert done.stdout.strip() == '1'
+        with zipfile.ZipFile(bundle) as archive:
+            assert archive.namelist() == ['round-iBGP/' + log.name]
+            assert archive.read(archive.namelist()[0]) == log.read_bytes()
+        copy = tmp_path / 'module_logs_build_147' / 'round-iBGP' / log.name
+        assert copy.stat().st_mode & 0o777 == 0o644
+        assert copy.parent.stat().st_mode & 0o777 == 0o755
+        assert copy.parent.parent.stat().st_mode & 0o777 == 0o755
+        assert bundle.stat().st_mode & 0o777 == 0o644
+    assert 'preserveModuleLogs()' in source[:source.index('    post {')]
+    assert source.count("if (env.MODULE_LOG_ARCHIVE_STATUS == 'failed')") == 2
+    assert source.count('Module logs ZIP') == 2
+    assert source.index('                            preserveModuleLogs()') < source.index('                                foldStructuredResultsWithRecovery()')
+    timing_helper = source.split('def bundleAllLogs()', 1)[1].split('\ndef installEmbeddedReportingHelper', 1)[0]
+    assert "env.LOG_BUNDLE_FILE = ''" not in timing_helper

@@ -3,6 +3,7 @@
 
 import argparse
 import hashlib
+import importlib.util
 from pathlib import Path
 import re
 import subprocess
@@ -40,7 +41,7 @@ def generated_python_cache(root, relative, tracked):
     return path.parent.name == "__pycache__" and source in tracked and regular_output(root, relative)
 
 
-def verify(collection_root, expected_commit, expected_branch="develop"):
+def verify(collection_root, expected_commit, expected_branch="develop", allow_switches_topology_patch=False):
     root = Path(collection_root).resolve()
 
     def git(*args):
@@ -66,7 +67,19 @@ def verify(collection_root, expected_commit, expected_branch="develop"):
     if not expected_commit or commit != expected_commit:
         raise ValueError("collection commit differs from the verified selected-branch checkout")
     changed = git("diff", "--name-only", "HEAD", "--", "plugins", "tests/integration")
-    if changed:
+    topology_files = {
+        'tests/integration/targets/nd_manage_switches/tests/sanity.yaml',
+        'tests/integration/targets/nd_manage_switches/tests/gathered.yaml',
+    }
+    policy = None
+    if allow_switches_topology_patch:
+        policy_path = root / 'temp_patches_for_topology/switches_topology.py'
+        if not regular_output(root, str(policy_path.relative_to(root))):
+            raise ValueError('approved switches topology policy is missing or unsafe')
+        specification = importlib.util.spec_from_file_location('nd_switches_topology_policy', policy_path)
+        policy = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(policy)
+    if changed and (not allow_switches_topology_patch or set(changed.splitlines()) - topology_files):
         raise ValueError("tracked collection or integration sources were modified")
     tracked, allowed = set(), set(GENERATED_CONFIG_FILES)
     entries = git("ls-tree", "-r", "-z", commit, "--", "plugins", "tests/integration").split("\0")
@@ -80,7 +93,9 @@ def verify(collection_root, expected_commit, expected_branch="develop"):
         digest = hashlib.new("sha1" if len(object_id) == 40 else "sha256")
         digest.update(b"blob " + str(len(data)).encode("ascii") + b"\0" + data)
         if digest.hexdigest() != object_id:
-            raise ValueError("tracked collection or integration sources were modified")
+            original = subprocess.check_output(['git', '-C', str(root), 'show', commit + ':' + relative], stderr=subprocess.DEVNULL)
+            if not (policy is not None and relative in topology_files and data == policy.patched_bytes(relative, original)):
+                raise ValueError("tracked collection or integration sources were modified")
         tracked.add(relative)
         # These two original targets already ignore their generated payloads.
         # Derive their exact filenames only from the now-verified source bytes.
@@ -103,14 +118,16 @@ def main():
     parser.add_argument("--collection-root", required=True)
     parser.add_argument("--expected-commit", required=True)
     parser.add_argument("--expected-branch", default="develop")
+    parser.add_argument("--allow-switches-topology-patch", action="store_true")
     args = parser.parse_args()
     try:
-        commit = verify(args.collection_root, args.expected_commit, args.expected_branch)
+        commit = verify(args.collection_root, args.expected_commit, args.expected_branch, args.allow_switches_topology_patch)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         # Do not print Git output, file contents or remote URLs.
         print("NDP_DEVELOP_SOURCE_CHECK_FAILED: " + (str(error) if isinstance(error, ValueError) else type(error).__name__))
         return 1
-    print("NDP_DEVELOP_SOURCES_VERIFIED: " + args.expected_branch + " " + commit + "; no source patches")
+    suffix = '; sole approved switches topology exception' if args.allow_switches_topology_patch else '; no source patches'
+    print("NDP_DEVELOP_SOURCES_VERIFIED: " + args.expected_branch + " " + commit + suffix)
     return 0
 
 
