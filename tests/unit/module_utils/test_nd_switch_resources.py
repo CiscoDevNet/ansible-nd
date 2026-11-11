@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -1637,6 +1638,41 @@ def test_exit_json_check_mode_uses_synthetic_before_after_diff():
     assert final["diff"][0]["_action"] == "added"
 
 
+def test_resource_init_uses_cached_fabric_context(monkeypatch):
+    """Initial inventory loading uses the newly constructed fabric context."""
+    nd = FakeND()
+    nd.module.params = {
+        "config": {},
+        "fabric": "FAB1",
+        "state": "merged",
+        "output_level": "normal",
+    }
+    nd.get_rest_send = Mock(return_value=nd.rest_send)
+    fabric_context = SimpleNamespace(switches=[])
+    fabric_context_factory = Mock(return_value=fabric_context)
+    module_path = "ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch_resources."
+    monkeypatch.setattr(f"{module_path}FabricContext", fabric_context_factory)
+
+    for dependency in (
+        "FabricDetailsCache",
+        "SwitchFabricUtils",
+        "SwitchWaitUtils",
+        "BootstrapCache",
+        "SwitchDiscoveryService",
+        "SwitchFabricOps",
+        "POAPHandler",
+        "RMAHandler",
+    ):
+        monkeypatch.setattr(f"{module_path}{dependency}", Mock(return_value=SimpleNamespace()))
+
+    resource = NDSwitchResourceModule(nd, Results(), logger=ListLogger())
+
+    fabric_context_factory.assert_called_once_with(nd.rest_send, "FAB1")
+    nd.get_rest_send.assert_called_once_with()
+    assert resource.fabric_context is fabric_context
+    assert resource.inventory.collection == resource.existing
+
+
 def test_exit_json_normal_requeries_dirty_inventory_and_builds_delete_add_diff(monkeypatch):
     """exit_json normal branch re-queries mutated runs and combines delete/add diffs."""
     before = [_sw("192.0.2.10", "SERIAL1")]
@@ -1706,8 +1742,7 @@ def test_exit_json_normal_reuses_inventory_when_no_mutation(monkeypatch):
     before = [_sw("192.0.2.10", "SERIAL1")]
     resource = _resource(state="merged", existing=before, output_level="info")
 
-    def fail_from_context(*_args, **_kwargs):
-        raise AssertionError("clean runs should not re-query inventory")
+    fail_from_context = Mock(side_effect=AssertionError("clean runs should not re-query inventory"))
 
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch_resources.FabricSwitchInventory.from_context",
@@ -1720,6 +1755,7 @@ def test_exit_json_normal_reuses_inventory_when_no_mutation(monkeypatch):
     assert final["changed"] is False
     assert final["before"][0]["seed_ip"] == "192.0.2.10"
     assert final["after"][0]["seed_ip"] == "192.0.2.10"
+    fail_from_context.assert_not_called()
 
 
 def test_exit_json_failed_results_skip_requery_and_fail_json(monkeypatch):
@@ -1732,8 +1768,7 @@ def test_exit_json_failed_results_skip_requery_and_fail_json(monkeypatch):
     resource.results.diff_current = {"attempted": True}
     resource.results.register_api_call()
 
-    def fail_from_context(*_args, **_kwargs):
-        raise AssertionError("failed runs should not re-query inventory")
+    fail_from_context = Mock(side_effect=AssertionError("failed runs should not re-query inventory"))
 
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch_resources.FabricSwitchInventory.from_context",
@@ -1742,6 +1777,8 @@ def test_exit_json_failed_results_skip_requery_and_fail_json(monkeypatch):
 
     with pytest.raises(FailJsonError):
         resource.exit_json()
+
+    fail_from_context.assert_not_called()
 
 
 def test_utils_payload_masking_and_payload_builders_do_not_mutate_input():
