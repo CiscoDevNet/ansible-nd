@@ -75,8 +75,10 @@ class FakeModule:
     def __init__(self):
         self.params = {}
         self.exit_kwargs = None
+        self.fail_kwargs = None
 
     def fail_json(self, **kwargs):
+        self.fail_kwargs = kwargs
         raise FailJsonError(kwargs.get("msg", "fail_json called"))
 
     def exit_json(self, **kwargs):
@@ -2015,6 +2017,13 @@ def test_exit_json_reports_post_mutation_inventory_refresh_failure(monkeypatch):
         resource.exit_json()
 
     assert calls == [True]
+    assert resource.module.fail_kwargs["msg"] == "Failed to query fabric 'FAB1' inventory during finalization: controller unavailable"
+    assert resource.module.fail_kwargs["failed"] is True
+    assert resource.module.fail_kwargs["changed"] is True
+    assert resource.module.fail_kwargs["response"][0]["MESSAGE"] == "created"
+    assert resource.module.fail_kwargs["result"][0]["success"] is True
+    assert resource.module.fail_kwargs["result"][0]["changed"] is True
+    assert resource.module.fail_kwargs["diff"][0]["created"] == ["SERIAL2"]
     assert resource.module.exit_kwargs is None
     assert any(level == "error" and "during finalization" in args[0] for level, args in resource.log.messages)
 

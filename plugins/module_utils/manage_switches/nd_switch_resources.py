@@ -3130,7 +3130,11 @@ class NDSwitchResourceModule:
                 except _FABRIC_OPERATION_ERRORS as exc:
                     msg = f"Failed to query fabric '{self.fabric}' inventory during finalization: {exc}"
                     self.log.error(msg)
-                    self.nd.module.fail_json(msg=msg)
+                    final.update(self.results.final_result)
+                    final["msg"] = msg
+                    final["changed"] = True
+                    final["failed"] = True
+                    self.nd.module.fail_json(**final)
                 self.existing = self.inventory.collection
             # Build diff: deletes (from self.sent) + adds (from self.sent_adds)
             diff_list: list[dict[str, Any]] = []
