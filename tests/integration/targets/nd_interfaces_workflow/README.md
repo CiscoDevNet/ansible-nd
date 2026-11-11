@@ -5,7 +5,7 @@ GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gp
 
 # `nd_interfaces_workflow` network integration target
 
-This target qualifies `cisco.nd.nd_interfaces_workflow` against live Nexus Dashboard fabrics. It exercises all twelve interface-family adapters, aggregate lifecycle behavior, shared snapshots, implicit policy transitions, policy-independent explicit deletion, conflicts, output controls, invalid inputs, optional property packs, and guarded cleanup.
+This target qualifies `cisco.nd.nd_interfaces_workflow` against live Nexus Dashboard fabrics. It exercises all thirteen interface-family adapters, aggregate lifecycle behavior, shared snapshots, implicit policy transitions, policy-independent explicit deletion, conflicts, output controls, invalid inputs, optional property packs, and guarded cleanup.
 
 ## Run the target
 
@@ -32,7 +32,7 @@ Historical ten-family measurements on one fabric, before `ethernet_routed` joine
 - Smoke profile: **57.56 seconds**
 - Full check profile: **306.82 seconds** (about 5 minutes 7 seconds)
 
-These are reference measurements, not timeouts. An all-twelve run performs additional routed-interface planning and lifecycle requests,
+These are reference measurements, not timeouts. An all-thirteen run performs additional routed and dot1q planning and lifecycle requests,
 so replace these figures after collecting a comparable run. Controller load, latency, and selected families can change runtime. The role
 is guarded with `run_once`, and selected fabrics run serially to protect the shared lab.
 
@@ -126,7 +126,7 @@ nd_iw_profile: destructive
 nd_iw_enable_destructive: true
 ```
 
-The generic all-family destructive run skips both routed override families. NX-OS Ethernet routed override resets every managed
+The generic all-family destructive run skips dot1q and both routed override families. NX-OS Ethernet routed override resets every managed
 `routedHost` omitted from the task, including a separately prepared subinterface parent. To exercise that state, use an isolated
 resource-owner fabric containing no unrelated managed routed interfaces, select only `ethernet_routed`, satisfy the normal destructive
 fabric gates, and additionally set:
@@ -143,6 +143,19 @@ exclusively owned routed port-channel scope with the corresponding dedicated gat
 nd_iw_selected_families: [port_channel_routed]
 nd_iw_enable_port_channel_routed_override: true
 ```
+
+NX-OS dot1q override resets every omitted managed `dot1qTunnelHost` interface across the fabric. An empty
+`config: []` has the same family-wide authority; it is not an exact reserved-port cleanup. The dedicated branch requires:
+
+```yaml
+nd_iw_selected_families: [ethernet_dot1q_tunnel_host]
+nd_iw_enable_ethernet_dot1q_override: true
+```
+
+All override branches also require the normal destructive profile/opt-in, the exact fabric mapping's
+`isolated_resource_owner: true`, its name in `nd_iw_destructive_fabrics`, and `nd_iw_override_scope_confirmed: true`.
+Set these only after confirming exclusive ownership of the entire selected managed-policy scope. Setup, cleanup, and
+ordinary lifecycle deletion always name the reserved identities explicitly.
 
 Physical deployment is independently gated by `nd_iw_enable_deploy: true`. Leave it false unless the reserved interfaces may safely be deployed. The target cleans only its reserved identities before and after live execution; `nd_iw_cleanup_strict` defaults to true so cleanup failures fail the run.
 
@@ -181,9 +194,10 @@ The preflight reads the mapped fabric and, when `nd_iw_verify_fabric_type` is tr
 
 ## Interface-family capabilities
 
-Each fabric currently lists the same twelve `candidate_families`:
+Each fabric currently lists the same thirteen `candidate_families`:
 
 - `ethernet_access`
+- `ethernet_dot1q_tunnel_host`
 - `ethernet_routed`
 - `ethernet_trunk_host`
 - `loopback`
@@ -212,6 +226,12 @@ Before selecting a family, reserve controller-visible resources that will not co
 - Physical interfaces for Ethernet cases and physical member interfaces for port channels. The checked-in NX-OS routed cases reserve
   `Ethernet1/52` and `Ethernet1/53` for routed Ethernet plus `Ethernet1/54` and `Ethernet1/55` for routed port-channels by default;
   override every identity that is not test-owned. Routed port-channel IDs default to 921 and 922.
+- Two dedicated, unused NX-OS physical ports for `ethernet_dot1q_tunnel_host`: `nd_iw_ethernet_dot1q_primary`
+  (default `Ethernet1/56`) and `nd_iw_ethernet_dot1q_secondary` (default `Ethernet1/57`) on the mapped primary switch.
+  These defaults are distinct from every other checked-in Ethernet case, subinterface parent, and aggregate member.
+  Override them if absent on the hardware or not exclusively reserved. They must not be fabric links, peer links,
+  port-channel/vPC members, or parent interfaces. A port name is not evidence of ownership; retain all module safety checks.
+  Dot1q uses the existing `nd_iw_access_vlan` and `nd_iw_access_vlan_alternate` fixtures (3101/3102 by default).
 - A valid vPC pair and per-peer member interfaces for vPC cases.
 - Routed parent interfaces for managed and unmanaged subinterfaces.
 - Test-owned loopback, port-channel, subinterface, SVI, vPC, and VLAN identifiers matching the reserved-resource overrides.
@@ -241,6 +261,17 @@ Configured `ethernet_routed` cases use the standalone module's outer network-OS 
 `routedHost`, including derived `policy_type`, all controller-object-independent policy fields, guarded optional NetFlow/QoS/PFC fields,
 and reset to the default `trunkHost` policy. IOS-XE `iosXeRoutedHost` needs a separately declared IOS-XE switch and free interface and is
 not inferred from the NX-OS fabric mappings.
+
+Configured `ethernet_dot1q_tunnel_host` cases are NX-OS-only (`network_os_type: nx-os`, `policy_type: dot1qTunnelHost`).
+They reuse the batched create/update/replace/delete lifecycle, stage-only idempotency, exact-target deploy replay,
+repeated-type checks, and mixed-family workflow. Full property branches use the authoritative standalone model;
+`monitor` is deliberately excluded. Percentage and PPS storm-control levels are separate valid variants, with same-class
+and cross-class mixed units as rejection cases. Each variant cleans its exact reserved identities before the next variant.
+Link-up debounce, FEC off, and referenced NetFlow/QoS/PFC fields retain the explicit optional prerequisites documented
+above (`linkup_debounce_supported`, `fec_off_supported`, `l2_netflow_monitor_exists`, `netflow_sampler_supported`,
+`qos_policy_exists`, `queuing_policy_exists`, `pfc_supported`); they are not enabled for live use by adding this family.
+Physical deletion is verified as reset to the default `trunkHost` policy. This definition does not claim live qualification
+on a particular controller release or switch platform; the separate standalone dot1q target remains available.
 
 The full check-only profile cannot deterministically preview a sibling-policy transition without first seeding live source state. The full live profile uses the standalone Ethernet access and trunk-host modules to establish deterministic sibling-policy sources, then verifies implicit accessHost↔trunkHost transitions under both `merged` and `replaced`, transition metadata, idempotency, and policy-independent deletion through the opposite Ethernet type. It also verifies that physical deletion resets both interfaces to the default `trunkHost` policy without physical deployment. Other structural domains and source policies remain unit-tested until each combination has a safe, model-backed live setup path; do not use fabric-owned loopbacks, SVIs, peer links, or other controller-owned interfaces merely to manufacture transition coverage.
 

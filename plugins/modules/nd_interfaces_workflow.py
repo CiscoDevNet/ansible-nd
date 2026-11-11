@@ -48,6 +48,7 @@ options:
         description:
         - Selects the standalone interface contract used to validate O(resources[].config).
         - V(ethernet_access) uses M(cisco.nd.nd_interface_ethernet_access).
+        - V(ethernet_dot1q_tunnel_host) uses M(cisco.nd.nd_interface_ethernet_dot1q_tunnel_host) for NX-OS physical Ethernet hosts.
         - V(ethernet_routed) uses M(cisco.nd.nd_interface_ethernet_routed).
         - Configured V(ethernet_routed) items require C(config_data.network_os.network_os_type). The routed policy discriminator is
           optional and is derived as V(routedHost) for V(nx-os) or V(iosXeRoutedHost) for V(ios-xe). Identifier-only V(deleted) items
@@ -68,6 +69,7 @@ options:
         required: true
         choices:
         - ethernet_access
+        - ethernet_dot1q_tunnel_host
         - ethernet_routed
         - ethernet_trunk_host
         - loopback
@@ -95,7 +97,7 @@ options:
         - V(deleted) acts on each explicitly listed identity regardless of its current policy family, provided the current interface is in
           the same structural domain and is safe to delete. Physical Ethernet interfaces are reset to the unconfigured fabric-default
           policy; deletable logical interfaces are removed.
-        - All twelve interface adapters support all four values.
+        - All thirteen interface adapters support all four values.
         type: str
         choices: [ merged, replaced, overridden, deleted ]
         default: merged
@@ -215,6 +217,13 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is supported only on Cisco Nexus Dashboard.
+- V(ethernet_dot1q_tunnel_host) accepts the standalone module's grouped C(interface_names) input. Empty groups are rejected;
+  an empty top-level C(config) list with V(overridden) intentionally resets all eligible dot1q hosts in the fabric.
+- V(ethernet_dot1q_tunnel_host) manages only NX-OS C(dot1qTunnelHost) policies. Dot1q port-channel and vPC member policies remain protected.
+  This is distinct from selective VLAN mappings on a trunk and routed subinterface encapsulation.
+- On ND 4.3.1 or newer, updates to existing dot1q host policies with nonempty resulting descriptions can be batched automatically.
+  Set C(description="") to clear a description. Description clearing and policy transitions remain supported but are excluded from batching.
+  The family is outside O(execution_options.preparation_only) and the optional observed-satisfaction optimization.
 - C(cisco.nd.nd_interface_flow_rules) is intentionally outside this workflow and is not a valid O(resources[].type).
 - C(cisco.nd.nd_manage_links) manages fabric-link resources rather than a host-interface family and is not a valid
   O(resources[].type). Link-owned interfaces remain protected from host-interface transitions and resets.
@@ -376,6 +385,24 @@ EXAMPLES = r"""
     verify:
       enabled: true
   register: interface_result
+
+- name: Stage an NX-OS Ethernet dot1q-tunnel host
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: FABRIC1
+    resources:
+      - type: ethernet_dot1q_tunnel_host
+        state: replaced
+        config:
+          - switch_ip: 192.168.1.11
+            interface_names: [Ethernet1/40]
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  access_vlan: 150
+                  description: Customer tunnel
+    config_actions:
+      deploy: false
 
 - name: Preview dependency ordering and required parent deployment
   cisco.nd.nd_interfaces_workflow:

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+from ansible_collections.cisco.nd.plugins.module_utils.interface_config_normalizer import expand_ethernet_dot1q_tunnel_host_config
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_dot1q_tunnel_host_interface import (
     EthernetDot1qTunnelHostInterfaceModel,
 )
@@ -23,36 +24,42 @@ def test_orchestrator_has_narrow_host_policy_scope() -> None:
     assert EthernetDot1qTunnelHostInterfaceOrchestrator.MEMBER_FAMILY == ""
     assert EthernetDot1qTunnelHostInterfaceOrchestrator.supports_bulk_create is True
     assert EthernetDot1qTunnelHostInterfaceOrchestrator.supports_bulk_delete is True
-    assert EthernetDot1qTunnelHostInterfaceOrchestrator.supports_bulk_full_modify is False
+    assert EthernetDot1qTunnelHostInterfaceOrchestrator.supports_bulk_full_modify is True
 
 
-def test_grouped_config_expands_once_per_switch_interface() -> None:
+@pytest.mark.parametrize("normalize", [expand_config, expand_ethernet_dot1q_tunnel_host_config])
+def test_grouped_config_expands_once_per_switch_interface(normalize) -> None:
     grouped = [
         {"switch_ip": "192.0.2.11", "interface_names": ["Ethernet1/40", "Ethernet1/41"], "config_data": {"network_os": {"policy": {"access_vlan": 150}}}},
         {"switch_ip": "192.0.2.12", "interface_names": ["Ethernet1/40"], "config_data": {"network_os": {"policy": {"access_vlan": 151}}}},
     ]
-    expanded = expand_config(grouped)
+    expanded = normalize(grouped)
     assert [(item["switch_ip"], item["interface_name"]) for item in expanded] == [
         ("192.0.2.11", "Ethernet1/40"),
         ("192.0.2.11", "Ethernet1/41"),
         ("192.0.2.12", "Ethernet1/40"),
     ]
     assert all("interface_names" not in item for item in expanded)
+    expanded[0]["config_data"]["network_os"]["policy"]["access_vlan"] = 152
+    assert grouped[0]["config_data"]["network_os"]["policy"]["access_vlan"] == 150
+    assert expanded[1]["config_data"]["network_os"]["policy"]["access_vlan"] == 150
 
 
-def test_grouped_config_rejects_duplicate_exact_target() -> None:
+@pytest.mark.parametrize("normalize", [expand_config, expand_ethernet_dot1q_tunnel_host_config])
+def test_grouped_config_rejects_duplicate_exact_target(normalize) -> None:
     grouped = [
         {"switch_ip": "192.0.2.11", "interface_names": ["Ethernet1/40"]},
         {"switch_ip": "192.0.2.11", "interface_names": ["ethernet1/40"]},
     ]
     with pytest.raises(ValueError, match="multiple config items"):
-        expand_config(grouped)
+        normalize(grouped)
 
 
-def test_empty_named_group_cannot_become_an_accidental_reset_all() -> None:
+@pytest.mark.parametrize("normalize", [expand_config, expand_ethernet_dot1q_tunnel_host_config])
+def test_empty_named_group_cannot_become_an_accidental_reset_all(normalize) -> None:
     with pytest.raises(ValueError, match=r"Use top-level config: \[\]"):
-        expand_config([{"switch_ip": "192.0.2.11", "interface_names": []}])
-    assert expand_config([]) == []
+        normalize([{"switch_ip": "192.0.2.11", "interface_names": []}])
+    assert normalize([]) == []
 
 
 @pytest.mark.parametrize("check_mode", [False, True])

@@ -150,3 +150,14 @@ def expand_ethernet_config(
             item["interface_name"] = name
             expanded.append(item)
     return expanded
+
+
+def expand_ethernet_dot1q_tunnel_host_config(config_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Require named dot1q groups while retaining explicit top-level reset-all."""
+    for index, group in enumerate(config_list):
+        if isinstance(group, dict) and group.get("interface_names") == []:
+            raise ValueError(
+                f"interface_names for dot1q config item {index} must name at least one interface. "
+                "Use top-level config: [] with state: overridden for an intentional fabric-wide reset."
+            )
+    return expand_ethernet_config(config_list)

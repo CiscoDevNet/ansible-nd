@@ -17,9 +17,10 @@ def test_argument_spec_uses_exact_registry_and_excludes_flow_rules():
     resource_options = spec["resources"]["options"]
     choices = resource_options["type"]["choices"]
 
-    assert len(choices) == 12
+    assert len(choices) == 13
     assert set(choices) == {
         "ethernet_access",
+        "ethernet_dot1q_tunnel_host",
         "ethernet_routed",
         "ethernet_trunk_host",
         "loopback",
@@ -57,6 +58,7 @@ def test_argument_spec_uses_exact_registry_and_excludes_flow_rules():
 def test_documentation_links_every_standalone_module_and_not_flow_rules():
     for module_name in (
         "nd_interface_ethernet_access",
+        "nd_interface_ethernet_dot1q_tunnel_host",
         "nd_interface_ethernet_routed",
         "nd_interface_ethernet_trunk_host",
         "nd_interface_loopback",
@@ -254,3 +256,18 @@ def test_main_preserves_structured_execution_failure():
             "workflow_contract": {"version": 1},
         }
     ]
+
+
+def test_dot1q_documentation_keeps_standalone_scope_and_stage_only_example():
+    assert "All thirteen interface adapters" in nd_interfaces_workflow.DOCUMENTATION
+    assert "Dot1q port-channel and vPC member policies remain protected" in nd_interfaces_workflow.DOCUMENTATION
+    examples = yaml.safe_load(nd_interfaces_workflow.EXAMPLES)
+    module_args = next(
+        example["cisco.nd.nd_interfaces_workflow"]
+        for example in examples
+        if example["cisco.nd.nd_interfaces_workflow"]["resources"][0]["type"] == "ethernet_dot1q_tunnel_host"
+    )
+    assert module_args["config_actions"]["deploy"] is False
+    config = module_args["resources"][0]["config"][0]
+    assert config["interface_names"] == ["Ethernet1/40"]
+    assert config["config_data"]["network_os"]["policy"]["access_vlan"] == 150
