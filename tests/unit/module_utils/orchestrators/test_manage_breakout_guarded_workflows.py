@@ -33,6 +33,7 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.orchestrators.test_man
     outcomes,
     response,
     run,
+    switch_inventory,
     writes,
 )
 
@@ -467,7 +468,7 @@ def test_override_empty_selected_switch_group_clears_that_switch(verify):
 def test_override_empty_fabric_scope_discovers_then_validates_only_broken_switches():
     fabric = combined(topology(P21), topology(native=(P49,), switch=OTHER_SERIAL))
     report, calls = run(
-        [fabric, inventory(), action(item(P21 + "/1")), topology(native=(P21,))],
+        [fabric, switch_inventory(inventory()["DATA"]), action(item(P21 + "/1")), topology(native=(P21,))],
         state="overridden",
         config=[],
         platform_inventory=None,
@@ -477,7 +478,7 @@ def test_override_empty_fabric_scope_discovers_then_validates_only_broken_switch
     assert len(writes(calls)) == 1
     assert_whole_ethernet(summary_calls(calls)[0], switch=None)
     assert_whole_ethernet(summary_calls(calls)[1])
-    metadata = [call for call in calls if urlsplit(call["path"]).path.endswith("/switches/" + SERIAL)]
+    metadata = [call for call in calls if urlsplit(call["path"]).path.endswith("/switches")]
     assert len(metadata) == 1
     assert all(not urlsplit(call["path"]).path.endswith("/switches/" + OTHER_SERIAL) for call in calls)
     assert_no_map_or_deploy_queries(calls)
@@ -500,7 +501,7 @@ def test_override_empty_fabric_without_breakouts_is_one_read_noop():
 def test_override_fabric_scope_validates_all_broken_platforms_before_any_write():
     fabric = combined(topology(P21), topology(P49, switch=OTHER_SERIAL))
     report, calls = run(
-        [fabric, inventory(), inventory(OTHER_SERIAL, platform="ios-xe")],
+        [fabric, switch_inventory(inventory()["DATA"], inventory(OTHER_SERIAL, platform="ios-xe")["DATA"])],
         state="overridden",
         config=[],
         platform_inventory=None,

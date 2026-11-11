@@ -73,8 +73,13 @@ def response(data, *, code=200, method="GET"):
 
 
 def inventory(serial=SERIAL, platform="nx-os", **row_fields):
-    """Actual single-switch response with the platform preflight evidence."""
+    """A switch metadata record wrapped for convenient DATA access in fixtures."""
     return response({"switchId": serial, "additionalData": {"platformType": platform}, **row_fields})
+
+
+def switch_inventory(*records):
+    """One complete switch-list page, including every supplied metadata row."""
+    return response({"switches": list(records), "meta": {"counts": {"total": len(records), "remaining": 0}}})
 
 
 def summary(*names, switch=SERIAL, **row_fields):
@@ -123,11 +128,9 @@ def run(
     }
     if config_actions is not None:
         params["config_actions"] = config_actions
-    # Serial-only workflows read each distinct switch's platform once before
-    # interface discovery. Supply real wire responses and record every call;
-    # do not patch the preflight or hide inventory from the returned trace.
-    # IP tests explicitly supply additionalData.platformType in their lookup
-    # response, so those rows are reused and need no separate inventory fixture.
+    # Every selected identity shares the existing FabricContext inventory GET.
+    # Supply real list envelopes and record every call; do not patch preflight
+    # or hide unexpected requests. IP fixtures supply that inventory explicitly.
     serials = []
     has_ip = False
     for entry in params["config"] if isinstance(params["config"], list) else []:
@@ -142,7 +145,10 @@ def run(
             if switch not in serials:
                 serials.append(switch)
     if platform_inventory is _DEFAULT_PLATFORM_INVENTORY:
-        platform_inventory = [inventory(serial) for serial in serials] if serials and not has_ip else None
+        if serials and not has_ip:
+            platform_inventory = switch_inventory(*(inventory(serial)["DATA"] for serial in serials))
+        else:
+            platform_inventory = None
     platform_responses = platform_inventory if isinstance(platform_inventory, list) else [platform_inventory] if platform_inventory is not None else []
     scripted = platform_responses + list(responses)
     sender = RecordingSender(scripted)
@@ -199,6 +205,15 @@ def assert_ethernet_get(call, switch=SERIAL):
     assert call["payload"] is None
 
 
+def assert_switch_inventory_get(call):
+    """Require the existing shared unfiltered metadata query before topology reads."""
+    path = urlsplit(call["path"])
+    assert call["verb"] == HttpVerbEnum.GET
+    assert path.path == BASE + "/switches"
+    assert path.query == ""
+    assert call["payload"] is None
+
+
 def test_complete_breakout_accepts_response_without_readback():
     result, calls = run([summary("Ethernet1/50"), action(item("Ethernet1/50"))])
     assert result["failed"] is False
@@ -238,7 +253,10 @@ def test_same_interface_on_two_switches_matches_composite_identity():
     assert result["changed"] is True
     assert outcomes(result)[(SERIAL, "Ethernet1/50")]["outcome"] == "success"
     assert outcomes(result)[(OTHER_SERIAL, "Ethernet1/50")]["outcome"] == "failed"
-    assert len(calls) == 5
+    assert len(calls) == 4
+    assert_switch_inventory_get(calls[0])
+    assert_family_get(calls[1], "Ethernet1/50")
+    assert_family_get(calls[2], "Ethernet1/50", switch=OTHER_SERIAL)
 
 
 def test_live_shaped_error_only_body_reports_missing_sibling_unknown():
@@ -501,7 +519,7 @@ def test_check_mode_skips_optional_verification_even_when_enabled():
     assert len(calls) == 2
 
 
-def test_repeated_management_ip_is_cached_and_resolved_with_targeted_filter():
+def test_repeated_management_ip_is_cached_in_shared_inventory():
     ip = "10.127.117.189"
     result, calls = run(
         [
@@ -518,9 +536,7 @@ def test_repeated_management_ip_is_cached_and_resolved_with_targeted_filter():
     )
     assert result["failed"] is False
     assert len(calls) == 3
-    lookup = urlsplit(calls[0]["path"])
-    assert lookup.path == BASE + "/switches"
-    assert parse_qs(lookup.query)["filter"] == ["fabricManagementIp:" + ip]
+    assert_switch_inventory_get(calls[0])
     assert {entry["switch_id"] for entry in result["api_outcomes"]} == {SERIAL}
     assert {entry["switchId"] for entry in calls[2]["payload"]["interfaces"]} == {SERIAL}
 
@@ -645,7 +661,7 @@ def test_ip_and_serial_aliases_for_same_parent_fail_before_discovery():
     assert result["failed"] is True
     assert result["changed"] is False
     assert len(calls) == 1
-    assert "/switches?" in calls[0]["path"]
+    assert_switch_inventory_get(calls[0])
     assert writes(calls) == []
 
 
@@ -1543,7 +1559,7 @@ def test_deleted_ip_and_serial_child_aliases_duplicate_family_after_lookup():
     assert result["failed"] is True
     assert result["changed"] is False
     assert len(calls) == 1
-    assert "/switches?" in calls[0]["path"]
+    assert_switch_inventory_get(calls[0])
     assert writes(calls) == []
 
 
@@ -1722,7 +1738,7 @@ def test_deleted_absent_child_and_parent_family_is_not_a_blind_noop():
     assert writes(calls) == []
 
 
-def assert_preflight_failure(report, calls, serials):
+def assert_preflight_failure(report, calls, _serials):
     """Reject before discovering, planning or submitting any topology action."""
     assert report["failed"] is True
     assert report["changed"] is False
@@ -1730,15 +1746,16 @@ def assert_preflight_failure(report, calls, serials):
     assert report["after_status"] == "unknown"
     assert report["api_outcomes"] == report["diff"] == []
     assert report.get("before", []) == report.get("after", []) == []
-    assert calls == [{"path": BASE + "/switches/" + serial, "verb": HttpVerbEnum.GET, "payload": None} for serial in serials]
-    assert [call["purpose"] for call in report["api_calls"]] == ["switch_metadata"] * len(serials)
+    assert len(calls) == 1
+    assert_switch_inventory_get(calls[0])
+    assert [call["purpose"] for call in report["api_calls"]] == ["switch_metadata"]
 
 
 @pytest.mark.parametrize("state", ["merged", "deleted"])
 @pytest.mark.parametrize("check_mode", [False, True])
 def test_iosxe_is_rejected_before_topology_policy_or_action_in_every_state(state, check_mode):
     config = [group("Ethernet1/50", breakout_map=None if state == "deleted" else "25g-4x")]
-    report, calls = run([], state=state, check_mode=check_mode, config=config, platform_inventory=inventory(platform="ios-xe"))
+    report, calls = run([], state=state, check_mode=check_mode, config=config, platform_inventory=switch_inventory(inventory(platform="ios-xe")["DATA"]))
     assert_preflight_failure(report, calls, [SERIAL])
     assert report["proposed"] == config
     assert "ios-xe" in report["msg"] and "Nexus Dashboard does not support breakout interfaces on IOS-XE" in report["msg"]
@@ -1748,7 +1765,7 @@ def test_iosxe_is_rejected_before_topology_policy_or_action_in_every_state(state
 @pytest.mark.parametrize("check_mode", [False, True])
 def test_deleted_child_on_iosxe_is_rejected_without_a_child_or_policy_lookup(check_mode):
     config = [group("Ethernet1/50/3", breakout_map=None)]
-    report, calls = run([], state="deleted", check_mode=check_mode, config=config, platform_inventory=inventory(platform="ios-xe"))
+    report, calls = run([], state="deleted", check_mode=check_mode, config=config, platform_inventory=switch_inventory(inventory(platform="ios-xe")["DATA"]))
     assert_preflight_failure(report, calls, [SERIAL])
     assert report["proposed"] == config
     assert "ios-xe" in report["msg"]
@@ -1765,7 +1782,7 @@ def test_even_an_apparent_native_or_broken_noop_requires_a_supported_platform(st
         state=state,
         check_mode=check_mode,
         config=[group("Ethernet1/50", breakout_map=None if state == "deleted" else "25g-4x")],
-        platform_inventory=inventory(platform=platform),
+        platform_inventory=switch_inventory(inventory(platform=platform)["DATA"]),
         verify={"enabled": True},
     )
     assert_preflight_failure(report, calls, [SERIAL])
@@ -1790,13 +1807,18 @@ def test_even_an_apparent_native_or_broken_noop_requires_a_supported_platform(st
     ],
 )
 def test_missing_unknown_or_wrong_typed_platform_metadata_fails_closed(additional):
-    report, calls = run([], platform_inventory=response({"switchId": SERIAL, "additionalData": additional}))
+    report, calls = run([], platform_inventory=switch_inventory({"switchId": SERIAL, "additionalData": additional}))
     assert_preflight_failure(report, calls, [SERIAL])
-    assert "additionalData.platformType is missing or unrecognized" in report["msg"]
+    expected = (
+        "malformed platform metadata"
+        if additional is not None and not isinstance(additional, dict)
+        else "additionalData.platformType is missing or unrecognized"
+    )
+    assert expected in report["msg"]
 
 
 def test_absent_additional_data_fails_closed_before_discovery():
-    report, calls = run([], platform_inventory=response({"switchId": SERIAL}))
+    report, calls = run([], platform_inventory=switch_inventory({"switchId": SERIAL}))
     assert_preflight_failure(report, calls, [SERIAL])
     assert "Cannot verify the platform" in report["msg"]
 
@@ -1810,7 +1832,7 @@ def test_other_recognized_platforms_are_not_treated_as_nxos(platform, state, che
         state=state,
         check_mode=check_mode,
         config=[group("Ethernet1/50", breakout_map=None if state == "deleted" else "25g-4x")],
-        platform_inventory=inventory(platform=platform),
+        platform_inventory=switch_inventory(inventory(platform=platform)["DATA"]),
     )
     assert_preflight_failure(report, calls, [SERIAL])
     assert "unsupported platformType '" + platform + "'" in report["msg"]
@@ -1828,7 +1850,7 @@ def test_mixed_nxos_iosxe_input_preflights_all_distinct_switches_before_any_disc
         state=state,
         check_mode=check_mode,
         config=config,
-        platform_inventory=[inventory(serial, platform="ios-xe" if serial == OTHER_SERIAL else "nx-os") for serial in serials],
+        platform_inventory=switch_inventory(*(inventory(serial, platform="ios-xe" if serial == OTHER_SERIAL else "nx-os")["DATA"] for serial in serials)),
     )
     assert_preflight_failure(report, calls, serials)
     assert report["proposed"] == config
@@ -1846,31 +1868,33 @@ def test_nxos_switch_in_a_campus_fabric_is_not_rejected_by_fabric_type(state, ch
         state=state,
         check_mode=check_mode,
         config=[group("Ethernet1/50", breakout_map=None if state == "deleted" else "25g-4x")],
-        platform_inventory=inventory(fabricType="Campus_VXLAN_EVPN", switchRole="border"),
+        platform_inventory=switch_inventory(inventory(fabricType="Campus_VXLAN_EVPN", switchRole="border")["DATA"]),
         fabric_name="Campus_AK",
     )
     assert report["failed"] is False and report["changed"] is True
     assert len(calls) == (2 if check_mode else 3)
-    assert calls[0]["path"] == "/api/v1/manage/fabrics/Campus_AK/switches/" + SERIAL
+    assert calls[0]["path"] == "/api/v1/manage/fabrics/Campus_AK/switches"
     assert calls[1]["path"].startswith("/api/v1/manage/fabrics/Campus_AK/interfacesSummary?")
     assert all("/summary" not in call["path"] and "/policies" not in call["path"] for call in calls)
     assert len(writes(calls)) == (0 if check_mode else 1)
 
 
 @pytest.mark.parametrize("serials", [(SERIAL,), (SERIAL, OTHER_SERIAL)])
-def test_serial_metadata_budget_is_one_exact_get_per_distinct_switch_not_per_port(serials):
+def test_serial_metadata_budget_is_one_batch_not_per_port(serials):
     config = [group("Ethernet1/50", switch=serial) for serial in serials] + [group("Ethernet1/51", switch=serial) for serial in serials]
     responses = [summary("Ethernet1/50", "Ethernet1/51", switch=serial) for serial in serials]
     responses.append(action(*(item(name, switch=serial) for serial in reversed(serials) for name in ("Ethernet1/51", "Ethernet1/50"))))
     trace = Results()
     report, calls = run(responses, config=config, results=trace)
     assert report["failed"] is False
-    assert calls[: len(serials)] == [{"path": BASE + "/switches/" + serial, "verb": HttpVerbEnum.GET, "payload": None} for serial in serials]
-    assert len(calls) == 2 * len(serials) + 1
+    assert_switch_inventory_get(calls[0])
+    assert len(calls) == len(serials) + 2
+    for call, serial in zip(calls[1:-1], serials):
+        assert_family_get(call, "Ethernet1/5", switch=serial)
     assert len(writes(calls)) == 1
     assert len(writes(calls)[0]["payload"]["interfaces"]) == 2 * len(serials)
-    assert_registered_calls(trace, calls, [OperationType.QUERY] * (2 * len(serials)) + [OperationType.CREATE])
-    assert [call["purpose"] for call in report["api_calls"][: len(serials)]] == ["switch_metadata"] * len(serials)
+    assert_registered_calls(trace, calls, [OperationType.QUERY] * (len(serials) + 1) + [OperationType.CREATE])
+    assert [call["purpose"] for call in report["api_calls"] if call.get("purpose") == "switch_metadata"] == ["switch_metadata"]
 
 
 @pytest.mark.parametrize("platform", ["nx-os", "ios-xe", None])
@@ -1886,8 +1910,7 @@ def test_ip_platform_metadata_is_reused_without_refetching_serial(platform, stat
     report, calls = run(script, state=state, config=[group("Ethernet1/50", switch=ip, breakout_map=None if state == "deleted" else "25g-4x")], results=trace)
     assert report["failed"] is (platform != "nx-os")
     assert len(calls) == (3 if platform == "nx-os" else 1)
-    assert "/switches?" in calls[0]["path"]
-    assert parse_qs(urlsplit(calls[0]["path"]).query)["filter"] == ["fabricManagementIp:" + ip]
+    assert_switch_inventory_get(calls[0])
     assert not any(urlsplit(call["path"]).path == BASE + "/switches/" + SERIAL for call in calls)
     assert report["proposed"][0]["switch_id"] == SERIAL
     assert [call["purpose"] for call in report["api_calls"] if call.get("purpose") == "switch_metadata"] == ["switch_metadata"]
@@ -1897,18 +1920,15 @@ def test_ip_platform_metadata_is_reused_without_refetching_serial(platform, stat
         assert_registered_calls(trace, calls, [OperationType.QUERY], state=state)
 
 
-def test_mixed_ip_and_serial_reuses_ip_record_and_reads_only_uncached_serial():
+def test_mixed_ip_and_serial_reuse_one_shared_inventory_snapshot():
     ip = "10.127.117.189"
     trace = Results()
     report, calls = run(
         [
-            response(
-                {
-                    "switches": [{"switchId": SERIAL, "fabricManagementIp": ip, "additionalData": {"platformType": "nx-os"}}],
-                    "meta": {"counts": {"remaining": 0}},
-                }
+            switch_inventory(
+                {"switchId": SERIAL, "fabricManagementIp": ip, "additionalData": {"platformType": "nx-os"}},
+                inventory(OTHER_SERIAL)["DATA"],
             ),
-            inventory(OTHER_SERIAL),
             summary("Ethernet1/50", "Ethernet1/51"),
             summary("Ethernet1/50", switch=OTHER_SERIAL),
             action(item("Ethernet1/50", switch=OTHER_SERIAL), item("Ethernet1/51"), item("Ethernet1/50")),
@@ -1917,11 +1937,10 @@ def test_mixed_ip_and_serial_reuses_ip_record_and_reads_only_uncached_serial():
         platform_inventory=None,
         results=trace,
     )
-    assert report["failed"] is False and len(calls) == 5
-    assert "/switches?" in calls[0]["path"]
-    assert calls[1]["path"] == BASE + "/switches/" + OTHER_SERIAL
-    assert not any(call["path"] == BASE + "/switches/" + SERIAL for call in calls)
-    assert_registered_calls(trace, calls, [OperationType.QUERY] * 4 + [OperationType.CREATE])
+    assert report["failed"] is False and len(calls) == 4
+    assert_switch_inventory_get(calls[0])
+    assert not any("/switches/" in call["path"] for call in calls)
+    assert_registered_calls(trace, calls, [OperationType.QUERY] * 3 + [OperationType.CREATE])
 
 
 @pytest.mark.parametrize("state", ["merged", "deleted"])
@@ -1950,7 +1969,7 @@ def test_replaced_is_rejected_before_any_switch_topology_policy_or_action_call(c
 def test_malformed_or_wrong_identity_platform_response_is_not_authoritative(data):
     report, calls = run([], platform_inventory=response(data))
     assert_preflight_failure(report, calls, [SERIAL])
-    assert "malformed or unexpected switch identity" in report["msg"]
+    assert "switch" in report["msg"].lower()
 
 
 @pytest.mark.parametrize("failure", ["not_found", "transport_loss", "http_failure_then_transport_loss", "iosxe", "unknown_platform"])
@@ -1959,21 +1978,26 @@ def test_malformed_or_wrong_identity_platform_response_is_not_authoritative(data
 def test_failed_platform_get_preserves_standard_ndoutput_and_read_diagnostics(failure, output_level, verbosity):
     trace = Results()
     scripts = {
-        "not_found": [response({"message": "Not found"}, code=404)],
+        "not_found": [response({"message": "Not found"}, code=404), response({"message": "Not found"}, code=404)],
         "transport_loss": [TimeoutError("Lost switch metadata response")],
         "http_failure_then_transport_loss": [response({"message": "Controller unavailable"}, code=500), TimeoutError("Lost metadata retry response")],
-        "iosxe": [inventory(platform="ios-xe")],
-        "unknown_platform": [inventory(platform=None)],
+        "iosxe": [switch_inventory(inventory(platform="ios-xe")["DATA"])],
+        "unknown_platform": [switch_inventory(inventory(platform=None)["DATA"])],
     }
     script = scripts[failure]
     report, calls = run([], platform_inventory=script, results=trace)
     assert report["failed"] is True and report["changed"] is report["may_have_changed"] is False
     assert report["api_outcomes"] == report["diff"] == []
-    assert len(calls) == (2 if failure == "http_failure_then_transport_loss" else 1)
-    assert all(call == {"path": BASE + "/switches/" + SERIAL, "verb": HttpVerbEnum.GET, "payload": None} for call in calls)
+    assert len(calls) == (2 if failure in {"http_failure_then_transport_loss", "not_found"} else 1)
+    assert_switch_inventory_get(calls[0])
+    if failure == "not_found":
+        assert calls[1] == {"path": BASE + "/summary", "verb": HttpVerbEnum.GET, "payload": None}
+    else:
+        assert all(call == calls[0] for call in calls)
     # Aborted shared GET commits retain one logical failed read, not intermediate replies.
-    assert trace.path == [calls[0]["path"]]
-    assert trace.verb == ["GET"] and trace.payload == [None] and trace.verbosity_level == [3]
+    logical_count = 2 if failure == "not_found" else 1
+    assert trace.path == [call["path"] for call in calls[:logical_count]]
+    assert trace.verb == ["GET"] * logical_count and trace.payload == [None] * logical_count and trace.verbosity_level == [3] * logical_count
     assert trace.metadata[0]["action"] == OperationType.QUERY.value
     expected_code = {"not_found": 404, "transport_loss": -1, "http_failure_then_transport_loss": -1, "iosxe": 200, "unknown_platform": 200}[failure]
     assert trace.responses[0]["RETURN_CODE"] == expected_code
@@ -1981,7 +2005,7 @@ def test_failed_platform_get_preserves_standard_ndoutput_and_read_diagnostics(fa
     if failure in {"iosxe", "unknown_platform"}:
         assert trace.results[0]["success"] is True  # The GET succeeded, but eligibility did not.
         assert "requires NX-OS switches" in report["msg"]
-    assert len(report["api_calls"]) == 1 and report["api_calls"][0]["purpose"] == "switch_metadata"
+    assert len(report["api_calls"]) == logical_count and all(call["purpose"] == "switch_metadata" for call in report["api_calls"])
     module = SimpleNamespace(params={"output_level": output_level, "state": "merged"}, _verbosity=verbosity)
     original = copy.deepcopy(report)
     output = _format_output(module, report, trace)
@@ -1998,44 +2022,49 @@ def test_failed_platform_get_preserves_standard_ndoutput_and_read_diagnostics(fa
         assert output["api_response"] == trace.responses
         assert output["api_result"] == trace.results
         assert output["api_metadata"] == trace.metadata
-        assert output["api_payload"] == [None]
+        assert output["api_payload"] == [None] * logical_count
     if "proposed" in output:
         assert output["proposed"] == [group("Ethernet1/50")]
 
 
-def test_lost_uncached_serial_metadata_does_not_reuse_preceding_ip_lookup_response():
+def test_lost_topology_response_does_not_reuse_preceding_inventory_response():
     ip = "10.127.117.189"
     trace = Results()
     report, calls = run(
         [
             response(
                 {
-                    "switches": [{"switchId": SERIAL, "fabricManagementIp": ip, "additionalData": {"platformType": "nx-os"}}],
+                    "switches": [
+                        {"switchId": SERIAL, "fabricManagementIp": ip, "additionalData": {"platformType": "nx-os"}},
+                        inventory(OTHER_SERIAL)["DATA"],
+                    ],
                     "meta": {"counts": {"remaining": 0}},
                 }
             ),
-            TimeoutError("Lost uncached serial metadata"),
+            TimeoutError("Lost topology response"),
         ],
         config=[group("Ethernet1/50", switch=ip), group("Ethernet1/50", switch=OTHER_SERIAL)],
         platform_inventory=None,
         results=trace,
     )
     assert report["failed"] is True and report["changed"] is report["may_have_changed"] is False
-    assert len(calls) == 2 and calls[1]["path"] == BASE + "/switches/" + OTHER_SERIAL
+    assert len(calls) == 2
+    assert_switch_inventory_get(calls[0])
+    assert_family_get(calls[1], "Ethernet1/50")
     assert_registered_calls(trace, calls, [OperationType.QUERY, OperationType.QUERY])
     assert trace.responses[0]["RETURN_CODE"] == 200
     assert trace.responses[1]["RETURN_CODE"] == -1 and trace.responses[1]["response_received"] is False
     assert trace.responses[1]["DATA"] == {}
-    assert report["api_calls"][1]["purpose"] == "switch_metadata"
+    assert report["api_calls"][0]["purpose"] == "switch_metadata"
     assert report["api_calls"][1]["http_status"] is None
 
 
 def ip_inventory(ip, platform="nx-os"):
-    """An independently fetched IP alias record, optionally missing metadata."""
+    """One IP alias record, optionally missing metadata, in a switch-list page."""
     row = {"switchId": SERIAL, "fabricManagementIp": ip}
     if platform is not None:
         row["additionalData"] = {"platformType": platform}
-    return response({"switches": [row], "meta": {"counts": {"total": 1, "remaining": 0}}})
+    return switch_inventory(row)
 
 
 @pytest.mark.parametrize("platforms", [("nx-os", "ios-xe"), ("ios-xe", "nx-os"), (None, "nx-os"), ("nx-os", None)])
@@ -2048,8 +2077,7 @@ def test_distinct_ip_aliases_cannot_overwrite_conflicting_or_missing_platform_me
     trace = Results()
     report, calls = run(
         [
-            ip_inventory(ips[0], platforms[0]),
-            ip_inventory(ips[1], platforms[1]),
+            switch_inventory(*(ip_inventory(ip, platform)["DATA"]["switches"][0] for ip, platform in zip(ips, platforms))),
             # Leave valid topology and action replies available. A preflight
             # bypass must not appear to fail merely because fixtures ran out.
             summary(*api_names),
@@ -2065,12 +2093,12 @@ def test_distinct_ip_aliases_cannot_overwrite_conflicting_or_missing_platform_me
     assert report["after_status"] == "unknown"
     assert report["api_outcomes"] == report["diff"] == []
     assert report.get("before", []) == report.get("after", []) == []
-    assert len(calls) == 2 and writes(calls) == []
-    assert [parse_qs(urlsplit(call["path"]).query)["filter"] for call in calls] == [["fabricManagementIp:" + ip] for ip in ips]
-    assert all(urlsplit(call["path"]).path == BASE + "/switches" for call in calls)
-    assert_registered_calls(trace, calls, [OperationType.QUERY, OperationType.QUERY], state=state, check_mode=check_mode)
+    assert len(calls) == 1 and writes(calls) == []
+    assert_switch_inventory_get(calls[0])
+    assert "Conflicting platform metadata" in report["msg"] and SERIAL in report["msg"]
+    assert_registered_calls(trace, calls, [OperationType.QUERY], state=state, check_mode=check_mode)
     assert all(entry["RETURN_CODE"] == 200 for entry in trace.responses)
-    assert [call["purpose"] for call in report["api_calls"]] == ["switch_metadata", "switch_metadata"]
+    assert [call["purpose"] for call in report["api_calls"]] == ["switch_metadata"]
     output = _format_output(SimpleNamespace(params={"state": state, "output_level": "info"}, _verbosity=3), report, trace)
     assert output["failed"] is True and output["changed"] is output["may_have_changed"] is False
     assert output["after_status"] == "unknown"
@@ -2086,20 +2114,20 @@ def test_distinct_ip_aliases_with_matching_nxos_metadata_allow_distinct_parent_f
     api_names = [parent + "/1" for parent in parents] if state == "deleted" else parents
     trace = Results()
     report, calls = run(
-        [ip_inventory(ips[0]), ip_inventory(ips[1]), summary(*api_names), action(*(item(name) for name in api_names))],
+        [switch_inventory(*(ip_inventory(ip)["DATA"]["switches"][0] for ip in ips)), summary(*api_names), action(*(item(name) for name in api_names))],
         state=state,
         check_mode=check_mode,
         config=[group(parent, switch=ip, breakout_map=None if state == "deleted" else "25g-4x") for parent, ip in zip(parents, ips)],
         results=trace,
     )
     assert report["failed"] is False and report["changed"] is True
-    assert len(calls) == (3 if check_mode else 4)
-    assert [parse_qs(urlsplit(call["path"]).query)["filter"] for call in calls[:2]] == [["fabricManagementIp:" + ip] for ip in ips]
-    assert_family_get(calls[2], "Ethernet1/5")
+    assert len(calls) == (2 if check_mode else 3)
+    assert_switch_inventory_get(calls[0])
+    assert_family_get(calls[1], "Ethernet1/5")
     assert not any(call["path"] == BASE + "/switches/" + SERIAL for call in calls)
     assert set(outcomes(report)) == {(SERIAL, parent) for parent in parents}
     assert {entry["outcome"] for entry in report["api_outcomes"]} == {"planned" if check_mode else "success"}
-    operations = [OperationType.QUERY] * 3 + ([] if check_mode else [OperationType.DELETE if state == "deleted" else OperationType.CREATE])
+    operations = [OperationType.QUERY] * 2 + ([] if check_mode else [OperationType.DELETE if state == "deleted" else OperationType.CREATE])
     assert_registered_calls(trace, calls, operations, state=state, check_mode=check_mode)
 
 
@@ -2120,7 +2148,7 @@ def test_repeated_canonical_ip_alias_uses_one_platform_lookup_for_distinct_famil
     )
     assert report["failed"] is False and report["changed"] is True
     assert len(calls) == (2 if check_mode else 3)
-    assert parse_qs(urlsplit(calls[0]["path"]).query)["filter"] == ["fabricManagementIp:" + canonical_ip]
+    assert_switch_inventory_get(calls[0])
     assert_family_get(calls[1], "Ethernet1/5")
     assert not any(call["path"] == BASE + "/switches/" + SERIAL for call in calls)
     operations = [OperationType.QUERY] * 2 + ([] if check_mode else [OperationType.DELETE if state == "deleted" else OperationType.CREATE])

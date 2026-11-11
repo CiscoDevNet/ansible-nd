@@ -1,7 +1,7 @@
 # Copyright: (c) 2026, L Nikhil Sri Krishna (@nisaikri) <nisaikri@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-"""Public argument, pre-connection validation and result-preservation tests."""
+"""Public validation, check-mode safety, and result-preservation tests."""
 
 from __future__ import annotations
 
@@ -17,12 +17,14 @@ from ansible_collections.cisco.nd.plugins.modules import nd_manage_breakout_inte
 from ansible_collections.cisco.nd.tests.unit.module_utils.orchestrators.test_manage_breakout_guarded_workflows import topology
 from ansible_collections.cisco.nd.tests.unit.module_utils.orchestrators.test_manage_breakout_interfaces import (
     BREAKOUT,
+    REMOVE,
     SERIAL,
     RecordingSender,
     action,
     group,
     inventory,
     item,
+    switch_inventory,
 )
 
 
@@ -233,12 +235,13 @@ def test_deleted_child_selector_preserves_parent_identity_wire_child_and_request
         assert output["proposed"] == report["proposed"]
 
 
-def test_check_mode_keeps_real_discovery_transport_and_passes_prediction_flag(monkeypatch):
+def test_check_mode_preserves_transport_write_guard_and_prediction_flag(monkeypatch):
+    """The module passes check mode to both transport protection and planning."""
     _unused_module, captured = _harness(monkeypatch, check_mode=True)
     with pytest.raises(_Exit):
         module_under_test.main()
     assert captured["rest_send"].params["check_mode"] is True
-    assert captured["rest_send"].check_mode is False
+    assert captured["rest_send"].check_mode is True
     assert captured["results"].check_mode is True
 
 
@@ -608,8 +611,8 @@ def test_formatter_failure_falls_back_to_shared_config_format_and_keeps_primary_
     assert ("logs" in output) == (output_level == "debug")
 
 
-def _scripted_main(monkeypatch, responses, params, *, verbosity=0, check_mode=False):
-    """Exercise module.main and its real workflow using only scripted REST replies."""
+def _scripted_main(monkeypatch, responses, params, *, verbosity=0, check_mode=False, transports=None):
+    """Exercise real module wiring with scripted replies and optional transport capture."""
     module = _Module(params, check_mode=check_mode, verbosity=verbosity)
     sender = RecordingSender(responses)
     real_rest_send = module_under_test.RestSend
@@ -619,6 +622,8 @@ def _scripted_main(monkeypatch, responses, params, *, verbosity=0, check_mode=Fa
         transport.unit_test = True
         transport.timeout = 600
         transport.send_interval = 1
+        if transports is not None:
+            transports.append(transport)
         return transport
 
     monkeypatch.setattr(module_under_test, "AnsibleModule", lambda **unused: module)
@@ -627,6 +632,167 @@ def _scripted_main(monkeypatch, responses, params, *, verbosity=0, check_mode=Fa
     monkeypatch.setattr(module_under_test, "Sender", lambda: sender)
     monkeypatch.setattr(module_under_test, "RestSend", rest_send_factory)
     return module, sender
+
+
+@pytest.mark.parametrize("verify", [False, True])
+@pytest.mark.parametrize("verbosity", [0, 3])
+@pytest.mark.parametrize(
+    "state,config,baseline,expected",
+    [
+        pytest.param("merged", [group("Ethernet1/21")], topology(native=("Ethernet1/21",)), {"Ethernet1/21": (True, "planned")}, id="merged-create"),
+        pytest.param("merged", [group("Ethernet1/21")], topology("Ethernet1/21"), {"Ethernet1/21": (True, "noop")}, id="merged-noop"),
+        pytest.param(
+            "deleted",
+            [group("Ethernet1/21", breakout_map=None)],
+            topology("Ethernet1/21"),
+            {"Ethernet1/21": (False, "planned")},
+            id="deleted-parent",
+        ),
+        pytest.param(
+            "deleted",
+            [group("Ethernet1/21/2", breakout_map=None)],
+            topology("Ethernet1/21"),
+            {"Ethernet1/21": (False, "planned")},
+            id="deleted-child",
+        ),
+        pytest.param(
+            "deleted",
+            [group("Ethernet1/21/2", breakout_map=None)],
+            topology(native=("Ethernet1/21",)),
+            {"Ethernet1/21": (False, "noop")},
+            id="deleted-former-child-noop",
+        ),
+        pytest.param(
+            "overridden",
+            [group("Ethernet1/21")],
+            topology("Ethernet1/49", native=("Ethernet1/21",)),
+            {"Ethernet1/21": (True, "planned"), "Ethernet1/49": (False, "planned")},
+            id="overridden-both-phases",
+        ),
+        pytest.param(
+            "overridden",
+            [group(breakout_map=None)],
+            topology("Ethernet1/21", "Ethernet1/49"),
+            {"Ethernet1/21": (False, "planned"), "Ethernet1/49": (False, "planned")},
+            id="overridden-clear-switch",
+        ),
+        pytest.param(
+            "overridden",
+            [],
+            topology("Ethernet1/21", "Ethernet1/49"),
+            {"Ethernet1/21": (False, "planned"), "Ethernet1/49": (False, "planned")},
+            id="overridden-clear-fabric",
+        ),
+    ],
+)
+def test_real_main_check_mode_discovers_and_predicts_without_action_or_verification(monkeypatch, verify, verbosity, state, config, baseline, expected):
+    """Entry-point dry runs retain initial GET dispatch, write protection, and predictions."""
+    transports = []
+    metadata = switch_inventory(inventory()["DATA"])
+    replies = [baseline, metadata] if state == "overridden" and not config else [metadata, baseline]
+    _unused_module, sender = _scripted_main(
+        monkeypatch,
+        replies,
+        _params(state, config=config, verify={"enabled": verify}),
+        check_mode=True,
+        verbosity=verbosity,
+        transports=transports,
+    )
+    with pytest.raises(_Exit) as caught:
+        module_under_test.main()
+    output = caught.value.result
+    assert output["failed"] is False
+    assert output["may_have_changed"] is False
+    assert output["changed"] is any(outcome == "planned" for _broken, outcome in expected.values())
+    assert output["after_status"] == "predicted"
+    assert output["recovery"] == []
+    assert "verification" not in output
+    assert len(transports) == 1
+    assert transports[0].check_mode is True
+    assert transports[0].mutation_attempt_count == 0
+    assert len(sender.calls) == 2
+    assert all(call["verb"] == HttpVerbEnum.GET and call["payload"] is None for call in sender.calls)
+    expected_before = {name: desired_broken if outcome == "noop" else not desired_broken for name, (desired_broken, outcome) in expected.items()}
+    assert {record["interface_name"]: record["broken_out"] for record in output["before"]} == expected_before
+    after = {record["interface_name"]: record for record in output["after"]}
+    assert {name: record["broken_out"] for name, record in after.items()} == {name: broken for name, (broken, _outcome) in expected.items()}
+    assert {record["interface_name"]: record["outcome"] for record in output["api_outcomes"]} == {
+        name: outcome for name, (_broken, outcome) in expected.items()
+    }
+    changed_parents = {name for name, (_broken, outcome) in expected.items() if outcome == "planned"}
+    child_selector = bool(config and config[0]["interface_names"] == ["Ethernet1/21/2"])
+    expected_diff = {"Ethernet1/21/2"} if child_selector and changed_parents else changed_parents
+    assert {name for record in output["diff"] for name in record["interface_names"]} == expected_diff
+    for name in changed_parents:
+        assert after[name]["evidence"] == "prediction"
+    if child_selector:
+        assert output["api_outcomes"][0]["requested_interface_name"] == "Ethernet1/21/2"
+    assert ("api_calls" in output) is (verbosity == 3)
+    assert ("api_paths" in output) is (verbosity == 3)
+    if verbosity == 3:
+        assert output["api_verbs"] == ["GET", "GET"]
+        assert [record["check_mode"] for record in output["api_metadata"]] == [True, True]
+
+
+@pytest.mark.parametrize("path", [BREAKOUT, REMOVE])
+def test_main_transport_blocks_an_accidental_action_in_check_mode(monkeypatch, path):
+    """Even a planner mistake cannot send a topology POST through main's transport."""
+    transports = []
+    _unused_module, sender = _scripted_main(monkeypatch, [], _params(config=[group("Ethernet1/21")]), check_mode=True, transports=transports)
+
+    class AccidentalActionOrchestrator:
+        def __init__(self, *, rest_send, results):
+            self.rest_send = rest_send
+
+        def run(self):
+            self.rest_send.path = path
+            self.rest_send.verb = HttpVerbEnum.POST
+            self.rest_send.payload = {"interfaces": [{"switchId": SERIAL, "interfaceName": "Ethernet1/21"}]}
+            self.rest_send.commit()
+            return {"changed": False, "failed": False, "after_status": "predicted", "api_outcomes": []}
+
+    monkeypatch.setattr(module_under_test, "ManageBreakoutInterfacesOrchestrator", AccidentalActionOrchestrator)
+    with pytest.raises(_Exit) as caught:
+        module_under_test.main()
+    assert caught.value.result["failed"] is False
+    assert sender.calls == []
+    assert transports[0].check_mode is True
+    assert transports[0].response_current["CHECK_MODE"] is True
+    assert transports[0].mutation_attempt_count == 0
+
+
+@pytest.mark.parametrize("state", ["merged", "deleted", "overridden"])
+@pytest.mark.parametrize("verify", [False, True])
+def test_real_main_normal_mode_still_dispatches_topology_actions(monkeypatch, state, verify):
+    """Restoring check-mode protection must not simulate ordinary module execution."""
+    parent, omitted = "Ethernet1/21", "Ethernet1/49"
+    baseline = topology(parent) if state == "deleted" else topology(omitted, native=(parent,)) if state == "overridden" else topology(native=(parent,))
+    replies = [switch_inventory(inventory()["DATA"]), baseline, action(item(parent + "/1" if state == "deleted" else parent))]
+    if verify:
+        replies.append(topology(native=(parent,)) if state == "deleted" else topology(parent, omitted) if state == "overridden" else topology(parent))
+    if state == "overridden":
+        replies.append(action(item(omitted + "/1")))
+        if verify:
+            replies.append(topology(parent, native=(omitted,)))
+    transports = []
+    _unused_module, sender = _scripted_main(
+        monkeypatch,
+        replies,
+        _params(state, config=[group(parent, breakout_map=None if state == "deleted" else "25g-4x")], verify={"enabled": verify}),
+        transports=transports,
+    )
+    with pytest.raises(_Exit) as caught:
+        module_under_test.main()
+    output = caught.value.result
+    assert output["failed"] is False
+    assert output["changed"] is True
+    assert transports[0].check_mode is False
+    posts = [call for call in sender.calls if call["verb"] == HttpVerbEnum.POST]
+    assert [call["path"] for call in posts] == ([BREAKOUT, REMOVE] if state == "overridden" else [REMOVE] if state == "deleted" else [BREAKOUT])
+    assert {record["outcome"] for record in output["api_outcomes"]} == {"success"}
+    assert output["after_status"] == ("observed" if verify else "response_confirmed")
+    after = {record["interface_name"]: record["broken_out"] for record in output["after"]}
+    assert after == ({parent: True, omitted: False} if state == "overridden" else {parent: state == "merged"})
 
 
 @pytest.mark.parametrize("verify", [False, True])
@@ -647,7 +813,7 @@ def test_real_main_keeps_partial_success_when_controller_error_message_is_not_te
     """Error presentation cannot erase accepted writes or fresh topology evidence."""
     accepted, rejected = "Ethernet1/21", "Ethernet1/23"
     replies = [
-        inventory(),
+        switch_inventory(inventory()["DATA"]),
         topology(native=(accepted, rejected)),
         action(item(accepted), item(rejected, status="Failed", message=failure_message)),
     ]
@@ -706,7 +872,7 @@ def test_real_main_keeps_partial_success_when_controller_error_message_is_not_te
 def test_real_main_preserves_accumulated_report_when_unexpected_run_exception_escapes(monkeypatch, observed_after, verbosity):
     """Unexpected report-boundary failures retain known changes without inventing after."""
     parent = "Ethernet1/21"
-    replies = [inventory(), topology(native=(parent,)), action(item(parent))]
+    replies = [switch_inventory(inventory()["DATA"]), topology(native=(parent,)), action(item(parent))]
     if observed_after:
         replies.append(topology(parent))
     _unused_module, sender = _scripted_main(monkeypatch, replies, _params(config=[group(parent)], verify={"enabled": True}), verbosity=verbosity)
@@ -764,7 +930,7 @@ def test_unexpected_report_exception_after_read_only_workflow_does_not_imply_wri
     baseline = topology(native=(parent,)) if check_mode else topology(parent)
     _unused_module, sender = _scripted_main(
         monkeypatch,
-        [inventory(), baseline],
+        [switch_inventory(inventory()["DATA"]), baseline],
         _params(config=[group(parent)], verify={"enabled": verify}),
         verbosity=verbosity,
         check_mode=check_mode,
@@ -818,7 +984,7 @@ def test_parser_exception_after_post_preserves_baseline_without_fabricating_succ
     existing, requested = "Ethernet1/21", "Ethernet1/23"
     _unused_module, sender = _scripted_main(
         monkeypatch,
-        [inventory(), topology(existing, native=(requested,)), action(item(requested))],
+        [switch_inventory(inventory()["DATA"]), topology(existing, native=(requested,)), action(item(requested))],
         _params(config=[group(existing, requested)], verify={"enabled": verify}),
         verbosity=verbosity,
     )

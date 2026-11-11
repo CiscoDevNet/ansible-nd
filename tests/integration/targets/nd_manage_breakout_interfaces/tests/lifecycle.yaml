@@ -9,12 +9,12 @@
         breakout_cleanup_removal_blocked: false
         breakout_cleanup_original_topology_failure: {}
 
-    - name: MERGED - Create map A on the reserved native control parent
+    - name: MERGED - Create map A using management IP when configured
       cisco.nd.nd_manage_breakout_interfaces: &breakout_create_a
         fabric_name: "{{ test_fabric_name }}"
         state: merged
         config: &breakout_parent_a_config
-          - switch_id: "{{ test_switch_serial }}"
+          - switch_id: "{{ test_switch_ip if test_switch_ip | trim | length > 0 else test_switch_serial }}"
             interface_names: "{{ [breakout_control_parent] }}"
             breakout_map: "{{ breakout_map_a }}"
       register: breakout_result
@@ -40,6 +40,22 @@
         breakout_expected_discovery_rounds: 2
         breakout_allow_guard_settling: true
 
+    - name: MERGED - Require IP creation to send the canonical serial in the breakout payload
+      ansible.builtin.assert:
+        that:
+          - breakout_result.api_outcomes[0].switch_id == test_switch_serial
+          - breakout_result.api_outcomes[0].interface_name == breakout_control_parent
+          - >-
+            breakout_result.api_payload | select('mapping') | selectattr('interfaces', 'defined') |
+            map(attribute='interfaces') | flatten | map(attribute='switchId') | list == [test_switch_serial]
+          - >-
+            breakout_result.api_calls | selectattr('purpose', 'defined') |
+            selectattr('purpose', 'equalto', 'switch_metadata') | map(attribute='path') | list
+            == ['/api/v1/manage/fabrics/' ~ (test_fabric_name | urlencode | replace('/', '%2F')) ~ '/switches']
+      when:
+        - test_switch_ip | trim | length > 0
+        - ansible_verbosity | int >= 3
+
     - name: MERGED - Validate map A and every reserved collateral interface
       ansible.builtin.include_tasks: ../tasks/observe.yaml
       vars:
@@ -53,8 +69,13 @@
     - name: Validate broken-family selectors without sending mutation requests
       ansible.builtin.include_tasks: ../tasks/validate_broken_inputs.yaml
 
-    - name: MERGED - Repeat the identical creation request
-      cisco.nd.nd_manage_breakout_interfaces: *breakout_create_a
+    - name: MERGED - Repeat creation using the switch serial number
+      cisco.nd.nd_manage_breakout_interfaces:
+        <<: *breakout_create_a
+        config:
+          - switch_id: "{{ test_switch_serial }}"
+            interface_names: "{{ [breakout_control_parent] }}"
+            breakout_map: "{{ breakout_map_a }}"
       register: breakout_result
 
     - name: MERGED - Require immediate first-repeat idempotency
@@ -132,7 +153,8 @@
           - breakout_result.api_outcomes[0].interface_name == breakout_control_parent
           - >-
             breakout_result.api_calls | selectattr('purpose', 'defined') |
-            selectattr('purpose', 'equalto', 'switch_metadata') | list | length == 1
+            selectattr('purpose', 'equalto', 'switch_metadata') | map(attribute='path') | list
+            == ['/api/v1/manage/fabrics/' ~ (test_fabric_name | urlencode | replace('/', '%2F')) ~ '/switches']
       when:
         - test_switch_ip | trim | length > 0
         - ansible_verbosity | int >= 3
@@ -563,6 +585,22 @@
         breakout_expected_write_actions: [remove]
         breakout_expected_after_status: response_confirmed
         breakout_expected_discovery_rounds: 1
+
+    - name: DELETED - Require IP deletion to send the canonical serial in the unbreakout payload
+      ansible.builtin.assert:
+        that:
+          - breakout_result.api_outcomes[0].switch_id == test_switch_serial
+          - breakout_result.api_outcomes[0].interface_name == breakout_control_parent
+          - >-
+            breakout_result.api_payload | select('mapping') | selectattr('interfaces', 'defined') |
+            map(attribute='interfaces') | flatten | map(attribute='switchId') | list == [test_switch_serial]
+          - >-
+            breakout_result.api_calls | selectattr('purpose', 'defined') |
+            selectattr('purpose', 'equalto', 'switch_metadata') | map(attribute='path') | list
+            == ['/api/v1/manage/fabrics/' ~ (test_fabric_name | urlencode | replace('/', '%2F')) ~ '/switches']
+      when:
+        - test_switch_ip | trim | length > 0
+        - ansible_verbosity | int >= 3
 
     - name: Independently verify response-only deletion restored all reserved native parents
       ansible.builtin.include_tasks: ../tasks/observe.yaml
