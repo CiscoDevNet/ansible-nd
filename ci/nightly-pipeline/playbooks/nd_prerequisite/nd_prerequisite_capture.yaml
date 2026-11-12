@@ -294,6 +294,17 @@
   run_once: true
   when: nd_prerequisite_mode | default('fixture') == 'live'
 
+- name: Decide whether exact physical-link discovery is required
+  ansible.builtin.set_fact:
+    _ndp_physical_link_capture_required: >-
+      {{ (_ndp_resource_physical_queries | length > 0)
+         or (_ndp_profile.links | default([]) | length > 0)
+         or (_ndp_profile.interfabric_links | default([]) | length > 0)
+         or (_ndp_profile.vpc_pairs | default([]) | length > 0)
+         or (_ndp_profile_execution.physical_peer_links | default([]) | length > 0) }}
+  run_once: true
+  when: nd_prerequisite_mode | default('fixture') == 'live'
+
 - name: Capture full switch interface details for port-channel membership checks
   cisco.nd.nd_rest:
     path: >-
@@ -311,7 +322,7 @@
   check_mode: false
   when:
     - nd_prerequisite_mode | default('fixture') == 'live'
-    - _ndp_resource_physical_queries | length > 0
+    - _ndp_physical_link_capture_required | bool
 
 - name: Require interface-detail capture for safe membership verification
   ansible.builtin.assert:
@@ -328,7 +339,7 @@
   run_once: true
   when:
     - nd_prerequisite_mode | default('fixture') == 'live'
-    - _ndp_resource_physical_queries | length > 0
+    - _ndp_physical_link_capture_required | bool
 
 - name: Normalize full switch interface details for the planner
   ansible.builtin.set_fact:
@@ -468,6 +479,8 @@
                   'configured': _ndp_policy_objects | length > 0,
                   'policy': _ndp_policy_object.policy | default(''),
                   'policy_type': _ndp_interface_current.configData.networkOS.policy.policyType | default(''),
+                  'port_channel_id': _ndp_interface_current.configData.networkOS.policy.portChannelId | default(none),
+                  'port_channel_member': _ndp_interface_current.configData.networkOS.policy.portChannelId is defined,
                   'nv_pairs': (_ndp_policy_object.interfaces | default([{}]) | first).nvPairs | default({}),
                   'admin_state': _ndp_interface_current.configData.networkOS.policy.adminState | default(false) | bool,
                   'operational_state': _ndp_interface_current.operData.operationalStatus | default(None) | lower
@@ -496,6 +509,27 @@
   when:
     - nd_prerequisite_mode | default('fixture') == 'live'
     - _ndp_resource_physical_queries | length > 0
+
+- name: Add exact standalone port-channel parents discovered on reserved member ports
+  ansible.builtin.set_fact:
+    _ndp_resource_logical_queries: >-
+      {{ _ndp_resource_logical_queries
+         + ([{'switch_ref': _ndp_parent_query._ndp_resource_interface.switch_ref,
+              'interface': 'Port-channel' ~ (_ndp_parent_query.current.configData.networkOS.policy.portChannelId | string | regex_replace('(?i)^port-channel', ''))}]
+            if not (_ndp_resource_logical_queries
+                    | selectattr('switch_ref', 'equalto', _ndp_parent_query._ndp_resource_interface.switch_ref)
+                    | selectattr('interface', 'equalto', 'Port-channel' ~ (_ndp_parent_query.current.configData.networkOS.policy.portChannelId | string | regex_replace('(?i)^port-channel', '')))
+                    | list | length) else [])) }}
+  loop: "{{ _ndp_live_resource_interface_results.results | default([]) }}"
+  loop_control:
+    loop_var: _ndp_parent_query
+    label: "{{ _ndp_parent_query._ndp_resource_interface.switch_ref }}/{{ _ndp_parent_query._ndp_resource_interface.interface }}"
+  run_once: true
+  when:
+    - nd_prerequisite_mode | default('fixture') == 'live'
+    - not (_ndp_parent_query.failed | default(false))
+    - _ndp_parent_query.current.configData.networkOS.policy.portChannelId is defined
+    - _ndp_parent_query.current.configData.networkOS.policy.policyType | default('') not in ['vpcMember', 'accessVpcPoMember']
 
 - name: Capture reserved logical interfaces and routed port-channel parents
   cisco.nd.nd_rest:
@@ -527,7 +561,8 @@
                 _ndp_logical_result._ndp_resource_interface.interface: {
                   'exists': _ndp_logical_objects | length > 0,
                   'policy': _ndp_logical_object.policy | default(''),
-                  'nv_pairs': (_ndp_logical_object.interfaces | default([{}]) | first).nvPairs | default({})
+                  'nv_pairs': (_ndp_logical_object.interfaces | default([{}]) | first).nvPairs | default({}),
+                  'members': (_ndp_logical_object.interfaces | default([{}]) | first).nvPairs.MEMBER_INTERFACES | default([])
                 }
               })
           })
@@ -615,6 +650,8 @@
         + (_ndp_profile.vpc_pairs | default([])
            | selectattr('physical_peer_links', 'defined')
            | map(attribute='physical_peer_links') | flatten
+           | map('combine', {'template': 'vpc_peer_link'}) | list)
+        + ((_ndp_profile_execution.physical_peer_links | default([]))
            | map('combine', {'template': 'vpc_peer_link'}) | list)
       }}
   run_once: true

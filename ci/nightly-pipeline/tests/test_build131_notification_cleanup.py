@@ -277,3 +277,69 @@ assert message.contains('Passed: 81') && message.contains('Failed: 0') && messag
 assert message.contains('case coverage INCOMPLETE') && message.contains('40 incomplete case(s)')
 assert !message.contains('PRIVATE_DIAGNOSTIC_CANARY')
 ''')
+
+
+@pytest.mark.parametrize('variant', ['Jenkinsfile_nd_jenkins_script',
+    'Jenkinsfile_nd_jenkins_script_temp_switches', 'Jenkinsfile_nd_jenkins_script_comm_list'])
+def test_webex_includes_separately_labelled_play_recap(variant):
+    source = (Path(__file__).resolve().parents[1] / variant).read_text()
+    recap = source.split('def modulePlayRecapText() {', 1)[1].split('\ndef moduleCaseSummaryRows()', 1)[0]
+    assert 'validatedPlayRecapCounts(row)' in recap
+    assert 'PLAY RECAP COUNTS BY MODULE' in recap
+    assert 'invocation.counts' in source
+    assert "row.result == 'NOT_RUN'" in recap
+    assert "'ok'" in source and "'failed'" in source and "'skipped'" in source
+    assert source.count('modulePlayRecapText()') == 3
+
+def test_webex_shows_actual_play_recap_without_changing_case_totals(groovy_runner):
+    groovy_runner(POST + r'''
+script.MODULE_ACTIVITY_RESULTS.putAll([
+    ibgp: [module:'nd_manage_l3out', test_type:'integration', nd:'4.3', scope:'iBGP', round_label:'iBGP',
+        result:'FAIL', coverage:'COMPLETE', validated:true, case_totals:[started:6,passed:5,failed:1,skipped:0,incomplete:0],
+        invocation:[status:'FAIL', counts:[ok:339,changed:29,unreachable:0,failed:1,skipped:313,rescued:0,ignored:0]]],
+    ebgp: [module:'nd_manage_l3out', test_type:'integration', nd:'4.3', scope:'eBGP', round_label:'eBGP',
+        result:'NOT_RUN', coverage:'UNKNOWN', case_totals:[:]],
+    missing: [module:'other_fixture', test_type:'integration', nd:'4.3', scope:'iBGP', round_label:'iBGP',
+        result:'FAIL', coverage:'COMPLETE', validated:true, case_totals:[started:1,passed:0,failed:1,skipped:0,incomplete:0],
+        invocation:[status:'FAIL', counts:[ok:1,failed:1,skipped:1]]]
+])
+script.run()
+def message = sent.join('\n')
+assert message.contains('Passed: 5') && message.contains('Failed: 2') && message.contains('Skipped: 0')
+assert message.contains('INTEG PLAY RECAP COUNTS')
+assert message.contains('Passed (ok): 340') && message.contains('Failed: 2') && message.contains('Skipped: 314')
+assert message.contains('nd_manage_l3out [iBGP]: 339 | 1 | 313')
+assert message.contains('other_fixture [iBGP]: 1 | 1 | 1')
+assert message.contains('nd_manage_l3out [eBGP]: NOT_RUN | - | - | -')
+assert !message.contains('ok=339 changed=29 unreachable=0 failed=1 skipped=313 rescued=0 ignored=0')
+''')
+
+def test_minimal_notification_keeps_recap_totals_when_case_report_is_unavailable(groovy_runner):
+    groovy_runner(POST + r'''
+reportReadyField.set(script, false)
+script.MODULE_ACTIVITY_RESULTS['executed'] = [module:'fixture_module', test_type:'integration',
+    round_label:'iBGP', result:'FAIL', invocation:[status:'FAIL',counts:[ok:191,failed:0,skipped:124]]]
+def message = script.minimalBuildNotification('FixtureError')
+assert message.contains('Passed (ok): 191')
+assert message.contains('Failed: 0') && message.contains('Skipped: 124')
+assert message.contains('CASE COUNTS NOT GENERATED')
+assert !message.contains('AUTHORED INTEG TEST CASE COUNTS')
+''')
+
+def test_play_recap_totals_are_unavailable_when_an_executed_recap_is_invalid(groovy_runner):
+    groovy_runner(POST + r'''
+script.MODULE_ACTIVITY_RESULTS.putAll([
+    valid: [module:'valid_fixture', test_type:'integration', round_label:'iBGP', result:'PASS',
+        case_totals:[passed:4,failed:0,skipped:0], invocation:[status:'OK',counts:[ok:10,failed:0,skipped:2]]],
+    invalid: [module:'invalid_fixture', test_type:'integration', round_label:'eBGP', result:'FAIL',
+        case_totals:[passed:0,failed:1,skipped:0], invocation:[status:'FAIL',counts:[ok:3,failed:1]]],
+    not_run: [module:'not_run_fixture', test_type:'integration', round_label:'eBGP', result:'NOT_RUN']
+])
+script.run()
+def message = sent.join('\n')
+assert message.contains('Passed (ok): unavailable')
+assert message.contains('Failed: unavailable') && message.contains('Skipped: unavailable')
+assert message.contains('Passed: 4') && message.contains('Failed: 1') && message.contains('Skipped: 0')
+assert message.contains('invalid_fixture [eBGP]: unavailable')
+assert message.contains('not_run_fixture [eBGP]: NOT_RUN | - | - | -')
+''')

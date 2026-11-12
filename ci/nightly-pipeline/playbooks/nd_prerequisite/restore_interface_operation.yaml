@@ -2,8 +2,8 @@
 - name: Validate the journaled prerequisite restore operation
   ansible.builtin.assert:
     that:
-      - _ndp_restore_operation.action in ['reset_routed_ethernet', 'restore_ethernet', 'delete_created_port_channel', 'delete_planned_link']
-      - _ndp_restore_operation.action in ['reset_routed_ethernet', 'restore_ethernet'] or not (_ndp_restore_operation.pre_change_intent_exists | bool)
+       - _ndp_restore_operation.action in ['reset_routed_ethernet', 'restore_ethernet', 'delete_created_port_channel', 'delete_planned_link', 'restore_port_channel_members']
+       - _ndp_restore_operation.action in ['reset_routed_ethernet', 'restore_ethernet', 'restore_port_channel_members'] or not (_ndp_restore_operation.pre_change_intent_exists | bool)
     fail_msg: "Refusing an unsupported or non-empty prerequisite restore snapshot."
   run_once: true
 
@@ -58,6 +58,105 @@
     - _ndp_restore_operation.action in ['reset_routed_ethernet', 'delete_created_port_channel']
     - (_ndp_restore_operation.switch_ip | default('')) | length > 0
     - test_module | default('') == 'nd_interface_subinterface_managed'
+
+- name: Read the standalone port-channel before restoring reserved members
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ _ndp_restore_operation.fabric_name }}/switches/{{ _ndp_restore_operation.serial }}/interfaces/{{ _ndp_restore_operation.interface }}
+    method: get
+  register: _ndp_restore_pc_current
+  no_log: true
+  run_once: true
+  when: _ndp_restore_operation.action == 'restore_port_channel_members'
+
+- name: Require the parent and expected detached membership before restoring
+  ansible.builtin.assert:
+    that:
+      - _ndp_restore_pc_current.current.switchId == _ndp_restore_operation.serial
+      - _ndp_restore_pc_current.current.interfaceName == _ndp_restore_operation.interface
+      - _ndp_restore_pc_current.current.interfaceType == 'portChannel'
+      - _ndp_restore_pc_current.current.configData.networkOS.policy.policyType == _ndp_restore_operation.policy_type
+      - _ndp_restore_pc_current.current.configData.networkOS.policy.ports | sort == _ndp_restore_operation.members_after | sort
+    fail_msg: >-
+      NDP_PORT_CHANNEL_RESTORE_UNVERIFIED: {{ _ndp_restore_operation.interface }} changed after prerequisite detach;
+      retaining the journal and refusing to overwrite newer membership.
+  run_once: true
+  no_log: true
+  when: _ndp_restore_operation.action == 'restore_port_channel_members'
+
+- name: Restore reserved members to the standalone access port-channel
+  cisco.nd.nd_interface_port_channel_access:
+    fabric_name: "{{ _ndp_restore_operation.fabric_name }}"
+    config:
+      - switch_ip: "{{ _ndp_restore_operation.switch_ip }}"
+        interface_name: "{{ _ndp_restore_operation.interface }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              ports: "{{ _ndp_restore_operation.members_before }}"
+    config_actions: {deploy: true}
+    state: merged
+  no_log: true
+  run_once: true
+  when:
+    - _ndp_restore_operation.action == 'restore_port_channel_members'
+    - _ndp_restore_operation.module == 'access'
+
+- name: Restore reserved members to the standalone trunk port-channel
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    fabric_name: "{{ _ndp_restore_operation.fabric_name }}"
+    config:
+      - switch_ip: "{{ _ndp_restore_operation.switch_ip }}"
+        interface_name: "{{ _ndp_restore_operation.interface }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              ports: "{{ _ndp_restore_operation.members_before }}"
+    config_actions: {deploy: true}
+    state: merged
+  no_log: true
+  run_once: true
+  when:
+    - _ndp_restore_operation.action == 'restore_port_channel_members'
+    - _ndp_restore_operation.module == 'trunk'
+
+- name: Restore reserved members to the standalone routed port-channel
+  cisco.nd.nd_interface_port_channel_routed:
+    fabric_name: "{{ _ndp_restore_operation.fabric_name }}"
+    config:
+      - switch_ip: "{{ _ndp_restore_operation.switch_ip }}"
+        interface_name: "{{ _ndp_restore_operation.interface }}"
+        config_data:
+          network_os:
+            network_os_type: nx-os
+            policy:
+              ports: "{{ _ndp_restore_operation.members_before }}"
+    config_actions: {deploy: true}
+    state: merged
+  no_log: true
+  run_once: true
+  when:
+    - _ndp_restore_operation.action == 'restore_port_channel_members'
+    - _ndp_restore_operation.module == 'routed'
+
+- name: Verify the original standalone port-channel member list was restored
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ _ndp_restore_operation.fabric_name }}/switches/{{ _ndp_restore_operation.serial }}/interfaces/{{ _ndp_restore_operation.interface }}
+    method: get
+  register: _ndp_restore_pc_verified
+  retries: 12
+  delay: 5
+  until: >-
+    _ndp_restore_pc_verified.current.switchId | default('') == _ndp_restore_operation.serial and
+    _ndp_restore_pc_verified.current.interfaceName | default('') == _ndp_restore_operation.interface and
+    _ndp_restore_pc_verified.current.configData.networkOS.policy.policyType | default('') == _ndp_restore_operation.policy_type and
+    _ndp_restore_pc_verified.current.configData.networkOS.policy.ports | default([]) | sort == _ndp_restore_operation.members_before | sort
+  no_log: true
+  run_once: true
+  when: _ndp_restore_operation.action == 'restore_port_channel_members'
 
 - name: "Remove the unmanaged sub-interfaces {{ test_module | default('') }} left on {{ _ndp_restore_operation.interface }}"
   cisco.nd.nd_interface_subinterface_unmanaged:

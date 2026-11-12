@@ -72,6 +72,10 @@
            | selectattr('templateName', 'equalto', _ndp_operation.template)
            | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_operation.src.serial)
            | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_operation.dst.serial)
+           | selectattr('sw1-info.if-name', 'defined')
+           | selectattr('sw2-info.if-name', 'defined')
+           | selectattr('sw1-info.if-name', 'equalto', _ndp_operation.src.interface)
+           | selectattr('sw2-info.if-name', 'equalto', _ndp_operation.dst.interface)
            | list | length) > 0)
          or
          ((_ndp_links_all
@@ -79,6 +83,10 @@
            | selectattr('templateName', 'equalto', _ndp_operation.template)
            | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_operation.dst.serial)
            | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_operation.src.serial)
+           | selectattr('sw1-info.if-name', 'defined')
+           | selectattr('sw2-info.if-name', 'defined')
+           | selectattr('sw1-info.if-name', 'equalto', _ndp_operation.dst.interface)
+           | selectattr('sw2-info.if-name', 'equalto', _ndp_operation.src.interface)
            | list | length) > 0) }}
   run_once: true
 
@@ -90,6 +98,10 @@
            | selectattr('link-type', 'equalto', 'ethisl')
            | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_operation.src.serial)
            | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_operation.dst.serial)
+           | selectattr('sw1-info.if-name', 'defined')
+           | selectattr('sw2-info.if-name', 'defined')
+           | selectattr('sw1-info.if-name', 'equalto', _ndp_operation.src.interface)
+           | selectattr('sw2-info.if-name', 'equalto', _ndp_operation.dst.interface)
            | list | length) > 0)
          or
          ((_ndp_links_all
@@ -97,6 +109,10 @@
            | selectattr('link-type', 'equalto', 'ethisl')
            | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_operation.dst.serial)
            | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_operation.src.serial)
+           | selectattr('sw1-info.if-name', 'defined')
+           | selectattr('sw2-info.if-name', 'defined')
+           | selectattr('sw1-info.if-name', 'equalto', _ndp_operation.dst.interface)
+           | selectattr('sw2-info.if-name', 'equalto', _ndp_operation.src.interface)
            | list | length) > 0) }}
   run_once: true
 
@@ -139,6 +155,9 @@
                  | selectattr('link-type', 'defined') | selectattr('link-type', 'equalto', 'ethisl')
                  | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_operation.src.serial)
                  | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_operation.dst.serial)
+                 | selectattr('sw1-info.if-name', 'defined') | selectattr('sw2-info.if-name', 'defined')
+                 | selectattr('sw1-info.if-name', 'equalto', _ndp_operation.src.interface)
+                 | selectattr('sw2-info.if-name', 'equalto', _ndp_operation.dst.interface)
                  | list | length) > 0)
                or
                (((_ndp_link_current.current if _ndp_link_current.current is not mapping
@@ -146,6 +165,9 @@
                  | selectattr('link-type', 'defined') | selectattr('link-type', 'equalto', 'ethisl')
                  | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_operation.dst.serial)
                  | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_operation.src.serial)
+                 | selectattr('sw1-info.if-name', 'defined') | selectattr('sw2-info.if-name', 'defined')
+                 | selectattr('sw1-info.if-name', 'equalto', _ndp_operation.dst.interface)
+                 | selectattr('sw2-info.if-name', 'equalto', _ndp_operation.src.interface)
                  | list | length) > 0) }}
           failed_when: false
           no_log: true
@@ -166,6 +188,10 @@
                    | selectattr('link-type', 'equalto', 'ethisl')
                    | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_operation.src.serial)
                    | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_operation.dst.serial)
+                   | selectattr('sw1-info.if-name', 'defined')
+                   | selectattr('sw2-info.if-name', 'defined')
+                   | selectattr('sw1-info.if-name', 'equalto', _ndp_operation.src.interface)
+                   | selectattr('sw2-info.if-name', 'equalto', _ndp_operation.dst.interface)
                    | list | length) > 0)
                  or
                  ((_ndp_links_all
@@ -173,6 +199,10 @@
                    | selectattr('link-type', 'equalto', 'ethisl')
                    | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_operation.dst.serial)
                    | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_operation.src.serial)
+                   | selectattr('sw1-info.if-name', 'defined')
+                   | selectattr('sw2-info.if-name', 'defined')
+                   | selectattr('sw1-info.if-name', 'equalto', _ndp_operation.dst.interface)
+                   | selectattr('sw2-info.if-name', 'equalto', _ndp_operation.src.interface)
                    | list | length) > 0) }}
       rescue:
         - name: "ensure_link self-heal admin-up unavailable -- continuing to hard assert"
@@ -304,10 +334,22 @@
                  else (_ndp_link_after.current.DATA | default(_ndp_link_after.current.links | default([]))))
                 | selectattr('templateName', 'defined')
                 | selectattr('templateName', 'equalto', _ndp_operation.template)
-                | selectattr('sw1-info.sw-serial-number', 'in', [_ndp_operation.src.serial, _ndp_operation.dst.serial])
-                | selectattr('sw2-info.sw-serial-number', 'in', [_ndp_operation.src.serial, _ndp_operation.dst.serial])
-                | selectattr('sw1-info.if-name', 'in', [_ndp_operation.src.interface, _ndp_operation.dst.interface])
-                | selectattr('sw2-info.if-name', 'in', [_ndp_operation.src.interface, _ndp_operation.dst.interface])
+                | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_operation.src.serial)
+                | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_operation.dst.serial)
+                | selectattr('sw1-info.if-name', 'defined') | selectattr('sw2-info.if-name', 'defined')
+                | selectattr('sw1-info.if-name', 'equalto', _ndp_operation.src.interface)
+                | selectattr('sw2-info.if-name', 'equalto', _ndp_operation.dst.interface)
+                | list | length) > 0
+               or
+               ((_ndp_link_after.current if _ndp_link_after.current is not mapping
+                 else (_ndp_link_after.current.DATA | default(_ndp_link_after.current.links | default([]))))
+                | selectattr('templateName', 'defined')
+                | selectattr('templateName', 'equalto', _ndp_operation.template)
+                | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_operation.dst.serial)
+                | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_operation.src.serial)
+                | selectattr('sw1-info.if-name', 'defined') | selectattr('sw2-info.if-name', 'defined')
+                | selectattr('sw1-info.if-name', 'equalto', _ndp_operation.dst.interface)
+                | selectattr('sw2-info.if-name', 'equalto', _ndp_operation.src.interface)
                 | list | length) > 0 }}
           no_log: true
           run_once: true

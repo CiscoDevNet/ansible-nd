@@ -67,6 +67,19 @@ m.exit_json(status=200,current=result)
 '''
 
 
+PORT_CHANNEL = r'''
+import json, os
+from pathlib import Path
+from ansible.module_utils.basic import AnsibleModule
+m=AnsibleModule(argument_spec={'fabric_name':{'type':'str'},'config':{'type':'list'},
+    'config_actions':{'type':'dict'},'state':{'type':'str'},'output_level':{'type':'str'}})
+p=Path(os.environ['RESTORE_LEDGER']); s=json.loads(p.read_text())
+item=m.params['config'][0]; ports=item['config_data']['network_os']['policy']['ports']
+s['writes'].append(['port_channel',m.params['fabric_name'],item['interface_name'],ports])
+s['current']['configData']['networkOS']['policy']['ports']=ports
+p.write_text(json.dumps(s)); m.exit_json(changed=True,before=[],after=[])
+'''
+
 def execute(tmp_path, *, problem='', before_up=False, prepare=False, mode='trunk'):
     before = {'mode':mode,'networkOS':{'networkOSType':'nx-os','policy':{
         'adminState':before_up,'policyType':'routedHost' if mode=='routed' else 'trunkHost',
@@ -85,6 +98,8 @@ def execute(tmp_path, *, problem='', before_up=False, prepare=False, mode='trunk
     modules=tmp_path/'collections/ansible_collections/cisco/nd/plugins/modules'; modules.mkdir(parents=True)
     for name in ['nd_rest','nd_interface_subinterface_managed','nd_interface_subinterface_unmanaged','nd_manage_links']:
         (modules/(name+'.py')).write_text(REST)
+    for name in ['nd_interface_port_channel_access','nd_interface_port_channel_trunk_host','nd_interface_port_channel_routed']:
+        (modules/(name+'.py')).write_text(PORT_CHANNEL)
     restore=yaml.safe_load((TASKS/'restore_interface_operation.yaml').read_text())
     # Keep production conditionals/verification; shorten only polling delays.
     def speed(tasks):
@@ -219,3 +234,40 @@ def test_free_port_target_normalization_cannot_leave_a_reserved_unused_port_up(t
     assert state['current']['operData']['adminStatus']=='down'
     assert [r[0] for r in state['writes']]==['put','put','post']
     assert all('Ethernet1%2F35' in r[1] or r[1].endswith('/interfaceActions/deploy') for r in state['writes'])
+
+
+@pytest.mark.parametrize('problem,success', [('', True), ('pc_changed', False)])
+def test_standalone_port_channel_restore_is_exact_and_refuses_drift(tmp_path,problem,success):
+    modules=tmp_path/'collections/ansible_collections/cisco/nd/plugins/modules'
+    modules.mkdir(parents=True)
+    (modules/'nd_rest.py').write_text(REST)
+    for name in ['nd_interface_subinterface_managed','nd_interface_subinterface_unmanaged','nd_manage_links',
+                 'nd_interface_port_channel_access','nd_interface_port_channel_trunk_host','nd_interface_port_channel_routed']:
+        (modules/(name+'.py')).write_text(PORT_CHANNEL)
+    current={'switchId':'SERIAL','interfaceName':'Port-channel11','interfaceType':'portChannel',
+        'configData':{'mode':'access','networkOS':{'networkOSType':'nx-os','policy':{
+            'policyType':'accessPoHost','ports':['Ethernet1/30']}}},'operData':{'mode':'access','adminStatus':'up'}}
+    if problem == 'pc_changed':
+        current['configData']['networkOS']['policy']['ports']=['Ethernet1/30','Ethernet1/40']
+    ledger=tmp_path/'ledger.json'; ledger.write_text(json.dumps({'current':current,'problem':'','writes':[]}))
+    operation={'action':'restore_port_channel_members','interface':'Port-channel11','serial':'SERIAL',
+        'switch_ip':'192.0.2.1','fabric_name':'TEST','module':'access','policy_type':'accessPoHost',
+        'members_before':['Ethernet1/10','Ethernet1/30'],'members_after':['Ethernet1/30']}
+    restore=yaml.safe_load((TASKS/'restore_interface_operation.yaml').read_text())
+    play=tmp_path/'restore-pc.yaml'; play.write_text(yaml.safe_dump([{'hosts':'localhost','connection':'local',
+        'gather_facts':False,'vars':{'ansible_python_interpreter':sys.executable,
+        '_ndp_restore_operation':operation},'tasks':restore}],sort_keys=False))
+    config=tmp_path/'ansible.cfg'; config.write_text('[defaults]\n')
+    env=dict(os.environ,ANSIBLE_CONFIG=str(config),ANSIBLE_COLLECTIONS_PATH=str(tmp_path/'collections'),
+        ANSIBLE_COLLECTIONS_SCAN_SYS_PATH='False',ANSIBLE_STDOUT_CALLBACK='default',ANSIBLE_NOCOLOR='1',
+        ANSIBLE_LOCAL_TEMP=str(tmp_path/'local'),ANSIBLE_REMOTE_TEMP=str(tmp_path/'remote'),
+        RESTORE_LEDGER=str(ledger),RESTORE_JOURNAL=str(tmp_path/'journal.yaml'),OBJC_DISABLE_INITIALIZE_FORK_SAFETY='YES')
+    done=subprocess.run([str(Path(sys.executable).with_name('ansible-playbook')),'-i','localhost,',str(play)],
+        env=env,text=True,capture_output=True,timeout=60)
+    state=json.loads(ledger.read_text())
+    assert (done.returncode == 0) is success,done.stdout+done.stderr
+    if success:
+        assert state['current']['configData']['networkOS']['policy']['ports']==['Ethernet1/10','Ethernet1/30']
+        assert [row[0] for row in state['writes']]==['port_channel']
+    else:
+        assert state['writes']==[]

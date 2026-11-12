@@ -129,22 +129,21 @@ topology_templates:
   access_links: &access_links [{switch_ref: vxlan_leaf_1, interfaces: [Ethernet1/3], admin_state: true, operational_state: when_reported_up}, {switch_ref: vxlan_leaf_2, interfaces: [Ethernet1/3], admin_state: true, operational_state: when_reported_up}]
   trunk_links: &trunk_links [{switch_ref: vxlan_leaf_1, interfaces: [Ethernet1/3], admin_state: true, operational_state: when_reported_up}, {switch_ref: vxlan_leaf_2, interfaces: [Ethernet1/3], admin_state: true, operational_state: when_reported_up}]
   l3out_smoke_links: &l3out_smoke_links [{switch_ref: vxlan_border_1, interfaces: [Ethernet1/1], admin_state: true, operational_state: when_reported_up}, {switch_ref: external_edge_1, interfaces: [Ethernet1/3], admin_state: true, operational_state: when_reported_up}]
-  # Only the cabled border_1<->edge_1 pair needs admin/oper readiness. The sub-interface and SVI links are
-  # config-only (planned) ND link objects, so their ports are deliberately NOT listed here.
-  l3out_links: &l3out_links [{switch_ref: vxlan_border_1, interfaces: [Ethernet1/1], admin_state: true, operational_state: when_reported_up}, {switch_ref: external_edge_1, interfaces: [Ethernet1/3], admin_state: true, operational_state: when_reported_up}]
+  # The L2 DCI SVI case needs a real, ready physical path; a planned link object
+  # was accepted by ND but did not satisfy the SVI create in build 163.
+  l3out_links: &l3out_links [{switch_ref: vxlan_border_1, interfaces: [Ethernet1/1, Ethernet1/4], admin_state: true, operational_state: when_reported_up}, {switch_ref: external_edge_1, interfaces: [Ethernet1/3, Ethernet1/4], admin_state: true, operational_state: when_reported_up}]
   dedicated_l3out_links: &dedicated_l3out_links [{switch_ref: vxlan_border_1, interfaces: [Ethernet1/1, Ethernet1/2], admin_state: true, operational_state: when_reported_up}, {switch_ref: external_edge_1, interfaces: [Ethernet1/2, Ethernet1/3], admin_state: true, operational_state: when_reported_up}]
   network_link: &network_link [{switch_ref: vxlan_leaf_1, interfaces: [Ethernet1/4], admin_state: true, operational_state: when_reported_up}]
   # Inter-fabric DCI links nd_manage_l3out needs but does NOT create itself (module docs: "the user must
   # manage links separately"). Live-probed on ND 4.3: ND validates ONE LINK TEMPLATE PER CONNECTIVITY TYPE and a
   # missing one fails the create with 207 "No links exist between the given fabrics for this type. Please
-  # create links with <template> template". This is a CONFIG requirement, not cabling: cisco.nd.nd_manage_links
-  # also accepts config-only (planned) links on uncabled ports, so the lab's single border_1<->edge_1 cable
-  # is enough and no extra connection is needed.
+  # create links with <template> template". A planned L2 link was accepted and read back in build 163,
+  # but the SVI create still failed; the additional topology or controller requirement is unverified.
   #   routed       -> ext_l3_dci_link  (policy layer3DciVrfLite) on the existing cable Eth1/1 <-> Eth1/3
   #   subInterface -> ext_fabric_setup (policy ebgpVrfLite)       parent Eth1/2 on both ends (nd_test_switch*_subif;
   #                                                               the runner overlay appends the dot1q id: Ethernet1/2.100)
   #   svi          -> ext_l2_dci_link  (policy layer2Dci)         trunk Eth1/4 on both ends (runner SVI overlay)
-  # requires_physical=false links are created as planned links and removed again by the restore journal.
+  # The SVI case requires the exact Eth1/4 cable; a config-only planned link is not sufficient.
   l3out_dci_links: &l3out_dci_links
     - template: ext_l3_dci_link
       policy_type: layer3DciVrfLite
@@ -163,7 +162,7 @@ topology_templates:
     - template: ext_l2_dci_link
       policy_type: layer2Dci
       provisioning: nd_manage_links
-      requires_physical: false
+      requires_physical: true
       src: {switch_ref: vxlan_border_1, interface: Ethernet1/4}
       dst: {switch_ref: external_edge_1, interface: Ethernet1/4}
       template_inputs: {trunk_allowed_vlans: "100,200,300", native_vlan: 1, port_type_fast: true, mtu_type: jumbo, speed: auto, bpdu_guard: default}
@@ -782,7 +781,7 @@ profiles:
     interfabric_links: *l3out_dci_links
     bfd_required: true
     managed_domains: [l3outs, vrfs, physical_interfaces]
-    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_fabric1_name: VXLAN_EVPN_Fabric, nd_test_fabric2_name: External_Connectivity_Fabric, nd_test_switch1_id: SERIAL00004, nd_test_switch2_id: SERIAL00005, nd_test_switch1_mgmt_ip: 192.0.2.88, nd_test_switch2_mgmt_ip: 192.0.2.89, nd_test_switch1_interface: Ethernet1/1, nd_test_switch2_interface: Ethernet1/3, nd_test_switch1_subif: Ethernet1/2, nd_test_switch2_subif: Ethernet1/2}
+    runtime_vars: {nd_test_fabric_name: VXLAN_EVPN_Fabric, nd_test_fabric1_name: VXLAN_EVPN_Fabric, nd_test_fabric2_name: External_Connectivity_Fabric, nd_test_switch1_id: SERIAL00004, nd_test_switch2_id: SERIAL00005, nd_test_switch1_mgmt_ip: 192.0.2.88, nd_test_switch2_mgmt_ip: 192.0.2.89, nd_test_switch1_interface: Ethernet1/1, nd_test_switch2_interface: Ethernet1/3, nd_test_switch1_subif: Ethernet1/2.100, nd_test_switch2_subif: Ethernet1/2.100}
     confirmation: {status: pending, owner: "", evidence: "", reasons: [confirm routed and subinterface wiring, confirm prerequisite VRF lifecycle, confirm route-map names and lifecycle]}
   integration.nd_interface_vpc_access:
     <<: *profile
@@ -909,7 +908,7 @@ profile_executions:
       switch_refs: [vxlan_leaf_1, vxlan_leaf_2]
       desired_roles: [leaf, leaf]
       pair_mode: physical
-      physical_peer_links: []
+      physical_peer_links: [{src: {switch_ref: vxlan_leaf_1, interface: Ethernet1/2}, dst: {switch_ref: vxlan_leaf_2, interface: Ethernet1/1}}]
       # 2026-10-13: ND reports the intended leaf_1 Eth1/2 <-> leaf_2 Eth1/1 link missing and admin-down.
       # Physical wiring needs CML confirmation; the leaves are N9K-C9300v, which do not support virtual fabric peering, so the physical peer-link is required.
       # 2026-10-15: build failure confirmed serials are correct (9MFYMFJ0SPV/96EHKPJ7D40 match this registry
@@ -925,7 +924,7 @@ profile_executions:
       switch_refs: [external_edge_1, external_edge_2]
       desired_roles: [edge_router, edge_router]
       pair_mode: physical
-      physical_peer_links: []
+      physical_peer_links: [{src: {switch_ref: external_edge_1, interface: Ethernet1/5}, dst: {switch_ref: external_edge_2, interface: Ethernet1/6}}, {src: {switch_ref: external_edge_1, interface: Ethernet1/7}, dst: {switch_ref: external_edge_2, interface: Ethernet1/8}}]
       # 2026-10-13: no current edge_1 <-> edge_2 peer-link is discovered. Eth1/2-3 on edge_1 are live DCI ports.
       # The standalone target's extended fixture uses edge_1 Eth1/5+1/7 and edge_2 Eth1/6+1/8; it is not a traffic test.
       confirmation: {status: pending, owner: lab_owner, evidence: "", reasons: ["for operational external vPC coverage, verify or add edge_1 Ethernet1/5 <-> edge_2 Ethernet1/6 and edge_1 Ethernet1/7 <-> edge_2 Ethernet1/8, matching the extended standalone fixture; the lean delete-safe fixture does not configure peer-link members; never repurpose edge_1 Ethernet1/2 or Ethernet1/3 because they are live DCI links; keepalive addresses and native-VLAN alignment require separate operational validation; the N9K-C9300v edge switches do not support virtual fabric peering, so only the physical peer-link is valid"]}

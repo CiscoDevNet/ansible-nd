@@ -96,8 +96,8 @@
     nd_test_switch2_mgmt_ip: 192.0.2.89
     nd_test_switch1_interface: Ethernet1/1
     nd_test_switch2_interface: Ethernet1/3
-    nd_test_switch1_subif: Ethernet1/2
-    nd_test_switch2_subif: Ethernet1/2
+    nd_test_switch1_subif: Ethernet1/2.100
+    nd_test_switch2_subif: Ethernet1/2.100
     nd_network_test_topology: standalone
     nd_vrf_test_topology: standalone
     # Fabric VRF VLAN range is 2000-2299; the collection default nd_vrf_base_vlan=2800
@@ -585,6 +585,17 @@
         - name: "[{{ test_module }}] SETUP - read the target's unchanged L3Out variables"
           ansible.builtin.include_vars:
             file: "{{ playbook_dir }}/tests/integration/targets/nd_manage_l3out/vars/main.yaml"
+
+        - name: "[{{ test_module }}] SETUP - verify L3Out subinterface names match the authored VLAN"
+          ansible.builtin.assert:
+            that:
+              - l3out_static.connectivity_details.routing_interface_type == 'subInterface'
+              - l3out_static.connectivity_details.links | length == 1
+              - l3out_static.connectivity_details.links[0].vlan_id | int >= 1
+              - l3out_static.connectivity_details.links[0].vlan_id | int <= 4094
+              - (test_switch1_subif | string).endswith('.' ~ (l3out_static.connectivity_details.links[0].vlan_id | string))
+              - (test_switch2_subif | string).endswith('.' ~ (l3out_static.connectivity_details.links[0].vlan_id | string))
+            fail_msg: "NDP_L3OUT_SUBINTERFACE_VLAN_MISMATCH: the configured subinterface names must include the authored VLAN suffix."
 
         - name: "[{{ test_module }}] SETUP - read external fabric BGP settings"
           cisco.nd.nd_rest:

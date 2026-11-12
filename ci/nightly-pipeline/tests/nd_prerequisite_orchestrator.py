@@ -489,7 +489,8 @@ def _assert_existing_link_port(registry, current_state, switch_ref, interface, e
         )
 
 
-def _assert_free_interface(registry, current_state, switch_ref, interface, existing_link=None):
+def _assert_free_interface(registry, current_state, switch_ref, interface, existing_link=None,
+                           allow_port_channel_member=False):
     state = _physical_interface_state(current_state, switch_ref, interface)
     if state is None:
         raise OrchestrationError(f"physical interface was not captured: {switch_ref}/{interface}")
@@ -500,7 +501,7 @@ def _assert_free_interface(registry, current_state, switch_ref, interface, exist
         _assert_existing_link_port(registry, current_state, switch_ref, interface, existing_link)
     elif _is_fabric_link(current_state, serial, interface):
         raise UnavailableError(f"reserved interface is a fabric link: {switch_ref}/{interface}")
-    if _is_port_channel_member(current_state, switch_ref, interface, state):
+    if not allow_port_channel_member and _is_port_channel_member(current_state, switch_ref, interface, state):
         raise UnavailableError(f"reserved interface is a port-channel member: {switch_ref}/{interface}")
     return state
 
@@ -554,10 +555,69 @@ def _is_default_free_port(state):
 
 
 def _port_channel_members(state):
-    members = state.get("nv_pairs", {}).get("MEMBER_INTERFACES", "")
+    members = state.get("members")
+    if members is None:
+        nv_pairs = state.get("nv_pairs", {})
+        members = next((value for key, value in nv_pairs.items() if str(key).lower() == "member_interfaces"), "")
     if isinstance(members, list):
         return [str(item) for item in members if str(item).strip()]
     return [item.strip() for item in str(members or "").split(",") if item.strip()]
+
+
+def _port_channel_id(state):
+    value = state.get("port_channel_id")
+    if value is None:
+        nv_pairs = state.get("nv_pairs", {})
+        value = next((item for key, item in nv_pairs.items() if str(key).lower() == "port_channel_id"), None)
+    if value is None:
+        return None
+    value = re.sub(r"(?i)^port-channel", "", str(value).strip())
+    return int(value) if re.fullmatch(r"[0-9]+", value) else None
+
+
+def _standalone_port_channel_module(policy):
+    value = str(policy or "").lower()
+    for module, policies in {
+        "access": ("accesspohost", "int_port_channel_access_host"),
+        "trunk": ("trunkpohost", "int_port_channel_trunk_host"),
+        "routed": ("l3po", "int_l3_port_channel"),
+    }.items():
+        if any(value == name or value.startswith(name + "_") for name in policies):
+            return module
+    return None
+
+
+def _port_channel_detachment(registry, current_state, switch_ref, interface, state):
+    member_policy = str(state.get("policy_type", "")).lower()
+    if member_policy in {"vpcmember", "accessvpcpomember", "vpc_member", "access_vpc_po_member"}:
+        raise UnavailableError(
+            f"pair-aware vPC member cannot be detached by a standalone port-channel update: {switch_ref}/{interface}"
+        )
+    channel_id = _port_channel_id(state)
+    if channel_id is None:
+        raise OrchestrationError(
+            f"port-channel membership is reported without an exact parent ID: {switch_ref}/{interface}"
+        )
+    parent_name = f"Port-channel{channel_id}"
+    parent = _logical_interface_state(current_state, switch_ref, parent_name)
+    if parent is None or parent.get("exists") is not True:
+        raise OrchestrationError(f"port-channel parent was not captured: {switch_ref}/{parent_name}")
+    parent_policy = parent.get("policy_type") or parent.get("policy")
+    module = _standalone_port_channel_module(parent_policy)
+    if module is None:
+        raise OrchestrationError(
+            f"unsupported standalone port-channel policy for {switch_ref}/{parent_name}: {parent_policy or 'unknown'}"
+        )
+    members = _port_channel_members(parent)
+    if interface.lower() not in {member.lower() for member in members}:
+        raise OrchestrationError(
+            f"port-channel member intent is inconsistent: {switch_ref}/{interface} is not listed by {parent_name}"
+        )
+    return {
+        "interface": parent_name,
+        "module": module,
+        "members_before": members,
+    }
 
 
 
@@ -705,7 +765,16 @@ def plan_topology_delta(registry, resolved_execution, current_state):
                 "desired_role": desired_role,
             })
 
-    for link in profile.get("links", []):
+    execution = resolved_execution.get("execution") or {}
+    execution_link_specs = execution.get("physical_peer_links", [])
+    profile_links = list(profile.get("links", []))
+    for spec in execution_link_specs:
+        for side in ("src", "dst"):
+            endpoint = spec[side]
+            profile_links.append({"switch_ref": endpoint["switch_ref"], "interfaces": [endpoint["interface"]],
+                                  "admin_state": True, "operational_state": "when_reported_up"})
+
+    for link in profile_links:
         switch_ref = link["switch_ref"]
         allowlist = registry["lab"]["interface_allowlist"][switch_ref]
         current_interfaces = current_state.get("interfaces", {}).get(switch_ref, {})
@@ -752,7 +821,9 @@ def plan_topology_delta(registry, resolved_execution, current_state):
             template_inputs = _flat_scalar_map(
                 spec.get("template_inputs", {}), f"inter-fabric link {template} template_inputs"
             )
-        physical_present = _physical_link_present(current_state, endpoints["src"], endpoints["dst"])
+        physical_present = _physical_link_present(
+            current_state, endpoints["src"], endpoints["dst"], allow_down=True
+        )
         if spec.get("requires_physical", True) and not physical_present:
             raise UnavailableError(
                 f"required physical link is missing: {endpoints['src']['switch_ref']}/{endpoints['src']['interface']} "
@@ -820,20 +891,63 @@ def plan_topology_delta(registry, resolved_execution, current_state):
                 "physical_peer_links": [],
             })
 
+    if execution:
+        if execution.get("pair_mode") != "physical" or not execution_link_specs:
+            raise OrchestrationError("standalone vPC execution must declare physical peer-link endpoints")
+        for peer_link in execution_link_specs:
+            src_endpoint, dst_endpoint = _resolve_link_endpoints(
+                registry, peer_link, "standalone vPC peer-link", require_distinct_fabrics=False
+            )
+            if {src_endpoint["switch_ref"], dst_endpoint["switch_ref"]} != set(execution.get("switch_refs", [])):
+                raise OrchestrationError("standalone vPC peer-link endpoints do not match the selected execution")
+            if not _physical_link_present(current_state, src_endpoint, dst_endpoint, allow_down=True):
+                raise UnavailableError(
+                    f"required physical vPC peer-link is missing: {src_endpoint['switch_ref']}/{src_endpoint['interface']} "
+                    f"<-> {dst_endpoint['switch_ref']}/{dst_endpoint['interface']}; cable these ports"
+                )
+
     for resource in profile.get("resources", []):
         kind = resource.get("kind")
         if kind == "verify_free_interfaces":
             switch_ref = resource["switch_ref"]
             interfaces = list(resource["interfaces"])
+            detachments = {}
             for interface in interfaces:
-                _assert_free_interface(registry, current_state, switch_ref, interface)
-            operations.append({
+                state = _assert_free_interface(
+                    registry, current_state, switch_ref, interface, allow_port_channel_member=True
+                )
+                if _is_port_channel_member(current_state, switch_ref, interface, state):
+                    detachment = _port_channel_detachment(
+                        registry, current_state, switch_ref, interface, state
+                    )
+                    key = detachment["interface"].lower()
+                    existing = detachments.setdefault(key, {
+                        "interface": detachment["interface"],
+                        "module": detachment["module"],
+                        "members_before": list(detachment["members_before"]),
+                        "members_to_remove": [],
+                    })
+                    if existing["module"] != detachment["module"] or existing["members_before"] != detachment["members_before"]:
+                        raise OrchestrationError(f"port-channel capture changed during planning: {switch_ref}/{detachment['interface']}")
+                    if interface.lower() not in {member.lower() for member in existing["members_to_remove"]}:
+                        existing["members_to_remove"].append(interface)
+            port_channel_detachments = []
+            for detachment in detachments.values():
+                removed = {interface.lower() for interface in detachment["members_to_remove"]}
+                detachment["members_after"] = [
+                    member for member in detachment["members_before"] if member.lower() not in removed
+                ]
+                port_channel_detachments.append(detachment)
+            operation = {
                 "operation": "verify_free_interfaces",
                 "switch_ref": switch_ref,
                 "serial": registry["lab"]["switches"][switch_ref]["serial"],
                 "interfaces": interfaces,
                 "constraints": list(resource["constraints"]),
-            })
+            }
+            if port_channel_detachments:
+                operation["port_channel_detachments"] = port_channel_detachments
+            operations.append(operation)
             continue
         if kind == "verify_logical_interface_namespace":
             switch_ref = resource["switch_ref"]
@@ -845,7 +959,21 @@ def plan_topology_delta(registry, resolved_execution, current_state):
                         f"logical interface was not captured: {switch_ref}/{interface}"
                     )
                 if state.get("exists") is not False:
-                    collisions.append(interface)
+                    cleanup_owned = False
+                    if resource["interface_type"] == "port_channel" and "port_channels" in profile.get("managed_domains", []):
+                        detachment = next((item for operation in operations
+                                           if operation.get("operation") == "verify_free_interfaces"
+                                           and operation.get("switch_ref") == switch_ref
+                                           for item in operation.get("port_channel_detachments", [])
+                                           if item["interface"].lower() == interface.lower()), None)
+                        remaining = detachment["members_after"] if detachment else _port_channel_members(state)
+                        policy = state.get("policy_type") or state.get("policy")
+                        cleanup_owned = _standalone_port_channel_module(policy) is not None and not remaining
+                    elif (profile["profile_id"] == "integration.nd_interface_port_channel_routed"
+                          and interface.lower() == "port-channel523.5"):
+                        cleanup_owned = True
+                    if not cleanup_owned:
+                        collisions.append(interface)
             if collisions:
                 raise OrchestrationError(
                     f"reserved logical interface namespace is in use on {switch_ref}: "

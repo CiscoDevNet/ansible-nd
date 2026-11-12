@@ -46,6 +46,14 @@ module.exit_json(changed=False, gathered=state['responses']['vpc'])
 '''
 
 
+FAKE_PORT_CHANNEL_MODULE = r'''
+from ansible.module_utils.basic import AnsibleModule
+module = AnsibleModule(argument_spec={
+    'fabric_name': {'type': 'str'}, 'config': {'type': 'list'},
+    'config_actions': {'type': 'dict'}, 'state': {'type': 'str'}, 'output_level': {'type': 'str'}})
+module.exit_json(changed=False, before=[], after=[])
+'''
+
 def tasks(filename):
     return yaml.safe_load((PREREQUISITES / filename).read_text())
 
@@ -70,6 +78,9 @@ def run(tmp_path, selected, values, responses=None, replan_operations=None):
     modules.mkdir(parents=True)
     (modules / "nd_rest.py").write_text(FAKE_MODULE)
     (modules / "nd_manage_vpc_pair.py").write_text(FAKE_VPC_MODULE)
+    for module_name in ("nd_interface_port_channel_access", "nd_interface_port_channel_trunk_host",
+                        "nd_interface_port_channel_routed"):
+        (modules / (module_name + ".py")).write_text(FAKE_PORT_CHANNEL_MODULE)
     ledger = tmp_path / "ledger.json"
     ledger.write_text(json.dumps({"responses": responses or {}, "reads": [], "writes": [], "plans": 0,
                                   "replan_operations": replan_operations or []}))
@@ -179,7 +190,7 @@ def wrapper_tail():
 def verification_operations():
     return [
         {"operation": "verify_resource", "resource": {"name": "fixture-resource"}},
-        {"operation": "verify_free_interfaces", "switch_ref": "fixture-switch", "interfaces": ["Ethernet1/41"],
+        {"operation": "verify_free_interfaces", "switch_ref": "fixture-switch", "serial": "FIXTURE0001", "interfaces": ["Ethernet1/41"],
          "constraints": ["exists", "not_fabric_link", "not_port_channel_member"]},
         {"operation": "verify_logical_interface_namespace", "switch_ref": "fixture-switch", "expected_state": "absent",
          "interface_type": "loopback", "interfaces": ["Loopback601"]},
@@ -204,9 +215,24 @@ def test_readonly_verification_keeps_checks_without_redundant_capture_or_replan(
     (tmp_path / "nd_prerequisite_wait.yaml").write_text("- name: Synthetic no-vPC wait path\n  ansible.builtin.debug:\n    msg: No vPC operations require convergence\n")
     capture_stub(tmp_path)
     remaining = [{"operation": "ensure_switch_membership"}] if scenario == "remaining_delta" else []
-    completed, ledger, facts = run(tmp_path, wrapper_tail(), {"nd_prerequisite_mode": "live", "nd_prerequisite_apply": True,
-                                                           "_ndp_execution_id": "fixture-profile", "_ndp_result": {"operations": operations},
-                                                           "_ndp_registry": {"lab": {"interface_allowlist": {"fixture-switch": ["Ethernet1/41"]}}}},
+    values = {"nd_prerequisite_mode": "live", "nd_prerequisite_apply": True,
+              "_ndp_execution_id": "fixture-profile", "_ndp_result": {"operations": operations},
+              "_ndp_registry": {"lab": {"interface_allowlist": {"fixture-switch": ["Ethernet1/41"]}}}}
+    responses = {}
+    if any(operation.get("operation") == "verify_free_interfaces" for operation in operations):
+        serial = "FIXTURE0001"
+        values["_ndp_restore_file"] = str(tmp_path / "restore.yaml")
+        values["_ndp_run_id"] = "capture-test"
+        values["_ndp_registry"]["lab"].update({
+            "switches": {"fixture-switch": {"serial": serial, "seed_ip": "192.0.2.41", "baseline_fabric_ref": "primary"}},
+            "fabrics": {"primary": {"name": "fixture-primary"}},
+        })
+        responses["/api/v1/manage/fabrics/fixture-primary/switches/FIXTURE0001/interfaces/Ethernet1%2F41"] = {
+            "switchId": serial, "interfaceName": "Ethernet1/41", "interfaceType": "ethernet",
+            "configData": {"mode": "trunk", "networkOS": {"networkOSType": "nx-os", "policy": {
+                "adminState": False, "policyType": "trunkHost"}}},
+        }
+    completed, ledger, facts = run(tmp_path, wrapper_tail(), values, responses=responses,
                                   replan_operations=remaining)
     needs_refresh = scenario in {"mutating", "mixed", "future", "remaining_delta"}
     assert (completed.returncode == 0) is (scenario != "remaining_delta"), completed.stdout + completed.stderr

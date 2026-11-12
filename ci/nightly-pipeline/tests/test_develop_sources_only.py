@@ -331,7 +331,8 @@ def test_l3out_external_asn_override_runs_in_ansible(tmp_path, existing_asn, res
     play = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]
     setup = next(task for task in walk(play["pre_tasks"] + play["tasks"])
                  if task.get("name", "").endswith("SETUP - prepare route-map prerequisites for the original L3Out cases"))
-    selected = setup["block"][:4]
+    selected = [task for task in setup["block"] if not task.get("name", "").endswith(
+        "SETUP - verify L3Out subinterface names match the authored VLAN")][:4]
     selected[1] = {"ansible.builtin.set_fact": {"_ndp_l3out_fabric2": response}}
     bgp = {"fabric1_details": {"advertise_default_route": True}, "bfd": True}
     if existing_asn:
@@ -368,3 +369,270 @@ def test_l3out_external_asn_override_runs_in_ansible(tmp_path, existing_asn, res
     else:
         assert result.returncode != 0
         assert "NDP_L3OUT_FABRIC2_ASN_MISSING" in result.stdout
+
+
+@pytest.mark.parametrize("module,policy_type,mode", [
+    ("access", "accessPoHost", "access"),
+    ("trunk", "trunkPoHost", "trunk"),
+    ("routed", "l3Po", "routed"),
+])
+def test_free_interface_prerequisite_detaches_only_the_reserved_port_channel_member(tmp_path, module, policy_type, mode):
+    rest_module = r'''
+import json, os
+from pathlib import Path
+from ansible.module_utils.basic import AnsibleModule
+m=AnsibleModule(argument_spec={'method':{'type':'str'},'path':{'type':'str'},'content':{'type':'raw'}})
+s=json.loads(Path(os.environ['PC_STATE']).read_text())
+m.exit_json(status=200,current=s['parent'])
+'''
+    pc_module = r'''
+import json, os
+from pathlib import Path
+from ansible.module_utils.basic import AnsibleModule
+m=AnsibleModule(argument_spec={'fabric_name':{'type':'str'},'config':{'type':'list'},
+    'config_actions':{'type':'dict'},'state':{'type':'str'},'output_level':{'type':'str'}})
+p=Path(os.environ['PC_STATE']); s=json.loads(p.read_text())
+item=m.params['config'][0]; ports=item['config_data']['network_os']['policy']['ports']
+s['writes'].append(ports); s['parent']['configData']['networkOS']['policy']['ports']=ports
+p.write_text(json.dumps(s)); m.exit_json(changed=True,before=[],after=[])
+'''
+    collection = tmp_path / "collections/ansible_collections/cisco/nd/plugins/modules"
+    collection.mkdir(parents=True)
+    (collection / "nd_rest.py").write_text(rest_module)
+    for module_name in (
+        "nd_interface_port_channel_access",
+        "nd_interface_port_channel_trunk_host",
+        "nd_interface_port_channel_routed",
+    ):
+        (collection / f"{module_name}.py").write_text(pc_module)
+
+    state = {
+        "parent": {
+            "switchId": "SERIAL0001",
+            "interfaceName": "Port-channel11",
+            "interfaceType": "portChannel",
+            "configData": {"mode": mode, "networkOS": {"networkOSType": "nx-os", "policy": {
+                "policyType": policy_type, "ports": ["Ethernet1/10", "Ethernet1/30"]}}},
+        },
+        "writes": [],
+    }
+    state_path = tmp_path / "pc-state.json"
+    state_path.write_text(__import__("json").dumps(state))
+    operations = [{
+        "operation": "verify_free_interfaces",
+        "switch_ref": "vxlan_leaf_1",
+        "serial": "SERIAL0001",
+        "interfaces": ["Ethernet1/10"],
+        "constraints": ["exists", "not_fabric_link", "not_port_channel_member"],
+        "port_channel_detachments": [{
+            "interface": "Port-channel11", "module": module,
+            "members_before": ["Ethernet1/10", "Ethernet1/30"],
+            "members_to_remove": ["Ethernet1/10"], "members_after": ["Ethernet1/30"],
+        }],
+    }]
+    registry = {"lab": {"fabrics": {"advanced": {"name": "TEST"}},
+                "switches": {"vxlan_leaf_1": {"serial": "SERIAL0001", "seed_ip": "192.0.2.1",
+                                                "baseline_fabric_ref": "advanced"}},
+                "interface_allowlist": {"vxlan_leaf_1": ["Ethernet1/10"]}}}
+    tasks = yaml.safe_load((ROOT / "playbooks/nd_prerequisite/apply_verify_free_interfaces.yaml").read_text())
+    selected_names = {
+        "verify_free_interfaces guard {{ _ndp_operation.switch_ref }}",
+        "Require a restore journal before releasing physical ports to a target",
+        "Capture each exact standalone port-channel before detaching reserved members",
+        "Require exact standalone parent identity and membership before detaching",
+        "Journal exact port-channel membership before detaching reserved members",
+        "Persist standalone port-channel before-images before detaching members",
+        "Detach reserved members from standalone access port-channels",
+        "Detach reserved members from standalone trunk port-channels",
+        "Detach reserved members from standalone routed port-channels",
+        "Verify only the reserved members were removed from standalone port-channels",
+    }
+    selected_tasks = [task for task in tasks if task.get("name") in selected_names]
+    assert len(selected_tasks) == len(selected_names)
+    play = tmp_path / "detach.yaml"
+    play.write_text(yaml.safe_dump([{
+        "hosts": "localhost", "connection": "local", "gather_facts": False,
+        "vars": {"ansible_python_interpreter": sys.executable,
+             "_ndp_operation": operations[0], "_ndp_registry": registry,
+                 "_ndp_restore_file": str(tmp_path / "restore.yaml"),
+                 "_ndp_run_id": "test-run", "_ndp_execution_id": "integration.fixture",
+                 "_ndp_prerequisite_restore_operations": []},
+        "tasks": selected_tasks,
+    }], sort_keys=False))
+    config = tmp_path / "ansible.cfg"
+    config.write_text("[defaults]\n")
+    env = dict(os.environ, ANSIBLE_CONFIG=str(config),
+               ANSIBLE_COLLECTIONS_PATH=str(tmp_path / "collections"),
+               ANSIBLE_COLLECTIONS_SCAN_SYS_PATH="False", ANSIBLE_LOCAL_TEMP=str(tmp_path / "local"),
+               ANSIBLE_REMOTE_TEMP=str(tmp_path / "remote"), PC_STATE=str(state_path),
+               OBJC_DISABLE_INITIALIZE_FORK_SAFETY="YES")
+    result = subprocess.run([str(Path(sys.executable).with_name("ansible-playbook")), "-i", "localhost,", str(play)],
+                            cwd=tmp_path, env=env, text=True, capture_output=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    updated = __import__("json").loads(state_path.read_text())
+    journal = yaml.safe_load((tmp_path / "restore.yaml").read_text())
+    assert updated["parent"]["configData"]["networkOS"]["policy"]["ports"] == ["Ethernet1/30"]
+    assert updated["writes"] == [["Ethernet1/30"]]
+    assert journal["operations"] == [{
+        "action": "restore_port_channel_members", "switch_ref": "vxlan_leaf_1", "serial": "SERIAL0001",
+        "switch_ip": "192.0.2.1", "fabric_name": "TEST", "interface": "Port-channel11",
+        "module": module, "policy_type": policy_type,
+        "members_before": ["Ethernet1/10", "Ethernet1/30"], "members_after": ["Ethernet1/30"],
+    }]
+
+def test_l3out_guard_accepts_build162_authored_fixture(tmp_path):
+    source = CHECKOUT / "tests/integration/targets/nd_manage_l3out/vars/main.yaml"
+    if not source.is_file():
+        pytest.skip("L3Out authored fixture is unavailable")
+    play = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]
+    guard = next(task for task in walk(play["pre_tasks"] + play["tasks"])
+                 if task.get("name", "").endswith("SETUP - verify L3Out subinterface names match the authored VLAN"))
+    fixture_path = tmp_path / "vars.yaml"
+    fixture_path.write_text(source.read_text())
+    tasks = [{"ansible.builtin.include_vars": {"file": str(fixture_path)}}, guard,
+             {"ansible.builtin.assert": {"that": [
+                 "l3out_static.connectivity_details.links[0].vlan_id == 100",
+                 "l3out_static.connectivity_details.links[0].switch1_details.interface_name == 'Ethernet1/2.100'",
+                 "l3out_static.connectivity_details.links[0].switch2_details.interface_name == 'Ethernet1/2.100'",
+             ]}}]
+    play_path = tmp_path / "play.yaml"
+    play_path.write_text(yaml.safe_dump([{"hosts": "all", "connection": "local", "gather_facts": False,
+        "vars": {"test_module": "nd_manage_l3out", "nd_test_switch1_subif": "Ethernet1/2.100",
+                 "nd_test_switch2_subif": "Ethernet1/2.100"}, "tasks": tasks}]))
+    result = subprocess.run([str(Path(sys.executable).with_name("ansible-playbook")), "-i", "localhost,", str(play_path)],
+                            cwd=tmp_path, env=dict(os.environ, ANSIBLE_LOCAL_TEMP=str(tmp_path / "local")),
+                            text=True, capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+def test_l3out_runtime_subinterface_names_include_authored_vlan():
+    runner = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]
+    registry = yaml.safe_load((ROOT / "tests/nd_prerequisite_profiles.yaml").read_text())
+    values = registry["profiles"]["integration.nd_manage_l3out"]["runtime_vars"]
+    for key in ("nd_test_switch1_subif", "nd_test_switch2_subif"):
+        assert runner["vars"][key] == values[key] == "Ethernet1/2.100"
+        for variant in ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches",
+                        "Jenkinsfile_nd_jenkins_script_comm_list"):
+            assert f'"{key}": "Ethernet1/2.100"' in (ROOT / variant).read_text()
+
+@pytest.mark.parametrize("vlan,switch1,switch2,success", [
+    (100, "Ethernet1/2.100", "Ethernet1/2.100", True),
+    (100, "Ethernet1/2", "Ethernet1/2.100", False),
+    (100, "Ethernet1/2.100", "Ethernet1/2.200", False),
+    (200, "Ethernet1/2.100", "Ethernet1/2.100", False),
+])
+def test_l3out_subinterface_guard_runs_in_ansible(tmp_path, vlan, switch1, switch2, success):
+    play = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]
+    guard = next(task for task in walk(play["pre_tasks"] + play["tasks"])
+                 if task.get("name", "").endswith("SETUP - verify L3Out subinterface names match the authored VLAN"))
+    fixture = [{"hosts": "all", "connection": "local", "gather_facts": False,
+                "vars": {"test_module": "nd_manage_l3out", "test_switch1_subif": switch1,
+                         "test_switch2_subif": switch2, "l3out_static": {"connectivity_details": {
+                             "routing_interface_type": "subInterface", "links": [{"vlan_id": vlan}]}}},
+                "tasks": [guard]}]
+    play_path = tmp_path / "play.yaml"
+    play_path.write_text(yaml.safe_dump(fixture))
+    result = subprocess.run([str(Path(sys.executable).with_name("ansible-playbook")), "-i", "localhost,", str(play_path)],
+                            cwd=tmp_path, env=dict(os.environ, ANSIBLE_LOCAL_TEMP=str(tmp_path / "local")),
+                            text=True, capture_output=True, timeout=30)
+    assert (result.returncode == 0) == success, result.stdout + result.stderr
+    if not success:
+        assert "NDP_L3OUT_SUBINTERFACE_VLAN_MISMATCH" in result.stdout
+
+@pytest.mark.parametrize("reverse,wrong_port,expected", [
+    (False, False, True), (True, False, True), (False, True, False), (True, True, False),
+])
+def test_link_apply_recognizes_only_the_exact_declared_endpoints(tmp_path, reverse, wrong_port, expected):
+    tasks = yaml.safe_load((ROOT / "playbooks/nd_prerequisite/apply_ensure_link.yaml").read_text())
+    match = next(task for task in tasks if "determine whether" in task.get("name", ""))
+    source = {"sw-serial-number": "SOURCE001", "if-name": "Ethernet1/4"}
+    destination = {"sw-serial-number": "DEST00001", "if-name": "Ethernet1/5" if wrong_port else "Ethernet1/4"}
+    first, second = (destination, source) if reverse else (source, destination)
+    operation = {"template": "ext_l2_dci_link", "src": {"serial": "SOURCE001", "interface": "Ethernet1/4"},
+                 "dst": {"serial": "DEST00001", "interface": "Ethernet1/4"}}
+    play = [{"hosts": "localhost", "connection": "local", "gather_facts": False,
+             "vars": {"_ndp_operation": operation, "_ndp_links_all": [{"templateName": "ext_l2_dci_link",
+                       "sw1-info": first, "sw2-info": second}], "expected": expected},
+             "tasks": [match, {"ansible.builtin.assert": {"that": ["_ndp_link_exists == expected"]}}]}]
+    path = tmp_path / "link.yaml"
+    path.write_text(yaml.safe_dump(play))
+    result = subprocess.run([str(Path(sys.executable).with_name("ansible-playbook")), "-i", "localhost,", str(path)],
+                            cwd=tmp_path, env=dict(os.environ, ANSIBLE_LOCAL_TEMP=str(tmp_path / "local")),
+                            text=True, capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+@pytest.mark.parametrize("reverse,wrong_port,expected", [
+    (False, False, True), (True, False, True), (False, True, False), (True, True, False),
+])
+def test_link_apply_requires_exact_physical_adjacency(tmp_path, reverse, wrong_port, expected):
+    tasks = yaml.safe_load((ROOT / "playbooks/nd_prerequisite/apply_ensure_link.yaml").read_text())
+    initial = next(task for task in tasks if "detect discovered physical" in task.get("name", ""))
+    provision = next(task for task in tasks if "provision {{ _ndp_operation.template }}" in task.get("name", ""))
+    self_heal = next(task for task in provision["block"] if "self-heal" in task.get("name", ""))
+    recompute = next(task for task in self_heal["block"] if "recompute physical adjacency" in task.get("name", ""))
+    retry = next(task for task in self_heal["block"] if "re-GET links until" in task.get("name", ""))
+    source = {"sw-serial-number": "SOURCE001", "if-name": "Ethernet1/1"}
+    destination = {"sw-serial-number": "DEST00001", "if-name": "Ethernet1/4" if wrong_port else "Ethernet1/3"}
+    first, second = (destination, source) if reverse else (source, destination)
+    operation = {"src": {"serial": "SOURCE001", "interface": "Ethernet1/1"},
+                 "dst": {"serial": "DEST00001", "interface": "Ethernet1/3"}}
+    check = {"ansible.builtin.assert": {"that": ["_ndp_phys_exists == expected"]}}
+    play = [{"hosts": "localhost", "connection": "local", "gather_facts": False,
+             "vars": {"_ndp_operation": operation, "_ndp_links_all": [{"link-type": "ethisl",
+                       "sw1-info": first, "sw2-info": second}], "expected": expected},
+             "tasks": [initial, check, recompute, check,
+                       {"ansible.builtin.set_fact": {"_ndp_link_current": {"current": "{{ _ndp_links_all }}"}}},
+                       {"ansible.builtin.set_fact": {"retry_matched": retry["until"]}},
+                       {"ansible.builtin.assert": {"that": ["retry_matched == expected"]}}]}]
+    path = tmp_path / "physical.yaml"
+    path.write_text(yaml.safe_dump(play))
+    result = subprocess.run([str(Path(sys.executable).with_name("ansible-playbook")), "-i", "localhost,", str(path)],
+                            cwd=tmp_path, env=dict(os.environ, ANSIBLE_LOCAL_TEMP=str(tmp_path / "local")),
+                            text=True, capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+@pytest.mark.parametrize("reverse,swap_ports,expected", [
+    (False, False, True), (True, False, True), (False, True, False), (True, True, False),
+])
+def test_link_readback_requires_paired_endpoints(tmp_path, reverse, swap_ports, expected):
+    tasks = yaml.safe_load((ROOT / "playbooks/nd_prerequisite/apply_ensure_link.yaml").read_text())
+    provision = next(task for task in tasks if "provision {{ _ndp_operation.template }}" in task.get("name", ""))
+    managed = next(task for task in provision["block"] if "via cisco.nd.nd_manage_links" in task.get("name", ""))
+    readback = next(task for task in managed["block"] if "read the link back" in task.get("name", ""))
+    source = {"sw-serial-number": "SOURCE001", "if-name": "Ethernet1/3" if swap_ports else "Ethernet1/1"}
+    destination = {"sw-serial-number": "DEST00001", "if-name": "Ethernet1/1" if swap_ports else "Ethernet1/3"}
+    first, second = (destination, source) if reverse else (source, destination)
+    operation = {"template": "ext_l2_dci_link", "src": {"serial": "SOURCE001", "interface": "Ethernet1/1"},
+                 "dst": {"serial": "DEST00001", "interface": "Ethernet1/3"}}
+    play = [{"hosts": "localhost", "connection": "local", "gather_facts": False,
+             "vars": {"_ndp_operation": operation, "_ndp_link_after": {"current": [{"templateName": "ext_l2_dci_link",
+                       "sw1-info": first, "sw2-info": second}]}, "expected": expected},
+             "tasks": [{"ansible.builtin.set_fact": {"matched": readback["until"]}},
+                       {"ansible.builtin.assert": {"that": ["matched == expected"]}}]}]
+    path = tmp_path / "readback.yaml"
+    path.write_text(yaml.safe_dump(play))
+    result = subprocess.run([str(Path(sys.executable).with_name("ansible-playbook")), "-i", "localhost,", str(path)],
+                            cwd=tmp_path, env=dict(os.environ, ANSIBLE_LOCAL_TEMP=str(tmp_path / "local")),
+                            text=True, capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+@pytest.mark.parametrize("operations,success", [
+    ([], True),
+    ([{"operation": "verify_resource"}], True),
+    ([{"operation": "ensure_link"}], False),
+    ([{"operation": "ensure_interface"}], False),
+])
+def test_reconciled_prerequisites_must_be_observed_before_module_runs(tmp_path, operations, success):
+    import json
+
+    tasks = yaml.safe_load((ROOT / "playbooks/nd_prerequisite/nd_prerequisite_wrapper.yaml").read_text())
+    gate = next(task for task in tasks if task.get("name") == "Confirm reconciled prerequisites have no remaining topology delta")
+    gate.pop("when", None)
+    play = [{"hosts": "localhost", "connection": "local", "gather_facts": False,
+             "vars": {"_ndp_reconciled_plan": {"stdout": json.dumps({"operations": operations})},
+                      "_ndp_execution_id": "integration.fixture"}, "tasks": [gate]}]
+    path = tmp_path / "gate.yaml"
+    path.write_text(yaml.safe_dump(play))
+    result = subprocess.run([str(Path(sys.executable).with_name("ansible-playbook")), "-i", "localhost,", str(path)],
+                            cwd=tmp_path, env=dict(os.environ, ANSIBLE_LOCAL_TEMP=str(tmp_path / "local")),
+                            text=True, capture_output=True, timeout=30)
+    assert (result.returncode == 0) is success, result.stdout + result.stderr

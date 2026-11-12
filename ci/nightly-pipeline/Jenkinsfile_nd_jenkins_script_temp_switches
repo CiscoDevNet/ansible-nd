@@ -1180,6 +1180,7 @@ def prepareDetailedWebexNotification() {
     def totalPassed = validatedCaseNumber(caseTotals.passed)
     def totalFailed = validatedCaseNumber(caseTotals.failed)
     def totalSkipped = validatedCaseNumber(caseTotals.skipped)
+    def playTotals = webexPlayRecapTotals(MODULE_ACTIVITY_RESULTS.values().toList())
     def resultTable = formatResultsTable(moduleCaseSummaryRows(), 'module test cases')
     def runDuration = calculateRunDuration(currentBuild.startTimeInMillis, new Date().time)
     def message = "${notificationTitle}\n"
@@ -1187,10 +1188,12 @@ def prepareDetailedWebexNotification() {
     message += "📊 Pipeline completed for the ND Nightly run - Build ${BUILD_NUMBER}\n"
     message += "🌿 ansible-nd branch: ${selectedBranch}\n"
     message += "🔖 ansible-nd commit: ${selectedCommit}\n\n"
-    message += "INTEG TEST COUNTS\nPassed: ${totalPassed}\nFailed: ${totalFailed}\nSkipped: ${totalSkipped}\n"
-    message += "Counts are authored integration test cases only; setup, cleanup and pipeline checks are excluded.\n"
-    message += "Build result: ${currentBuild.currentResult}\n\n📝 DETAILED TEST RESULTS:\n\n"
-    message += "${resultTable}\n\n${moduleTaskRecapText()}\n\n**Artifact links:**\n- [Build artifacts](${JOB_URL}${BUILD_NUMBER}/artifact/)\n"
+    message += "INTEG PLAY RECAP COUNTS\nPassed (ok): ${playTotals.passed}\nFailed: ${playTotals.failed}\nSkipped: ${playTotals.skipped}\n"
+    message += "Counts use validated Ansible PLAY RECAP values and include setup/cleanup.\n\n"
+    message += "AUTHORED INTEG TEST CASE COUNTS\nPassed: ${totalPassed}\nFailed: ${totalFailed}\nSkipped: ${totalSkipped}\n"
+    message += "Authored case counts are separate; setup, cleanup and pipeline checks are excluded.\n"
+    message += "Build result: ${currentBuild.currentResult}\n\n📝 AUTHORED CASE RESULTS:\n\n"
+    message += "${resultTable}\n\n${moduleTaskRecapText()}\n\n${modulePlayRecapText()}\n\n**Artifact links:**\n- [Build artifacts](${JOB_URL}${BUILD_NUMBER}/artifact/)\n"
     if (env.MODULE_LOG_ARCHIVE_STATUS == 'success') {
         message += "- [Module logs ZIP](${JOB_URL}${BUILD_NUMBER}/artifact/${env.LOG_BUNDLE_FILE})\n"
     }
@@ -1213,22 +1216,28 @@ def minimalBuildNotification(exceptionClass = 'unavailable') {
     // Accept only a bounded Java class name, never an exception body or token.
     def failureClass = (exceptionClass ?: 'unavailable').toString().take(200)
     if (!(failureClass ==~ /[A-Za-z0-9_.$]+/)) { failureClass = 'unavailable' }
-    def caseReport = 'CASE COUNTS NOT GENERATED: report validation did not complete; authored totals are withheld.\n'
+    def rows = MODULE_ACTIVITY_RESULTS.values().toList()
+    def playCounts = webexPlayRecapTotals(rows)
+    def playRecap = 'INTEG PLAY RECAP COUNTS\n' +
+        'Passed (ok): ' + playCounts.passed + '\n' +
+        'Failed: ' + playCounts.failed + '\n' +
+        'Skipped: ' + playCounts.skipped + '\n' +
+        'Counts use validated Ansible PLAY RECAP values and include setup/cleanup.\n\n'
+    def caseReport = playRecap + 'CASE COUNTS NOT GENERATED: report validation did not complete; authored totals are withheld.\n'
     if (ND_CASE_REPORT_READY) {
         try {
-            def rows = MODULE_ACTIVITY_RESULTS.values().toList()
             def counts = webexModuleTotals(rows)
             def passed = validatedCaseNumber(counts.passed)
             def failed = validatedCaseNumber(counts.failed)
             def skipped = validatedCaseNumber(counts.skipped)
-            caseReport = 'INTEG TEST COUNTS\n' +
+            caseReport = playRecap + 'AUTHORED INTEG TEST CASE COUNTS\n' +
                 'Passed: ' + passed + '\n' +
                 'Failed: ' + failed + '\n' +
                 'Skipped: ' + skipped + '\n' +
                 'Counts are authored integration test cases only; setup, cleanup and pipeline checks are excluded.\n'
             try {
                 def table = formatResultsTable(moduleCaseSummaryRows(), 'module test cases')
-                caseReport += '\nDETAILED TEST RESULTS:\n\n' + table + '\n\n' + moduleTaskRecapText() + '\n' +
+                caseReport += '\nAUTHORED CASE RESULTS:\n\n' + table + '\n\n' + moduleTaskRecapText() + '\n\n' + modulePlayRecapText() + '\n' +
                     'Detailed notification failed after report validation; error class is shown above.\n'
             } catch (Exception renderError) {
                 rethrowIfInterrupt(renderError)
@@ -1236,7 +1245,7 @@ def minimalBuildNotification(exceptionClass = 'unavailable') {
             }
         } catch (Exception countError) {
             rethrowIfInterrupt(countError)
-            caseReport = 'CASE COUNTS NOT GENERATED: validated totals could not be calculated; no counts are shown.\n'
+            caseReport = playRecap + 'CASE COUNTS NOT GENERATED: validated authored totals could not be calculated.\n'
         }
     }
     "ND ${versions}${roundsSuffix} NIGHTLY NOTIFICATION - Build ${BUILD_NUMBER}\n" +
@@ -2683,6 +2692,48 @@ def webexModuleTotals(rows) {
     ['passed', 'failed', 'skipped'].collectEntries { name ->
         [(name): webexOutcomeCount(rows, name)]
     }
+}
+
+def validatedPlayRecapCounts(row) {
+    def invocation = row?.invocation
+    def counts = invocation instanceof Map ? invocation.counts : null
+    if (row?.test_type != 'integration' || row.result == 'NOT_RUN' || row.reporting_status == 'ERROR' ||
+        !(invocation instanceof Map) || !(invocation.status in ['OK', 'FAIL', 'SKIP']) || !(counts instanceof Map)) {
+        return null
+    }
+    def result = [:]
+    [['passed', 'ok'], ['failed', 'failed'], ['skipped', 'skipped']].each { pair ->
+        def value = counts[pair[1]]
+        if (!(value instanceof Number) || value < 0 || value.doubleValue() != value.longValue()) { return null }
+        result[pair[0]] = value.longValue()
+    }
+    result.size() == 3 ? result : null
+}
+
+def webexPlayRecapTotals(rows) {
+    def executed = rows.findAll { it.test_type == 'integration' && it.result != 'NOT_RUN' }
+    if (executed.isEmpty()) { return [passed: 'unavailable', failed: 'unavailable', skipped: 'unavailable'] }
+    def totals = [passed: 0L, failed: 0L, skipped: 0L]
+    for (def row : executed) {
+        def counts = validatedPlayRecapCounts(row)
+        if (counts == null) { return [passed: 'unavailable', failed: 'unavailable', skipped: 'unavailable'] }
+        totals.keySet().each { key -> totals[key] += counts[key] }
+    }
+    totals.collectEntries { key, value -> [(key): value.toString()] }
+}
+
+def modulePlayRecapText() {
+    def rows = MODULE_ACTIVITY_RESULTS.values().findAll { it.test_type == 'integration' }
+    def lines = rows.collect { row ->
+        def label = (row.module ?: 'unknown').toString().replaceAll(/[|\r\n]/, ' ').take(160)
+        def round = (row.round_label ?: row.scope ?: 'unknown').toString().replaceAll(/[|\r\n]/, ' ').take(80)
+        if (row.result == 'NOT_RUN') { return "${label} [${round}]: NOT_RUN | - | - | -".toString() }
+        def counts = validatedPlayRecapCounts(row)
+        counts == null ? "${label} [${round}]: unavailable".toString() :
+            "${label} [${round}]: ${counts.passed} | ${counts.failed} | ${counts.skipped}".toString()
+    }
+    'PLAY RECAP COUNTS BY MODULE\nModule [round] | Passed (ok) | Failed | Skipped\n' +
+        (lines ? lines.join('\n') : 'No integration module execution recorded.')
 }
 
 def moduleTaskRecapText() {
@@ -4798,8 +4849,8 @@ inventory = {
             "ansible_network_interface1": "Ethernet1/4",
             "nd_test_switch1_interface": "Ethernet1/1",
             "nd_test_switch2_interface": "Ethernet1/3",
-            "nd_test_switch1_subif": "Ethernet1/2",
-            "nd_test_switch2_subif": "Ethernet1/2",
+            "nd_test_switch1_subif": "Ethernet1/2.100",
+            "nd_test_switch2_subif": "Ethernet1/2.100",
             "test_groups": ["standalone"],
             "nd_network_test_topology": "standalone",
             "nd_vrf_test_topology": "standalone",

@@ -59,6 +59,33 @@
     fail_msg: "Unknown prerequisite profile: {{ _ndp_execution_id }}"
   run_once: true
 
+- name: Resolve execution-specific physical prerequisite links
+  ansible.builtin.set_fact:
+    _ndp_profile_execution: >-
+      {{ (_ndp_registry.profile_executions.values() | flatten
+          | selectattr('execution_id', 'equalto', _ndp_execution_id) | list | first) | default({}) }}
+    _ndp_execution_link_profiles: []
+  run_once: true
+
+- name: Add only selected-execution peer-link interfaces to prerequisite capture
+  ansible.builtin.set_fact:
+    _ndp_execution_link_profiles: >-
+      {{ _ndp_execution_link_profiles + [
+        {'switch_ref': _ndp_execution_link.src.switch_ref, 'interfaces': [_ndp_execution_link.src.interface],
+         'admin_state': true, 'operational_state': 'when_reported_up'},
+        {'switch_ref': _ndp_execution_link.dst.switch_ref, 'interfaces': [_ndp_execution_link.dst.interface],
+         'admin_state': true, 'operational_state': 'when_reported_up'}] }}
+  loop: "{{ _ndp_profile_execution.physical_peer_links | default([]) }}"
+  loop_control:
+    loop_var: _ndp_execution_link
+    label: "{{ _ndp_execution_link.src.switch_ref }}/{{ _ndp_execution_link.src.interface }}"
+  run_once: true
+
+- name: Merge selected-execution peer-link interfaces into live capture profile
+  ansible.builtin.set_fact:
+    _ndp_profile: "{{ _ndp_profile | combine({'links': (_ndp_profile.links | default([])) + _ndp_execution_link_profiles}, recursive=true) }}"
+  run_once: true
+
 - name: Invalidate a previous verified prerequisite runtime marker
   ansible.builtin.file:
     path: "{{ nd_prerequisite_marker_dir | default(playbook_dir ~ '/nd_prerequisite/.runtime') }}/{{ _ndp_execution_id }}.yaml"
@@ -336,15 +363,7 @@
 - name: Confirm reconciled prerequisites have no remaining topology delta
   ansible.builtin.assert:
     that:
-      # Keep the established replan contract for verification/interface/link
-      # entries. This does not classify ensure_interface or ensure_link as read-only:
-      # both still require the fresh post-apply capture above.
-      # ensure_link is mutating but self-verifying: apply_ensure_link.yaml is GET-first
-      # (skips when the link already exists) and asserts the create was accepted, so a
-      # failed create already fails the run before this gate. Its post-create GET shape
-      # is controller-version-dependent, so it is trusted to that apply-time assert
-      # rather than re-verified by this offline replan.
-      - (_ndp_reconciled_plan.stdout | from_json).operations | rejectattr('operation', 'in', ['verify_resource', 'ensure_interface', 'ensure_link', 'verify_free_interfaces', 'verify_logical_interface_namespace']) | list | length == 0
+      - (_ndp_reconciled_plan.stdout | from_json).operations | rejectattr('operation', 'in', ['verify_resource', 'verify_free_interfaces', 'verify_logical_interface_namespace']) | list | length == 0
     fail_msg: "ND prerequisite reconciliation completed with remaining topology operations; refusing to run {{ _ndp_execution_id }}."
   run_once: true
   when:
