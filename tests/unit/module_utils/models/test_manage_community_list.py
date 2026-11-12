@@ -428,29 +428,25 @@ def test_manage_community_list_00230_gathered_filter_properties() -> None:
     """
     # Summary
 
-    Verify ``gathered_filter_properties`` contains the expected 2 properties.
+    Verify ``gathered_filter_properties`` contains the expected three properties.
 
     ## Test
 
-    - gathered_filter_properties tuple has exactly 2 entries
-    - Entries are "name" and "type"
+    - gathered_filter_properties tuple has exactly three entries.
+    - Entries are ``name``, ``type``, and ``tenant_name``.
 
     ## Classes and Methods
 
     - CommunityListModel.gathered_filter_properties
     """
-    assert CommunityListModel.gathered_filter_properties == (
-        "name",
-        "type",
-    )
+    assert CommunityListModel.gathered_filter_properties == ("name", "type", "tenant_name")
 
 
 def test_manage_community_list_00240_normalize_gathered_filter_passthrough() -> None:
     """
     # Summary
 
-    Verify ``normalize_gathered_filter`` returns filters unchanged
-    (no custom normalization needed for community lists).
+    Verify bare-name, type-only, and empty gathered filters remain unchanged.
 
     ## Test
 
@@ -467,8 +463,77 @@ def test_manage_community_list_00240_normalize_gathered_filter_passthrough() -> 
     assert CommunityListModel.normalize_gathered_filter({}) == {}
 
 
-@pytest.mark.parametrize("filter_item", [{"name": "invalid/name"}, {"type": "invalid"}])
+@pytest.mark.parametrize(
+    "filter_item",
+    [
+        {"name": "invalid/name"},
+        {"type": "invalid"},
+        {"tenant_name": "invalid/tenant"},
+    ],
+)
 def test_manage_community_list_00250_invalid_gathered_filter_values(filter_item) -> None:
     """Verify invalid supported values fail during filter normalization."""
     with pytest.raises(ValidationError):
         CommunityListModel.normalize_gathered_filter(filter_item)
+
+
+@pytest.mark.parametrize(
+    ("filter_item", "expected"),
+    [
+        ({"tenant_name": "tenantA"}, {"tenant_name": "tenantA"}),
+        ({"name": "tenantA~CL1"}, {"name": "CL1", "tenant_name": "tenantA"}),
+        ({"name": "CL1", "tenant_name": "tenantA"}, {"name": "CL1", "tenant_name": "tenantA"}),
+        ({"name": "CL1", "tenantName": "tenantA"}, {"name": "CL1", "tenant_name": "tenantA"}),
+    ],
+)
+def test_manage_community_list_00260_normalize_tenant_gathered_filter(filter_item, expected) -> None:
+    """Verify tenant-qualified and explicit tenant filters normalize identically."""
+    assert CommunityListModel.normalize_gathered_filter(filter_item) == expected
+
+
+def test_manage_community_list_00270_reject_conflicting_tenant_filter() -> None:
+    """Verify conflicting explicit and qualified tenant names are rejected."""
+    with pytest.raises(ValidationError, match="conflicts"):
+        CommunityListModel.normalize_gathered_filter(
+            {
+                "name": "tenantA~CL1",
+                "tenant_name": "tenantB",
+            }
+        )
+
+
+def test_manage_community_list_00280_match_name_and_tenant_pair() -> None:
+    """Verify tenant-aware filters do not match the same bare name in another tenant."""
+    criteria = CommunityListModel.normalize_gathered_filter({"name": "tenantA~CL1"})
+
+    assert CommunityListModel.matches_gathered_filter(
+        criteria,
+        {"name": "CL1", "tenant_name": "tenantA"},
+    )
+    assert not CommunityListModel.matches_gathered_filter(
+        criteria,
+        {"name": "CL1", "tenant_name": "tenantB"},
+    )
+    tenant_only_criteria = CommunityListModel.normalize_gathered_filter(
+        {
+            "tenant_name": "tenantA",
+        }
+    )
+    assert CommunityListModel.matches_gathered_filter(
+        tenant_only_criteria,
+        {"name": "CL1", "tenant_name": "tenantA"},
+    )
+    assert not CommunityListModel.matches_gathered_filter(
+        tenant_only_criteria,
+        {"name": "CL1", "tenant_name": "tenantB"},
+    )
+
+
+def test_manage_community_list_00290_reject_overlong_qualified_filter() -> None:
+    """Verify the combined tenant-qualified name respects the API limit."""
+    with pytest.raises(ValidationError, match="115 characters or fewer"):
+        CommunityListModel.normalize_gathered_filter(
+            {
+                "name": f"{'T' * 63}~{'N' * 115}",
+            }
+        )

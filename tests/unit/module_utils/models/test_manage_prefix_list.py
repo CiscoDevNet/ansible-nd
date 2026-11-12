@@ -833,20 +833,20 @@ def test_manage_prefix_list_00330_gathered_filter_properties() -> None:
     """
     # Summary
 
-    Verify ``gathered_filter_properties`` contains ``ip_version`` and ``name``.
+    Verify ``gathered_filter_properties`` contains ``ip_version``, ``name``, and ``tenant_name``.
 
     ## Classes and Methods
 
     - PrefixListModel.gathered_filter_properties
     """
-    assert PrefixListModel.gathered_filter_properties == ("ip_version", "name")
+    assert PrefixListModel.gathered_filter_properties == ("ip_version", "name", "tenant_name")
 
 
 def test_manage_prefix_list_00340_normalize_gathered_filter_passthrough() -> None:
     """
     # Summary
 
-    Verify ``normalize_gathered_filter`` returns filters unchanged.
+    Verify bare-name, address-family-only, and empty gathered filters remain unchanged.
 
     ## Classes and Methods
 
@@ -857,8 +857,113 @@ def test_manage_prefix_list_00340_normalize_gathered_filter_passthrough() -> Non
     assert PrefixListModel.normalize_gathered_filter({}) == {}
 
 
-@pytest.mark.parametrize("filter_item", [{"name": "invalid/name"}, {"ip_version": "invalid"}])
+@pytest.mark.parametrize(
+    "filter_item",
+    [
+        {"name": "invalid/name"},
+        {"ip_version": "invalid"},
+        {"tenant_name": "invalid/tenant"},
+    ],
+)
 def test_manage_prefix_list_00350_invalid_gathered_filter_values(filter_item) -> None:
     """Verify invalid supported values fail during filter normalization."""
     with pytest.raises(ValidationError):
         PrefixListModel.normalize_gathered_filter(filter_item)
+
+
+@pytest.mark.parametrize(
+    ("filter_item", "expected"),
+    [
+        (
+            {"tenant_name": "tenantA"},
+            {"tenant_name": "tenantA"},
+        ),
+        (
+            {"ip_version": "ipv4", "name": "tenantA~PL1"},
+            {"ip_version": "ipv4", "name": "PL1", "tenant_name": "tenantA"},
+        ),
+        (
+            {"ip_version": "ipv4", "name": "PL1", "tenant_name": "tenantA"},
+            {"ip_version": "ipv4", "name": "PL1", "tenant_name": "tenantA"},
+        ),
+        (
+            {"ip_version": "ipv4", "name": "PL1", "tenantName": "tenantA"},
+            {"ip_version": "ipv4", "name": "PL1", "tenant_name": "tenantA"},
+        ),
+    ],
+)
+def test_manage_prefix_list_00360_normalize_tenant_gathered_filter(filter_item, expected) -> None:
+    """Verify tenant-qualified and explicit tenant filters normalize identically."""
+    assert PrefixListModel.normalize_gathered_filter(filter_item) == expected
+
+
+def test_manage_prefix_list_00370_reject_conflicting_tenant_filter() -> None:
+    """Verify conflicting explicit and qualified tenant names are rejected."""
+    with pytest.raises(ValidationError, match="conflicts"):
+        PrefixListModel.normalize_gathered_filter(
+            {
+                "ip_version": "ipv4",
+                "name": "tenantA~PL1",
+                "tenant_name": "tenantB",
+            }
+        )
+
+
+def test_manage_prefix_list_00380_match_name_and_tenant_pair() -> None:
+    """Verify tenant-aware filters do not match the same bare name in another tenant."""
+    criteria = PrefixListModel.normalize_gathered_filter(
+        {
+            "ip_version": "ipv4",
+            "name": "tenantA~PL1",
+        }
+    )
+
+    assert PrefixListModel.matches_gathered_filter(
+        criteria,
+        {
+            "ip_version": "ipv4",
+            "name": "PL1",
+            "tenant_name": "tenantA",
+        },
+    )
+    assert not PrefixListModel.matches_gathered_filter(
+        criteria,
+        {
+            "ip_version": "ipv4",
+            "name": "PL1",
+            "tenant_name": "tenantB",
+        },
+    )
+    tenant_only_criteria = PrefixListModel.normalize_gathered_filter(
+        {
+            "tenant_name": "tenantA",
+        }
+    )
+
+    assert PrefixListModel.matches_gathered_filter(
+        tenant_only_criteria,
+        {
+            "ip_version": "ipv4",
+            "name": "PL1",
+            "tenant_name": "tenantA",
+        },
+    )
+    assert not PrefixListModel.matches_gathered_filter(
+        tenant_only_criteria,
+        {
+            "ip_version": "ipv6",
+            "name": "PL2",
+            "tenant_name": "tenantB",
+        },
+    )
+
+
+def test_manage_prefix_list_00390_reject_overlong_qualified_filter() -> None:
+    """Verify the combined tenant-qualified name respects the API limit."""
+    with pytest.raises(ValidationError, match="115 characters or fewer"):
+        PrefixListModel.normalize_gathered_filter(
+            {
+                "ip_version": "ipv4",
+                "name": f"{'T' * 63}~{'N' * 115}",
+            }
+        )

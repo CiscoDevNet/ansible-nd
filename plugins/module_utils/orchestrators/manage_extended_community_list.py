@@ -49,7 +49,7 @@ class ManageExtendedCommunityListOrchestrator(NDBaseOrchestrator[ExtendedCommuni
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
     query_all_page_size: ClassVar[int] = 100
-    query_all_max_pages: ClassVar[int] = 100
+    query_all_max_pages: ClassVar[int] = 10000
 
     # Satisfy NDBaseOrchestrator.validate_bulk_endpoints
     create_endpoint: type[NDEndpointBaseModel] = EpManageExtendedCommunityListsPost
@@ -315,10 +315,10 @@ class ManageExtendedCommunityListOrchestrator(NDBaseOrchestrator[ExtendedCommuni
 
     def _query_all_for_gathered(self, gathered_filters=None) -> list[dict]:
         """
-        Fetch extended community lists for gathered state, optionally filtered by name and type.
+        Fetch extended community lists for gathered state, optionally filtered by name, type, and tenant_name.
 
         Type-only server filtering is safe because the API type value matches the
-        normalized Ansible value. Name criteria remain local: tenant-scoped API
+        normalized Ansible value. Name and tenant_name criteria remain local: tenant-scoped API
         names are qualified as ``tenant~name`` on the wire but normalized to a
         bare name in gathered output, so an exact server-side name query could
         omit valid tenant-scoped matches.
@@ -332,6 +332,7 @@ class ManageExtendedCommunityListOrchestrator(NDBaseOrchestrator[ExtendedCommuni
             expressions = []
 
         if expressions:
+            # TODO(4.2.1) interface-lucene-or-silently-empty
             for expression in expressions:
                 for item in self._query_all_for_management_states(expression):
                     name = item.get("name") if isinstance(item, dict) else None

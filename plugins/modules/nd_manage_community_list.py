@@ -44,6 +44,8 @@ options:
         - Allowed characters are C([a-zA-Z0-9~_-]).
         - Maximum length is 115 characters (63 for the default tenant).
         - Optional filter for O(state=gathered).
+        - For O(state=gathered), a bare name can match resources with that name across tenants.
+          Set O(config.tenant_name), or use C(tenant~name), to select a tenant-specific resource.
         type: str
         required: false
       type:
@@ -63,6 +65,8 @@ options:
         - Allowed characters are C([A-Za-z0-9_-]). Max 63 characters.
         - When set, O(config.name) may be the bare list name or the fully qualified C(tenant~name) API name.
         - The module reports the bare O(config.name) and uses C(tenant~name) for API lookups, updates, and deletes.
+        - Optional filter for O(state=gathered).
+        - Use with O(config.name) to restrict gathered results to a specific tenant.
         type: str
         aliases: [ tenantName ]
       entries:
@@ -244,6 +248,14 @@ EXAMPLES = r"""
             action: permit
             internet: true
     state: overridden
+
+- name: Gather a community list for a specific tenant
+  cisco.nd.nd_manage_community_list:
+    fabric_name: my-fabric
+    config:
+      - name: CL-EXPORT
+        tenant_name: tenantSales
+    state: gathered
 """
 
 RETURN = r"""

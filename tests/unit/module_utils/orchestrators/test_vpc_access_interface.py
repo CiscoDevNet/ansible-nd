@@ -1085,6 +1085,104 @@ def test_vpc_access_orchestrator_00730_gathered_dedup_prefers_lower_switch_id(mo
     assert result[0]["switchIp"] == "192.168.1.1"
 
 
+def test_vpc_access_orchestrator_00735_gathered_filters_before_peer_dedup(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify exact gathered matching occurs before vPC peer deduplication, so a
+    multi-item filter can retain resources selected through different peers.
+
+    ## Test
+
+    - Both switches return a broad candidate set containing vpc9 and vpc10.
+    - The first filter selects access VLAN 5 specifically through peer 192.168.1.2.
+    - The second filter selects vpc9 specifically through peer 192.168.1.1.
+    - vpc10 is retained through peer 192.168.1.2.
+    - vpc9 is retained through peer 192.168.1.1.
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator._query_all_for_gathered()
+    """
+    from types import SimpleNamespace
+
+    def responses():
+        yield {}
+
+    orchestrator = _build_orchestrator(ResponseGenerator(responses()), state="gathered")
+    orchestrator._fabric_context = SimpleNamespace(
+        fabric_name="fabric_1",
+        switch_map={
+            "192.168.1.1": "FDOAAAAAAAA",
+            "192.168.1.2": "FDOZZZZZZZ",
+        },
+    )
+
+    monkeypatch.setattr(AccessVpcHostInterfaceOrchestrator, "validate_prerequisites", lambda self: None)
+
+    def fake_request(self, path, verb, **kwargs):
+        switch_id = "FDOAAAAAAAA" if "FDOAAAAAAAA" in path else "FDOZZZZZZZ"
+        peer_switch_id = "FDOZZZZZZZ" if switch_id == "FDOAAAAAAAA" else "FDOAAAAAAAA"
+
+        return {
+            "interfaces": [
+                {
+                    "interfaceName": "vpc9",
+                    "interfaceType": "vpc",
+                    "configData": {
+                        "networkOS": {
+                            "policy": {
+                                "policyType": "accessVpcHost",
+                                "accessVlan": 10,
+                                "peerSwitchId": peer_switch_id,
+                            }
+                        }
+                    },
+                },
+                {
+                    "interfaceName": "vpc10",
+                    "interfaceType": "vpc",
+                    "configData": {
+                        "networkOS": {
+                            "policy": {
+                                "policyType": "accessVpcHost",
+                                "accessVlan": 5,
+                                "peerSwitchId": peer_switch_id,
+                            }
+                        }
+                    },
+                },
+            ],
+            "meta": {"counts": {"remaining": 0}},
+        }
+
+    monkeypatch.setattr(AccessVpcHostInterfaceOrchestrator, "_request", fake_request)
+
+    filters = [
+        {
+            "switch_ip": "192.168.1.2",
+            "config_data": {
+                "network_os": {
+                    "policy": {
+                        "access_vlan": 5,
+                    }
+                }
+            },
+        },
+        {
+            "switch_ip": "192.168.1.1",
+            "interface_name": "vpc9",
+        },
+    ]
+
+    result = orchestrator.query_all(gathered_filters=filters)
+
+    assert {(item["switchIp"], item["interfaceName"]) for item in result} == {
+        ("192.168.1.1", "vpc9"),
+        ("192.168.1.2", "vpc10"),
+    }
+
+
 def test_vpc_access_orchestrator_00740_gathered_preserves_same_name_on_different_pairs(monkeypatch) -> None:
     """Verify gathered deduplication preserves same-name vPCs belonging to different switch pairs."""
     from types import SimpleNamespace

@@ -372,12 +372,12 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
 
     def _query_all_for_gathered(self, gathered_filters=None) -> ResponseType:
         """
-        Fetch prefix lists for gathered state, optionally filtered by ip_version and name.
+        Fetch prefix lists for gathered state, optionally filtered by ip_version, name, and tenant_name.
 
         Filters by ip_version skip querying an unneeded address family when every
-        filter item is explicitly scoped. Name matching remains local because a
-        tenant-scoped API name is qualified as ``tenant~name`` on the wire but is
-        normalized to a bare name in gathered output.
+        filter item is explicitly scoped. Name and tenant_name matching remain
+        local because a tenant-scoped API name is qualified as ``tenant~name`` on
+        the wire but is normalized to a bare name in gathered output.
         """
         filter_items = gathered_filters or [{}]
         versions_to_query = self._gathered_versions(filter_items)

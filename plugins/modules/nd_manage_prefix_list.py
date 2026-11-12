@@ -60,6 +60,8 @@ options:
         - When O(config.tenant_name) is set, the combined C(tenant_name~name)
           value must not exceed 115 characters.
         - Optional filter for O(state=gathered).
+        - For O(state=gathered), a bare name can match resources with that name across tenants.
+          Set O(config.tenant_name), or use C(tenant~name), to select a tenant-specific resource.
         type: str
         required: false
       description:
@@ -74,6 +76,8 @@ options:
         - Prefix lists with the same O(config.ip_version) and O(config.name) but different
           O(config.tenant_name) values are treated as independent resources.
         - Allowed characters are C([A-Za-z0-9_-]).
+        - Optional filter for O(state=gathered).
+        - Use with O(config.name) to restrict gathered results to a specific tenant.
         type: str
         aliases: [ tenantName ]
       entries:
@@ -246,6 +250,15 @@ EXAMPLES = r"""
             action: permit
             prefix: 10.0.0.0/8
     state: overridden
+
+- name: Gather an IPv4 prefix list for a specific tenant
+  cisco.nd.nd_manage_prefix_list:
+    fabric_name: my-fabric
+    config:
+      - ip_version: ipv4
+        name: PL-IPV4-BORDERS
+        tenant_name: tenant-a
+    state: gathered
 """
 
 RETURN = r"""

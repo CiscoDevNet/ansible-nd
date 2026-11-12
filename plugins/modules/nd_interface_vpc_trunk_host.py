@@ -44,10 +44,14 @@ options:
     - The structure mirrors the ND Manage Interfaces API payload.
     - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
     - Not required for O(state=gathered).
-    - For O(state=gathered), every supplied field is a filter criterion. Criteria within one list item use AND semantics,
-      while multiple list items use OR semantics.
-    - Supported endpoint criteria are used to reduce candidates with server-side Lucene queries. All criteria are then
-      evaluated locally to preserve complete and consistent matching semantics.
+    - For O(state=gathered), supported filter properties are O(config.switch_ip),
+      O(config.interface_name), O(config.config_data.network_os.policy.admin_state),
+      O(config.config_data.network_os.policy.allowed_vlans),
+      O(config.config_data.network_os.policy.native_vlan),
+      O(config.config_data.network_os.policy.peer1_port_channel_id), and
+      O(config.config_data.network_os.policy.peer2_port_channel_id).
+    - Criteria within one list item use AND semantics, while multiple list items
+      use OR semantics. Any other supplied property is rejected.
     type: list
     elements: dict
     required: false

@@ -441,20 +441,20 @@ def test_manage_extended_community_list_00230_gathered_filter_properties() -> No
     """
     # Summary
 
-    Verify ``gathered_filter_properties`` contains ``name`` and ``type``.
+    Verify ``gathered_filter_properties`` contains ``name``, ``type``, and ``tenant_name``.
 
     ## Classes and Methods
 
     - ExtendedCommunityListModel.gathered_filter_properties
     """
-    assert ExtendedCommunityListModel.gathered_filter_properties == ("name", "type")
+    assert ExtendedCommunityListModel.gathered_filter_properties == ("name", "type", "tenant_name")
 
 
 def test_manage_extended_community_list_00240_normalize_gathered_filter_passthrough() -> None:
     """
     # Summary
 
-    Verify ``normalize_gathered_filter`` returns filters unchanged.
+    Verify bare-name, type-only, and empty gathered filters remain unchanged.
 
     ## Classes and Methods
 
@@ -465,8 +465,78 @@ def test_manage_extended_community_list_00240_normalize_gathered_filter_passthro
     assert ExtendedCommunityListModel.normalize_gathered_filter({}) == {}
 
 
-@pytest.mark.parametrize("filter_item", [{"name": "invalid/name"}, {"type": "invalid"}])
+@pytest.mark.parametrize(
+    "filter_item",
+    [
+        {"name": "invalid/name"},
+        {"type": "invalid"},
+        {"tenant_name": "invalid/tenant"},
+    ],
+)
 def test_manage_extended_community_list_00250_invalid_gathered_filter_values(filter_item) -> None:
     """Verify invalid supported values fail during filter normalization."""
     with pytest.raises(ValidationError):
         ExtendedCommunityListModel.normalize_gathered_filter(filter_item)
+
+
+@pytest.mark.parametrize(
+    ("filter_item", "expected"),
+    [
+        ({"tenant_name": "tenantA"}, {"tenant_name": "tenantA"}),
+        ({"name": "tenantA~ECL1"}, {"name": "ECL1", "tenant_name": "tenantA"}),
+        ({"name": "ECL1", "tenant_name": "tenantA"}, {"name": "ECL1", "tenant_name": "tenantA"}),
+        ({"name": "ECL1", "tenantName": "tenantA"}, {"name": "ECL1", "tenant_name": "tenantA"}),
+    ],
+)
+def test_manage_extended_community_list_00260_normalize_tenant_gathered_filter(filter_item, expected) -> None:
+    """Verify tenant-qualified and explicit tenant filters normalize identically."""
+    assert ExtendedCommunityListModel.normalize_gathered_filter(filter_item) == expected
+
+
+def test_manage_extended_community_list_00270_reject_conflicting_tenant_filter() -> None:
+    """Verify conflicting explicit and qualified tenant names are rejected."""
+    with pytest.raises(ValidationError, match="conflicts"):
+        ExtendedCommunityListModel.normalize_gathered_filter(
+            {
+                "name": "tenantA~ECL1",
+                "tenant_name": "tenantB",
+            }
+        )
+
+
+def test_manage_extended_community_list_00280_match_name_and_tenant_pair() -> None:
+    """Verify tenant-aware filters do not match the same bare name in another tenant."""
+    criteria = ExtendedCommunityListModel.normalize_gathered_filter({"name": "tenantA~ECL1"})
+
+    assert ExtendedCommunityListModel.matches_gathered_filter(
+        criteria,
+        {"name": "ECL1", "tenant_name": "tenantA"},
+    )
+    assert not ExtendedCommunityListModel.matches_gathered_filter(
+        criteria,
+        {"name": "ECL1", "tenant_name": "tenantB"},
+    )
+    tenant_only_criteria = ExtendedCommunityListModel.normalize_gathered_filter(
+        {
+            "tenant_name": "tenantA",
+        }
+    )
+
+    assert ExtendedCommunityListModel.matches_gathered_filter(
+        tenant_only_criteria,
+        {"name": "ECL1", "tenant_name": "tenantA"},
+    )
+    assert not ExtendedCommunityListModel.matches_gathered_filter(
+        tenant_only_criteria,
+        {"name": "ECL1", "tenant_name": "tenantB"},
+    )
+
+
+def test_manage_extended_community_list_00290_reject_overlong_qualified_filter() -> None:
+    """Verify the combined tenant-qualified name respects the API limit."""
+    with pytest.raises(ValidationError, match="115 characters or fewer"):
+        ExtendedCommunityListModel.normalize_gathered_filter(
+            {
+                "name": f"{'T' * 63}~{'N' * 115}",
+            }
+        )
