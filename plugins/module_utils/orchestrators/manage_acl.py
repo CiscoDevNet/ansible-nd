@@ -243,6 +243,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
             spec=self.gathered_lucene_spec,
         )
 
+        # TODO(4.2.1) TBD
         # The ACL endpoint returns no results for quoted filter values. Names
         # containing '-' or '~' are quoted by the generic safe formatter, so use a
         # complete scan and exact local filtering for those names.
@@ -255,6 +256,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
         collected: list[dict] = []
         seen: set[str] = set()
 
+        # TODO(4.2.1) interface-lucene-or-silently-empty
         # One request per expression provides OR semantics without relying on the
         # endpoint's unsupported Lucene OR operator.
         for expression in expressions:
