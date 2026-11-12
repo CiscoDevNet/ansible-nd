@@ -1,8 +1,10 @@
 # `nd_manage_extended_community_list` Harness Parity
 
 The original integration suite remains enabled while the harness replacement
-is validated against the same controller environment. Harness scenarios use
-explicit `nd4x_demo` and state-specific tags and run only when selected.
+is validated against the same controller environment. When the controller
+meets the ND 4.x support floor, harness scenarios run as part of the normal
+target suite. Use `--skip-tags nd4x_demo` to opt out of harness coverage, or
+use a state-specific `nd4x_demo_*` tag to select an individual harness state.
 
 ## Scenario mapping
 
@@ -21,21 +23,39 @@ explicit `nd4x_demo` and state-specific tags and run only when selected.
 
 ## Harness execution
 
-Safe aggregate harness coverage requires an inventory where
+Default target execution includes the harness when the controller is
+supported:
+
+```bash
+ansible-test network-integration nd_manage_extended_community_list \
+  --inventory /absolute/path/to/inventory.networking \
+  -vv
+```
+
+To run the legacy suite without the harness:
+
+```bash
+ansible-test network-integration nd_manage_extended_community_list \
+  --inventory /absolute/path/to/inventory.networking \
+  --skip-tags nd4x_demo \
+  -vv
+```
+
+Harness-only coverage requires an inventory where
 `nd_test_community_lists_run_overridden=false` (the `ansible-test`
 `network-integration` command does not accept `--extra-vars`):
 
 ```bash
-ansible-test network-integration nd_manage_extended_community_list \\
-  --inventory /absolute/path/to/inventory.networking \\
-  --tags nd4x_demo \\
+ansible-test network-integration nd_manage_extended_community_list \
+  --inventory /absolute/path/to/inventory.networking \
+  --tags nd4x_demo \
   -vv
 ```
 
 The preflight is inherited by each scenario tag, so individual runs such as
 `--tags nd4x_demo_replaced` also perform version detection and gating.
-Do not use `--skip-tags nd4x_demo_overridden` with the aggregate harness tag,
-because the shared preflight also carries that scenario tag.
+Use `--skip-tags nd4x_demo` when opting out of the complete harness; the
+shared preflight and every harness scenario carry that common tag.
 
 Tenant identity coverage additionally requires `nd_test_tenant_name_a` and
 `nd_test_tenant_name_b`.
@@ -45,6 +65,10 @@ Overridden coverage requires a dedicated test fabric and:
 ```ini
 nd_test_community_lists_run_overridden=true
 ```
+
+Explicitly selecting `--tags nd4x_demo_overridden` without this opt-in fails
+fast with a destructive-test guard. Aggregate harness execution leaves the
+overridden scenario skipped unless the opt-in variable is enabled.
 
 The overridden scenario refuses to run when the complete paginated fabric
 inventory contains a list outside the reserved test identities. Default-tenant
