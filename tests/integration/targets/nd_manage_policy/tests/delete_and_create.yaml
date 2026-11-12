@@ -111,6 +111,11 @@
       ansible.builtin.assert:
         that:
           - result.changed == true
+          - result.before | length == 1
+          - result.before[0].policyId == pre_replace_matches[0].policy_id
+          - result.after | length == 1
+          - result.after[0].templateName == 'clock_summertime'
+          - result.after[0].policyId != pre_replace_matches[0].policy_id
       tags: replace
 
     # TC-2: Verify END STATE — old clock_timezone gone, new clock_summertime present
@@ -141,6 +146,7 @@
           - post_replace_matches[0].name == "clock_summertime"
           # New policyId — proves delete + recreate, not in-place update.
           - post_replace_matches[0].policy_id != pre_replace_matches[0].policy_id
+          - post_replace_matches[0].policy_id == result.after[0].policyId
       tags: replace
 
     # TC-3: Idempotence — re-running with the new template should be a no-op
