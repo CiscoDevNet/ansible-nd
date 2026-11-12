@@ -19,6 +19,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils import (
     PayloadUtils,
+    SwitchFabricUtils,
     SwitchWaitUtils,
     SwitchOperationError,
     build_bootstrap_index,
@@ -358,6 +359,7 @@ def _resource(state="merged", *, config=None, check_mode=False, existing=None, o
     resource.sent_adds = []
     resource.proposed_cfgs = []
     resource._plan = None
+    resource._check_mode_config_actions = []
     resource.nd_logs = []
     resource.msg = ""
     resource.output = NDOutput(output_level=output_level)
@@ -1205,7 +1207,8 @@ def test_post_add_processing_waits_saves_updates_roles_and_finalize_paths():
         }
     ]
     assert [entry["action"] for entry in ctx.results.metadata] == ["save_credentials", "update_role", "config_save", "deploy_switches"]
-    assert ctx.results.payload[-1] == {"switchIds": ["SERIAL1"]}
+    assert ctx.results.path[-2:] == ["/config-save", "/switch-deploy"]
+    assert ctx.results.payload[-2:] == [None, {"switchIds": ["SERIAL1"]}]
 
     failing_wait = RecordingWait(manageable=False)
     with pytest.raises(FailJsonError, match="failed to become manageable"):
@@ -1254,6 +1257,7 @@ def test_post_add_processing_splits_reload_waits_by_platform():
             "skip_greenfield_check": True,
         }
     ]
+    assert ctx.results.metadata[-1]["action"] == "deploy_switches"
     assert ctx.results.payload[-1] == {"switchIds": ["NXOS1", "NXOS2", "IOSXE1", "IOSXR1"]}
 
 
@@ -1309,36 +1313,96 @@ def test_default_ibgp_preserve_config_keeps_poap_reload_observation():
 
 
 def test_fabric_ops_finalize_honors_switch_and_global_deploy_modes():
-    """Finalize chooses save, switch deploy, global deploy, and check-mode no-op correctly."""
-    calls = []
-    fabric_utils = RecordingFinalizeFabricUtils(calls)
+    """Finalize chooses save, switch deploy, global deploy, no-target failure, and check-mode correctly."""
+    nd = FakeND(data={"RETURN_CODE": 200, "MESSAGE": "OK"})
+    fabric_utils = SwitchFabricUtils(nd, "FAB1", ListLogger())
     results = Results()
-    ctx = SwitchServiceContext(FakeND(), results, "FAB1", ListLogger(), save_config=True, deploy_config=True, deploy_type="switch")
-    ctx.nd.rest_send.response_current = {"RETURN_CODE": 200, "MESSAGE": "full response"}
-    ctx.nd.rest_send.result_current = {"success": True, "changed": True}
+    ctx = SwitchServiceContext(nd, results, "FAB1", ListLogger(), save_config=True, deploy_config=True, deploy_type="switch")
     SwitchFabricOps(ctx, fabric_utils).finalize(["SERIAL1"])
-    assert calls == [("save", None), ("deploy_switches", ["SERIAL1"])]
+    assert [(call["path"], call["verb"], call["data"]) for call in nd.calls] == [
+        ("/api/v1/manage/fabrics/FAB1/actions/configSave", HttpVerbEnum.POST, None),
+        ("/api/v1/manage/fabrics/FAB1/switchActions/deploy", HttpVerbEnum.POST, {"switchIds": ["SERIAL1"]}),
+    ]
     assert [entry["action"] for entry in results.metadata] == ["config_save", "deploy_switches"]
-    assert results.path == ["/config-save", "/switch-deploy"]
+    assert results.path == [
+        "/api/v1/manage/fabrics/FAB1/actions/configSave",
+        "/api/v1/manage/fabrics/FAB1/switchActions/deploy",
+    ]
+    assert results.verb == ["POST", "POST"]
     assert results.payload == [None, {"switchIds": ["SERIAL1"]}]
     assert results.verbosity_level == [2, 2]
     assert [response["RETURN_CODE"] for response in results.responses] == [200, 200]
 
-    calls.clear()
+    nd.calls.clear()
     results = Results()
     ctx.deploy_type = "global"
     ctx.results = results
-    ctx.nd.rest_send.response_current = {"RETURN_CODE": 200, "MESSAGE": "full response"}
-    ctx.nd.rest_send.result_current = {"success": True, "changed": True}
     SwitchFabricOps(ctx, fabric_utils).finalize(["SERIAL1"])
-    assert calls == [("save", None), ("deploy_config", None)]
+    assert [(call["path"], call["verb"], call["data"]) for call in nd.calls] == [
+        ("/api/v1/manage/fabrics/FAB1/actions/configSave", HttpVerbEnum.POST, None),
+        ("/api/v1/manage/fabrics/FAB1/actions/configDeploy", HttpVerbEnum.POST, None),
+    ]
     assert [entry["action"] for entry in results.metadata] == ["config_save", "deploy_config"]
-    assert results.path == ["/config-save", "/config-deploy"]
+    assert results.path == [
+        "/api/v1/manage/fabrics/FAB1/actions/configSave",
+        "/api/v1/manage/fabrics/FAB1/actions/configDeploy",
+    ]
+    assert results.verb == ["POST", "POST"]
+    assert results.payload == [None, None]
+    assert [response["RETURN_CODE"] for response in results.responses] == [200, 200]
 
-    calls.clear()
+    nd.calls.clear()
+    ctx.deploy_type = "switch"
+    with pytest.raises(SwitchOperationError, match="Switch-level deploy requested but no serial numbers were resolved"):
+        SwitchFabricOps(ctx, fabric_utils).finalize([])
+    assert nd.calls == []
+
+    nd.calls.clear()
     ctx.nd.module.check_mode = True
     SwitchFabricOps(ctx, fabric_utils).finalize(["SERIAL1"])
-    assert calls == []
+    assert nd.calls == []
+    assert results.metadata[-1]["action"] == "config_actions"
+
+
+def test_idempotent_sync_serials_require_resolved_switch_targets():
+    """Idempotent config-sync deploys target resolved serials and fails when targets are missing."""
+    resource = NDSwitchResourceModule.__new__(NDSwitchResourceModule)
+    nd = FakeND()
+    resource.nd = nd
+    resource.log = ListLogger()
+    resource.ctx = SwitchServiceContext(nd=nd, results=Results(), fabric="FAB1", log=resource.log, save_config=True, deploy_config=True)
+
+    out_of_sync = _sw(
+        "192.0.2.10",
+        "SERIAL1",
+        additionalData={
+            "configSyncStatus": "outOfSync",
+            "discoveryStatus": "ok",
+            "systemMode": "normal",
+            "platformType": "nx-os",
+        },
+    )
+    in_sync = _sw(
+        "192.0.2.11",
+        "SERIAL2",
+        additionalData={
+            "configSyncStatus": "inSync",
+            "discoveryStatus": "ok",
+            "systemMode": "normal",
+            "platformType": "nx-os",
+        },
+    )
+    plan = _empty_plan(idempotent=[_cfg("192.0.2.10"), _cfg("192.0.2.11")])
+
+    assert resource._idempotent_sync_serials(plan, {sw.fabric_management_ip: sw for sw in (out_of_sync, in_sync)}) == ["SERIAL1"]
+
+    resource.ctx.deploy_config = False
+    assert resource._idempotent_sync_serials(plan, {out_of_sync.fabric_management_ip: out_of_sync}) == []
+
+    resource.ctx.deploy_config = True
+    missing_plan = _empty_plan(idempotent=[_cfg("192.0.2.99")])
+    with pytest.raises(FailJsonError, match="switch serial numbers could not be resolved.*192.0.2.99"):
+        resource._idempotent_sync_serials(missing_plan, {})
 
 
 def test_poap_handler_check_mode_noop_and_bootstrap_not_found():
@@ -1897,6 +1961,96 @@ def test_exit_json_check_mode_uses_synthetic_before_after_diff():
     assert final["before"][0]["seed_ip"] == "192.0.2.10"
     assert final["after"][1]["seed_ip"] == "192.0.2.11"
     assert final["diff"][0]["_action"] == "added"
+
+
+def test_check_mode_idempotent_out_of_sync_switch_reports_changed_for_config_actions():
+    """Check mode reports changed when an idempotent switch still needs config save/deploy."""
+    existing = [
+        _sw(
+            "192.0.2.10",
+            "SERIAL1",
+            additionalData={
+                "configSyncStatus": "outOfSync",
+                "discoveryStatus": "ok",
+                "systemMode": "normal",
+                "platformType": "nx-os",
+            },
+        )
+    ]
+    cfg = _cfg("192.0.2.10")
+    resource = _resource(
+        state="merged",
+        config=[{"seed_ip": "192.0.2.10", "username": "admin", "password": "password", "role": "leaf"}],
+        check_mode=True,
+        existing=existing,
+    )
+    resource.ctx.save_config = True
+    resource.ctx.deploy_config = True
+    resource.ctx.deploy_type = "switch"
+    resource.proposed_cfgs = [cfg]
+    resource._plan = _empty_plan(idempotent=[cfg])
+
+    resource._handle_merged_state(resource._plan, {})
+    resource.exit_json()
+
+    final = resource.module.exit_kwargs
+    assert final["changed"] is True
+    assert final["diff"] == [
+        {
+            "_action": "config_actions",
+            "save": True,
+            "deploy": True,
+            "deploy_type": "switch",
+            "serial_numbers": ["SERIAL1"],
+        }
+    ]
+    assert resource.results.diffs[0]["save_deploy_required"] is True
+    assert resource.results.diffs[0]["save_deploy_serial_numbers"] == ["SERIAL1"]
+
+
+@pytest.mark.parametrize(
+    ("state", "handler_name", "add_bucket"),
+    [
+        ("merged", "_handle_merged_state", "to_add"),
+        ("overridden", "_handle_overridden_state", "to_update"),
+        ("replaced", "_handle_replaced_state", "to_update"),
+    ],
+)
+def test_check_mode_does_not_preview_idempotent_deploy_when_add_phase_will_finalize(state, handler_name, add_bucket):
+    """A mixed plan does not preview an idempotent-only finalize path that normal mode skips."""
+    existing = [
+        _sw(
+            "192.0.2.10",
+            "SERIAL1",
+            additionalData={
+                "configSyncStatus": "outOfSync",
+                "discoveryStatus": "ok",
+                "systemMode": "normal",
+                "platformType": "nx-os",
+            },
+        )
+    ]
+    idempotent_cfg = _cfg("192.0.2.10")
+    add_cfg = _cfg("192.0.2.11")
+    resource = _resource(
+        state=state,
+        config=[
+            {"seed_ip": "192.0.2.10", "username": "admin", "password": "password", "role": "leaf"},
+            {"seed_ip": "192.0.2.11", "username": "admin", "password": "password", "role": "leaf"},
+        ],
+        check_mode=True,
+        existing=existing,
+    )
+    resource.ctx.save_config = True
+    resource.ctx.deploy_config = True
+    resource.ctx.deploy_type = "switch"
+    plan = _empty_plan(idempotent=[idempotent_cfg], **{add_bucket: [add_cfg]})
+
+    getattr(resource, handler_name)(plan, {})
+
+    assert resource.results.diffs[0]["save_deploy_required"] is True
+    assert "save_deploy_serial_numbers" not in resource.results.diffs[0]
+    assert resource._check_mode_config_actions == []
 
 
 def test_exit_json_normal_requeries_inventory_and_builds_delete_add_diff(monkeypatch):
