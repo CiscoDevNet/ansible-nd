@@ -345,7 +345,10 @@ class ActionModule(ActionBase):
                 if expected_value is None:
                     continue
                 actual_value = _first_value(live, field)
-                if not _values_equal(expected_value, actual_value):
+                # A field configured by the test but absent/null in the live
+                # response is a validation failure. Add a narrowly scoped
+                # exception only when a specific ND release is known to omit it.
+                if actual_value is None or not _values_equal(expected_value, actual_value):
                     mismatches.setdefault(name, {})[field] = {
                         "expected": expected_value,
                         "actual": actual_value,
