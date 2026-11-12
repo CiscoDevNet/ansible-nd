@@ -24,6 +24,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.on
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import (
     EpManageSwitchesListGet,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switch_actions import (
+    EpManageSwitchActionsDeployPost,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics_networks import (
+    EpOneManageFabricsSwitchActionsDeployPost,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
     MappingType,
     PublicNetworkAttachmentMode,
@@ -53,7 +59,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_sta
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_config_utils import (
     configured_network_names,
     deploy_enabled_by_network,
-    deploy_type_by_network,
+    deploy_scope_by_network,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_network import (
     BaseNetworkStrategy,
@@ -165,7 +171,7 @@ class NetworkAttachmentManager:
             self._trace("network_attachment_phase_noop", phase=phase, desired_count=len(desired or {}), current_count=len(current or {}))
             return {"current": current} if phase == "pre" else {}
 
-        deploy_enabled = deploy_enabled_by_network(config)
+        deploy_enabled = deploy_enabled_by_network(config, getattr(self.coordinator, "config_actions", None))
         deploy_targets: dict[str, set[str]] = {}
         for payload in payloads:
             network_name = payload.get("networkName")
@@ -900,25 +906,44 @@ class NetworkAttachmentManager:
         config: list[dict],
         *deploy_target_maps: dict[str, set[str]],
         strategy: BaseNetworkStrategy | None = None,
+        actions: Any | None = None,
     ) -> list[dict[str, Any]]:
-        deploy_enabled = deploy_enabled_by_network(config)
-        deploy_types = deploy_type_by_network(config)
-        mcfg_parent = bool(strategy and strategy.is_multicluster and strategy.is_parent)
+        deploy_enabled = deploy_enabled_by_network(config, actions)
+        deploy_scopes = deploy_scope_by_network(config, actions)
         grouped: dict[tuple[str, ...], set[str]] = {}
         network_level: set[str] = set()
+        no_target: set[str] = set()
+        switch_scope_targets: set[str] = set()
         for target_map in deploy_target_maps:
             for network_name, switch_ids in (target_map or {}).items():
                 if not deploy_enabled.get(network_name, True):
                     continue
-                if not switch_ids or (deploy_types.get(network_name, "switch") == "network" and not mcfg_parent):
+                scope = deploy_scopes.get(network_name, "resource")
+                msd_parent = bool(
+                    strategy
+                    and getattr(strategy, "is_parent", False)
+                    and getattr(strategy, "is_multisite", False)
+                    and not getattr(strategy, "is_multicluster", False)
+                )
+                if scope == "switch":
+                    if switch_ids:
+                        switch_scope_targets.update(switch_ids)
+                    else:
+                        no_target.add(network_name)
+                elif scope == "resource" and msd_parent and switch_ids:
+                    grouped.setdefault(tuple(sorted(switch_ids)), set()).add(network_name)
+                elif scope == "resource":
                     network_level.add(network_name)
                 else:
                     grouped.setdefault(tuple(sorted(switch_ids)), set()).add(network_name)
-        payloads = [
-            NetworkSwitchesListModel(network_names=sorted(names), switch_ids=list(switch_ids)).to_payload() for switch_ids, names in sorted(grouped.items())
-        ]
+        payloads = [{"switchIds": sorted(switch_scope_targets)}] if switch_scope_targets else []
+        payloads.extend(
+            [NetworkSwitchesListModel(network_names=sorted(names), switch_ids=list(switch_ids)).to_payload() for switch_ids, names in sorted(grouped.items())]
+        )
         if network_level:
             payloads.append(NetworkSwitchesListModel(network_names=sorted(network_level)).to_payload())
+        if no_target:
+            payloads.append(NetworkSwitchesListModel(network_names=sorted(no_target)).to_payload())
         return payloads
 
     @staticmethod
@@ -926,27 +951,36 @@ class NetworkAttachmentManager:
         config: list[dict],
         *deploy_target_maps: dict[str, set[str]],
         strategy: BaseNetworkStrategy | None = None,
+        actions: Any | None = None,
     ) -> list[dict[str, Any]]:
         """
         Build Network deploy requests for detach cleanup at the selected scope.
 
         Delete must deploy the detach/undeploy work before the Network delete is
         attempted, regardless of per-Network ``deploy``. Standalone and MSD
-        honor ``deploy_type`` without deploying unrelated switch configuration.
+        honor the selected config action scope without deploying unrelated switch configuration.
         Switch scope includes Network names and affected switch IDs; Network
         scope includes Network names. MCFG parent retains affected switch IDs.
         Never widen a missing switch target to an unscoped Network request.
         """
-        deploy_types = deploy_type_by_network(config)
-        mcfg_parent = bool(strategy and strategy.is_multicluster and strategy.is_parent)
+        deploy_scopes = deploy_scope_by_network(config, actions)
+        mcfg_parent = bool(strategy and getattr(strategy, "is_multicluster", False) and getattr(strategy, "is_parent", False))
+        msd_parent = bool(
+            strategy and getattr(strategy, "is_multisite", False) and getattr(strategy, "is_parent", False) and not getattr(strategy, "is_multicluster", False)
+        )
         network_level: set[str] = set()
         network_groups: dict[tuple[str, ...], set[str]] = {}
         for target_map in deploy_target_maps:
             for network_name, target_switch_ids in (target_map or {}).items():
-                if not target_switch_ids:
-                    continue
-                if deploy_types.get(network_name, "switch") == "network" and not mcfg_parent:
+                scope = deploy_scopes.get(network_name, "resource")
+                if scope == "resource" and msd_parent and target_switch_ids:
+                    network_groups.setdefault(tuple(sorted(target_switch_ids)), set()).add(network_name)
+                elif scope == "resource" and not (mcfg_parent or msd_parent):
                     network_level.add(network_name)
+                elif scope == "resource" and msd_parent and not target_switch_ids:
+                    network_level.add(network_name)
+                elif not target_switch_ids:
+                    continue
                 else:
                     network_groups.setdefault(tuple(sorted(target_switch_ids)), set()).add(network_name)
         payloads = [
@@ -964,9 +998,10 @@ class NetworkAttachmentManager:
         module_args: dict,
         strategy: BaseNetworkStrategy,
         existing_names: set[str] | None = None,
+        actions: Any | None = None,
     ) -> list[dict[str, Any]]:
         configured = set(configured_network_names(config))
-        deploy_enabled = deploy_enabled_by_network(config)
+        deploy_enabled = deploy_enabled_by_network(config, actions)
         pending_statuses = {"pending", "outofsync", "failed", "inprogress", "deploymentinprogress"}
         deploy_targets: dict[str, set[str]] = {}
         after_names: set[str] = set()
@@ -999,7 +1034,7 @@ class NetworkAttachmentManager:
 
         if not deploy_targets:
             return []
-        return self.build_deploy_payloads(config, deploy_targets, strategy=strategy)
+        return self.build_deploy_payloads(config, deploy_targets, strategy=strategy, actions=actions)
 
     def deploy_network_attachments(
         self,
@@ -1033,6 +1068,32 @@ class NetworkAttachmentManager:
         )
         trace = self.coordinator._finalize_api_trace(results)
         self._trace("network_attachment_deploy_end", changed=trace.get("changed"), failed=trace.get("failed"))
+        return trace
+
+    def deploy_network_switches(
+        self,
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        deploy_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Deploy pending fabric configuration to the selected switches."""
+        switch_ids = deploy_payload.get("switchIds") or []
+        if not switch_ids:
+            raise ValueError("Switch deployment requires affected switch IDs.")
+        self._trace("network_switch_deploy_start", deploy_payload=deploy_payload)
+        orchestrator, results = self.coordinator._new_network_orchestrator(module_args, strategy)
+        endpoint_cls = EpOneManageFabricsSwitchActionsDeployPost if strategy.is_multicluster else EpManageSwitchActionsDeployPost
+        endpoint = orchestrator._make_endpoint(endpoint_cls)
+        if not strategy.is_multicluster:
+            endpoint.endpoint_params.force_show_run = False
+        orchestrator._request(
+            path=endpoint.path,
+            verb=endpoint.verb,
+            data={"switchIds": list(switch_ids)},
+            operation_type=OperationType.UPDATE,
+        )
+        trace = self.coordinator._finalize_api_trace(results)
+        self._trace("network_switch_deploy_end", changed=trace.get("changed"), failed=trace.get("failed"))
         return trace
 
     def wait_for_attachments_delete_ready(

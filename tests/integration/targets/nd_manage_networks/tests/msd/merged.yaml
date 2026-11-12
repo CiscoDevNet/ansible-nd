@@ -24,7 +24,6 @@
         vlan_id: "{{ nd_network_base_vlan + 201 }}"
         vlan_name: ans_nd_net_msd_mrg_sw
         deploy: false
-        deploy_type: switch
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
       - network_name: ansible-nd-net-msd-merged-resource
@@ -33,7 +32,6 @@
         vlan_id: "{{ nd_network_base_vlan + 202 }}"
         vlan_name: ans_nd_net_msd_mrg_res
         deploy: false
-        deploy_type: network
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
     nd_network_msd_merged_deploy_config:
@@ -43,7 +41,6 @@
         vlan_id: "{{ nd_network_base_vlan + 201 }}"
         vlan_name: ans_nd_net_msd_mrg_sw
         deploy: true
-        deploy_type: switch
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
       - network_name: ansible-nd-net-msd-merged-resource
@@ -52,7 +49,6 @@
         vlan_id: "{{ nd_network_base_vlan + 202 }}"
         vlan_name: ans_nd_net_msd_mrg_res
         deploy: true
-        deploy_type: network
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
   delegate_to: localhost

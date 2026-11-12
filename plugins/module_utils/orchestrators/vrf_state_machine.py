@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActions
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_vrf import (
     BaseVrfStrategy,
 )
@@ -298,20 +299,10 @@ class VrfStateMachine:
             result["_deferred_deploy_payloads"] = deploy_payloads
             return result
 
-        if self._check_mode():
-            self.coordinator._merge_api_trace(
-                result,
-                {
-                    "changed": True,
-                    "failed": False,
-                    "check_mode_deploy_payloads": deploy_payloads,
-                },
-            )
-            return result
-
         for deploy_payload in deploy_payloads:
             self._trace("deploy_start", deploy_payload=deploy_payload)
-            deploy_trace = self.coordinator._deploy_vrf_attachments(
+            deploy = getattr(self.coordinator, "_run_vrf_config_actions", self.coordinator._deploy_vrf_attachments)
+            deploy_trace = deploy(
                 module_args,
                 strategy,
                 deploy_payload,
@@ -528,7 +519,6 @@ class VrfStateMachine:
             {
                 "vrf_name": vrf_name,
                 "deploy": True,
-                "deploy_type": "vrf",
             }
             for vrf_name in target_vrf_names
         ]
@@ -538,6 +528,7 @@ class VrfStateMachine:
             pending_config,
             module_args,
             strategy,
+            actions=ConfigActions(save=False, deploy=True, type="resource", provided=False),
         )
         if not deploy_payloads:
             return []
@@ -594,12 +585,9 @@ class VrfStateMachine:
         return {}
 
     @staticmethod
-    def _delete_all_generated_config(vrf_name: str, strategy: BaseVrfStrategy) -> dict[str, Any]:
+    def _delete_all_generated_config(vrf_name: str, _strategy: BaseVrfStrategy) -> dict[str, Any]:
         """Build synthetic delete config for config=[] cleanup."""
-        config = {"vrf_name": vrf_name}
-        if getattr(strategy, "is_parent", False):
-            config["deploy_type"] = "vrf"
-        return config
+        return {"vrf_name": vrf_name}
 
     def _vrf_names_from_models(self, items: Any) -> list[str]:
         """Return unique VRF names from state-machine model instances."""

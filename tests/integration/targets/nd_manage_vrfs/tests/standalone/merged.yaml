@@ -63,7 +63,6 @@
         netflow_enable: false
         attach: "{{ nd_vrf_attach_block }}"
         deploy: "{{ nd_vrf_attach_block | length > 0 }}"
-        deploy_type: switch
       - vrf_name: ansible-nd-vrf-merged-l3vni
         vrf_id: "{{ nd_vrf_base_id + 11 }}"
         l3vni_wo_vlan: true
@@ -98,7 +97,6 @@
         static_default_route: false
         attach: "{{ nd_vrf_attach_block }}"
         deploy: false
-        deploy_type: switch
       - vrf_name: ansible-nd-vrf-merged-stage-resource
         vrf_id: "{{ nd_vrf_base_id + 13 }}"
         vlan_id: "{{ nd_vrf_base_vlan + 13 }}"
@@ -107,7 +105,6 @@
         adv_default_routes: true
         static_default_route: true
         deploy: false
-        deploy_type: vrf
     nd_vrf_merged_deploy_config:
       - vrf_name: ansible-nd-vrf-merged-stage-switch
         vrf_id: "{{ nd_vrf_base_id + 12 }}"
@@ -118,7 +115,6 @@
         static_default_route: false
         attach: "{{ nd_vrf_attach_block }}"
         deploy: true
-        deploy_type: switch
       - vrf_name: ansible-nd-vrf-merged-stage-resource
         vrf_id: "{{ nd_vrf_base_id + 13 }}"
         vlan_id: "{{ nd_vrf_base_vlan + 13 }}"
@@ -127,7 +123,6 @@
         adv_default_routes: true
         static_default_route: true
         deploy: true
-        deploy_type: vrf
   delegate_to: localhost
   tags: merged
 
