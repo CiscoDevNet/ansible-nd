@@ -1,0 +1,49 @@
+---
+# Collect a complete interface inventory for one or more switches.
+#
+# nd_rest does not paginate collection responses. The recursive page task
+# below follows the same max/offset contract used by nd4x_module_test and
+# returns a result-shaped list so callers can continue to use
+# <inventory>.results[*].current.interfaces.
+
+- name: "ND4X PAGINATION: Initialize interface inventory"
+  ansible.builtin.set_fact:
+    nd4x_paginated_interface_inventory: []
+
+- name: "ND4X PAGINATION: Collect every interface page"
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_collect_interface_pages.yaml
+  loop: "{{ nd4x_interface_switches }}"
+  loop_control:
+    loop_var: nd4x_interface_switch
+    label: >-
+      {{ nd4x_interface_switch.fabricManagementIp
+         | default(nd4x_interface_switch.switchId) }}
+  vars:
+    nd4x_interface_page_size: 100
+    nd4x_interface_max_pages: 10000
+    nd4x_interface_offset: 0
+    nd4x_interface_page_number: 0
+    nd4x_interface_rows: []
+
+- name: "ND4X PAGINATION: Verify one complete result per switch"
+  ansible.builtin.assert:
+    that:
+      - >-
+        nd4x_paginated_interface_inventory | length
+        == nd4x_interface_switches | length
+      - >-
+        nd4x_paginated_interface_inventory
+        | map(attribute='item.switchId')
+        | list | unique | length
+        == nd4x_interface_switches
+        | map(attribute='switchId')
+        | list | unique | length
+      - >-
+        nd4x_paginated_interface_inventory
+        | selectattr('current.interfaces', 'defined')
+        | list | length
+        == nd4x_interface_switches | length
+    fail_msg: >-
+      Paginated interface collection did not produce exactly one complete
+      result for every switch in the fabric.
