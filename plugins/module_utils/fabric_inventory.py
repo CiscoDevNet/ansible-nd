@@ -11,6 +11,7 @@ from typing import Any
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import (
     EpManageFabricsSwitchesGet,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
     NDConfigCollection,
 )
@@ -64,6 +65,34 @@ class FabricSwitchInventory:
         """
         raw = cls.query_fabric_switches(nd, fabric, log)
         collection = NDConfigCollection.from_api_response(response_data=raw, model_class=model_class)
+        instance = cls(list(collection))
+        instance.collection = collection
+        return instance
+
+    @classmethod
+    def from_context(cls, fabric_context: FabricContext, model_class: type) -> "FabricSwitchInventory":
+        """
+        # Summary
+
+        Parse and index the cached switch inventory from a `FabricContext`.
+
+        ## Parameters
+
+        - `fabric_context`: Cached fabric context that supplies raw switch records.
+        - `model_class`: Pydantic model class used to parse switch records.
+
+        ## Returns
+
+        - A new `FabricSwitchInventory` with `switches` and `collection`
+          populated.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the fabric context cannot query switch inventory.
+        """
+        collection = NDConfigCollection.from_api_response(response_data=fabric_context.switches, model_class=model_class)
         instance = cls(list(collection))
         instance.collection = collection
         return instance

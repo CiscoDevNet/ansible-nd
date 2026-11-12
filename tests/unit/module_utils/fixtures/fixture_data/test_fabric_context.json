@@ -233,6 +233,20 @@
             ]
         }
     },
+    "test_fabric_context_00240a": {
+        "TEST_NOTES": [
+            "Switch list returns HTTP 200 but the body carries an embedded 'code' error key.",
+            "switch_map must fail closed and raise rather than accepting this as empty switch inventory."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "code": 500,
+            "message": "controller unavailable"
+        }
+    },
     "test_fabric_context_00250a": {
         "TEST_NOTES": ["#399: switches endpoint 404 (parent fabric missing). First call in _load_switch_maps."],
         "RETURN_CODE": 404,
