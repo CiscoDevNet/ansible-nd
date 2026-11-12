@@ -104,3 +104,15 @@ def test_refresh_updates_unmodified_outputs_but_preserves_user_edits(tmp_path, s
         generator.generate(template=template, output=output, refresh=True)
     assert changed.read_text() == 'user edit'
     assert untouched.read_bytes() == before
+
+def test_individual_template_matches_main_runtime_and_timing_helpers(source):
+    main = (ROOT / 'Jenkinsfile_nd_jenkins_script').read_text()
+    for name in ('prepareRuntimeInputs', 'formatPhaseTimingTable', 'bundleAllLogs',
+                 'installEmbeddedReportingHelper', 'downloadFromConsul'):
+        pattern = r'(?ms)^def ' + name + r'\([^\n]*\) \{.*?(?=^def |\Z)'
+        expected = re.search(pattern, main)
+        actual = re.search(pattern, source)
+        assert expected and actual
+        assert actual.group().strip() == expected.group().strip()
+    pattern = r'(?ms)^@Field Map EMBEDDED_INTERFACE_HELPERS = \[\n.*?^\]'
+    assert re.search(pattern, source).group() == re.search(pattern, main).group()

@@ -16,10 +16,10 @@ def test_integration_case_contract_never_uses_whole_invocation_recaps(variant):
     assert 'caseOutcomeCount(' in counter
     recap = source.split('def moduleTaskRecapText() {', 1)[1].split('\ndef moduleCaseSummaryRows()', 1)[0]
     assert "['ok', 'changed', 'unreachable', 'failed', 'skipped', 'rescued', 'ignored']" in recap
-    assert "it.result != 'NOT_RUN'" in recap
+    assert "it.result != 'NOT_RUN' && it.test_type == 'integration'" in recap
     assert "row.reporting_status != 'ERROR'" in recap
     assert "invocation.status in ['OK', 'FAIL', 'SKIP']" in recap
-    assert "ANSIBLE TASK RECAP (includes setup and cleanup; not test-case counts)" in recap
+    assert "INTEGRATION TARGET TASK COUNTS (not test-case counts)" in recap
     assert source.count('moduleTaskRecapText()') == 3
     assert 'Counts use the closed-log task recap' not in source
     assert "test_type: target[1]" in source
@@ -238,4 +238,42 @@ assert message.contains('ANSIBLE TASK RECAP')
 assert message.contains('policy_fixture [iBGP]: ok=150 changed=21 unreachable=0 failed=0 skipped=125 rescued=0 ignored=7')
 assert message.contains('other_fixture [iBGP]: ok=20 changed=3 unreachable=0 failed=1 skipped=9 rescued=0 ignored=0')
 assert !message.contains('missing_fixture [eBGP]: ok=0')
+''')
+
+
+def test_module_recap_does_not_use_whole_invocation_counts():
+    for name in ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches",
+                 "Jenkinsfile_nd_jenkins_script_comm_list"):
+        source = (Path(__file__).resolve().parents[1] / name).read_text()
+        recap = source.split('def moduleTaskRecapText() {', 1)[1].split('\ndef moduleCaseSummaryRows()', 1)[0]
+        assert 'integration_recap' in recap
+        assert 'invocation.counts' not in recap
+
+
+@pytest.mark.parametrize('variant', ['Jenkinsfile_nd_jenkins_script',
+    'Jenkinsfile_nd_jenkins_script_temp_switches', 'Jenkinsfile_nd_jenkins_script_comm_list'])
+def test_webex_table_preserves_incomplete_case_evidence(variant):
+    source = (Path(__file__).resolve().parents[1] / variant).read_text()
+    formatter = source.split('def formatResultsTable(', 1)[1].split('\ndef splitWebexMessage(', 1)[0]
+    assert 'CASE COVERAGE / RESULT DETAILS:' in formatter
+    assert "it.status != 'SKIP' && it.note" in formatter
+    assert "record.note.split('; ').findAll" in formatter
+    assert "${record.module} (${record.label}): ${record.note}" not in formatter
+
+
+def test_webex_displays_incomplete_case_evidence_without_changing_totals(groovy_runner):
+    groovy_runner(POST + r'''
+script.MODULE_ACTIVITY_RESULTS.putAll([
+    policy: [module:'nd_manage_policy_group', test_type:'integration', nd:'4.3', scope:'iBGP', round_label:'iBGP',
+        result:'PASS', coverage:'INCOMPLETE', validated:true,
+        case_totals:[started:121,passed:81,failed:0,skipped:0,incomplete:40], duration:'24m',
+        failure:'PRIVATE_DIAGNOSTIC_CANARY'],
+    missing: [module:'nd_manage_policy_group', test_type:'integration', nd:'4.3', scope:'eBGP', round_label:'eBGP',
+        result:'NOT_RUN', coverage:'UNKNOWN', failure:'preflight blocked']
+])
+script.run()
+def message = sent.join('\n')
+assert message.contains('Passed: 81') && message.contains('Failed: 0') && message.contains('Skipped: 0')
+assert message.contains('case coverage INCOMPLETE') && message.contains('40 incomplete case(s)')
+assert !message.contains('PRIVATE_DIAGNOSTIC_CANARY')
 ''')

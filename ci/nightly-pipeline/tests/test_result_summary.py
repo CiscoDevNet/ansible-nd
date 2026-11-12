@@ -428,3 +428,77 @@ if (scenario == 'null_message') {
     if (scenario == 'nonzero_exit') { assert script.binding.env.PIPELINE_FAILED == 'true' }
 }
 ''')
+
+
+@pytest.mark.parametrize("failure", ["none", "failed", "rescued"])
+def test_real_ansible_target_counts_exclude_pipeline_tasks(tmp_path, monkeypatch, failure):
+    monkeypatch.syspath_prepend(str(ROOT / "playbooks"))
+    from nd_reporting_pipeline import IntegrationRecap
+
+    role = tmp_path / "tests/integration/targets/nd_example/tasks"
+    role.mkdir(parents=True)
+    tasks = [
+        {"name": "target ok", "debug": {"msg": "ok"}},
+        {"name": "target changed", "debug": {"msg": "changed"}, "changed_when": True},
+        {"name": "target skipped", "debug": {"msg": "skip"}, "when": False},
+        {"name": "target ignored", "fail": {"msg": "expected"}, "ignore_errors": True},
+        {"name": "target loop", "debug": {"msg": "item"}, "loop": [1, 2]},
+    ]
+    if failure == "failed":
+        tasks.append({"name": "target failure", "fail": {"msg": "failure"}})
+    elif failure == "rescued":
+        tasks.append({"block": [{"name": "target rescued failure", "fail": {"msg": "failure"}}],
+                      "rescue": [{"name": "target rescue", "debug": {"msg": "rescued"}}]})
+    (role / "main.yml").write_text(yaml.safe_dump(tasks))
+    playbook = tmp_path / "run_integration_module.yaml"
+    playbook.write_text(yaml.safe_dump([{
+        "hosts": "localhost", "connection": "local", "gather_facts": False,
+        "tasks": [
+            {"name": "pipeline preparation", "debug": {"msg": "prepare"}},
+            {"name": "begin execution", "debug": {"msg": "begin"}, "tags": ["nd_phase_execution"]},
+            {"block": [{"name": "run target", "include_role": {"name": "nd_example"}}],
+             "always": [{"name": "pipeline cleanup", "debug": {"msg": "cleanup"}, "tags": ["nd_phase_cleanup"]}]},
+        ],
+    }]))
+    log = tmp_path / "local.txt"
+    environment = dict(os.environ, ANSIBLE_STDOUT_CALLBACK="nd_report",
+                       ANSIBLE_CALLBACK_PLUGINS=str(ROOT / "playbooks"),
+                       ANSIBLE_ROLES_PATH=str(role.parents[1]),
+                       ND_RESULT_LOG=str(log), TEST_RUN_MARKER="current", ND_RESULT_MODULE="nd_example",
+                       ND_RESULT_PHASE="prerequisites", ANSIBLE_NOCOLOR="1", ANSIBLE_VERBOSITY="0")
+    command = str(Path(sys.executable).parent / "ansible-playbook")
+    completed = subprocess.run([command, "-i", "localhost,", str(playbook)], env=environment,
+                               capture_output=True, text=True, timeout=30)
+    assert completed.returncode == (2 if failure == "failed" else 0), completed.stdout + completed.stderr
+    recap = IntegrationRecap("nd_example")
+    for line in Path(str(log) + ".events.jsonl").read_text().splitlines():
+        recap.observe(json.loads(line))
+    counts = json.loads(Path(str(log) + ".event-summary.json").read_text())["counts"]
+    if failure == "rescued":
+        assert counts["rescued"] == 1
+        assert recap.result(counts) is None
+    else:
+        assert recap.result(counts) == {"scope": "integration_target", "counts": {
+            "ok": 4, "changed": 1, "unreachable": 0, "failed": int(failure == "failed"),
+            "skipped": 1, "rescued": 0, "ignored": 1}}
+    assert counts["ok"] > 4
+
+
+@pytest.mark.parametrize("missing_changed,rescued,other_path", [(True, False, False), (False, True, False), (False, False, True)])
+def test_scoped_counts_are_unavailable_for_ambiguous_evidence(monkeypatch, missing_changed, rescued, other_path):
+    monkeypatch.syspath_prepend(str(ROOT / "playbooks"))
+    from nd_reporting_pipeline import IntegrationRecap
+
+    recap = IntegrationRecap("nd_example")
+    event = {"kind": "outcome", "outcome": "ok", "terminal": True, "task_uuid": "task",
+             "task_instance": 1, "host": "localhost", "phase": "execution",
+             "path": "tests/integration/targets/nd_example/tasks/main.yaml", "changed": False}
+    if missing_changed:
+        event.pop("changed")
+    if other_path:
+        event["path"] = "other/tasks/main.yaml"
+    recap.observe(event)
+    counts = dict.fromkeys(REPORT.COUNTERS, 0)
+    counts["ok"] = 1
+    counts["rescued"] = int(rescued)
+    assert recap.result(counts) is None

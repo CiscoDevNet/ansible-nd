@@ -443,11 +443,67 @@ def attach_execution(summary, job, execution, markers, event_stats=None):
     return summary
 
 
+class IntegrationRecap:
+    def __init__(self, module):
+        self.module = module
+        self.total = dict.fromkeys(COUNTERS, 0)
+        self.target = dict.fromkeys(COUNTERS, 0)
+        self.seen = set()
+        self.target_seen = False
+        self.invalid = False
+
+    def observe(self, event):
+        if event.get("kind") != "outcome" or not event.get("terminal", not event.get("item", False)):
+            return
+        identity = (event.get("task_uuid"), event.get("task_instance"), event.get("host"))
+        if identity in self.seen or not isinstance(event.get("changed"), bool):
+            self.invalid = True
+            return
+        self.seen.add(identity)
+        outcome = event.get("outcome")
+        ignored = event.get("ignored", False)
+        delta = dict.fromkeys(COUNTERS, 0)
+        if outcome == "ok" or outcome in ("failed", "unreachable") and ignored:
+            delta["ok"] = 1
+            delta["changed"] = int(event["changed"])
+            delta["ignored"] = int(bool(ignored))
+        elif outcome in ("failed", "unreachable", "skipped"):
+            delta[outcome] = 1
+        else:
+            self.invalid = True
+            return
+        for key in COUNTERS:
+            self.total[key] += delta[key]
+        if event.get("phase") != "execution":
+            return
+        path = "/" + str(event.get("path") or "").replace("\\", "/").lstrip("/")
+        marker = "/tests/integration/targets/" + self.module + "/"
+        if marker in path:
+            self.target_seen = True
+            for key in COUNTERS:
+                self.target[key] += delta[key]
+        elif not path.endswith("/run_integration_module.yaml"):
+            self.invalid = True
+
+    def result(self, counts):
+        if self.invalid or not self.target_seen or counts.get("rescued") or self.total != counts:
+            return None
+        return {"scope": "integration_target", "counts": self.target}
+
+
 def structured_summary(job, closed, catalog_snapshot=None, event_observer=None):
     execution, markers = boundary_evidence(job, closed)
+    scoped = IntegrationRecap(job["module"]) if job["test_type"] == "integration" else None
+
+    def observe(event):
+        if scoped is not None:
+            scoped.observe(event)
+        if event_observer is not None:
+            event_observer(event)
+
     activity = case_parser.summarize_events(job["log"], job["module"], job["run_id"], job["build"],
         job["scope"], job["collection_root"], job["test_type"], catalog_path=job["catalog"],
-        catalog_snapshot=catalog_snapshot, event_observer=event_observer)
+        catalog_snapshot=catalog_snapshot, event_observer=observe)
     if not activity.get("validated"):
         raise ValueError("structured module activity was not validated")
     stats = read_json(job["log"] + ".event-summary.json")
@@ -462,6 +518,7 @@ def structured_summary(job, closed, catalog_snapshot=None, event_observer=None):
                "failure_tasks": [clean_error(value) for value in stats.get("failure_tasks", [])[:20]],
                "capability_tasks": [clean_error(value) for value in stats.get("capability_tasks", [])[:20]],
                "reason": "Ansible execution failed" if failed else "Declared lab substrate unavailable" if stats.get("module_skipped") else ""}
+    summary["integration_recap"] = scoped.result(counts) if scoped is not None else None
     return attach_execution(summary, job, execution, markers, stats), activity
 
 

@@ -233,7 +233,7 @@ class CallbackModule(DefaultCallback):
                 host_name = ""
             event.update(
                 kind="outcome", outcome=outcome, ignored=bool(ignored), item=bool(item),
-                terminal=not item, host=host_name,
+                terminal=not item, host=host_name, changed=bool(payload.get("changed", False)),
                 task_instance=self._host_instances.get(
                     (event["task_uuid"], host_name), self._task_instances.get(event["task_uuid"], 0)),
             )
