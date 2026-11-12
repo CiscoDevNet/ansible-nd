@@ -49,6 +49,11 @@ class SubinterfaceUnmanagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Sub
     """
 
     model_class: ClassVar[type[NDBaseModel]] = SubinterfaceUnmanagedInterfaceModel
+    # TODO(4.2.1) staged-subinterface-delete-echo
+    # ND 4.2.1 and 4.3.1 can retype a removed subinterface as structural `ethernet` while it keeps the `userDefined` /
+    # `interface_delete` row, so the staged-delete tombstone is accepted under either type. The lookup is by the exact subinterface
+    # name and the replay still requires a preview with pending lines for that name.
+    staged_delete_echo_interface_types: ClassVar[frozenset[str]] = frozenset({"subInterface", "ethernet"})
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_modify_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True

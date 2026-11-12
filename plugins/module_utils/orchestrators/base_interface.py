@@ -152,6 +152,9 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     # opts out — used by interface types with no capability endpoint (e.g. future breakout).
     interface_type: ClassVar[str] = ""
     interface_mode: ClassVar[str] = ""
+    # `interfaceType` values under which ND lists this family's staged-delete tombstone (see `_can_replay_absent_delete`). Empty opts
+    # out: families with their own `_can_replay_absent_delete` (ethernet, port-channel, vPC) never consult it.
+    staged_delete_echo_interface_types: ClassVar[frozenset[str]] = frozenset()
     # Subclasses whose delete side removes IOS-XE logical interfaces (`interfaceActions/remove` + deploy) set this so `state: deleted`
     # and `state: overridden` refuse a removal ND cannot complete yet (see `_check_xe_removal_discovered`).
     xe_removal_requires_discovery: ClassVar[bool] = False
@@ -1250,6 +1253,11 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             network_os = (record.get("configData") or {}).get("networkOS") or {}
             if network_os.get("networkOSType") != "ios-xe":
                 continue
+            # A staged-delete tombstone means ND already accepted the removal and holds the pending `no interface`. ND reports its
+            # `operationalStatus` as `unknown` for several seconds after any deploy on the switch while its history still ends with
+            # the create push, so the check below would refuse a removal that only needs deploying (lab-verified 2026-11-10, 4.2.1.10).
+            if self._is_staged_delete_tombstone(record):
+                continue
             status = str((record.get("operData") or {}).get("operationalStatus") or "").strip().lower()
             if status in ("up", "down"):
                 continue
@@ -1985,14 +1993,50 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         return self._reconcile_deploy_models(model_instances, empty_preview_is_converged=False)
 
     def _can_replay_absent_delete(self, existing_data: dict | None) -> bool:
-        """An absent delete may replay only if no raw interface record remains.
+        """An absent delete may replay only if no raw record remains, or the record is this family's own delete tombstone.
 
         ``query_all`` filters by policy type, so an absent model can still name
         an interface owned by another module. Previewing that identity would
-        deploy the other policy's staged configuration.
+        deploy the other policy's staged configuration. The one exception is the
+        ``userDefined`` / ``interface_delete`` record ND lists after an accepted
+        ``interfaceActions/remove`` that has not been deployed yet (a delete run
+        with ``deploy: false``): it carries no competing policy, only the pending
+        ``no interface`` command, so an explicit delete of the same name must be
+        able to deploy it. Subclasses opt in through ``staged_delete_echo_interface_types``.
+        A row of an opted-in type that carries no policy at all is accepted on the
+        same terms: it has no competing policy either, and the replay deploys only
+        when the preview of that exact name reports pending lines.
         """
 
-        return existing_data is None
+        if existing_data is None:
+            return True
+        if existing_data.get("interfaceType") not in self.staged_delete_echo_interface_types:
+            return False
+        if self._is_staged_delete_tombstone(existing_data):
+            return True
+        # TODO(4.2.1) staged-removal-before-discovery-lists-policyless-row
+        # When `interfaceActions/remove` is accepted within seconds of the create deploy (before ND has discovered the interface), ND
+        # lists the interface as a row with no policy instead of the `interface_delete` tombstone, while `interfaceActions/preview`
+        # still reports `no interface <name>` pending (NX-OS loopback, lab-verified 2026-11-10 on 4.2.1.10 and 4.3.1.175). Without this
+        # the staged removal is never deployed. The same shape is ND's stale row after a deployed removal and its row for an interface
+        # it does not manage; both preview with zero pending lines, so the replay queues nothing for them.
+        return not ((existing_data.get("configData") or {}).get("networkOS") or {}).get("policy")
+
+    @staticmethod
+    def _is_staged_delete_tombstone(record: dict) -> bool:
+        """
+        # Summary
+
+        Return whether `record` is the `userDefined` / `interface_delete` row ND lists for an interface whose `interfaceActions/remove`
+        was accepted but not deployed yet.
+
+        ## Raises
+
+        None
+        """
+        network_os = (record.get("configData") or {}).get("networkOS") or {}
+        policy = network_os.get("policy") or {}
+        return isinstance(policy, dict) and policy.get("policyType") == "userDefined" and policy.get("templateName") == "interface_delete"
 
     def reconcile_absent_deletes(self, model_instances: Sequence[ModelType]) -> bool:
         """Recover an accepted deletion whose switch-side deploy remains pending.

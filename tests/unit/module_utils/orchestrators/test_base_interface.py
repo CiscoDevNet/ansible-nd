@@ -1252,6 +1252,164 @@ def test_reconcile_absent_delete_empty_preview_is_idempotent(monkeypatch, check_
     assert instance._pending_deploys == []
 
 
+def _staged_delete_tombstone(name: str, interface_type: str, network_os_type: str = "ios-xe") -> dict:
+    """Return the raw record ND lists after an accepted, undeployed `interfaceActions/remove` (lab 2026-11-10, 4.2.1.10)."""
+    return {
+        "interfaceName": name,
+        "interfaceType": interface_type,
+        "switchId": "FDO12345ABC",
+        "configData": {
+            "networkOS": {
+                "networkOSType": network_os_type,
+                "policy": {"policyType": "userDefined", "templateConfig": {"ReadOnlyOnEdit": True}, "templateName": "interface_delete"},
+            }
+        },
+    }
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("network_os_type", ["ios-xe", "nx-os"])
+def test_reconcile_absent_delete_replays_staged_delete_tombstone(monkeypatch, check_mode: bool, network_os_type: str) -> None:
+    """A delete staged with `deploy: false` is deployed by a later `deploy: true` delete of the same interface."""
+
+    def responses():
+        yield _preview_multistatus([_preview_row("loopback10", "FDO12345ABC", pending_lines=1)])
+
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "staged_delete_echo_interface_types", frozenset({"loopback"}))
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    instance.rest_send.check_mode = check_mode
+    instance.deploy = True
+    _seed_shared_inventory(instance, "FDO12345ABC", {"loopback10": _staged_delete_tombstone("Loopback10", "loopback", network_os_type)})
+    deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
+
+    assert instance.reconcile_absent_deletes([deleted]) is True
+    assert instance._pending_deploys == ([] if check_mode else [("loopback10", "FDO12345ABC")])
+
+
+def test_reconcile_absent_delete_ignores_tombstone_of_another_interface_type(monkeypatch) -> None:
+    """A delete tombstone of a type this orchestrator does not manage is not a replay target and costs no preview."""
+
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "staged_delete_echo_interface_types", frozenset({"loopback"}))
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    instance.deploy = True
+    _seed_shared_inventory(instance, "FDO12345ABC", {"vlan10": _staged_delete_tombstone("Vlan10", "svi")})
+    deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="vlan10")
+
+    assert instance.reconcile_absent_deletes([deleted]) is False
+    assert instance._pending_deploys == []
+    assert instance.rest_send.response_count == 0
+
+
+def _policyless_row(name: str, interface_type: str, network_os_type: str = "nx-os") -> dict:
+    """Return the raw record ND lists for a removal staged seconds after the create deploy (lab 2026-11-10, 4.2.1.10 and 4.3.1.175)."""
+    return {
+        "configData": {"mode": "unknown", "networkOS": {"networkOSType": network_os_type}},
+        "interfaceName": name,
+        "interfaceType": interface_type,
+        "operData": {"adminStatus": "up", "ipAddress": "10.100.206.1/32", "operationalStatus": "up", "portChannelId": -1},
+        "switchId": "FDO12345ABC",
+    }
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_reconcile_absent_delete_replays_policyless_row_with_pending_removal(monkeypatch, check_mode: bool) -> None:
+    """
+    # Summary
+
+    Verify a delete staged seconds after the create deploy is still deployed by a later `deploy: true` delete. ND lists that interface as a
+    row without a policy instead of the `interface_delete` tombstone, while its preview keeps `no interface` pending.
+
+    ## Test
+
+    - The raw inventory holds a policy-less `loopback` row for the requested name
+    - The one-interface preview reports pending lines
+    - `reconcile_absent_deletes()` returns True and queues the deploy outside check mode
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.reconcile_absent_deletes()
+    - NDBaseInterfaceOrchestrator._can_replay_absent_delete()
+    """
+
+    def responses():
+        yield _preview_multistatus([_preview_row("loopback10", "FDO12345ABC", pending_lines=2)])
+
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "staged_delete_echo_interface_types", frozenset({"loopback"}))
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    instance.rest_send.check_mode = check_mode
+    instance.deploy = True
+    _seed_shared_inventory(instance, "FDO12345ABC", {"loopback10": _policyless_row("Loopback10", "loopback")})
+    deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
+
+    assert instance.reconcile_absent_deletes([deleted]) is True
+    assert instance._pending_deploys == ([] if check_mode else [("loopback10", "FDO12345ABC")])
+
+
+def test_reconcile_absent_delete_policyless_row_with_nothing_pending_is_converged(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify the stale policy-less row ND keeps after a deployed removal, or lists for an interface it does not manage, queues no deploy.
+
+    ## Test
+
+    - The raw inventory holds a policy-less `loopback` row for the requested name
+    - The one-interface preview reports zero pending lines
+    - `reconcile_absent_deletes()` returns False and queues nothing
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.reconcile_absent_deletes()
+    - NDBaseInterfaceOrchestrator._can_replay_absent_delete()
+    """
+
+    def responses():
+        yield _preview_multistatus([_preview_row("loopback10", "FDO12345ABC", pending_lines=0)])
+
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "staged_delete_echo_interface_types", frozenset({"loopback"}))
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    instance.deploy = True
+    _seed_shared_inventory(instance, "FDO12345ABC", {"loopback10": _policyless_row("Loopback10", "loopback")})
+    deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
+
+    assert instance.reconcile_absent_deletes([deleted]) is False
+    assert instance._pending_deploys == []
+
+
+@pytest.mark.parametrize("opted_in", [frozenset(), frozenset({"loopback"})])
+def test_reconcile_absent_delete_ignores_policyless_row_of_another_interface_type(monkeypatch, opted_in) -> None:
+    """
+    # Summary
+
+    Verify a policy-less row is a replay target only for a family that opted in with that row's `interfaceType`.
+
+    ## Test
+
+    - The raw inventory holds a policy-less `svi` row
+    - The orchestrator opts in for no type, then for `loopback` only
+    - `reconcile_absent_deletes()` returns False and sends no preview
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.reconcile_absent_deletes()
+    - NDBaseInterfaceOrchestrator._can_replay_absent_delete()
+    """
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "staged_delete_echo_interface_types", opted_in)
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    instance.deploy = True
+    _seed_shared_inventory(instance, "FDO12345ABC", {"vlan10": _policyless_row("Vlan10", "svi")})
+    deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="vlan10")
+
+    assert instance.reconcile_absent_deletes([deleted]) is False
+    assert instance._pending_deploys == []
+    assert instance.rest_send.response_count == 0
+
+
 @pytest.mark.parametrize("check_mode", [False, True])
 def test_reconcile_absent_delete_skips_foreign_policy_and_previews_only_absent_target(monkeypatch, check_mode: bool) -> None:
     """A filtered-out foreign policy cannot hitchhike on a valid pending delete."""
@@ -3640,6 +3798,33 @@ def test_base_interface_01110() -> None:
 
     with does_not_raise():
         instance._check_xe_removal_discovered([("port-channel501", "CAT9KV1701")])
+
+    assert len(instance.rest_send.responses) == 0
+
+
+def test_base_interface_01115() -> None:
+    """
+    # Summary
+
+    Verify `_check_xe_removal_discovered` skips ND's staged-delete tombstone (`userDefined` / `interface_delete`). ND flips a
+    tombstone's `operationalStatus` to `unknown` for several seconds after any deploy on the switch (lab 2026-11-10, 4.2.1.10), and
+    its deployment history still ends with the create push, so the guard would refuse a removal ND has already accepted.
+
+    ## Test
+
+    - Candidate vlan983 is an `ios-xe` tombstone with `operationalStatus: unknown`
+    - No exception; no deployment-history request is made
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    """
+    tombstone = _staged_delete_tombstone("Vlan983", "svi")
+    tombstone["operData"] = {"operationalStatus": "unknown"}
+    instance = _seeded_orchestrator(ResponseGenerator(iter(())), [tombstone])
+
+    with does_not_raise():
+        instance._check_xe_removal_discovered([("vlan983", "CAT9KV1701")])
 
     assert len(instance.rest_send.responses) == 0
 
