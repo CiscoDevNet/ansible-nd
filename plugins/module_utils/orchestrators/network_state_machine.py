@@ -333,25 +333,22 @@ class NetworkStateMachine:
             result["_deferred_deploy_payloads"] = [{"_undeploy": True, **payload} for payload in detach_payloads] + deploy_payloads
             return result
 
-        if self._check_mode():
+        if self._check_mode() and detach_payloads:
             self.coordinator._merge_api_trace(
                 result,
-                {
-                    "changed": True,
-                    "failed": False,
-                    "check_mode_deploy_payloads": detach_payloads + deploy_payloads,
-                },
+                {"changed": True, "failed": False, "check_mode_deploy_payloads": detach_payloads},
             )
-            return result
+        elif not self._check_mode():
+            for deploy_payload in detach_payloads:
+                self._trace("undeploy_start", deploy_payload=deploy_payload)
+                deploy_trace = self.coordinator._deploy_network_attachments(module_args, strategy, deploy_payload, undeploy=True)
+                self.coordinator._merge_api_trace(result, deploy_trace)
+                self._trace("undeploy_end", deploy_payload=deploy_payload)
 
-        for deploy_payload in detach_payloads:
-            self._trace("undeploy_start", deploy_payload=deploy_payload)
-            deploy_trace = self.coordinator._deploy_network_attachments(module_args, strategy, deploy_payload, undeploy=True)
-            self.coordinator._merge_api_trace(result, deploy_trace)
-            self._trace("undeploy_end", deploy_payload=deploy_payload)
         for deploy_payload in deploy_payloads:
             self._trace("deploy_start", deploy_payload=deploy_payload)
-            deploy_trace = self.coordinator._deploy_network_attachments(
+            deploy = getattr(self.coordinator, "_run_network_config_actions", self.coordinator._deploy_network_attachments)
+            deploy_trace = deploy(
                 module_args,
                 strategy,
                 deploy_payload,

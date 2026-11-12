@@ -419,7 +419,6 @@ class NetworkConfigModel(NDBaseModel):
     interface_netflow_monitor: str | None = Field(default=None, alias="l3NetflowMonitor")
     gateway_on_border: bool | None = Field(default=None, alias="gatewayOnBorder")
     deploy: bool = True
-    deploy_type: str = Field(default="switch", alias="deployType")
     attach: list[NetworkAttachmentConfigModel] | None = None
 
     @model_validator(mode="before")
@@ -581,12 +580,10 @@ class NetworkConfigModel(NDBaseModel):
     @model_validator(mode="after")
     def _check_cross_field_rules(self, info: ValidationInfo):
         network_type = self.network_type
-        if self.deploy_type not in ("switch", "network"):
-            raise ValueError("deploy_type must be either 'switch' or 'network'")
         context = info.context or {}
         read_only_or_delete = context.get("state") in ("deleted", "gathered")
         if not read_only_or_delete and context.get("default_network_type") == NetworkType.EXTERNAL_CONNECTIVITY.value:
-            supported = {"network_name", "network_id", "vlan_id", "vlan_name", "layer", "vrf_name", "attach", "deploy", "deploy_type"}
+            supported = {"network_name", "network_id", "vlan_id", "vlan_name", "layer", "vrf_name", "attach", "deploy"}
             unsupported = self.model_fields_set - supported
             if self.layer not in (None, NetworkLayer.LAYER2.value):
                 unsupported.add("layer")

@@ -66,6 +66,25 @@ options:
     type: str
     choices: [ merged, replaced, overridden, deleted, gathered, staged ]
     default: merged
+  config_actions:
+    description:
+      - Controls optional deployment after Network changes.
+      - When omitted, deployment is enabled and scoped by Network name.
+      - C(type=switch) deploys affected switches; no targets are reported as a skip.
+      - C(type=resource) deploys by Network name, including Networks without attachments.
+      - Per-item C(config[].deploy) overrides are supported only with C(type=resource).
+      - C(state=staged) always skips deployment.
+    type: dict
+    suboptions:
+      deploy:
+        description: Whether to deploy pending Network changes.
+        type: bool
+        default: true
+      type:
+        description: Scope for optional deployment.
+        type: str
+        choices: [ switch, resource ]
+        default: resource
   config:
     description:
       - List of Network definition configurations to manage.
@@ -77,8 +96,8 @@ options:
         TRM or NetFlow enablement when the corresponding flag is omitted.
         This applies at the same standalone or child-fabric scope.
       - For parent fabrics, each item may include a C(child_fabric_config) list
-        to provide per-child-fabric overrides. The parent-level C(attach),
-        C(deploy), and C(deploy_type) options are applied only on the parent
+        to provide per-child-fabric overrides. The parent-level C(attach) and
+        C(deploy) options are applied only on the parent
         fabric and are not sent to child fabrics.
       - On Fabric groups and Multi-cluster Fabric groups, child-only properties must be placed under
         C(child_fabric_config). Supplying them at the top level is rejected for
@@ -116,7 +135,8 @@ options:
         type: bool
       deploy:
         description:
-          - Deploy pending Network attachment changes for this Network.
+          - Per-Network deployment override, valid only with C(config_actions.type=resource).
+          - When omitted, inherits C(config_actions.deploy).
           - For parent fabrics, deployment is performed once after all child
             fabric tasks complete.
           - Applies only to parent/standalone Network attachments, not child
@@ -126,20 +146,6 @@ options:
             scope, and then removes the Network.
         type: bool
         default: true
-      deploy_type:
-        description:
-          - Scope of Network deployment and undeployment.
-          - C(switch) deploys the selected Networks on the switches affected by
-            this attachment operation when switch identifiers are available.
-          - C(network) deploys the pending Network changes for this Network.
-          - On standalone fabrics and Fabric groups, attachment removals and Network deletion
-            use the selected Network scope, not whole-switch deployment.
-          - Deployment for Multi-cluster Fabric groups uses the OneManage Network endpoint and
-            retains affected switch identifiers regardless of C(deploy_type).
-          - Network deletion waits for detach deployment before removal.
-        type: str
-        choices: [ switch, network ]
-        default: switch
       attach:
         description:
           - Parent/standalone switch attachment entries for this Network.
@@ -377,7 +383,7 @@ options:
           - Each entry targets a child member fabric and may override its
             fabric-instance multicast, DHCP, TRM, and NetFlow settings.
           - Omitted fields are not explicitly changed on the child.
-          - C(attach), C(deploy), C(deploy_type), Network name, mode, VRF,
+          - C(attach), C(deploy), Network name, mode, VRF,
             Network ID, VLAN ID, VLAN name, gateways, interface description,
             MTU, routing tag, ARP suppression,
             and PVLAN fields remain parent-owned.
@@ -481,14 +487,16 @@ EXAMPLES = r"""
             interfaces:
               - mode: access
                 interface_range: Ethernet1/10
-        deploy: true
-        deploy_type: switch
+    config_actions:
+      type: switch
 
 # Standalone fabric - create an L3 Network
 - name: Create an L3 Network associated with a VRF
   cisco.nd.nd_manage_networks:
     fabric_name: fab1
     state: merged
+    config_actions:
+      type: resource
     config:
       - network_name: Network_L3
         layer: layer3
@@ -720,6 +728,11 @@ msg:
   returned: on failure and on selected no-op or child-fabric failure paths
   type: str
   sample: "Unexpected error: controller rejected Network payload"
+config_actions:
+  description: Per-target optional deploy plan and execution results.
+  returned: when an optional deploy is planned, completed, or skipped
+  type: list
+  elements: dict
 fabric_type:
   description:
     - Resolved fabric topology used by the workflow.
@@ -817,6 +830,8 @@ import logging
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_spec import config_actions_spec
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import RESOURCE_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
@@ -850,6 +865,7 @@ def main():
             options=network_module_argument_spec(),
         ),
     )
+    argument_spec.update(config_actions_spec(RESOURCE_CONFIG_ACTIONS))
 
     module = AnsibleModule(
         argument_spec=argument_spec,

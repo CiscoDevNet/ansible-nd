@@ -223,7 +223,6 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             "vrf_type",
             "fabric_name",
             "deploy",
-            "deploy_type",
         }
         if explicit_fields is not None:
             unsupported = sorted(explicit_fields - allowed)

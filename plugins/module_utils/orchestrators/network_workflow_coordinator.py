@@ -25,18 +25,24 @@ from typing import Any
 
 from ansible.module_utils.basic import AnsibleModule
 
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.controller import ConfigActionsController
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import RESOURCE_CONFIG_ACTIONS
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import get_raw_module_args
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActions, ConfigActionsContext
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import NetworkChildConfigModel, NetworkConfigModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import NetworkLayer, VlanNetworkType
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.networks import NDNetworkOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.backends.resource import ResourceConfigActionsBackend
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_attachment_manager import (
     NetworkAttachmentManager,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_config_utils import (
     configured_network_names,
     deploy_enabled_by_network,
-    deploy_type_by_network,
+    deploy_scope_by_network,
     network_name_filter,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_dependency_checker import (
@@ -93,6 +99,7 @@ class NetworkWorkflowCoordinator:
             else None
         )
         self.strategy = strategy
+        self.config_actions: ConfigActions | None = None
         self._trace_started_at = time.monotonic()
         self._workflow_trace: list[dict[str, Any]] = []
         if initial_workflow_trace:
@@ -126,6 +133,7 @@ class NetworkWorkflowCoordinator:
         Returns a result dict suitable for module.exit_json(**result).
         """
         module_args: dict = dict(self.module.params)
+        self._resolve_config_actions(module_args)
         if self.strategy is None:
             self.strategy = self._resolve_strategy(module_args)
         self._trace(
@@ -156,6 +164,21 @@ class NetworkWorkflowCoordinator:
             self._trace("workflow_error", error=repr(exc), exception=type(exc).__name__)
             raise
 
+        if module_args.get("state") == "staged" and self.config_actions is not None:
+            staged_result = ConfigActionsController(
+                RESOURCE_CONFIG_ACTIONS,
+                ResourceConfigActionsBackend("networkNames", lambda _payload: None),
+            ).execute(
+                self.config_actions,
+                ConfigActionsContext(
+                    fabric_names=(module_args["fabric_name"],),
+                    state="staged",
+                    check_mode=self.module.check_mode,
+                    eligible=False,
+                    reason="staged_state",
+                ),
+            )
+            result.setdefault("config_actions", []).append(staged_result.to_result())
         self._trace("workflow_end", changed=result.get("changed"), failed=result.get("failed"))
         return self._attach_workflow_trace(result)
 
@@ -278,6 +301,22 @@ class NetworkWorkflowCoordinator:
             result["workflow_trace"] = list(self._workflow_trace)
         return result
 
+    def _resolve_config_actions(self, module_args: dict) -> ConfigActions:
+        """Parse and validate deploy intent before any workflow mutations."""
+        try:
+            actions = parse_config_actions(
+                params=module_args,
+                raw_args=get_raw_module_args(),
+                policy=RESOURCE_CONFIG_ACTIONS,
+                state=module_args.get("state"),
+            )
+        except ValueError as exc:
+            self.module.fail_json(msg=f"Invalid config_actions: {exc}")
+            raise
+        self.config_actions = actions
+        self._trace("config_actions_resolved", config_actions=actions.to_result())
+        return actions
+
     def _validate_topology_argument_scope(
         self,
         module_args: dict,
@@ -347,7 +386,7 @@ class NetworkWorkflowCoordinator:
                 operational_only = not NDNetworkOrchestrator.has_network_definition_intent(parsed_config)
                 if operational_only:
                     sparse_config = {"network_name": parsed_config["network_name"]}
-                    for key in ("attach", "deploy", "deploy_type"):
+                    for key in ("attach", "deploy"):
                         if key in parsed_config:
                             sparse_config[key] = parsed_config[key]
                     parsed.append(sparse_config)
@@ -515,12 +554,10 @@ class NetworkWorkflowCoordinator:
                     undeploy = deploy_payload.get("_undeploy", False)
                     request_payload = {key: value for key, value in deploy_payload.items() if key != "_undeploy"}
                     self._trace("parent_deferred_deploy_start", deploy_payload=request_payload)
-                    deploy_trace = self._deploy_network_attachments(
-                        parent_module_args,
-                        self.strategy,
-                        request_payload,
-                        undeploy=undeploy,
-                    )
+                    if undeploy:
+                        deploy_trace = self._deploy_network_attachments(parent_module_args, self.strategy, request_payload, undeploy=True)
+                    else:
+                        deploy_trace = self._run_network_config_actions(parent_module_args, self.strategy, request_payload)
                     self._merge_api_trace(parent_result, deploy_trace)
                     self._trace("parent_deferred_deploy_end", deploy_payload=request_payload)
 
@@ -827,7 +864,7 @@ class NetworkWorkflowCoordinator:
         ND rejects Network removal while attached or pending attachment changes are
         present.  For ``state=deleted`` the requested ``attach`` block and
         per-Network ``deploy`` is ignored. Standalone/MSD cleanup honors
-        ``deploy_type``; MCFG parent cleanup uses OneManage Network deployment.
+        module-level config action scope; MCFG parent cleanup uses OneManage Network deployment.
         """
         return self._network_state_machine().run_deleted(module_args, strategy)
 
@@ -916,6 +953,9 @@ class NetworkWorkflowCoordinator:
                     result[key] = payloads + result[key]
                 else:
                     result[key].extend(payloads)
+        config_action_results = trace.get("config_actions") or []
+        if config_action_results:
+            result.setdefault("config_actions", []).extend(config_action_results)
 
         verbosity = self.module._verbosity if hasattr(self.module, "_verbosity") else 0
         if self.module.params.get("output_level") == "debug":
@@ -1012,11 +1052,46 @@ class NetworkWorkflowCoordinator:
 
     def _deploy_enabled_by_network(self, config: list[dict]) -> dict[str, bool]:
         """Return per-Network deploy intent; omitted deploy defaults to True."""
-        return deploy_enabled_by_network(config)
+        return deploy_enabled_by_network(config, getattr(self, "config_actions", None))
 
-    def _deploy_type_by_network(self, config: list[dict]) -> dict[str, str]:
-        """Return per-Network deploy scope; omitted deploy_type defaults to switch."""
-        return deploy_type_by_network(config)
+    def _deploy_scope_by_network(self, config: list[dict]) -> dict[str, str]:
+        """Return the module-level deploy scope for each Network."""
+        return deploy_scope_by_network(config, getattr(self, "config_actions", None))
+
+    def _run_network_config_actions(self, module_args: dict, strategy: BaseNetworkStrategy, deploy_payload: dict[str, Any]) -> dict[str, Any]:
+        """Execute or plan one optional Network deploy through the shared controller."""
+        actions = getattr(self, "config_actions", None) or parse_config_actions(
+            params=module_args, raw_args={}, policy=RESOURCE_CONFIG_ACTIONS, state=module_args.get("state")
+        )
+        resources = tuple(deploy_payload.get("networkNames") or ())
+        switch_ids = tuple(deploy_payload.get("switchIds") or ())
+        backend = ResourceConfigActionsBackend(
+            "networkNames",
+            lambda payload: self._deploy_network_attachments(module_args, strategy, payload),
+            switch_deploy=lambda payload: self._deploy_network_switches(module_args, strategy, payload),
+        )
+        result = ConfigActionsController(RESOURCE_CONFIG_ACTIONS, backend).execute(
+            actions,
+            ConfigActionsContext(
+                fabric_names=(strategy.fabric_name,),
+                state=module_args.get("state"),
+                check_mode=self.module.check_mode,
+                switch_ids=switch_ids,
+                resources=resources,
+            ),
+        )
+        if result.status == "failed":
+            failed = next((step for step in result.actions if step.status == "failed"), None)
+            raise RuntimeError(f"Network config action deploy failed: {failed.error if failed else result.reason}")
+        trace: dict[str, Any] = {}
+        for step in result.actions:
+            if step.status == "completed" and isinstance(step.response, dict):
+                trace = dict(step.response)
+                break
+        trace["config_actions"] = [result.to_result()]
+        if result.status == "planned":
+            trace.update(changed=True, failed=False, check_mode_deploy_payloads=[deploy_payload])
+        return trace
 
     def _desired_attachment_map(
         self,
@@ -1183,7 +1258,7 @@ class NetworkWorkflowCoordinator:
         *target_maps: dict[str, set[str]],
     ) -> list[dict[str, Any]]:
         """Build deploy requests from one or more Network/switch maps."""
-        return self.attachments.build_deploy_payloads(config, *target_maps, strategy=self.strategy)
+        return self.attachments.build_deploy_payloads(config, *target_maps, strategy=self.strategy, actions=getattr(self, "config_actions", None))
 
     def _build_delete_deploy_payloads(
         self,
@@ -1192,7 +1267,7 @@ class NetworkWorkflowCoordinator:
         strategy: BaseNetworkStrategy | None = None,
     ) -> list[dict[str, Any]]:
         """Build delete cleanup deploy requests from Network/switch maps."""
-        return self.attachments.build_delete_deploy_payloads(config, *target_maps, strategy=strategy)
+        return self.attachments.build_delete_deploy_payloads(config, *target_maps, strategy=strategy, actions=getattr(self, "config_actions", None))
 
     def _build_pending_network_deploy_payloads(
         self,
@@ -1203,7 +1278,9 @@ class NetworkWorkflowCoordinator:
         existing_names: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Build a deploy request for configured Networks already pending in ND."""
-        return self.attachments.build_pending_network_deploy_payloads(result, config, module_args, strategy, existing_names=existing_names)
+        return self.attachments.build_pending_network_deploy_payloads(
+            result, config, module_args, strategy, existing_names=existing_names, actions=getattr(self, "config_actions", None)
+        )
 
     def _query_current_networks(
         self,
@@ -1290,6 +1367,17 @@ class NetworkWorkflowCoordinator:
                 "check_mode_deploy_payloads": [deploy_payload],
             }
         return self.attachments.deploy_network_attachments(module_args, strategy, deploy_payload, undeploy=undeploy)
+
+    def _deploy_network_switches(
+        self,
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        deploy_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Deploy the selected switches through switchActions/deploy."""
+        if self.module.check_mode:
+            return {"changed": True, "failed": False, "check_mode_deploy_payloads": [deploy_payload]}
+        return self.attachments.deploy_network_switches(module_args, strategy, deploy_payload)
 
     # ── Child task runner ─────────────────────────────────────────
 

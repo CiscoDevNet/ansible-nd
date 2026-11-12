@@ -23,6 +23,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.on
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import (
     EpManageSwitchesListGet,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switch_actions import (
+    EpManageSwitchActionsDeployPost,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics_networks import (
+    EpOneManageFabricsSwitchActionsDeployPost,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_actions_models import (
     VrfDeployRequestModel,
 )
@@ -44,7 +50,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_config_utils import (
     configured_vrf_names,
     deploy_enabled_by_vrf,
-    deploy_type_by_vrf,
+    deploy_scope_by_vrf,
 )
 
 
@@ -122,7 +128,7 @@ class VrfAttachmentManager:
             return {}
 
         vrf_names = configured_vrf_names(config)
-        deploy_enabled = deploy_enabled_by_vrf(config)
+        deploy_enabled = deploy_enabled_by_vrf(config, getattr(self.coordinator, "config_actions", None))
 
         query_all = state == "overridden"
         query_vrf_names = current_vrf_names
@@ -718,6 +724,7 @@ class VrfAttachmentManager:
         self,
         config: list[dict],
         *target_maps: dict[str, set[str]],
+        actions: Any | None = None,
     ) -> list[dict[str, Any]]:
         """Build deploy requests from one or more VRF/switch maps."""
         deploy_targets: dict[str, set[str]] = {}
@@ -728,26 +735,44 @@ class VrfAttachmentManager:
         if not deploy_targets:
             return []
 
-        deploy_type = deploy_type_by_vrf(config)
+        selected_actions = actions if actions is not None else getattr(self.coordinator, "config_actions", None)
+        deploy_scope = deploy_scope_by_vrf(config, selected_actions)
+        strategy = getattr(self.coordinator, "strategy", None)
+        msd_parent = bool(
+            strategy and getattr(strategy, "is_parent", False) and getattr(strategy, "is_multisite", False) and not getattr(strategy, "is_multicluster", False)
+        )
         payloads: list[dict[str, Any]] = []
         vrf_level_names: list[str] = []
         switch_groups: dict[tuple[str, ...], list[str]] = {}
+        switch_scope_ids: set[str] = set()
+        switch_scope_no_targets: list[str] = []
 
         for vrf_name in sorted(deploy_targets.keys()):
-            if deploy_type.get(vrf_name, "switch") == "vrf":
-                vrf_level_names.append(vrf_name)
+            scope = deploy_scope.get(vrf_name, "resource")
+            if scope == "resource":
+                switch_ids = sorted(deploy_targets.get(vrf_name) or [])
+                if msd_parent and switch_ids:
+                    switch_groups.setdefault(tuple(switch_ids), []).append(vrf_name)
+                else:
+                    vrf_level_names.append(vrf_name)
                 continue
             switch_ids = sorted(deploy_targets.get(vrf_name) or [])
             if switch_ids:
-                switch_groups.setdefault(tuple(switch_ids), []).append(vrf_name)
+                switch_scope_ids.update(switch_ids)
             else:
-                vrf_level_names.append(vrf_name)
+                switch_scope_no_targets.append(vrf_name)
+
+        if switch_scope_ids:
+            payloads.append({"switchIds": sorted(switch_scope_ids)})
 
         for switch_ids, vrf_names in sorted(switch_groups.items()):
             payloads.append(VrfDeployRequestModel(vrf_names=sorted(vrf_names), switch_ids=list(switch_ids)).to_payload())
 
         if vrf_level_names:
             payloads.append(VrfDeployRequestModel(vrf_names=sorted(vrf_level_names)).to_payload())
+
+        if switch_scope_no_targets:
+            payloads.append(VrfDeployRequestModel(vrf_names=sorted(switch_scope_no_targets)).to_payload())
 
         return payloads
 
@@ -758,12 +783,17 @@ class VrfAttachmentManager:
         module_args: dict,
         strategy: BaseVrfStrategy,
         existing_names: set[str] | None = None,
+        actions: Any | None = None,
     ) -> list[dict[str, Any]]:
         """Build a deploy request for configured VRFs already pending in ND."""
-        deploy_enabled = deploy_enabled_by_vrf(config)
-        deploy_type = deploy_type_by_vrf(config)
+        selected_actions = actions if actions is not None else getattr(self.coordinator, "config_actions", None)
+        deploy_enabled = deploy_enabled_by_vrf(config, selected_actions)
+        deploy_scope = deploy_scope_by_vrf(config, selected_actions)
         configured_vrfs = set(configured_vrf_names(config))
         pending_statuses = {"pending", "inProgress"}
+        strategy_is_msd_parent = bool(
+            getattr(strategy, "is_parent", False) and getattr(strategy, "is_multisite", False) and not getattr(strategy, "is_multicluster", False)
+        )
         pending_vrfs: set[str] = set()
         deploy_target_map: dict[str, set[str]] = {}
         after_vrfs: set[str] = set()
@@ -780,11 +810,13 @@ class VrfAttachmentManager:
                 pending_vrfs.add(vrf_name)
 
         vrf_level_names: set[str] = set()
-        switch_level_names = {vrf_name for vrf_name in pending_vrfs if deploy_type.get(vrf_name, "switch") == "switch"}
+        switch_level_names = {vrf_name for vrf_name in pending_vrfs if deploy_scope.get(vrf_name, "resource") == "switch"}
         vrf_level_names.update(pending_vrfs.difference(switch_level_names))
 
         deploy_enabled_names = {vrf_name for vrf_name in after_vrfs if deploy_enabled.get(vrf_name, True)}
-        attachment_query_names = sorted((deploy_enabled_names.difference(vrf_level_names)).union(switch_level_names))
+        attachment_query_names = sorted(
+            deploy_enabled_names if strategy_is_msd_parent else (deploy_enabled_names.difference(vrf_level_names)).union(switch_level_names)
+        )
         # Simulated creations have no controller attachment metadata yet.
         if existing_names is not None:
             attachment_query_names = [name for name in attachment_query_names if name in existing_names]
@@ -803,7 +835,7 @@ class VrfAttachmentManager:
                 if switch_ids:
                     deploy_target_map[vrf_name] = set(switch_ids)
                 else:
-                    vrf_level_names.add(vrf_name)
+                    deploy_target_map.setdefault(vrf_name, set())
 
         for attachment in attachment_details:
             vrf_name = attachment.get("vrfName")
@@ -811,12 +843,12 @@ class VrfAttachmentManager:
             if vrf_name not in configured_vrfs or not deploy_enabled.get(vrf_name, True):
                 continue
             if attachment.get("attach") is True and self.attachment_has_pending_delete_work(attachment):
-                if deploy_type.get(vrf_name, "switch") == "vrf" or not switch_id:
+                if deploy_scope.get(vrf_name, "resource") == "resource" or not switch_id:
                     deploy_target_map.setdefault(vrf_name, set())
                 else:
                     deploy_target_map.setdefault(vrf_name, set()).add(switch_id)
             elif attachment.get("attach") is False and self.attachment_has_pending_delete_work(attachment):
-                if deploy_type.get(vrf_name, "switch") == "vrf" or not switch_id:
+                if deploy_scope.get(vrf_name, "resource") == "resource" or not switch_id:
                     deploy_target_map.setdefault(vrf_name, set())
                 else:
                     deploy_target_map.setdefault(vrf_name, set()).add(switch_id)
@@ -826,7 +858,7 @@ class VrfAttachmentManager:
 
         if not deploy_target_map:
             return []
-        return self.coordinator._build_deploy_payloads(config, deploy_target_map)
+        return self.build_deploy_payloads(config, deploy_target_map, actions=selected_actions)
 
     def wait_for_vrfs_delete_ready(
         self,
@@ -955,4 +987,30 @@ class VrfAttachmentManager:
         )
         trace = self.coordinator._finalize_api_trace(results)
         self._trace("vrf_attachment_deploy_end", changed=trace.get("changed"), failed=trace.get("failed"))
+        return trace
+
+    def deploy_vrf_switches(
+        self,
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+        deploy_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Deploy pending fabric configuration to the selected switches."""
+        switch_ids = deploy_payload.get("switchIds") or []
+        if not switch_ids:
+            raise ValueError("Switch deployment requires affected switch IDs.")
+        self._trace("vrf_switch_deploy_start", deploy_payload=deploy_payload)
+        orchestrator, results = self.coordinator._new_vrf_orchestrator(module_args, strategy)
+        endpoint_cls = EpOneManageFabricsSwitchActionsDeployPost if strategy.is_multicluster else EpManageSwitchActionsDeployPost
+        endpoint = orchestrator._make_endpoint(endpoint_cls)
+        if not strategy.is_multicluster:
+            endpoint.endpoint_params.force_show_run = False
+        orchestrator._request(
+            path=endpoint.path,
+            verb=endpoint.verb,
+            data={"switchIds": list(switch_ids)},
+            operation_type=OperationType.UPDATE,
+        )
+        trace = self.coordinator._finalize_api_trace(results)
+        self._trace("vrf_switch_deploy_end", changed=trace.get("changed"), failed=trace.get("failed"))
         return trace

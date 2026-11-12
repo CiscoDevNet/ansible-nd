@@ -55,7 +55,6 @@
           - "65000:50030"
         attach: "{{ nd_vrf_mcfg_attach_block }}"
         deploy: "{{ nd_vrf_mcfg_attach_block | length > 0 }}"
-        deploy_type: vrf
         child_fabric_config:
           - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
             adv_host_routes: true
