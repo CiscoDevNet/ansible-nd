@@ -62,10 +62,13 @@
   when:
     - fabric_interface.1.interfaceType | default('') == 'svi'
     - >-
-      fabric_interface.1.get('configData', {})
-      .get('networkOS', {})
-      .get('policy', {})
-      .get('policyType', '') == 'svi'
+      (
+        (
+          (
+            fabric_interface.1.get('configData') or {}
+          ).get('networkOS') or {}
+        ).get('policy') or {}
+      ).get('policyType', '') == 'svi'
 
 - name: "OVERRIDDEN PREFLIGHT: Reject SVIs outside test scope"
   vars:

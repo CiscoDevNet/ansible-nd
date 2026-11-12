@@ -46,6 +46,32 @@
 
 - name: Run nd_interface_svi state tests with optional logging env
   block:
+    - name: "ND4X GUARD: Require explicit NX-OS overridden-test opt-in"
+      ansible.builtin.assert:
+        that:
+          - nd4x_svi_destructive_tests_enabled | default(false) | bool
+        fail_msg: >-
+          The overridden SVI test is fabric-wide and can delete managed SVIs
+          omitted from the desired configuration. Run only on a dedicated test
+          fabric and set nd4x_svi_destructive_tests_enabled=true.
+      when:
+        - "'nd4x_demo_overridden' in ansible_run_tags"
+      tags:
+        - nd4x_demo_overridden
+
+    - name: "ND4X GUARD: Require explicit IOS-XE overridden-test opt-in"
+      ansible.builtin.assert:
+        that:
+          - nd4x_svi_destructive_tests_enabled | default(false) | bool
+        fail_msg: >-
+          The IOS-XE overridden SVI test is fabric-wide and can delete managed
+          SVIs omitted from the desired configuration. Run only on a dedicated
+          test fabric and set nd4x_svi_destructive_tests_enabled=true.
+      when:
+        - "'nd4x_demo_xe_overridden' in ansible_run_tags"
+      tags:
+        - nd4x_demo_xe_overridden
+
     - name: Pre-test cleanup
       ansible.builtin.include_tasks: setup.yaml
 
@@ -73,7 +99,6 @@
         file: nd4x_demo_preflight.yaml
         apply:
           tags:
-            - never
             - nd4x_demo
             - nd4x_demo_preflight
             - nd4x_demo_merged
@@ -86,7 +111,6 @@
             - nd4x_demo_xe
             - nd4x_demo_xe_overridden
       tags:
-        - never
         - nd4x_demo
         - nd4x_demo_preflight
         - nd4x_demo_merged
@@ -104,12 +128,10 @@
         file: nd4x_demo_merged.yaml
         apply:
           tags:
-            - never
             - nd4x_demo
             - nd4x_demo_merged
             - nd4x_demo_merged_fanout
       tags:
-        - never
         - nd4x_demo
         - nd4x_demo_merged
         - nd4x_demo_merged_fanout
@@ -120,11 +142,9 @@
         file: nd4x_demo_replaced.yaml
         apply:
           tags:
-            - never
             - nd4x_demo
             - nd4x_demo_replaced
       tags:
-        - never
         - nd4x_demo
         - nd4x_demo_replaced
       when: nd4x_supported | default(false) | bool
@@ -134,25 +154,23 @@
         file: nd4x_demo_overridden.yaml
         apply:
           tags:
-            - never
             - nd4x_demo
             - nd4x_demo_overridden
       tags:
-        - never
         - nd4x_demo
         - nd4x_demo_overridden
-      when: nd4x_supported | default(false) | bool
+      when:
+        - nd4x_supported | default(false) | bool
+        - nd4x_svi_destructive_tests_enabled | default(false) | bool
 
     - name: Run deleted state tests using the ND 4.x harness
       ansible.builtin.include_tasks:
         file: nd4x_demo_deleted.yaml
         apply:
           tags:
-            - never
             - nd4x_demo
             - nd4x_demo_deleted
       tags:
-        - never
         - nd4x_demo
         - nd4x_demo_deleted
       when: nd4x_supported | default(false) | bool
@@ -162,11 +180,9 @@
         file: nd4x_demo_hsrp_dhcp.yaml
         apply:
           tags:
-            - never
             - nd4x_demo
             - nd4x_demo_hsrp_dhcp
       tags:
-        - never
         - nd4x_demo
         - nd4x_demo_hsrp_dhcp
       when: nd4x_supported | default(false) | bool
@@ -176,11 +192,9 @@
         file: nd4x_demo_xe_preflight.yaml
         apply:
           tags:
-            - never
             - nd4x_demo_xe
             - nd4x_demo_xe_overridden
       tags:
-        - never
         - nd4x_demo_xe
         - nd4x_demo_xe_overridden
       when: test_xe_switch_ip | default('') | length > 0
@@ -190,10 +204,8 @@
         file: nd4x_demo_xe.yaml
         apply:
           tags:
-            - never
             - nd4x_demo_xe
       tags:
-        - never
         - nd4x_demo_xe
       when: nd4x_xe_supported | default(false) | bool
 
@@ -202,23 +214,21 @@
         file: nd4x_demo_xe_overridden.yaml
         apply:
           tags:
-            - never
             - nd4x_demo_xe_overridden
       tags:
-        - never
         - nd4x_demo_xe_overridden
-      when: nd4x_xe_supported | default(false) | bool
+      when:
+        - nd4x_xe_supported | default(false) | bool
+        - nd4x_svi_destructive_tests_enabled | default(false) | bool
 
     - name: Run negative validation tests using the ND 4.x harness target
       ansible.builtin.include_tasks:
         file: nd4x_demo_negative.yaml
         apply:
           tags:
-            - never
             - nd4x_demo
             - nd4x_demo_negative
       tags:
-        - never
         - nd4x_demo
         - nd4x_demo_negative
       when: nd4x_supported | default(false) | bool

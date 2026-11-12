@@ -62,10 +62,14 @@
   when:
     - fabric_interface.1.interfaceType | default('') == 'svi'
     - >-
-      fabric_interface.1.get('configData', {})
-      .get('networkOS', {})
-      .get('policy', {})
-      .get('policyType', '') in ['iosXeSvi', 'iosXeSviShutNoShut', 'svi']
+      (
+        (
+          (
+            fabric_interface.1.get('configData') or {}
+          ).get('networkOS') or {}
+        ).get('policy') or {}
+      ).get('policyType', '')
+      in ['iosXeSvi', 'iosXeSviShutNoShut', 'svi']
 
 - name: "XE OVERRIDDEN PREFLIGHT: Reject SVIs outside test scope"
   vars:
@@ -274,6 +278,22 @@
             expected_status: 404
             expected_failed: true
       register: nd4x_xe_deleted
+
+    - name: "XE DELETED: Verify post-delete REST responses"
+      ansible.builtin.assert:
+        that:
+          - nd4x_xe_deleted.nd_query_results | length == 2
+          - >-
+            nd4x_xe_deleted.nd_query_results
+            | selectattr('status', 'equalto', 404)
+            | list | length == 2
+          - >-
+            nd4x_xe_deleted.nd_query_results
+            | selectattr('failed', 'equalto', true)
+            | list | length == 2
+        fail_msg: >-
+          The IOS-XE deletion queries did not return the expected failed 404
+          response for both deleted SVIs.
 
     - name: "XE DELETED: Verify deletion and idempotency"
       ansible.builtin.assert:

@@ -60,6 +60,19 @@
     - nd4x_interface_page_response.jsondata.interfaces | length == nd4x_interface_page_size
     - nd4x_interface_page_number | int + 1 >= nd4x_interface_max_pages | int
 
+- name: "ND4X PAGINATION: Prepare the next interface page"
+  ansible.builtin.set_fact:
+    nd4x_interface_next_offset: >-
+      {{ nd4x_interface_offset | int + nd4x_interface_page_size | int }}
+    nd4x_interface_next_page_number: >-
+      {{ nd4x_interface_page_number | int + 1 }}
+    nd4x_interface_next_rows: >-
+      {{ nd4x_interface_rows
+         + nd4x_interface_page_response.jsondata.interfaces }}
+  when:
+    - nd4x_interface_page_response.jsondata.interfaces | length == nd4x_interface_page_size
+    - nd4x_interface_page_number | int + 1 < nd4x_interface_max_pages | int
+
 # This must remain the final task in the file. Every recursive level registers
 # the page response under the same name; a parent level must not execute more
 # tasks after the child returns and overwrites that registered value.
@@ -67,12 +80,9 @@
   ansible.builtin.include_tasks:
     file: nd4x_demo_collect_interface_pages.yaml
   vars:
-    nd4x_interface_offset: >-
-      {{ nd4x_interface_offset | int + nd4x_interface_page_size | int }}
-    nd4x_interface_page_number: >-
-      {{ nd4x_interface_page_number | int + 1 }}
-    nd4x_interface_rows: >-
-      {{ nd4x_interface_rows + nd4x_interface_page_response.jsondata.interfaces }}
+    nd4x_interface_offset: "{{ nd4x_interface_next_offset }}"
+    nd4x_interface_page_number: "{{ nd4x_interface_next_page_number }}"
+    nd4x_interface_rows: "{{ nd4x_interface_next_rows }}"
   when:
     - nd4x_interface_page_response.jsondata.interfaces | length == nd4x_interface_page_size
     - nd4x_interface_page_number | int + 1 < nd4x_interface_max_pages | int

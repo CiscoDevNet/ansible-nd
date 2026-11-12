@@ -136,11 +136,12 @@ The overridden operation is fabric-wide. Its harness scenario therefore:
 
 ## Tags and safety
 
-Harness scenarios are selected with `nd4x_demo` or a state-specific tag. Do
-not add `never` to `--tags`, because that activates every harness scenario in
-the target. The original suite continues to run in an ordinary target run.
+Harness scenarios are selected with `nd4x_demo` or a state-specific tag. The
+harness runs as part of the normal target execution when ND 4.x preflight
+succeeds; use `--skip-tags nd4x_demo` to opt out. Do not use the `never` tag.
+The original legacy suite remains unchanged.
 
-To run all NX-OS harness scenarios, including the destructive overridden path:
+To run all safe NX-OS harness scenarios:
 
 ```text
 cd /path/to/nd_interface_svi
@@ -148,6 +149,19 @@ cd /path/to/nd_interface_svi
 ansible-test network-integration nd_interface_svi \
   --inventory /path/to/inventory.networking \
   --tags nd4x_demo \
+  -vv
+```
+
+The umbrella tag skips the destructive overridden scenario unless the
+destructive opt-in is enabled. Run the overridden scenario explicitly only on
+a dedicated test fabric:
+
+```text
+cd /path/to/nd_interface_svi
+
+ansible-test network-integration nd_interface_svi \
+  --inventory /path/to/inventory.networking \
+  --tags nd4x_demo_overridden \
   -vv
 ```
 
@@ -168,17 +182,6 @@ The destructive overridden scenario requires a dedicated test fabric and:
 # Add this temporarily under [nd:vars] in the test inventory.
 # Do not commit the inventory change.
 nd_svi_destructive_tests_enabled=true
-```
-
-The NX-OS overridden scenario can be selected explicitly with:
-
-```text
-cd /path/to/nd_interface_svi
-
-ansible-test network-integration nd_interface_svi \
-  --inventory /path/to/inventory.networking \
-  --tags nd4x_demo_overridden \
-  -vv
 ```
 
 The IOS-XE harness scenarios can be selected with:

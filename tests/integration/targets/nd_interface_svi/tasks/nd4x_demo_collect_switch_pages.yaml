@@ -47,6 +47,18 @@
     - nd4x_switch_page_response.jsondata.switches | length == nd4x_switch_page_size
     - nd4x_switch_page_number | int + 1 >= nd4x_switch_max_pages | int
 
+- name: "ND4X PAGINATION: Prepare the next switch page"
+  ansible.builtin.set_fact:
+    nd4x_switch_next_offset: >-
+      {{ nd4x_switch_offset | int + nd4x_switch_page_size | int }}
+    nd4x_switch_next_page_number: >-
+      {{ nd4x_switch_page_number | int + 1 }}
+    nd4x_switch_next_rows: >-
+      {{ nd4x_switch_rows + nd4x_switch_page_response.jsondata.switches }}
+  when:
+    - nd4x_switch_page_response.jsondata.switches | length == nd4x_switch_page_size
+    - nd4x_switch_page_number | int + 1 < nd4x_switch_max_pages | int
+
 # This must remain the final task in the file. Each recursive level registers
 # the response under the same name; parent frames must not process it after a
 # child returns.
@@ -54,12 +66,9 @@
   ansible.builtin.include_tasks:
     file: nd4x_demo_collect_switch_pages.yaml
   vars:
-    nd4x_switch_offset: >-
-      {{ nd4x_switch_offset | int + nd4x_switch_page_size | int }}
-    nd4x_switch_page_number: >-
-      {{ nd4x_switch_page_number | int + 1 }}
-    nd4x_switch_rows: >-
-      {{ nd4x_switch_rows + nd4x_switch_page_response.jsondata.switches }}
+    nd4x_switch_offset: "{{ nd4x_switch_next_offset }}"
+    nd4x_switch_page_number: "{{ nd4x_switch_next_page_number }}"
+    nd4x_switch_rows: "{{ nd4x_switch_next_rows }}"
   when:
     - nd4x_switch_page_response.jsondata.switches | length == nd4x_switch_page_size
     - nd4x_switch_page_number | int + 1 < nd4x_switch_max_pages | int
