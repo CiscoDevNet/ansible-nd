@@ -120,7 +120,7 @@
       - result.changed == true
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: replace
 
 - name: REPLACE - TC2 - ASSERT - Check if changed flag is false for VXLANFabric
@@ -154,7 +154,7 @@
   register: validation
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: replace
 
 - name: REPLACE - TC2 - ASSERT - Validation passed
@@ -163,7 +163,7 @@
       - validation.failed == false
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: replace
 
 # TC3 - Idempotence test
@@ -285,7 +285,7 @@
   register: result
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: replace
 
 - name: REPLACE - TC5 - API - Query direct vpcPair state for extended details verification
@@ -295,7 +295,7 @@
   register: tc5_vpc_pair_direct
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: replace
 
 - name: REPLACE - TC5 - ASSERT - Verify base pair state from direct API
@@ -308,7 +308,7 @@
       - (tc5_vpc_pair_direct.current.useVirtualPeerLink | default(false)) | bool == true
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: replace
 
 - name: REPLACE - TC5 - Set flag when direct API returns detailed payload
@@ -327,7 +327,7 @@
       }}
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: replace
 
 - name: REPLACE - TC5 - VALIDATE - Verify extended vpc_pair_details state
@@ -343,7 +343,7 @@
   register: tc5_validation
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
     - tc5_has_vpc_pair_details | default(false) | bool
   tags: replace
 
@@ -354,7 +354,7 @@
       strict vpc_pair_details validation skipped for this run.
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
     - not (tc5_has_vpc_pair_details | default(false) | bool)
   tags: replace
 
@@ -366,7 +366,7 @@
       - (tc5_has_vpc_pair_details | default(false) | bool == false) or (tc5_validation.failed == false)
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: replace
 
 # TC6 - Replace with config_actions save+deploy

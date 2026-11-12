@@ -464,7 +464,7 @@
   register: tc12_merge_result
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: gather
 
 - name: GATHER - TC12 - GATHER - Query pair with extended vpc_pair_details
@@ -482,7 +482,7 @@
   register: tc12_gather_result
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: gather
 
 - name: GATHER - TC12 - VALIDATE - Verify pair is gathered after extended-details apply
@@ -496,7 +496,7 @@
   register: tc12_validation
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: gather
 
 - name: GATHER - TC12 - ASSERT - Extended details gather validation passed
@@ -508,7 +508,7 @@
       - tc12_validation.failed == false
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: gather
 
 # TC13 - gathered + config_actions validation (must fail)

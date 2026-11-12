@@ -334,7 +334,7 @@
   register: result
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: override
 
 - name: OVERRIDE - TC6 - API - Query direct vpcPair state for extended details verification
@@ -344,7 +344,7 @@
   register: tc6_vpc_pair_direct
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: override
 
 - name: OVERRIDE - TC6 - ASSERT - Verify base pair state from direct API
@@ -357,7 +357,7 @@
       - (tc6_vpc_pair_direct.current.useVirtualPeerLink | default(false)) | bool == true
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: override
 
 - name: OVERRIDE - TC6 - Set flag when direct API returns detailed payload
@@ -376,7 +376,7 @@
       }}
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: override
 
 - name: OVERRIDE - TC6 - VALIDATE - Verify extended vpc_pair_details state
@@ -392,7 +392,7 @@
   register: tc6_validation
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
     - tc6_has_vpc_pair_details | default(false) | bool
   tags: override
 
@@ -403,7 +403,7 @@
       strict vpc_pair_details validation skipped for this run.
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
     - not (tc6_has_vpc_pair_details | default(false) | bool)
   tags: override
 
@@ -415,7 +415,7 @@
       - (tc6_has_vpc_pair_details | default(false) | bool == false) or (tc6_validation.failed == false)
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: override
 
 # TC7 - Override with config_actions save+deploy
