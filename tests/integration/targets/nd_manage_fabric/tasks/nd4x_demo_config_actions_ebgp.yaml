@@ -1,0 +1,38 @@
+---
+- name: "CONFIG ACTIONS: Reject invalid eBGP save/deploy settings before mutation"
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
+    output_level: "{{ nd_info.output_level }}"
+    state: merged
+    config: "{{ nd4x_action_invalid_config }}"
+    config_actions:
+      save: false
+      deploy: true
+      type: switch
+  register: nd4x_ebgp_invalid_actions_first
+  ignore_errors: true
+
+- name: Verify invalid eBGP save/deploy settings fail without a change
+  ansible.builtin.assert:
+    that:
+      - nd4x_ebgp_invalid_actions_first is failed
+      - nd4x_ebgp_invalid_actions_first is not changed
+      - "'config_actions.deploy=true requires config_actions.save=true' in nd4x_ebgp_invalid_actions_first.msg"
+
+- name: "CONFIG ACTIONS: Reject the identical invalid eBGP request again"
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
+    output_level: "{{ nd_info.output_level }}"
+    state: merged
+    config: "{{ nd4x_action_invalid_config }}"
+    config_actions:
+      save: false
+      deploy: true
+      type: switch
+  register: nd4x_ebgp_invalid_actions_second
+  ignore_errors: true
+
+- name: Verify invalid eBGP settings are rejected on repeated requests
+  ansible.builtin.assert:
+    that:
+      - nd4x_ebgp_invalid_actions_second is failed
+      - nd4x_ebgp_invalid_actions_second is not changed
+      - "'config_actions.deploy=true requires config_actions.save=true' in nd4x_ebgp_invalid_actions_second.msg"

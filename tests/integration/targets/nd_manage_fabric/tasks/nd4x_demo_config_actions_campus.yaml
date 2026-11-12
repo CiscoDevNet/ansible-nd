@@ -1,0 +1,59 @@
+---
+- name: "CONFIG ACTIONS: Reject invalid Campus save/deploy settings before mutation"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    output_level: "{{ nd_info.output_level }}"
+    state: merged
+    config: "{{ nd4x_action_invalid_config }}"
+    config_actions:
+      save: false
+      deploy: true
+      type: switch
+  register: nd4x_campus_invalid_actions_first
+  ignore_errors: true
+
+- name: Verify invalid Campus save/deploy settings fail without a change
+  ansible.builtin.assert:
+    that:
+      - nd4x_campus_invalid_actions_first is failed
+      - nd4x_campus_invalid_actions_first is not changed
+      - "'config_actions.deploy=true requires config_actions.save=true' in nd4x_campus_invalid_actions_first.msg"
+
+- name: "CONFIG ACTIONS: Reject the identical invalid Campus request again"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    output_level: "{{ nd_info.output_level }}"
+    state: merged
+    config: "{{ nd4x_action_invalid_config }}"
+    config_actions:
+      save: false
+      deploy: true
+      type: switch
+  register: nd4x_campus_invalid_actions_second
+  ignore_errors: true
+
+- name: Verify invalid Campus settings are rejected on repeated requests
+  ansible.builtin.assert:
+    that:
+      - nd4x_campus_invalid_actions_second is failed
+      - nd4x_campus_invalid_actions_second is not changed
+      - "'config_actions.deploy=true requires config_actions.save=true' in nd4x_campus_invalid_actions_second.msg"
+
+- name: Reject explicit Campus fast convergence before ND 4.3.1
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    output_level: "{{ nd_info.output_level }}"
+    state: merged
+    config:
+      - fabric_name: "{{ nd4x_fabric_case.merged_name }}"
+        management:
+          bgp_asn: "65002"
+          bgp_fast_convergence: false
+  register: nd4x_campus_pre_431_fast_convergence
+  ignore_errors: true
+  when: nd4x_fabric_version.current.platformVersion is version('4.3.1', '<')
+
+- name: Verify Campus fast convergence is rejected locally before ND 4.3.1
+  ansible.builtin.assert:
+    that:
+      - nd4x_campus_pre_431_fast_convergence is failed
+      - nd4x_campus_pre_431_fast_convergence is not changed
+      - "'requires ND 4.3.1 or later' in (nd4x_campus_pre_431_fast_convergence.msg | default(''))"
+  when: nd4x_fabric_version.current.platformVersion is version('4.3.1', '<')

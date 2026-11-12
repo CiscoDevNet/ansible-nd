@@ -11,6 +11,7 @@ ebgp_test_fabric_merged: "ndit_{{ nd_fabric_test_run_id }}_ebgp_merged"
 ebgp_test_fabric_replaced: "ndit_{{ nd_fabric_test_run_id }}_ebgp_replaced"
 ebgp_test_fabric_deleted: "ndit_{{ nd_fabric_test_run_id }}_ebgp_deleted"
 ebgp_test_fabric_config_actions: "ndit_{{ nd_fabric_test_run_id }}_ebgp_actions"
+ebgp_test_fabric_comparison: "ndit_{{ nd_fabric_test_run_id }}_ebgp_comparison"
 ebgp_multi_fabric_1: "ndit_{{ nd_fabric_test_run_id }}_ebgp_multi_1"
 ebgp_multi_fabric_2: "ndit_{{ nd_fabric_test_run_id }}_ebgp_multi_2"
 
@@ -18,6 +19,7 @@ ext_test_fabric_merged: "ndit_{{ nd_fabric_test_run_id }}_ext_merged"
 ext_test_fabric_replaced: "ndit_{{ nd_fabric_test_run_id }}_ext_replaced"
 ext_test_fabric_deleted: "ndit_{{ nd_fabric_test_run_id }}_ext_deleted"
 ext_test_fabric_config_actions: "ndit_{{ nd_fabric_test_run_id }}_ext_actions"
+ext_test_fabric_comparison: "ndit_{{ nd_fabric_test_run_id }}_ext_comparison"
 ext_multi_fabric_1: "ndit_{{ nd_fabric_test_run_id }}_ext_multi_1"
 ext_multi_fabric_2: "ndit_{{ nd_fabric_test_run_id }}_ext_multi_2"
 
@@ -649,3 +651,2202 @@ fabric_config_ai_ebgp:
     dhcp_end_address: ""
     management_gateway: ""
     management_ipv4_prefix: 24
+
+# ND 4.x harness cases. The target is split by fabric module, so each case
+# supplies its module name, native fixture, update, replacement, and API checks
+# to the shared target-local harness workflow.
+nd4x_fabric_cases:
+  ibgp:
+    label: iBGP VXLAN
+    field_expectation_key: ibgp
+    module: cisco.nd.nd_manage_fabric_ibgp_vxlan
+    fabric_type: vxlanIbgp
+    harness_tags: [never, nd4x_demo, nd4x_demo_ibgp]
+    config_actions_tasks: nd4x_demo_config_actions_ibgp.yaml
+    fixture: "{{ fabric_config_ibgp }}"
+    merged_seed_overrides:
+      management:
+        banner: "@ADVISORY ND4X iBGP merge-preservation probe ADVISORY@"
+    merged_name: "{{ test_fabric_merged }}"
+    replaced_name: "{{ test_fabric_replaced }}"
+    deleted_name: "{{ test_fabric_deleted }}"
+    config_actions_name: "{{ test_fabric_config_actions }}"
+    cleanup_config:
+      - fabric_name: "{{ test_fabric_merged }}"
+      - fabric_name: "{{ test_fabric_replaced }}"
+      - fabric_name: "{{ test_fabric_deleted }}"
+      - fabric_name: "{{ test_fabric_config_actions }}"
+      - fabric_name: "{{ ibgp_multi_fabric_1 }}"
+      - fabric_name: "{{ ibgp_multi_fabric_2 }}"
+    merged_update:
+      management:
+        bgp_asn: "65002"
+        site_id: "65002"
+        anycast_gateway_mac: "2020.0000.00bb"
+        performance_monitoring: true
+    merged_expectations:
+      - jsonpath: $.current.management.type
+        equals: vxlanIbgp
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65002"
+      - jsonpath: $.current.management.siteId
+        equals: "65002"
+      - jsonpath: $.current.management.banner
+        equals: "@ADVISORY ND4X iBGP merge-preservation probe ADVISORY@"
+    replace_seed_overrides:
+      management:
+        fabric_mtu: 9000
+    replace_minimal:
+      location:
+        latitude: 37.7749
+        longitude: -122.4194
+      license_tier: premier
+      alert_suspend: disabled
+      security_domain: all
+      telemetry_collection: false
+      management:
+        bgp_asn: "65004"
+        site_id: "65004"
+        banner: "^ Updated via replaced state ^"
+    replace_expectations:
+      - jsonpath: $.current.management.type
+        equals: vxlanIbgp
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65004"
+      - jsonpath: $.current.management.fabricMtu
+        equals: 9216
+    action_field_key: fabric_mtu
+    action_field_jsonpath: $.current.management.fabricMtu
+    action_baseline_value: 9216
+    action_invalid_value: 9000
+    multi_fabric_names:
+      - "{{ ibgp_multi_fabric_1 }}"
+      - "{{ ibgp_multi_fabric_2 }}"
+  ebgp:
+    label: eBGP VXLAN
+    field_expectation_key: ebgp
+    module: cisco.nd.nd_manage_fabric_ebgp_vxlan
+    fabric_type: vxlanEbgp
+    harness_tags: [never, nd4x_demo, nd4x_demo_ebgp]
+    config_actions_tasks: nd4x_demo_config_actions_ebgp.yaml
+    fixture: "{{ fabric_config_ebgp }}"
+    merged_name: "{{ ebgp_test_fabric_merged }}"
+    replaced_name: "{{ ebgp_test_fabric_replaced }}"
+    deleted_name: "{{ ebgp_test_fabric_deleted }}"
+    config_actions_name: "{{ ebgp_test_fabric_config_actions }}"
+    cleanup_config:
+      - fabric_name: "{{ ebgp_test_fabric_merged }}"
+      - fabric_name: "{{ ebgp_test_fabric_replaced }}"
+      - fabric_name: "{{ ebgp_test_fabric_deleted }}"
+      - fabric_name: "{{ ebgp_test_fabric_config_actions }}"
+      - fabric_name: "{{ ebgp_test_fabric_comparison }}"
+      - fabric_name: "{{ ebgp_multi_fabric_1 }}"
+      - fabric_name: "{{ ebgp_multi_fabric_2 }}"
+    merged_update:
+      management:
+        bgp_asn: "65002"
+        site_id: "65002"
+        anycast_gateway_mac: "2020.0000.00bb"
+        performance_monitoring: true
+    merged_expectations:
+      - jsonpath: $.current.management.type
+        equals: vxlanEbgp
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65002"
+      - jsonpath: $.current.management.anycastGatewayMac
+        equals: "2020.0000.00bb"
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: true
+      - jsonpath: $.current.management.bgpAsnAutoAllocation
+        equals: false
+      - jsonpath: $.current.management.bgpAsMode
+        equals: multiAS
+      - jsonpath: $.current.management.bgpAllowAsInNum
+        equals: 1
+      - jsonpath: $.current.management.bgpMaxPath
+        equals: 4
+      - jsonpath: $.current.management.autoConfigureEbgpEvpnPeering
+        equals: true
+      - jsonpath: $.current.management.nxapi
+        equals: true
+    comparison:
+      name: "{{ ebgp_test_fabric_comparison }}"
+      seed_config: "{{ fabric_config_ebgp }}"
+      seed_expectations:
+        - jsonpath: $.current.management.type
+          equals: vxlanEbgp
+        - jsonpath: $.current.management.bgpAsn
+          equals: "65001"
+        - jsonpath: $.current.management.bgpAsnAutoAllocation
+          equals: false
+      merged_config:
+        management:
+          bgp_asn: "65004"
+          bgp_asn_auto_allocation: true
+          bgp_asn_range: "65000-65100"
+          fabric_mtu: 8000
+      merged_expectations:
+        - jsonpath: $.current.management.bgpAsn
+          equals: "65004"
+        - jsonpath: $.current.management.bgpAsnAutoAllocation
+          equals: true
+        - jsonpath: $.current.management.bgpAsnRange
+          equals: "65000-65100"
+        - jsonpath: $.current.management.fabricMtu
+          equals: 8000
+        - jsonpath: $.current.management.targetSubnetMask
+          equals: 30
+      replaced_config:
+        management:
+          bgp_asn: "65100"
+          bgp_asn_auto_allocation: true
+          bgp_asn_range: "65000-65100"
+          target_subnet_mask: 30
+      replaced_expectations:
+        - jsonpath: $.current.management.bgpAsn
+          equals: "65100"
+        - jsonpath: $.current.management.bgpAsnAutoAllocation
+          equals: true
+        - jsonpath: $.current.management.bgpAsnRange
+          equals: "65000-65100"
+        - jsonpath: $.current.management.targetSubnetMask
+          equals: 30
+        - jsonpath: $.current.management.fabricMtu
+          equals: 9216
+    replace_seed_overrides:
+      management:
+        fabric_mtu: 9000
+    replace_minimal:
+      location:
+        latitude: 37.7749
+        longitude: -122.4194
+      license_tier: premier
+      alert_suspend: disabled
+      security_domain: all
+      telemetry_collection: false
+      management:
+        bgp_asn: "65004"
+        bgp_asn_auto_allocation: true
+        bgp_asn_range: "65000-65100"
+        site_id: "65004"
+        banner: "^ Updated via replaced state ^"
+        nxapi: false
+    replace_expectations:
+      - jsonpath: $.current.management.type
+        equals: vxlanEbgp
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65004"
+      - jsonpath: $.current.management.bgpAsnAutoAllocation
+        equals: true
+      - jsonpath: $.current.management.bgpAsnRange
+        equals: "65000-65100"
+      - jsonpath: $.current.management.bgpAsMode
+        equals: multiAS
+      - jsonpath: $.current.management.bgpAllowAsInNum
+        equals: 1
+      - jsonpath: $.current.management.bgpMaxPath
+        equals: 4
+      - jsonpath: $.current.management.autoConfigureEbgpEvpnPeering
+        equals: true
+      - jsonpath: $.current.management.nxapi
+        equals: false
+      - jsonpath: $.current.management.fabricMtu
+        equals: 9216
+    action_field_key: fabric_mtu
+    action_field_jsonpath: $.current.management.fabricMtu
+    action_baseline_value: 9216
+    action_invalid_value: 9000
+    multi_fabric_names:
+      - "{{ ebgp_multi_fabric_1 }}"
+      - "{{ ebgp_multi_fabric_2 }}"
+  campus:
+    label: Campus iBGP VXLAN
+    field_expectation_key: campus
+    module: cisco.nd.nd_manage_fabric_campus_ibgp_vxlan
+    fabric_type: vxlanCampus
+    harness_tags: [never, nd4x_demo, nd4x_demo_campus]
+    config_actions_tasks: nd4x_demo_config_actions_campus.yaml
+    fixture: "{{ fabric_config_campus }}"
+    merged_name: "{{ campus_test_fabric_merged }}"
+    replaced_name: "{{ campus_test_fabric_replaced }}"
+    deleted_name: "{{ campus_test_fabric_deleted }}"
+    config_actions_name: "{{ campus_test_fabric_config_actions }}"
+    failure_cleanup_probe: "{{ campus_cleanup_failure_probe }}"
+    cleanup_config:
+      - fabric_name: "{{ campus_test_fabric_merged }}"
+      - fabric_name: "{{ campus_test_fabric_replaced }}"
+      - fabric_name: "{{ campus_test_fabric_deleted }}"
+      - fabric_name: "{{ campus_test_fabric_config_actions }}"
+      - fabric_name: "{{ campus_cleanup_failure_probe }}"
+    merged_update:
+      management:
+        bgp_asn: "65002"
+        ospf_process_id: 2
+        system_mtu: 9198
+        performance_monitoring: true
+    merged_expectations:
+      - jsonpath: $.current.management.type
+        equals: vxlanCampus
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65002"
+      - jsonpath: $.current.management.ospfProcessId
+        equals: 2
+      - jsonpath: $.current.management.systemMtu
+        equals: 9198
+    versioned_update:
+      management:
+        bgp_asn: "65002"
+        bgp_fast_convergence: true
+    versioned_expectations:
+      - jsonpath: $.current.management.bgpFastConvergence
+        equals: true
+    replace_seed_overrides:
+      management:
+        system_mtu: 9198
+    replace_minimal:
+      management:
+        bgp_asn: "65004"
+    replace_expectations:
+      - jsonpath: $.current.management.type
+        equals: vxlanCampus
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65004"
+      - jsonpath: $.current.management.systemMtu
+        equals: 1500
+    action_field_key: system_mtu
+    action_field_jsonpath: $.current.management.systemMtu
+    action_baseline_value: 1500
+    action_invalid_value: 9198
+
+  external:
+    label: External Connectivity
+    field_expectation_key: external
+    module: cisco.nd.nd_manage_fabric_external
+    fabric_type: externalConnectivity
+    harness_tags: [never, nd4x_demo, nd4x_demo_external]
+    config_actions_tasks: nd4x_demo_config_actions_external.yaml
+    fixture: "{{ fabric_config_external }}"
+    merged_name: "{{ ext_test_fabric_merged }}"
+    replaced_name: "{{ ext_test_fabric_replaced }}"
+    deleted_name: "{{ ext_test_fabric_deleted }}"
+    config_actions_name: "{{ ext_test_fabric_config_actions }}"
+    config_actions_fixture_overrides:
+      management:
+        real_time_interface_statistics_collection: true
+    cleanup_config:
+      - fabric_name: "{{ ext_test_fabric_merged }}"
+      - fabric_name: "{{ ext_test_fabric_replaced }}"
+      - fabric_name: "{{ ext_test_fabric_deleted }}"
+      - fabric_name: "{{ ext_test_fabric_config_actions }}"
+      - fabric_name: "{{ ext_test_fabric_comparison }}"
+      - fabric_name: "{{ ext_multi_fabric_1 }}"
+      - fabric_name: "{{ ext_multi_fabric_2 }}"
+    merged_update:
+      management:
+        bgp_asn: "65002"
+        copp_policy: strict
+        performance_monitoring: true
+        cdp: true
+    merged_expectations:
+      - jsonpath: $.current.management.type
+        equals: externalConnectivity
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65002"
+      - jsonpath: $.current.management.coppPolicy
+        equals: strict
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: true
+      - jsonpath: $.current.management.cdp
+        equals: true
+    comparison:
+      name: "{{ ext_test_fabric_comparison }}"
+      seed_config: "{{ fabric_config_external }}"
+      seed_expectations:
+        - jsonpath: $.current.management.type
+          equals: externalConnectivity
+        - jsonpath: $.current.management.bgpAsn
+          equals: "65001"
+        - jsonpath: $.current.management.coppPolicy
+          equals: manual
+      merged_config:
+        management:
+          bgp_asn: "65099"
+          copp_policy: strict
+      merged_expectations:
+        - jsonpath: $.current.management.bgpAsn
+          equals: "65099"
+        - jsonpath: $.current.management.coppPolicy
+          equals: strict
+      replaced_config:
+        management:
+          bgp_asn: "65100"
+      replaced_expectations:
+        - jsonpath: $.current.management.bgpAsn
+          equals: "65100"
+        - jsonpath: $.current.management.coppPolicy
+          equals: manual
+    replace_seed_overrides:
+      management:
+        copp_policy: strict
+    replace_minimal:
+      location:
+        latitude: 37.7749
+        longitude: -122.4194
+      license_tier: premier
+      alert_suspend: disabled
+      security_domain: all
+      telemetry_collection: false
+      management:
+        bgp_asn: "65004"
+    replace_expectations:
+      - jsonpath: $.current.management.type
+        equals: externalConnectivity
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65004"
+      - jsonpath: $.current.management.coppPolicy
+        equals: manual
+    action_field_key: interface_statistics_load_interval
+    action_field_jsonpath: $.current.management.interfaceStatisticsLoadInterval
+    action_baseline_value: 10
+    action_invalid_value: 20
+    multi_fabric_names:
+      - "{{ ext_multi_fabric_1 }}"
+      - "{{ ext_multi_fabric_2 }}"
+  ai_ibgp:
+    label: AI iBGP VXLAN
+    field_expectation_key: ai_ibgp
+    module: cisco.nd.nd_manage_fabric_ai_ibgp_vxlan
+    fabric_type: aimlVxlanIbgp
+    harness_tags: [never, nd4x_demo, nd4x_demo_ai_ibgp]
+    config_actions_tasks: nd4x_demo_config_actions_ai_ibgp.yaml
+    fixture: "{{ fabric_config_ai_ibgp }}"
+    merged_seed_overrides:
+      management:
+        banner: "@ADVISORY ND4X AI iBGP merge-preservation probe ADVISORY@"
+    merged_name: "{{ ai_ibgp_test_fabric_merged }}"
+    replaced_name: "{{ ai_ibgp_test_fabric_replaced }}"
+    deleted_name: "{{ ai_ibgp_test_fabric_deleted }}"
+    config_actions_name: "{{ ai_ibgp_test_fabric_config_actions }}"
+    cleanup_config:
+      - fabric_name: "{{ ai_ibgp_test_fabric_merged }}"
+      - fabric_name: "{{ ai_ibgp_test_fabric_replaced }}"
+      - fabric_name: "{{ ai_ibgp_test_fabric_deleted }}"
+      - fabric_name: "{{ ai_ibgp_test_fabric_config_actions }}"
+    merged_update:
+      management:
+        bgp_asn: "65002"
+        site_id: "65002"
+        anycast_gateway_mac: "2020.0000.00bb"
+        performance_monitoring: true
+    merged_expectations:
+      - jsonpath: $.current.management.type
+        equals: aimlVxlanIbgp
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65002"
+      - jsonpath: $.current.management.siteId
+        equals: "65002"
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: true
+      - jsonpath: $.current.management.banner
+        equals: "@ADVISORY ND4X AI iBGP merge-preservation probe ADVISORY@"
+    replace_seed_overrides:
+      management:
+        fabric_mtu: 9000
+    replace_minimal:
+      location:
+        latitude: 37.7749
+        longitude: -122.4194
+      license_tier: premier
+      alert_suspend: disabled
+      security_domain: all
+      telemetry_collection: false
+      management:
+        bgp_asn: "65004"
+        site_id: "65004"
+        banner: "^ AI iBGP Updated via replaced state ^"
+    replace_expectations:
+      - jsonpath: $.current.management.type
+        equals: aimlVxlanIbgp
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65004"
+      - jsonpath: $.current.management.fabricMtu
+        equals: 9216
+    action_field_key: fabric_mtu
+    action_field_jsonpath: $.current.management.fabricMtu
+    action_baseline_value: 9216
+    action_invalid_value: 9000
+
+  ai_ebgp:
+    label: AI eBGP VXLAN
+    field_expectation_key: ai_ebgp
+    module: cisco.nd.nd_manage_fabric_ai_ebgp_vxlan
+    fabric_type: aimlVxlanEbgp
+    harness_tags: [never, nd4x_demo, nd4x_demo_ai_ebgp]
+    config_actions_tasks: nd4x_demo_config_actions_ai_ebgp.yaml
+    fixture: "{{ fabric_config_ai_ebgp }}"
+    merged_seed_overrides:
+      management:
+        banner: "^ ND4X AI eBGP merge-preservation probe ^"
+    merged_name: "{{ ai_ebgp_test_fabric_merged }}"
+    replaced_name: "{{ ai_ebgp_test_fabric_replaced }}"
+    deleted_name: "{{ ai_ebgp_test_fabric_deleted }}"
+    config_actions_name: "{{ ai_ebgp_test_fabric_config_actions }}"
+    cleanup_config:
+      - fabric_name: "{{ ai_ebgp_test_fabric_merged }}"
+      - fabric_name: "{{ ai_ebgp_test_fabric_replaced }}"
+      - fabric_name: "{{ ai_ebgp_test_fabric_deleted }}"
+      - fabric_name: "{{ ai_ebgp_test_fabric_config_actions }}"
+    merged_update:
+      management:
+        bgp_asn: "65002"
+        site_id: "65002"
+        anycast_gateway_mac: "2020.0000.00bb"
+        performance_monitoring: true
+    merged_expectations:
+      - jsonpath: $.current.management.type
+        equals: aimlVxlanEbgp
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65002"
+      - jsonpath: $.current.management.siteId
+        equals: "65002"
+      - jsonpath: $.current.management.anycastGatewayMac
+        equals: "2020.0000.00bb"
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: true
+      - jsonpath: $.current.management.bgpAsnAutoAllocation
+        equals: false
+      - jsonpath: $.current.management.bgpAsMode
+        equals: multiAS
+      - jsonpath: $.current.management.bgpAllowAsInNum
+        equals: 1
+      - jsonpath: $.current.management.bgpMaxPath
+        equals: 4
+      - jsonpath: $.current.management.autoConfigureEbgpEvpnPeering
+        equals: true
+      - jsonpath: $.current.management.nxapi
+        equals: false
+      - jsonpath: $.current.management.banner
+        equals: "^ ND4X AI eBGP merge-preservation probe ^"
+    replace_seed_overrides:
+      management:
+        fabric_mtu: 9000
+    replace_minimal:
+      location:
+        latitude: 37.7749
+        longitude: -122.4194
+      license_tier: premier
+      alert_suspend: disabled
+      security_domain: all
+      telemetry_collection: false
+      management:
+        bgp_asn: "65004"
+        bgp_asn_auto_allocation: false
+        site_id: "65004"
+        nxapi: false
+        banner: "^ AI eBGP Updated via replaced state ^"
+    replace_expectations:
+      - jsonpath: $.current.management.type
+        equals: aimlVxlanEbgp
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65004"
+      - jsonpath: $.current.management.bgpAsnAutoAllocation
+        equals: false
+      - jsonpath: $.current.management.siteId
+        equals: "65004"
+      - jsonpath: $.current.management.bgpAsMode
+        equals: multiAS
+      - jsonpath: $.current.management.bgpAllowAsInNum
+        equals: 1
+      - jsonpath: $.current.management.bgpMaxPath
+        equals: 4
+      - jsonpath: $.current.management.autoConfigureEbgpEvpnPeering
+        equals: true
+      - jsonpath: $.current.management.nxapi
+        equals: false
+      - jsonpath: $.current.management.banner
+        equals: "^ AI eBGP Updated via replaced state ^"
+      - jsonpath: $.current.management.fabricMtu
+        equals: 9216
+    action_field_key: fabric_mtu
+    action_field_jsonpath: $.current.management.fabricMtu
+    action_baseline_value: 9216
+    action_invalid_value: 9000
+nd4x_fabric_legacy_field_expectations:
+  ibgp:
+    merged:
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65002"
+      - jsonpath: $.current.management.siteId
+        equals: "65002"
+      - jsonpath: $.current.management.anycastGatewayMac
+        equals: "2020.0000.00bb"
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: true
+      - jsonpath: $.current.management.targetSubnetMask
+        equals: 30
+      - jsonpath: $.current.management.fabricMtu
+        equals: 9216
+      - jsonpath: $.current.management.l2HostInterfaceMtu
+        equals: 9216
+      - jsonpath: $.current.management.l3VniNoVlanDefaultOption
+        equals: false
+      - jsonpath: $.current.management.replicationMode
+        equals: "multicast"
+      - jsonpath: $.current.management.multicastGroupSubnet
+        equals: "239.1.1.0/25"
+      - jsonpath: $.current.management.autoGenerateMulticastGroupAddress
+        equals: false
+      - jsonpath: $.current.management.underlayMulticastGroupAddressLimit
+        equals: 128
+      - jsonpath: $.current.management.tenantRoutedMulticast
+        equals: false
+      - jsonpath: $.current.management.rendezvousPointCount
+        equals: 2
+      - jsonpath: $.current.management.rendezvousPointLoopbackId
+        equals: 254
+      - jsonpath: $.current.management.vpcPeerLinkVlan
+        equals: "3600"
+      - jsonpath: $.current.management.vpcPeerLinkEnableNativeVlan
+        equals: false
+      - jsonpath: $.current.management.vpcPeerKeepAliveOption
+        equals: "loopback"
+      - jsonpath: $.current.management.vpcAutoRecoveryTimer
+        equals: 360
+      - jsonpath: $.current.management.vpcDelayRestoreTimer
+        equals: 150
+      - jsonpath: $.current.management.vpcPeerLinkPortChannelId
+        equals: "500"
+      - jsonpath: $.current.management.vpcDomainIdRange
+        equals: "1-1000"
+      - jsonpath: $.current.management.bgpLoopbackId
+        equals: 0
+      - jsonpath: $.current.management.nveLoopbackId
+        equals: 1
+      - jsonpath: $.current.management.vrfTemplate
+        equals: "Default_VRF_Universal"
+      - jsonpath: $.current.management.networkTemplate
+        equals: "Default_Network_Universal"
+      - jsonpath: $.current.management.vrfExtensionTemplate
+        equals: "Default_VRF_Extension_Universal"
+      - jsonpath: $.current.management.networkExtensionTemplate
+        equals: "Default_Network_Extension_Universal"
+      - jsonpath: $.current.management.bgpLoopbackIpRange
+        equals: "10.2.0.0/22"
+      - jsonpath: $.current.management.nveLoopbackIpRange
+        equals: "10.3.0.0/22"
+      - jsonpath: $.current.management.anycastRendezvousPointIpRange
+        equals: "10.254.254.0/24"
+      - jsonpath: $.current.management.intraFabricSubnetRange
+        equals: "10.4.0.0/16"
+      - jsonpath: $.current.management.l2VniRange
+        equals: "30000-49000"
+      - jsonpath: $.current.management.l3VniRange
+        equals: "50000-59000"
+      - jsonpath: $.current.management.networkVlanRange
+        equals: "2300-2999"
+      - jsonpath: $.current.management.vrfVlanRange
+        equals: "2000-2299"
+      - jsonpath: $.current.management.subInterfaceDot1qRange
+        equals: "2-511"
+      - jsonpath: $.current.management.vrfLiteAutoConfig
+        equals: "manual"
+      - jsonpath: $.current.management.vrfLiteSubnetRange
+        equals: "10.33.0.0/16"
+      - jsonpath: $.current.management.vrfLiteSubnetTargetMask
+        equals: 30
+      - jsonpath: $.current.management.autoUniqueVrfLiteIpPrefix
+        equals: false
+      - jsonpath: $.current.management.perVrfLoopbackAutoProvision
+        equals: true
+      - jsonpath: $.current.management.perVrfLoopbackIpRange
+        equals: "10.5.0.0/22"
+      - jsonpath: $.current.management.tenantDhcp
+        equals: true
+      - jsonpath: $.current.management.nxapi
+        equals: true
+      - jsonpath: $.current.management.nxapiHttpsPort
+        equals: 443
+      - jsonpath: $.current.management.nxapiHttp
+        equals: false
+      - jsonpath: $.current.management.nxapiHttpPort
+        equals: 80
+      - jsonpath: $.current.management.snmpTrap
+        equals: true
+      - jsonpath: $.current.management.advertisePhysicalIp
+        equals: false
+      - jsonpath: $.current.management.anycastBorderGatewayAdvertisePhysicalIp
+        equals: false
+      - jsonpath: $.current.management.greenfieldDebugFlag
+        equals: "enable"
+      - jsonpath: $.current.management.tcamAllocation
+        equals: true
+      - jsonpath: $.current.management.realTimeInterfaceStatisticsCollection
+        equals: false
+      - jsonpath: $.current.management.day0Bootstrap
+        equals: false
+      - jsonpath: $.current.management.localDhcpServer
+        equals: false
+      - jsonpath: $.current.management.overlayMode
+        equals: "cli"
+      - jsonpath: $.current.management.underlayIpv6
+        equals: false
+      - jsonpath: $.current.management.fabricInterfaceType
+        equals: "p2p"
+      - jsonpath: $.current.management.linkStateRoutingProtocol
+        equals: "ospf"
+      - jsonpath: $.current.management.ospfAreaId
+        equals: "0.0.0.0"
+      - jsonpath: $.current.management.routeReflectorCount
+        equals: 4
+      - jsonpath: $.current.management.staticUnderlayIpAllocation
+        equals: false
+      - jsonpath: $.current.management.tenantRoutedMulticastIpv6
+        equals: false
+      - jsonpath: $.current.management.rendezvousPointMode
+        equals: "asm"
+      - jsonpath: $.current.management.pimHelloAuthentication
+        equals: false
+      - jsonpath: $.current.management.vpcIpv6NeighborDiscoverySync
+        equals: true
+      - jsonpath: $.current.management.vpcLayer3PeerRouter
+        equals: true
+      - jsonpath: $.current.management.vpcTorDelayRestoreTimer
+        equals: 30
+      - jsonpath: $.current.management.fabricVpcDomainId
+        equals: false
+      - jsonpath: $.current.management.fabricVpcQos
+        equals: false
+      - jsonpath: $.current.management.enablePeerSwitch
+        equals: false
+      - jsonpath: $.current.management.advertisePhysicalIpOnBorder
+        equals: true
+      - jsonpath: $.current.management.bgpAuthentication
+        equals: false
+      - jsonpath: $.current.management.ospfAuthentication
+        equals: false
+      - jsonpath: $.current.management.bfd
+        equals: false
+      - jsonpath: $.current.management.macsec
+        equals: false
+      - jsonpath: $.current.management.vrfLiteMacsec
+        equals: false
+      - jsonpath: $.current.management.autoBgpNeighborDescription
+        equals: true
+      - jsonpath: $.current.management.linkStateRoutingTag
+        equals: "UNDERLAY"
+      - jsonpath: $.current.management.ipServiceLevelAgreementIdRange
+        equals: "10000-19999"
+      - jsonpath: $.current.management.objectTrackingNumberRange
+        equals: "100-299"
+      - jsonpath: $.current.management.serviceNetworkVlanRange
+        equals: "3000-3199"
+      - jsonpath: $.current.management.routeMapSequenceNumberRange
+        equals: "1-65534"
+      - jsonpath: $.current.management.perVrfLoopbackAutoProvisionIpv6
+        equals: false
+      - jsonpath: $.current.management.cdp
+        equals: false
+      - jsonpath: $.current.management.inbandManagement
+        equals: false
+      - jsonpath: $.current.management.securityGroupTag
+        equals: false
+      - jsonpath: $.current.management.privateVlan
+        equals: false
+      - jsonpath: $.current.management.defaultQueuingPolicy
+        equals: false
+      - jsonpath: $.current.management.aimlQos
+        equals: false
+      - jsonpath: $.current.management.dlb
+        equals: false
+      - jsonpath: $.current.management.aiLoadSharing
+        equals: false
+      - jsonpath: $.current.management.ptp
+        equals: false
+      - jsonpath: $.current.management.stpRootOption
+        equals: "unmanaged"
+      - jsonpath: $.current.management.mplsHandoff
+        equals: false
+      - jsonpath: $.current.management.allowVlanOnLeafTorPairing
+        equals: "none"
+      - jsonpath: $.current.management.leafTorIdRange
+        equals: false
+      - jsonpath: $.current.management.nveHoldDownTimer
+        equals: 180
+      - jsonpath: $.current.management.strictConfigComplianceMode
+        equals: false
+      - jsonpath: $.current.management.advancedSshOption
+        equals: false
+      - jsonpath: $.current.management.coppPolicy
+        equals: "strict"
+      - jsonpath: $.current.management.powerRedundancyMode
+        equals: "redundant"
+      - jsonpath: $.current.management.hostInterfaceAdminState
+        equals: true
+      - jsonpath: $.current.management.policyBasedRouting
+        equals: false
+      - jsonpath: $.current.management.banner
+        exists: true
+      - jsonpath: $.current.management.realTimeBackup
+        equals: false
+      - jsonpath: $.current.management.scheduledBackup
+        equals: false
+      - jsonpath: $.current.management.brownfieldNetworkNameFormat
+        equals: "Auto_Net_VNI$$VNI$$_VLAN$$VLAN_ID$$"
+      - jsonpath: $.current.management.brownfieldSkipOverlayNetworkAttachments
+        equals: false
+      - jsonpath: $.current.management.allowSmartSwitchOnboarding
+        equals: false
+    replaced:
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65004"
+      - jsonpath: $.current.management.siteId
+        equals: "65004"
+      - jsonpath: $.current.management.banner
+        equals: "^ Updated via replaced state ^"
+      - jsonpath: $.current.management.anycastGatewayMac
+        equals: "2020.0000.00aa"
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: false
+      - jsonpath: $.current.management.targetSubnetMask
+        equals: 30
+      - jsonpath: $.current.management.fabricMtu
+        equals: 9216
+      - jsonpath: $.current.management.l2HostInterfaceMtu
+        equals: 9216
+      - jsonpath: $.current.management.overlayMode
+        equals: "cli"
+      - jsonpath: $.current.management.underlayIpv6
+        equals: false
+      - jsonpath: $.current.management.fabricInterfaceType
+        equals: "p2p"
+      - jsonpath: $.current.management.linkStateRoutingProtocol
+        equals: "ospf"
+      - jsonpath: $.current.management.ospfAreaId
+        equals: "0.0.0.0"
+      - jsonpath: $.current.management.staticUnderlayIpAllocation
+        equals: false
+      - jsonpath: $.current.management.replicationMode
+        equals: "multicast"
+      - jsonpath: $.current.management.multicastGroupSubnet
+        equals: "239.1.1.0/25"
+      - jsonpath: $.current.management.autoGenerateMulticastGroupAddress
+        equals: false
+      - jsonpath: $.current.management.underlayMulticastGroupAddressLimit
+        equals: 128
+      - jsonpath: $.current.management.tenantRoutedMulticast
+        equals: false
+      - jsonpath: $.current.management.tenantRoutedMulticastIpv6
+        equals: false
+      - jsonpath: $.current.management.rendezvousPointCount
+        equals: 2
+      - jsonpath: $.current.management.rendezvousPointLoopbackId
+        equals: 254
+      - jsonpath: $.current.management.rendezvousPointMode
+        equals: "asm"
+      - jsonpath: $.current.management.pimHelloAuthentication
+        equals: false
+      - jsonpath: $.current.management.vpcPeerLinkVlan
+        equals: "3600"
+      - jsonpath: $.current.management.vpcPeerLinkEnableNativeVlan
+        equals: false
+      - jsonpath: $.current.management.vpcPeerKeepAliveOption
+        equals: "management"
+      - jsonpath: $.current.management.vpcAutoRecoveryTimer
+        equals: 360
+      - jsonpath: $.current.management.vpcDelayRestoreTimer
+        equals: 150
+      - jsonpath: $.current.management.vpcPeerLinkPortChannelId
+        equals: "500"
+      - jsonpath: $.current.management.vpcDomainIdRange
+        equals: "1-1000"
+      - jsonpath: $.current.management.vpcIpv6NeighborDiscoverySync
+        equals: true
+      - jsonpath: $.current.management.vpcLayer3PeerRouter
+        equals: true
+      - jsonpath: $.current.management.vpcTorDelayRestoreTimer
+        equals: 30
+      - jsonpath: $.current.management.fabricVpcDomainId
+        equals: false
+      - jsonpath: $.current.management.fabricVpcQos
+        equals: false
+      - jsonpath: $.current.management.enablePeerSwitch
+        equals: false
+      - jsonpath: $.current.management.bgpLoopbackId
+        equals: 0
+      - jsonpath: $.current.management.nveLoopbackId
+        equals: 1
+      - jsonpath: $.current.management.routeReflectorCount
+        equals: 2
+      - jsonpath: $.current.management.vrfTemplate
+        equals: "Default_VRF_Universal"
+      - jsonpath: $.current.management.networkTemplate
+        equals: "Default_Network_Universal"
+      - jsonpath: $.current.management.vrfExtensionTemplate
+        equals: "Default_VRF_Extension_Universal"
+      - jsonpath: $.current.management.networkExtensionTemplate
+        equals: "Default_Network_Extension_Universal"
+      - jsonpath: $.current.management.autoBgpNeighborDescription
+        equals: true
+      - jsonpath: $.current.management.linkStateRoutingTag
+        equals: "UNDERLAY"
+      - jsonpath: $.current.management.bgpLoopbackIpRange
+        equals: "10.2.0.0/22"
+      - jsonpath: $.current.management.nveLoopbackIpRange
+        equals: "10.3.0.0/22"
+      - jsonpath: $.current.management.anycastRendezvousPointIpRange
+        equals: "10.254.254.0/24"
+      - jsonpath: $.current.management.intraFabricSubnetRange
+        equals: "10.4.0.0/16"
+      - jsonpath: $.current.management.l2VniRange
+        equals: "30000-49000"
+      - jsonpath: $.current.management.l3VniRange
+        equals: "50000-59000"
+      - jsonpath: $.current.management.networkVlanRange
+        equals: "2300-2999"
+      - jsonpath: $.current.management.vrfVlanRange
+        equals: "2000-2299"
+      - jsonpath: $.current.management.subInterfaceDot1qRange
+        equals: "2-511"
+      - jsonpath: $.current.management.l3VniNoVlanDefaultOption
+        equals: false
+      - jsonpath: $.current.management.vrfLiteAutoConfig
+        equals: "manual"
+      - jsonpath: $.current.management.vrfLiteSubnetRange
+        equals: "10.33.0.0/16"
+      - jsonpath: $.current.management.vrfLiteSubnetTargetMask
+        equals: 30
+      - jsonpath: $.current.management.autoUniqueVrfLiteIpPrefix
+        equals: false
+      - jsonpath: $.current.management.perVrfLoopbackAutoProvision
+        equals: false
+      - jsonpath: $.current.management.perVrfLoopbackAutoProvisionIpv6
+        equals: false
+      - jsonpath: $.current.management.nxapi
+        equals: true
+      - jsonpath: $.current.management.nxapiHttp
+        equals: false
+      - jsonpath: $.current.management.nxapiHttpsPort
+        equals: 443
+      - jsonpath: $.current.management.nxapiHttpPort
+        equals: 80
+      - jsonpath: $.current.management.tenantDhcp
+        equals: true
+      - jsonpath: $.current.management.snmpTrap
+        equals: true
+      - jsonpath: $.current.management.cdp
+        equals: false
+      - jsonpath: $.current.management.tcamAllocation
+        equals: true
+      - jsonpath: $.current.management.realTimeInterfaceStatisticsCollection
+        equals: false
+      - jsonpath: $.current.management.advertisePhysicalIp
+        equals: false
+      - jsonpath: $.current.management.advertisePhysicalIpOnBorder
+        equals: true
+      - jsonpath: $.current.management.anycastBorderGatewayAdvertisePhysicalIp
+        equals: false
+      - jsonpath: $.current.management.greenfieldDebugFlag
+        equals: "disable"
+      - jsonpath: $.current.management.bgpAuthentication
+        equals: false
+      - jsonpath: $.current.management.ospfAuthentication
+        equals: false
+      - jsonpath: $.current.management.bfd
+        equals: false
+      - jsonpath: $.current.management.macsec
+        equals: false
+      - jsonpath: $.current.management.vrfLiteMacsec
+        equals: false
+      - jsonpath: $.current.management.securityGroupTag
+        equals: false
+      - jsonpath: $.current.management.privateVlan
+        equals: false
+      - jsonpath: $.current.management.defaultQueuingPolicy
+        equals: false
+      - jsonpath: $.current.management.aimlQos
+        equals: false
+      - jsonpath: $.current.management.dlb
+        equals: false
+      - jsonpath: $.current.management.aiLoadSharing
+        equals: false
+      - jsonpath: $.current.management.ptp
+        equals: false
+      - jsonpath: $.current.management.stpRootOption
+        equals: "unmanaged"
+      - jsonpath: $.current.management.mplsHandoff
+        equals: false
+      - jsonpath: $.current.management.allowVlanOnLeafTorPairing
+        equals: "none"
+      - jsonpath: $.current.management.leafTorIdRange
+        equals: false
+      - jsonpath: $.current.management.nveHoldDownTimer
+        equals: 180
+      - jsonpath: $.current.management.nextGenerationOAM
+        equals: true
+      - jsonpath: $.current.management.strictConfigComplianceMode
+        equals: false
+      - jsonpath: $.current.management.advancedSshOption
+        equals: false
+      - jsonpath: $.current.management.coppPolicy
+        equals: "strict"
+      - jsonpath: $.current.management.powerRedundancyMode
+        equals: "redundant"
+      - jsonpath: $.current.management.hostInterfaceAdminState
+        equals: true
+      - jsonpath: $.current.management.policyBasedRouting
+        equals: false
+      - jsonpath: $.current.management.inbandManagement
+        equals: false
+      - jsonpath: $.current.management.ipServiceLevelAgreementIdRange
+        equals: "10000-19999"
+      - jsonpath: $.current.management.objectTrackingNumberRange
+        equals: "100-299"
+      - jsonpath: $.current.management.serviceNetworkVlanRange
+        equals: "3000-3199"
+      - jsonpath: $.current.management.routeMapSequenceNumberRange
+        equals: "1-65534"
+      - jsonpath: $.current.management.realTimeBackup
+        equals: false
+      - jsonpath: $.current.management.scheduledBackup
+        equals: false
+      - jsonpath: $.current.management.brownfieldNetworkNameFormat
+        equals: "Auto_Net_VNI$$VNI$$_VLAN$$VLAN_ID$$"
+      - jsonpath: $.current.management.brownfieldSkipOverlayNetworkAttachments
+        equals: false
+      - jsonpath: $.current.management.allowSmartSwitchOnboarding
+        equals: false
+      - jsonpath: $.current.management.day0Bootstrap
+        equals: false
+      - jsonpath: $.current.management.localDhcpServer
+        equals: false
+  ebgp:
+    merged:
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65002"
+      - jsonpath: $.current.management.siteId
+        equals: "65002"
+      - jsonpath: $.current.management.anycastGatewayMac
+        equals: "2020.0000.00bb"
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: true
+      - jsonpath: $.current.management.bgpAsMode
+        equals: "multiAS"
+    replaced:
+      - jsonpath: $.current.management.l3VniRange
+        equals: "50000-59000"
+      - jsonpath: $.current.management.l2VniRange
+        equals: "30000-49000"
+      - jsonpath: $.current.management.bgpLoopbackIpRange
+        equals: "10.2.0.0/22"
+      - jsonpath: $.current.management.nveLoopbackIpRange
+        equals: "10.3.0.0/22"
+      - jsonpath: $.current.management.intraFabricSubnetRange
+        equals: "10.4.0.0/16"
+      - jsonpath: $.current.management.vrfLiteSubnetRange
+        equals: "10.33.0.0/16"
+      - jsonpath: $.current.management.anycastRendezvousPointIpRange
+        equals: "10.254.254.0/24"
+      - jsonpath: $.current.management.networkVlanRange
+        equals: "2300-2999"
+      - jsonpath: $.current.management.vrfVlanRange
+        equals: "2000-2299"
+      - jsonpath: $.current.management.fabricMtu
+        equals: 9216
+      - jsonpath: $.current.management.l2HostInterfaceMtu
+        equals: 9216
+      - jsonpath: $.current.management.anycastGatewayMac
+        equals: "2020.0000.00aa"
+      - jsonpath: $.current.management.multicastGroupSubnet
+        equals: "239.1.1.0/25"
+      - jsonpath: $.current.management.vpcAutoRecoveryTimer
+        equals: 360
+      - jsonpath: $.current.management.vpcDelayRestoreTimer
+        equals: 150
+      - jsonpath: $.current.management.vpcPeerLinkPortChannelId
+        equals: "500"
+      - jsonpath: $.current.management.vpcPeerLinkVlan
+        equals: "3600"
+      - jsonpath: $.current.management.vpcDomainIdRange
+        equals: "1-1000"
+      - jsonpath: $.current.management.vpcIpv6NeighborDiscoverySync
+        equals: true
+      - jsonpath: $.current.management.rendezvousPointCount
+        equals: 2
+      - jsonpath: $.current.management.rendezvousPointLoopbackId
+        equals: 254
+      - jsonpath: $.current.management.bgpAsMode
+        equals: "multiAS"
+      - jsonpath: $.current.management.bgpAllowAsInNum
+        equals: 1
+      - jsonpath: $.current.management.bgpMaxPath
+        equals: 4
+      - jsonpath: $.current.management.tcamAllocation
+        equals: true
+      - jsonpath: $.current.management.realTimeInterfaceStatisticsCollection
+        equals: false
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: false
+      - jsonpath: $.current.management.tenantDhcp
+        equals: true
+      - jsonpath: $.current.management.snmpTrap
+        equals: true
+      - jsonpath: $.current.management.greenfieldDebugFlag
+        equals: "disable"
+      - jsonpath: $.current.management.nxapiHttp
+        equals: true
+      - jsonpath: $.current.management.nxapi
+        equals: false
+      - jsonpath: $.current.management.perVrfLoopbackAutoProvision
+        equals: false
+      - jsonpath: $.current.management.perVrfLoopbackAutoProvisionIpv6
+        equals: false
+      - jsonpath: $.current.management.banner
+        equals: "^ Updated via replaced state ^"
+  external:
+    merged:
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65002"
+      - jsonpath: $.current.management.coppPolicy
+        equals: "strict"
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: true
+      - jsonpath: $.current.management.cdp
+        equals: true
+    replaced:
+      - jsonpath: $.current.management.coppPolicy
+        equals: "manual"
+      - jsonpath: $.current.management.snmpTrap
+        equals: true
+      - jsonpath: $.current.management.cdp
+        equals: false
+      - jsonpath: $.current.management.nxapi
+        equals: false
+      - jsonpath: $.current.management.nxapiHttp
+        equals: false
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: false
+      - jsonpath: $.current.management.realTimeInterfaceStatisticsCollection
+        equals: false
+      - jsonpath: $.current.management.powerRedundancyMode
+        equals: "redundant"
+      - jsonpath: $.current.management.ptp
+        equals: false
+  ai_ibgp:
+    merged:
+      - jsonpath: $.current.management.type
+        equals: "aimlVxlanIbgp"
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65002"
+      - jsonpath: $.current.management.siteId
+        equals: "65002"
+      - jsonpath: $.current.management.anycastGatewayMac
+        equals: "2020.0000.00bb"
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: true
+      - jsonpath: $.current.management.overlayMode
+        equals: "cli"
+      - jsonpath: $.current.management.underlayIpv6
+        equals: false
+      - jsonpath: $.current.management.fabricInterfaceType
+        equals: "p2p"
+      - jsonpath: $.current.management.linkStateRoutingProtocol
+        equals: "ospf"
+      - jsonpath: $.current.management.ospfAreaId
+        equals: "0.0.0.0"
+      - jsonpath: $.current.management.routeReflectorCount
+        equals: 4
+      - jsonpath: $.current.management.staticUnderlayIpAllocation
+        equals: false
+      - jsonpath: $.current.management.banner
+        exists: true
+    replaced:
+      - jsonpath: $.current.management.type
+        equals: "aimlVxlanIbgp"
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65004"
+      - jsonpath: $.current.management.siteId
+        equals: "65004"
+      - jsonpath: $.current.management.banner
+        equals: "^ AI iBGP Updated via replaced state ^"
+      - jsonpath: $.current.management.anycastGatewayMac
+        equals: "2020.0000.00aa"
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: false
+      - jsonpath: $.current.management.fabricMtu
+        equals: 9216
+      - jsonpath: $.current.management.l2HostInterfaceMtu
+        equals: 9216
+      - jsonpath: $.current.management.replicationMode
+        equals: "multicast"
+      - jsonpath: $.current.management.multicastGroupSubnet
+        equals: "239.1.1.0/25"
+      - jsonpath: $.current.management.rendezvousPointCount
+        equals: 2
+      - jsonpath: $.current.management.vpcPeerLinkVlan
+        equals: "3600"
+      - jsonpath: $.current.management.vpcAutoRecoveryTimer
+        equals: 360
+      - jsonpath: $.current.management.vpcDelayRestoreTimer
+        equals: 150
+      - jsonpath: $.current.management.advertisePhysicalIp
+        equals: false
+      - jsonpath: $.current.management.bgpLoopbackIpRange
+        equals: "10.2.0.0/22"
+      - jsonpath: $.current.management.nveLoopbackIpRange
+        equals: "10.3.0.0/22"
+      - jsonpath: $.current.management.l2VniRange
+        equals: "30000-49000"
+      - jsonpath: $.current.management.l3VniRange
+        equals: "50000-59000"
+  ai_ebgp:
+    merged:
+      - jsonpath: $.current.management.type
+        equals: "aimlVxlanEbgp"
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65002"
+      - jsonpath: $.current.management.siteId
+        equals: "65002"
+      - jsonpath: $.current.management.anycastGatewayMac
+        equals: "2020.0000.00bb"
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: true
+    replaced:
+      - jsonpath: $.current.management.type
+        equals: "aimlVxlanEbgp"
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65004"
+      - jsonpath: $.current.management.siteId
+        equals: "65004"
+      - jsonpath: $.current.management.banner
+        equals: "^ AI eBGP Updated via replaced state ^"
+      - jsonpath: $.current.management.anycastGatewayMac
+        equals: "2020.0000.00aa"
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: false
+      - jsonpath: $.current.management.fabricMtu
+        equals: 9216
+      - jsonpath: $.current.management.l2HostInterfaceMtu
+        equals: 9216
+      - jsonpath: $.current.management.replicationMode
+        equals: "multicast"
+      - jsonpath: $.current.management.multicastGroupSubnet
+        equals: "239.1.1.0/25"
+      - jsonpath: $.current.management.rendezvousPointCount
+        equals: 2
+      - jsonpath: $.current.management.vpcPeerLinkVlan
+        equals: "3600"
+      - jsonpath: $.current.management.vpcAutoRecoveryTimer
+        equals: 360
+      - jsonpath: $.current.management.vpcDelayRestoreTimer
+        equals: 150
+      - jsonpath: $.current.management.advertisePhysicalIp
+        equals: false
+      - jsonpath: $.current.management.bgpLoopbackIpRange
+        equals: "10.2.0.0/22"
+      - jsonpath: $.current.management.nveLoopbackIpRange
+        equals: "10.3.0.0/22"
+      - jsonpath: $.current.management.l2VniRange
+        equals: "30000-49000"
+      - jsonpath: $.current.management.l3VniRange
+        equals: "50000-59000"
+  campus:
+    merged:
+      - jsonpath: $.current.management.bgpAsn
+        equals: "65002"
+      - jsonpath: $.current.management.ospfProcessId
+        equals: 2
+      - jsonpath: $.current.management.systemMtu
+        equals: 9198
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: true
+    replaced: []
+
+# Exact multi-fabric payloads from the legacy integration tasks, with REST
+# expectations for each explicitly supplied field plus resource name and type.
+# ND omits empty-string management defaults from GET responses; those values
+# remain in the original create payloads but are not asserted on read-back.
+# ND also omits dhcpProtocolVersion when local DHCP is disabled, even when the
+# request supplies its default value.
+# ND omits managementIpv4Prefix when managementGateway is empty.
+# ND 4.2.1 also omits interfaceStatisticsLoadInterval when real-time interface
+# statistics are disabled, so that inactive default is not asserted on read-back.
+nd4x_fabric_multi_cases:
+  ibgp:
+    configs:
+    - fabric_name: '{{ ibgp_multi_fabric_1 }}'
+      location:
+        latitude: 37.7749
+        longitude: -122.4194
+      license_tier: premier
+      alert_suspend: disabled
+      security_domain: all
+      telemetry_collection: false
+      management:
+        bgp_asn: '65101'
+        site_id: '65101'
+        target_subnet_mask: 30
+        anycast_gateway_mac: 2020.0000.0001
+        performance_monitoring: false
+        replication_mode: multicast
+        multicast_group_subnet: 239.1.1.0/25
+        auto_generate_multicast_group_address: false
+        underlay_multicast_group_address_limit: 128
+        tenant_routed_multicast: false
+        rendezvous_point_count: 2
+        rendezvous_point_loopback_id: 254
+        vpc_peer_link_vlan: '3600'
+        vpc_peer_link_enable_native_vlan: false
+        vpc_peer_keep_alive_option: loopback
+        vpc_auto_recovery_timer: 360
+        vpc_delay_restore_timer: 150
+        vpc_peer_link_port_channel_id: '500'
+        advertise_physical_ip: false
+        vpc_domain_id_range: 1-1000
+        bgp_loopback_id: 0
+        nve_loopback_id: 1
+        vrf_template: Default_VRF_Universal
+        network_template: Default_Network_Universal
+        vrf_extension_template: Default_VRF_Extension_Universal
+        network_extension_template: Default_Network_Extension_Universal
+        l3_vni_no_vlan_default_option: false
+        fabric_mtu: 9216
+        l2_host_interface_mtu: 9216
+        tenant_dhcp: true
+        nxapi: true
+        nxapi_https_port: 443
+        nxapi_http: false
+        nxapi_http_port: 80
+        snmp_trap: true
+        anycast_border_gateway_advertise_physical_ip: false
+        greenfield_debug_flag: enable
+        tcam_allocation: true
+        real_time_interface_statistics_collection: false
+        interface_statistics_load_interval: 10
+        bgp_loopback_ip_range: 10.101.0.0/22
+        nve_loopback_ip_range: 10.103.0.0/22
+        anycast_rendezvous_point_ip_range: 10.254.101.0/24
+        intra_fabric_subnet_range: 10.104.0.0/16
+        l2_vni_range: 30000-49000
+        l3_vni_range: 50000-59000
+        network_vlan_range: 2300-2999
+        vrf_vlan_range: 2000-2299
+        sub_interface_dot1q_range: 2-511
+        vrf_lite_auto_config: manual
+        vrf_lite_subnet_range: 10.133.0.0/16
+        vrf_lite_subnet_target_mask: 30
+        auto_unique_vrf_lite_ip_prefix: false
+        per_vrf_loopback_auto_provision: true
+        per_vrf_loopback_ip_range: 10.105.0.0/22
+        banner: ''
+        day0_bootstrap: false
+        local_dhcp_server: false
+        dhcp_protocol_version: dhcpv4
+        dhcp_start_address: ''
+        dhcp_end_address: ''
+        management_gateway: ''
+        management_ipv4_prefix: 24
+    - fabric_name: '{{ ibgp_multi_fabric_2 }}'
+      location:
+        latitude: 37.7749
+        longitude: -122.4194
+      license_tier: premier
+      alert_suspend: disabled
+      security_domain: all
+      telemetry_collection: false
+      management:
+        bgp_asn: '65102'
+        site_id: '65102'
+        target_subnet_mask: 30
+        anycast_gateway_mac: 2020.0000.0002
+        performance_monitoring: false
+        replication_mode: multicast
+        multicast_group_subnet: 239.1.1.0/25
+        auto_generate_multicast_group_address: false
+        underlay_multicast_group_address_limit: 128
+        tenant_routed_multicast: false
+        rendezvous_point_count: 2
+        rendezvous_point_loopback_id: 254
+        vpc_peer_link_vlan: '3600'
+        vpc_peer_link_enable_native_vlan: false
+        vpc_peer_keep_alive_option: loopback
+        vpc_auto_recovery_timer: 360
+        vpc_delay_restore_timer: 150
+        vpc_peer_link_port_channel_id: '500'
+        advertise_physical_ip: false
+        vpc_domain_id_range: 1-1000
+        bgp_loopback_id: 0
+        nve_loopback_id: 1
+        vrf_template: Default_VRF_Universal
+        network_template: Default_Network_Universal
+        vrf_extension_template: Default_VRF_Extension_Universal
+        network_extension_template: Default_Network_Extension_Universal
+        l3_vni_no_vlan_default_option: false
+        fabric_mtu: 9216
+        l2_host_interface_mtu: 9216
+        tenant_dhcp: true
+        nxapi: true
+        nxapi_https_port: 443
+        nxapi_http: false
+        nxapi_http_port: 80
+        snmp_trap: true
+        anycast_border_gateway_advertise_physical_ip: false
+        greenfield_debug_flag: enable
+        tcam_allocation: true
+        real_time_interface_statistics_collection: false
+        interface_statistics_load_interval: 10
+        bgp_loopback_ip_range: 10.102.0.0/22
+        nve_loopback_ip_range: 10.103.0.0/22
+        anycast_rendezvous_point_ip_range: 10.254.102.0/24
+        intra_fabric_subnet_range: 10.104.0.0/16
+        l2_vni_range: 30000-49000
+        l3_vni_range: 50000-59000
+        network_vlan_range: 2300-2999
+        vrf_vlan_range: 2000-2299
+        sub_interface_dot1q_range: 2-511
+        vrf_lite_auto_config: manual
+        vrf_lite_subnet_range: 10.134.0.0/16
+        vrf_lite_subnet_target_mask: 30
+        auto_unique_vrf_lite_ip_prefix: false
+        per_vrf_loopback_auto_provision: true
+        per_vrf_loopback_ip_range: 10.106.0.0/22
+        banner: ''
+        day0_bootstrap: false
+        local_dhcp_server: false
+        dhcp_protocol_version: dhcpv4
+        dhcp_start_address: ''
+        dhcp_end_address: ''
+        management_gateway: ''
+        management_ipv4_prefix: 24
+    expectations:
+    - - jsonpath: $.current.management.type
+        equals: vxlanIbgp
+      - jsonpath: $.current.name
+        equals: '{{ ibgp_multi_fabric_1 }}'
+      - jsonpath: $.current.location.latitude
+        equals: 37.7749
+      - jsonpath: $.current.location.longitude
+        equals: -122.4194
+      - jsonpath: $.current.licenseTier
+        equals: premier
+      - jsonpath: $.current.alertSuspend
+        equals: disabled
+      - jsonpath: $.current.securityDomain
+        equals: all
+      - jsonpath: $.current.telemetryCollection
+        equals: false
+      - jsonpath: $.current.management.bgpAsn
+        equals: '65101'
+      - jsonpath: $.current.management.siteId
+        equals: '65101'
+      - jsonpath: $.current.management.targetSubnetMask
+        equals: 30
+      - jsonpath: $.current.management.anycastGatewayMac
+        equals: 2020.0000.0001
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: false
+      - jsonpath: $.current.management.replicationMode
+        equals: multicast
+      - jsonpath: $.current.management.multicastGroupSubnet
+        equals: 239.1.1.0/25
+      - jsonpath: $.current.management.autoGenerateMulticastGroupAddress
+        equals: false
+      - jsonpath: $.current.management.underlayMulticastGroupAddressLimit
+        equals: 128
+      - jsonpath: $.current.management.tenantRoutedMulticast
+        equals: false
+      - jsonpath: $.current.management.rendezvousPointCount
+        equals: 2
+      - jsonpath: $.current.management.rendezvousPointLoopbackId
+        equals: 254
+      - jsonpath: $.current.management.vpcPeerLinkVlan
+        equals: '3600'
+      - jsonpath: $.current.management.vpcPeerLinkEnableNativeVlan
+        equals: false
+      - jsonpath: $.current.management.vpcPeerKeepAliveOption
+        equals: loopback
+      - jsonpath: $.current.management.vpcAutoRecoveryTimer
+        equals: 360
+      - jsonpath: $.current.management.vpcDelayRestoreTimer
+        equals: 150
+      - jsonpath: $.current.management.vpcPeerLinkPortChannelId
+        equals: '500'
+      - jsonpath: $.current.management.advertisePhysicalIp
+        equals: false
+      - jsonpath: $.current.management.vpcDomainIdRange
+        equals: 1-1000
+      - jsonpath: $.current.management.bgpLoopbackId
+        equals: 0
+      - jsonpath: $.current.management.nveLoopbackId
+        equals: 1
+      - jsonpath: $.current.management.vrfTemplate
+        equals: Default_VRF_Universal
+      - jsonpath: $.current.management.networkTemplate
+        equals: Default_Network_Universal
+      - jsonpath: $.current.management.vrfExtensionTemplate
+        equals: Default_VRF_Extension_Universal
+      - jsonpath: $.current.management.networkExtensionTemplate
+        equals: Default_Network_Extension_Universal
+      - jsonpath: $.current.management.l3VniNoVlanDefaultOption
+        equals: false
+      - jsonpath: $.current.management.fabricMtu
+        equals: 9216
+      - jsonpath: $.current.management.l2HostInterfaceMtu
+        equals: 9216
+      - jsonpath: $.current.management.tenantDhcp
+        equals: true
+      - jsonpath: $.current.management.nxapi
+        equals: true
+      - jsonpath: $.current.management.nxapiHttpsPort
+        equals: 443
+      - jsonpath: $.current.management.nxapiHttp
+        equals: false
+      - jsonpath: $.current.management.nxapiHttpPort
+        equals: 80
+      - jsonpath: $.current.management.snmpTrap
+        equals: true
+      - jsonpath: $.current.management.anycastBorderGatewayAdvertisePhysicalIp
+        equals: false
+      - jsonpath: $.current.management.greenfieldDebugFlag
+        equals: enable
+      - jsonpath: $.current.management.tcamAllocation
+        equals: true
+      - jsonpath: $.current.management.realTimeInterfaceStatisticsCollection
+        equals: false
+      - jsonpath: $.current.management.bgpLoopbackIpRange
+        equals: 10.101.0.0/22
+      - jsonpath: $.current.management.nveLoopbackIpRange
+        equals: 10.103.0.0/22
+      - jsonpath: $.current.management.anycastRendezvousPointIpRange
+        equals: 10.254.101.0/24
+      - jsonpath: $.current.management.intraFabricSubnetRange
+        equals: 10.104.0.0/16
+      - jsonpath: $.current.management.l2VniRange
+        equals: 30000-49000
+      - jsonpath: $.current.management.l3VniRange
+        equals: 50000-59000
+      - jsonpath: $.current.management.networkVlanRange
+        equals: 2300-2999
+      - jsonpath: $.current.management.vrfVlanRange
+        equals: 2000-2299
+      - jsonpath: $.current.management.subInterfaceDot1qRange
+        equals: 2-511
+      - jsonpath: $.current.management.vrfLiteAutoConfig
+        equals: manual
+      - jsonpath: $.current.management.vrfLiteSubnetRange
+        equals: 10.133.0.0/16
+      - jsonpath: $.current.management.vrfLiteSubnetTargetMask
+        equals: 30
+      - jsonpath: $.current.management.autoUniqueVrfLiteIpPrefix
+        equals: false
+      - jsonpath: $.current.management.perVrfLoopbackAutoProvision
+        equals: true
+      - jsonpath: $.current.management.perVrfLoopbackIpRange
+        equals: 10.105.0.0/22
+      - jsonpath: $.current.management.day0Bootstrap
+        equals: false
+      - jsonpath: $.current.management.localDhcpServer
+        equals: false
+    - - jsonpath: $.current.management.type
+        equals: vxlanIbgp
+      - jsonpath: $.current.name
+        equals: '{{ ibgp_multi_fabric_2 }}'
+      - jsonpath: $.current.location.latitude
+        equals: 37.7749
+      - jsonpath: $.current.location.longitude
+        equals: -122.4194
+      - jsonpath: $.current.licenseTier
+        equals: premier
+      - jsonpath: $.current.alertSuspend
+        equals: disabled
+      - jsonpath: $.current.securityDomain
+        equals: all
+      - jsonpath: $.current.telemetryCollection
+        equals: false
+      - jsonpath: $.current.management.bgpAsn
+        equals: '65102'
+      - jsonpath: $.current.management.siteId
+        equals: '65102'
+      - jsonpath: $.current.management.targetSubnetMask
+        equals: 30
+      - jsonpath: $.current.management.anycastGatewayMac
+        equals: 2020.0000.0002
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: false
+      - jsonpath: $.current.management.replicationMode
+        equals: multicast
+      - jsonpath: $.current.management.multicastGroupSubnet
+        equals: 239.1.1.0/25
+      - jsonpath: $.current.management.autoGenerateMulticastGroupAddress
+        equals: false
+      - jsonpath: $.current.management.underlayMulticastGroupAddressLimit
+        equals: 128
+      - jsonpath: $.current.management.tenantRoutedMulticast
+        equals: false
+      - jsonpath: $.current.management.rendezvousPointCount
+        equals: 2
+      - jsonpath: $.current.management.rendezvousPointLoopbackId
+        equals: 254
+      - jsonpath: $.current.management.vpcPeerLinkVlan
+        equals: '3600'
+      - jsonpath: $.current.management.vpcPeerLinkEnableNativeVlan
+        equals: false
+      - jsonpath: $.current.management.vpcPeerKeepAliveOption
+        equals: loopback
+      - jsonpath: $.current.management.vpcAutoRecoveryTimer
+        equals: 360
+      - jsonpath: $.current.management.vpcDelayRestoreTimer
+        equals: 150
+      - jsonpath: $.current.management.vpcPeerLinkPortChannelId
+        equals: '500'
+      - jsonpath: $.current.management.advertisePhysicalIp
+        equals: false
+      - jsonpath: $.current.management.vpcDomainIdRange
+        equals: 1-1000
+      - jsonpath: $.current.management.bgpLoopbackId
+        equals: 0
+      - jsonpath: $.current.management.nveLoopbackId
+        equals: 1
+      - jsonpath: $.current.management.vrfTemplate
+        equals: Default_VRF_Universal
+      - jsonpath: $.current.management.networkTemplate
+        equals: Default_Network_Universal
+      - jsonpath: $.current.management.vrfExtensionTemplate
+        equals: Default_VRF_Extension_Universal
+      - jsonpath: $.current.management.networkExtensionTemplate
+        equals: Default_Network_Extension_Universal
+      - jsonpath: $.current.management.l3VniNoVlanDefaultOption
+        equals: false
+      - jsonpath: $.current.management.fabricMtu
+        equals: 9216
+      - jsonpath: $.current.management.l2HostInterfaceMtu
+        equals: 9216
+      - jsonpath: $.current.management.tenantDhcp
+        equals: true
+      - jsonpath: $.current.management.nxapi
+        equals: true
+      - jsonpath: $.current.management.nxapiHttpsPort
+        equals: 443
+      - jsonpath: $.current.management.nxapiHttp
+        equals: false
+      - jsonpath: $.current.management.nxapiHttpPort
+        equals: 80
+      - jsonpath: $.current.management.snmpTrap
+        equals: true
+      - jsonpath: $.current.management.anycastBorderGatewayAdvertisePhysicalIp
+        equals: false
+      - jsonpath: $.current.management.greenfieldDebugFlag
+        equals: enable
+      - jsonpath: $.current.management.tcamAllocation
+        equals: true
+      - jsonpath: $.current.management.realTimeInterfaceStatisticsCollection
+        equals: false
+      - jsonpath: $.current.management.bgpLoopbackIpRange
+        equals: 10.102.0.0/22
+      - jsonpath: $.current.management.nveLoopbackIpRange
+        equals: 10.103.0.0/22
+      - jsonpath: $.current.management.anycastRendezvousPointIpRange
+        equals: 10.254.102.0/24
+      - jsonpath: $.current.management.intraFabricSubnetRange
+        equals: 10.104.0.0/16
+      - jsonpath: $.current.management.l2VniRange
+        equals: 30000-49000
+      - jsonpath: $.current.management.l3VniRange
+        equals: 50000-59000
+      - jsonpath: $.current.management.networkVlanRange
+        equals: 2300-2999
+      - jsonpath: $.current.management.vrfVlanRange
+        equals: 2000-2299
+      - jsonpath: $.current.management.subInterfaceDot1qRange
+        equals: 2-511
+      - jsonpath: $.current.management.vrfLiteAutoConfig
+        equals: manual
+      - jsonpath: $.current.management.vrfLiteSubnetRange
+        equals: 10.134.0.0/16
+      - jsonpath: $.current.management.vrfLiteSubnetTargetMask
+        equals: 30
+      - jsonpath: $.current.management.autoUniqueVrfLiteIpPrefix
+        equals: false
+      - jsonpath: $.current.management.perVrfLoopbackAutoProvision
+        equals: true
+      - jsonpath: $.current.management.perVrfLoopbackIpRange
+        equals: 10.106.0.0/22
+      - jsonpath: $.current.management.day0Bootstrap
+        equals: false
+      - jsonpath: $.current.management.localDhcpServer
+        equals: false
+  ebgp:
+    configs:
+    - fabric_name: '{{ ebgp_multi_fabric_1 }}'
+      location:
+        latitude: 37.7749
+        longitude: -122.4194
+      license_tier: premier
+      alert_suspend: disabled
+      security_domain: all
+      telemetry_collection: false
+      management:
+        bgp_asn: '65101'
+        site_id: '65101'
+        bgp_as_mode: sameTierAS
+        bgp_allow_as_in_num: 1
+        bgp_max_path: 4
+        auto_configure_ebgp_evpn_peering: true
+        target_subnet_mask: 30
+        anycast_gateway_mac: 2020.0000.0001
+        performance_monitoring: false
+        replication_mode: multicast
+        multicast_group_subnet: 239.1.1.0/25
+        auto_generate_multicast_group_address: false
+        underlay_multicast_group_address_limit: 128
+        tenant_routed_multicast: false
+        rendezvous_point_count: 2
+        rendezvous_point_loopback_id: 254
+        vpc_peer_link_vlan: '3600'
+        vpc_peer_link_enable_native_vlan: false
+        vpc_peer_keep_alive_option: management
+        vpc_auto_recovery_timer: 360
+        vpc_delay_restore_timer: 150
+        vpc_peer_link_port_channel_id: '500'
+        advertise_physical_ip: false
+        vpc_domain_id_range: 1-1000
+        bgp_loopback_id: 0
+        nve_loopback_id: 1
+        vrf_template: Default_VRF_Universal
+        network_template: Default_Network_Universal
+        vrf_extension_template: Default_VRF_Extension_Universal
+        network_extension_template: Default_Network_Extension_Universal
+        l3_vni_no_vlan_default_option: false
+        fabric_mtu: 9216
+        l2_host_interface_mtu: 9216
+        tenant_dhcp: true
+        nxapi: true
+        nxapi_https_port: 443
+        nxapi_http: false
+        nxapi_http_port: 80
+        snmp_trap: true
+        anycast_border_gateway_advertise_physical_ip: false
+        greenfield_debug_flag: disable
+        tcam_allocation: true
+        real_time_interface_statistics_collection: false
+        interface_statistics_load_interval: 10
+        bgp_loopback_ip_range: 10.101.0.0/22
+        nve_loopback_ip_range: 10.103.0.0/22
+        anycast_rendezvous_point_ip_range: 10.254.101.0/24
+        intra_fabric_subnet_range: 10.104.0.0/16
+        l2_vni_range: 30000-49000
+        l3_vni_range: 50000-59000
+        network_vlan_range: 2300-2999
+        vrf_vlan_range: 2000-2299
+        sub_interface_dot1q_range: 2-511
+        vrf_lite_auto_config: manual
+        vrf_lite_subnet_range: 10.133.0.0/16
+        vrf_lite_subnet_target_mask: 30
+        auto_unique_vrf_lite_ip_prefix: false
+        per_vrf_loopback_auto_provision: true
+        per_vrf_loopback_ip_range: 10.105.0.0/22
+        banner: ''
+        day0_bootstrap: false
+        local_dhcp_server: false
+        dhcp_protocol_version: dhcpv4
+        dhcp_start_address: ''
+        dhcp_end_address: ''
+        management_gateway: ''
+        management_ipv4_prefix: 24
+    - fabric_name: '{{ ebgp_multi_fabric_2 }}'
+      location:
+        latitude: 37.7749
+        longitude: -122.4194
+      license_tier: premier
+      alert_suspend: disabled
+      security_domain: all
+      telemetry_collection: false
+      management:
+        bgp_asn: '65102'
+        site_id: '65102'
+        bgp_as_mode: sameTierAS
+        bgp_allow_as_in_num: 1
+        bgp_max_path: 4
+        auto_configure_ebgp_evpn_peering: true
+        target_subnet_mask: 30
+        anycast_gateway_mac: 2020.0000.0002
+        performance_monitoring: false
+        replication_mode: multicast
+        multicast_group_subnet: 239.1.1.0/25
+        auto_generate_multicast_group_address: false
+        underlay_multicast_group_address_limit: 128
+        tenant_routed_multicast: false
+        rendezvous_point_count: 2
+        rendezvous_point_loopback_id: 254
+        vpc_peer_link_vlan: '3600'
+        vpc_peer_link_enable_native_vlan: false
+        vpc_peer_keep_alive_option: management
+        vpc_auto_recovery_timer: 360
+        vpc_delay_restore_timer: 150
+        vpc_peer_link_port_channel_id: '500'
+        advertise_physical_ip: false
+        vpc_domain_id_range: 1-1000
+        bgp_loopback_id: 0
+        nve_loopback_id: 1
+        vrf_template: Default_VRF_Universal
+        network_template: Default_Network_Universal
+        vrf_extension_template: Default_VRF_Extension_Universal
+        network_extension_template: Default_Network_Extension_Universal
+        l3_vni_no_vlan_default_option: false
+        fabric_mtu: 9216
+        l2_host_interface_mtu: 9216
+        tenant_dhcp: true
+        nxapi: true
+        nxapi_https_port: 443
+        nxapi_http: false
+        nxapi_http_port: 80
+        snmp_trap: true
+        anycast_border_gateway_advertise_physical_ip: false
+        greenfield_debug_flag: disable
+        tcam_allocation: true
+        real_time_interface_statistics_collection: false
+        interface_statistics_load_interval: 10
+        bgp_loopback_ip_range: 10.102.0.0/22
+        nve_loopback_ip_range: 10.103.0.0/22
+        anycast_rendezvous_point_ip_range: 10.254.102.0/24
+        intra_fabric_subnet_range: 10.104.0.0/16
+        l2_vni_range: 30000-49000
+        l3_vni_range: 50000-59000
+        network_vlan_range: 2300-2999
+        vrf_vlan_range: 2000-2299
+        sub_interface_dot1q_range: 2-511
+        vrf_lite_auto_config: manual
+        vrf_lite_subnet_range: 10.134.0.0/16
+        vrf_lite_subnet_target_mask: 30
+        auto_unique_vrf_lite_ip_prefix: false
+        per_vrf_loopback_auto_provision: true
+        per_vrf_loopback_ip_range: 10.106.0.0/22
+        banner: ''
+        day0_bootstrap: false
+        local_dhcp_server: false
+        dhcp_protocol_version: dhcpv4
+        dhcp_start_address: ''
+        dhcp_end_address: ''
+        management_gateway: ''
+        management_ipv4_prefix: 24
+    expectations:
+    - - jsonpath: $.current.management.type
+        equals: vxlanEbgp
+      - jsonpath: $.current.name
+        equals: '{{ ebgp_multi_fabric_1 }}'
+      - jsonpath: $.current.location.latitude
+        equals: 37.7749
+      - jsonpath: $.current.location.longitude
+        equals: -122.4194
+      - jsonpath: $.current.licenseTier
+        equals: premier
+      - jsonpath: $.current.alertSuspend
+        equals: disabled
+      - jsonpath: $.current.securityDomain
+        equals: all
+      - jsonpath: $.current.telemetryCollection
+        equals: false
+      - jsonpath: $.current.management.bgpAsn
+        equals: '65101'
+      - jsonpath: $.current.management.siteId
+        equals: '65101'
+      - jsonpath: $.current.management.bgpAsMode
+        equals: sameTierAS
+      - jsonpath: $.current.management.bgpAllowAsInNum
+        equals: 1
+      - jsonpath: $.current.management.bgpMaxPath
+        equals: 4
+      - jsonpath: $.current.management.autoConfigureEbgpEvpnPeering
+        equals: true
+      - jsonpath: $.current.management.targetSubnetMask
+        equals: 30
+      - jsonpath: $.current.management.anycastGatewayMac
+        equals: 2020.0000.0001
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: false
+      - jsonpath: $.current.management.replicationMode
+        equals: multicast
+      - jsonpath: $.current.management.multicastGroupSubnet
+        equals: 239.1.1.0/25
+      - jsonpath: $.current.management.autoGenerateMulticastGroupAddress
+        equals: false
+      - jsonpath: $.current.management.underlayMulticastGroupAddressLimit
+        equals: 128
+      - jsonpath: $.current.management.tenantRoutedMulticast
+        equals: false
+      - jsonpath: $.current.management.rendezvousPointCount
+        equals: 2
+      - jsonpath: $.current.management.rendezvousPointLoopbackId
+        equals: 254
+      - jsonpath: $.current.management.vpcPeerLinkVlan
+        equals: '3600'
+      - jsonpath: $.current.management.vpcPeerLinkEnableNativeVlan
+        equals: false
+      - jsonpath: $.current.management.vpcPeerKeepAliveOption
+        equals: management
+      - jsonpath: $.current.management.vpcAutoRecoveryTimer
+        equals: 360
+      - jsonpath: $.current.management.vpcDelayRestoreTimer
+        equals: 150
+      - jsonpath: $.current.management.vpcPeerLinkPortChannelId
+        equals: '500'
+      - jsonpath: $.current.management.advertisePhysicalIp
+        equals: false
+      - jsonpath: $.current.management.vpcDomainIdRange
+        equals: 1-1000
+      - jsonpath: $.current.management.bgpLoopbackId
+        equals: 0
+      - jsonpath: $.current.management.nveLoopbackId
+        equals: 1
+      - jsonpath: $.current.management.vrfTemplate
+        equals: Default_VRF_Universal
+      - jsonpath: $.current.management.networkTemplate
+        equals: Default_Network_Universal
+      - jsonpath: $.current.management.vrfExtensionTemplate
+        equals: Default_VRF_Extension_Universal
+      - jsonpath: $.current.management.networkExtensionTemplate
+        equals: Default_Network_Extension_Universal
+      - jsonpath: $.current.management.l3VniNoVlanDefaultOption
+        equals: false
+      - jsonpath: $.current.management.fabricMtu
+        equals: 9216
+      - jsonpath: $.current.management.l2HostInterfaceMtu
+        equals: 9216
+      - jsonpath: $.current.management.tenantDhcp
+        equals: true
+      - jsonpath: $.current.management.nxapi
+        equals: true
+      - jsonpath: $.current.management.nxapiHttpsPort
+        equals: 443
+      - jsonpath: $.current.management.nxapiHttp
+        equals: false
+      - jsonpath: $.current.management.nxapiHttpPort
+        equals: 80
+      - jsonpath: $.current.management.snmpTrap
+        equals: true
+      - jsonpath: $.current.management.anycastBorderGatewayAdvertisePhysicalIp
+        equals: false
+      - jsonpath: $.current.management.greenfieldDebugFlag
+        equals: disable
+      - jsonpath: $.current.management.tcamAllocation
+        equals: true
+      - jsonpath: $.current.management.realTimeInterfaceStatisticsCollection
+        equals: false
+      - jsonpath: $.current.management.bgpLoopbackIpRange
+        equals: 10.101.0.0/22
+      - jsonpath: $.current.management.nveLoopbackIpRange
+        equals: 10.103.0.0/22
+      - jsonpath: $.current.management.anycastRendezvousPointIpRange
+        equals: 10.254.101.0/24
+      - jsonpath: $.current.management.intraFabricSubnetRange
+        equals: 10.104.0.0/16
+      - jsonpath: $.current.management.l2VniRange
+        equals: 30000-49000
+      - jsonpath: $.current.management.l3VniRange
+        equals: 50000-59000
+      - jsonpath: $.current.management.networkVlanRange
+        equals: 2300-2999
+      - jsonpath: $.current.management.vrfVlanRange
+        equals: 2000-2299
+      - jsonpath: $.current.management.subInterfaceDot1qRange
+        equals: 2-511
+      - jsonpath: $.current.management.vrfLiteAutoConfig
+        equals: manual
+      - jsonpath: $.current.management.vrfLiteSubnetRange
+        equals: 10.133.0.0/16
+      - jsonpath: $.current.management.vrfLiteSubnetTargetMask
+        equals: 30
+      - jsonpath: $.current.management.autoUniqueVrfLiteIpPrefix
+        equals: false
+      - jsonpath: $.current.management.perVrfLoopbackAutoProvision
+        equals: true
+      - jsonpath: $.current.management.perVrfLoopbackIpRange
+        equals: 10.105.0.0/22
+      - jsonpath: $.current.management.day0Bootstrap
+        equals: false
+      - jsonpath: $.current.management.localDhcpServer
+        equals: false
+    - - jsonpath: $.current.management.type
+        equals: vxlanEbgp
+      - jsonpath: $.current.name
+        equals: '{{ ebgp_multi_fabric_2 }}'
+      - jsonpath: $.current.location.latitude
+        equals: 37.7749
+      - jsonpath: $.current.location.longitude
+        equals: -122.4194
+      - jsonpath: $.current.licenseTier
+        equals: premier
+      - jsonpath: $.current.alertSuspend
+        equals: disabled
+      - jsonpath: $.current.securityDomain
+        equals: all
+      - jsonpath: $.current.telemetryCollection
+        equals: false
+      - jsonpath: $.current.management.bgpAsn
+        equals: '65102'
+      - jsonpath: $.current.management.siteId
+        equals: '65102'
+      - jsonpath: $.current.management.bgpAsMode
+        equals: sameTierAS
+      - jsonpath: $.current.management.bgpAllowAsInNum
+        equals: 1
+      - jsonpath: $.current.management.bgpMaxPath
+        equals: 4
+      - jsonpath: $.current.management.autoConfigureEbgpEvpnPeering
+        equals: true
+      - jsonpath: $.current.management.targetSubnetMask
+        equals: 30
+      - jsonpath: $.current.management.anycastGatewayMac
+        equals: 2020.0000.0002
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: false
+      - jsonpath: $.current.management.replicationMode
+        equals: multicast
+      - jsonpath: $.current.management.multicastGroupSubnet
+        equals: 239.1.1.0/25
+      - jsonpath: $.current.management.autoGenerateMulticastGroupAddress
+        equals: false
+      - jsonpath: $.current.management.underlayMulticastGroupAddressLimit
+        equals: 128
+      - jsonpath: $.current.management.tenantRoutedMulticast
+        equals: false
+      - jsonpath: $.current.management.rendezvousPointCount
+        equals: 2
+      - jsonpath: $.current.management.rendezvousPointLoopbackId
+        equals: 254
+      - jsonpath: $.current.management.vpcPeerLinkVlan
+        equals: '3600'
+      - jsonpath: $.current.management.vpcPeerLinkEnableNativeVlan
+        equals: false
+      - jsonpath: $.current.management.vpcPeerKeepAliveOption
+        equals: management
+      - jsonpath: $.current.management.vpcAutoRecoveryTimer
+        equals: 360
+      - jsonpath: $.current.management.vpcDelayRestoreTimer
+        equals: 150
+      - jsonpath: $.current.management.vpcPeerLinkPortChannelId
+        equals: '500'
+      - jsonpath: $.current.management.advertisePhysicalIp
+        equals: false
+      - jsonpath: $.current.management.vpcDomainIdRange
+        equals: 1-1000
+      - jsonpath: $.current.management.bgpLoopbackId
+        equals: 0
+      - jsonpath: $.current.management.nveLoopbackId
+        equals: 1
+      - jsonpath: $.current.management.vrfTemplate
+        equals: Default_VRF_Universal
+      - jsonpath: $.current.management.networkTemplate
+        equals: Default_Network_Universal
+      - jsonpath: $.current.management.vrfExtensionTemplate
+        equals: Default_VRF_Extension_Universal
+      - jsonpath: $.current.management.networkExtensionTemplate
+        equals: Default_Network_Extension_Universal
+      - jsonpath: $.current.management.l3VniNoVlanDefaultOption
+        equals: false
+      - jsonpath: $.current.management.fabricMtu
+        equals: 9216
+      - jsonpath: $.current.management.l2HostInterfaceMtu
+        equals: 9216
+      - jsonpath: $.current.management.tenantDhcp
+        equals: true
+      - jsonpath: $.current.management.nxapi
+        equals: true
+      - jsonpath: $.current.management.nxapiHttpsPort
+        equals: 443
+      - jsonpath: $.current.management.nxapiHttp
+        equals: false
+      - jsonpath: $.current.management.nxapiHttpPort
+        equals: 80
+      - jsonpath: $.current.management.snmpTrap
+        equals: true
+      - jsonpath: $.current.management.anycastBorderGatewayAdvertisePhysicalIp
+        equals: false
+      - jsonpath: $.current.management.greenfieldDebugFlag
+        equals: disable
+      - jsonpath: $.current.management.tcamAllocation
+        equals: true
+      - jsonpath: $.current.management.realTimeInterfaceStatisticsCollection
+        equals: false
+      - jsonpath: $.current.management.bgpLoopbackIpRange
+        equals: 10.102.0.0/22
+      - jsonpath: $.current.management.nveLoopbackIpRange
+        equals: 10.103.0.0/22
+      - jsonpath: $.current.management.anycastRendezvousPointIpRange
+        equals: 10.254.102.0/24
+      - jsonpath: $.current.management.intraFabricSubnetRange
+        equals: 10.104.0.0/16
+      - jsonpath: $.current.management.l2VniRange
+        equals: 30000-49000
+      - jsonpath: $.current.management.l3VniRange
+        equals: 50000-59000
+      - jsonpath: $.current.management.networkVlanRange
+        equals: 2300-2999
+      - jsonpath: $.current.management.vrfVlanRange
+        equals: 2000-2299
+      - jsonpath: $.current.management.subInterfaceDot1qRange
+        equals: 2-511
+      - jsonpath: $.current.management.vrfLiteAutoConfig
+        equals: manual
+      - jsonpath: $.current.management.vrfLiteSubnetRange
+        equals: 10.134.0.0/16
+      - jsonpath: $.current.management.vrfLiteSubnetTargetMask
+        equals: 30
+      - jsonpath: $.current.management.autoUniqueVrfLiteIpPrefix
+        equals: false
+      - jsonpath: $.current.management.perVrfLoopbackAutoProvision
+        equals: true
+      - jsonpath: $.current.management.perVrfLoopbackIpRange
+        equals: 10.106.0.0/22
+      - jsonpath: $.current.management.day0Bootstrap
+        equals: false
+      - jsonpath: $.current.management.localDhcpServer
+        equals: false
+  external:
+    configs:
+    - fabric_name: '{{ ext_multi_fabric_1 }}'
+      location:
+        latitude: 37.7749
+        longitude: -122.4194
+      license_tier: premier
+      alert_suspend: disabled
+      security_domain: all
+      telemetry_collection: false
+      management:
+        bgp_asn: '65101'
+        copp_policy: manual
+        create_bgp_config: true
+        cdp: false
+        snmp_trap: true
+        nxapi: false
+        nxapi_http: false
+        nxapi_https_port: 443
+        nxapi_http_port: 80
+        performance_monitoring: false
+        real_time_interface_statistics_collection: false
+        interface_statistics_load_interval: 10
+        sub_interface_dot1q_range: 2-511
+        day0_bootstrap: false
+        local_dhcp_server: false
+        dhcp_protocol_version: dhcpv4
+        dhcp_start_address: ''
+        dhcp_end_address: ''
+        management_gateway: ''
+        management_ipv4_prefix: 24
+    - fabric_name: '{{ ext_multi_fabric_2 }}'
+      location:
+        latitude: 37.7749
+        longitude: -122.4194
+      license_tier: premier
+      alert_suspend: disabled
+      security_domain: all
+      telemetry_collection: false
+      management:
+        bgp_asn: '65102'
+        copp_policy: manual
+        create_bgp_config: true
+        cdp: false
+        snmp_trap: true
+        nxapi: false
+        nxapi_http: false
+        nxapi_https_port: 443
+        nxapi_http_port: 80
+        performance_monitoring: false
+        real_time_interface_statistics_collection: false
+        interface_statistics_load_interval: 10
+        sub_interface_dot1q_range: 2-511
+        day0_bootstrap: false
+        local_dhcp_server: false
+        dhcp_protocol_version: dhcpv4
+        dhcp_start_address: ''
+        dhcp_end_address: ''
+        management_gateway: ''
+        management_ipv4_prefix: 24
+    expectations:
+    - - jsonpath: $.current.management.type
+        equals: externalConnectivity
+      - jsonpath: $.current.name
+        equals: '{{ ext_multi_fabric_1 }}'
+      - jsonpath: $.current.location.latitude
+        equals: 37.7749
+      - jsonpath: $.current.location.longitude
+        equals: -122.4194
+      - jsonpath: $.current.licenseTier
+        equals: premier
+      - jsonpath: $.current.alertSuspend
+        equals: disabled
+      - jsonpath: $.current.securityDomain
+        equals: all
+      - jsonpath: $.current.telemetryCollection
+        equals: false
+      - jsonpath: $.current.management.bgpAsn
+        equals: '65101'
+      - jsonpath: $.current.management.coppPolicy
+        equals: manual
+      - jsonpath: $.current.management.createBgpConfig
+        equals: true
+      - jsonpath: $.current.management.cdp
+        equals: false
+      - jsonpath: $.current.management.snmpTrap
+        equals: true
+      - jsonpath: $.current.management.nxapi
+        equals: false
+      - jsonpath: $.current.management.nxapiHttp
+        equals: false
+      - jsonpath: $.current.management.nxapiHttpsPort
+        equals: 443
+      - jsonpath: $.current.management.nxapiHttpPort
+        equals: 80
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: false
+      - jsonpath: $.current.management.realTimeInterfaceStatisticsCollection
+        equals: false
+      - jsonpath: $.current.management.subInterfaceDot1qRange
+        equals: 2-511
+      - jsonpath: $.current.management.day0Bootstrap
+        equals: false
+      - jsonpath: $.current.management.localDhcpServer
+        equals: false
+    - - jsonpath: $.current.management.type
+        equals: externalConnectivity
+      - jsonpath: $.current.name
+        equals: '{{ ext_multi_fabric_2 }}'
+      - jsonpath: $.current.location.latitude
+        equals: 37.7749
+      - jsonpath: $.current.location.longitude
+        equals: -122.4194
+      - jsonpath: $.current.licenseTier
+        equals: premier
+      - jsonpath: $.current.alertSuspend
+        equals: disabled
+      - jsonpath: $.current.securityDomain
+        equals: all
+      - jsonpath: $.current.telemetryCollection
+        equals: false
+      - jsonpath: $.current.management.bgpAsn
+        equals: '65102'
+      - jsonpath: $.current.management.coppPolicy
+        equals: manual
+      - jsonpath: $.current.management.createBgpConfig
+        equals: true
+      - jsonpath: $.current.management.cdp
+        equals: false
+      - jsonpath: $.current.management.snmpTrap
+        equals: true
+      - jsonpath: $.current.management.nxapi
+        equals: false
+      - jsonpath: $.current.management.nxapiHttp
+        equals: false
+      - jsonpath: $.current.management.nxapiHttpsPort
+        equals: 443
+      - jsonpath: $.current.management.nxapiHttpPort
+        equals: 80
+      - jsonpath: $.current.management.performanceMonitoring
+        equals: false
+      - jsonpath: $.current.management.realTimeInterfaceStatisticsCollection
+        equals: false
+      - jsonpath: $.current.management.subInterfaceDot1qRange
+        equals: 2-511
+      - jsonpath: $.current.management.day0Bootstrap
+        equals: false
+      - jsonpath: $.current.management.localDhcpServer
+        equals: false
