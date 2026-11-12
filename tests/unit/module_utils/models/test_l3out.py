@@ -1162,8 +1162,8 @@ def test_l3out_01200():
     ## Test
 
     - Returns dict with fabric_name, state, config keys
-    - state has correct choices (merged, replaced, deleted)
-    - config is list of dicts with l3out_spec options
+    - state has correct choices (merged, replaced, deleted, gathered)
+    - config is an optional list of dicts with l3out_spec options
     - Nested specs have required fields marked
 
     ## Classes and Methods
@@ -1177,10 +1177,11 @@ def test_l3out_01200():
     assert spec["fabric_name"]["required"] is True
     assert "state" in spec
     assert spec["state"]["default"] == "merged"
-    assert set(spec["state"]["choices"]) == {"merged", "replaced", "deleted"}
+    assert set(spec["state"]["choices"]) == {"merged", "replaced", "deleted", "gathered"}
     assert "config" in spec
     assert spec["config"]["type"] == "list"
     assert spec["config"]["elements"] == "dict"
+    assert spec["config"]["required"] is False
 
     # L3Out item spec
     l3out_opts = spec["config"]["options"]
@@ -1342,3 +1343,17 @@ class TestAuthKeySecretHandling:
 
         payload = model.to_payload()
         assert "authKey" not in payload["routingDetails"]["fabric1Details"]
+
+    def test_gathered_config_retains_attach_and_masks_auth_key(self):
+        """
+        Gathered output keeps fields supported by the module argspec while
+        preserving the existing secret masking behavior.
+        """
+        model = self._build_model_with_auth_key()
+        model.attach = True
+
+        gathered = model.to_gathered_config()
+
+        assert gathered["attach"] is True
+        assert gathered["routing_details"]["bgp"]["fabric1_details"]["auth_key"] == self.AUTH_KEY_MASKED
+        assert self.AUTH_KEY_PLAINTEXT not in str(gathered)

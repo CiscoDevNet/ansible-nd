@@ -147,17 +147,18 @@ def test_svi_orchestrator_00020() -> None:
 # =============================================================================
 
 
-def test_svi_orchestrator_00400() -> None:
+@pytest.mark.parametrize("state", ["overridden", "gathered"])
+def test_svi_orchestrator_00400(state) -> None:
     """
     # Summary
 
-    Verify `query_all` validates the fabric, iterates all switches (`state: overridden` is fabric-wide per
-    `_switches_to_query`), filters to interfaceType=svi AND policyType=svi, and injects `switchIp` onto each
-    kept interface.
+    Verify query_all queries every switch for state: overridden and state: gathered, filters to interfaceType=svi and
+    policyType=svi, and injects switchIp.
 
     ## Test
 
-    - state is `overridden`, so `_switches_to_query` returns the full switch map
+    - `state` is parameterized with `overridden` and `gathered`; both are fabric-wide. Overridden resolves the full
+      switch map through `_switches_to_query`, while gathered reads the fabric switch map directly.
     - Fabric summary returns 200
     - Two switches in the switch list
     - Switch 1 returns: SVI (kept), ethernet (filtered by interfaceType), SVI with policyType=underlaySvi (filtered by policyType)
@@ -179,7 +180,7 @@ def test_svi_orchestrator_00400() -> None:
     gen_responses = ResponseGenerator(responses())
 
     with does_not_raise():
-        orchestrator = _build_orchestrator(gen_responses, state="overridden")
+        orchestrator = _build_orchestrator(gen_responses, state=state)
         result = orchestrator.query_all()
 
     assert isinstance(result, list)
