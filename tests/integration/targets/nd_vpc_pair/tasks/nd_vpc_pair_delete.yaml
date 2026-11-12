@@ -21,7 +21,7 @@
     vpc_pair_conf:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
-        use_virtual_peer_link: true
+        use_virtual_peer_link: "{{ supports_vpc_fabric_peering | bool }}"
   delegate_to: localhost
   tags: delete
 
@@ -333,10 +333,12 @@
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
-        use_virtual_peer_link: true
+        use_virtual_peer_link: "{{ supports_vpc_fabric_peering | bool }}"
         vpc_pair_details: "{{ vpc_pair_details_delete_safe }}"
   register: result
-  when: test_fabric_type == "LANClassic"
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: delete
 
 - name: DELETE - TC5 - API - Query direct vpcPair state before deletion
@@ -344,7 +346,9 @@
     path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPair"
     method: get
   register: tc5_vpc_pair_direct
-  when: test_fabric_type == "LANClassic"
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: delete
 
 - name: DELETE - TC5 - VALIDATE - Verify extended vpc_pair_details before deletion
@@ -353,12 +357,14 @@
     expected_data:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
-        use_virtual_peer_link: true
+        use_virtual_peer_link: "{{ supports_vpc_fabric_peering | bool }}"
         vpc_pair_details: "{{ vpc_pair_details_delete_safe }}"
     mode: "full"
     validate_vpc_pair_details: true
   register: tc5_validation
-  when: test_fabric_type == "LANClassic"
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: delete
 
 - name: DELETE - TC5 - DELETE - Delete vPC pair created with extended details
@@ -374,7 +380,9 @@
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
   register: tc5_delete_result
-  when: test_fabric_type == "LANClassic"
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: delete
 
 - name: DELETE - TC5 - ASSERT - Extended details delete flow passed
@@ -387,7 +395,9 @@
       - tc5_validation.failed == false
       - tc5_delete_result.failed == false
       - tc5_delete_result.changed == true
-  when: test_fabric_type == "LANClassic"
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: delete
 
 # TC6 - Delete with config_actions save+deploy
@@ -560,7 +570,7 @@
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
-        use_virtual_peer_link: true
+        use_virtual_peer_link: "{{ supports_vpc_fabric_peering | bool }}"
   failed_when: false
   when: cleanup_at_end | default(true)
   tags: delete

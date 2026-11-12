@@ -117,7 +117,15 @@ class VpcPairStateMachine(NDStateMachine):
         )
 
         formatted = self.output.format()
-        formatted.setdefault("current", formatted.get("after", []))
+        if "current" not in formatted:
+            if self.module.params.get("state") == "gathered":
+                # Shared gathered output leaves ``after`` empty and prunes keys
+                # against playbook names (peer1/peer2_switch_id), dropping the
+                # runtime aliases switch_id/peer_switch_id. Preserve those IDs
+                # from the validated collection for the vPC runner and validator.
+                formatted["current"] = self.existing.to_ansible_config()
+            else:
+                formatted["current"] = formatted.get("after", [])
         formatted.setdefault("response", [])
         formatted.setdefault("result", [])
         class_diff = self._build_class_diff()

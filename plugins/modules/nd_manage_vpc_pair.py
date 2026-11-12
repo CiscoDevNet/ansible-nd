@@ -113,7 +113,8 @@ options:
                 - peer_switch_id
             use_virtual_peer_link:
                 description:
-                - Enable virtual peer link for the vPC pair.
+                - Enable virtual peer link for the vPC pair. The target fabric must support
+                  virtual fabric peering; set this to C(false) to use a physical peer link.
                 type: bool
                 default: false
             vpc_pair_details:

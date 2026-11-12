@@ -21,7 +21,7 @@
     vpc_pair_conf:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
-        use_virtual_peer_link: true
+        use_virtual_peer_link: "{{ supports_vpc_fabric_peering | bool }}"
         vpc_pair_details:
           type: default
           domain_id: 20
@@ -71,7 +71,7 @@
     vpc_pair_conf:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
-        use_virtual_peer_link: true
+        use_virtual_peer_link: "{{ supports_vpc_fabric_peering | bool }}"
   delegate_to: localhost
   tags: merge
 
@@ -227,7 +227,7 @@
   register: result
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC2 - ASSERT - Check if changed flag is true
@@ -237,7 +237,7 @@
       - result.changed == true
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC2 - GATHER - Get vPC pair state in ND
@@ -255,7 +255,7 @@
   register: verify_result
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC2 - VALIDATE - Verify modified vPC pair state
@@ -266,7 +266,7 @@
   register: validation
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC2 - ASSERT - Validation passed
@@ -275,7 +275,7 @@
       - validation.failed == false
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 # TC2b - VXLANFabric specific test
@@ -382,7 +382,7 @@
   register: result
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC4 - ASSERT - Check if changed flag is true
@@ -392,7 +392,7 @@
       - result.changed == true
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC4 - GATHER - Get vPC pair state in ND
@@ -410,7 +410,7 @@
   register: verify_result
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC4 - VALIDATE - Verify minimal vPC pair
@@ -421,7 +421,7 @@
   register: validation
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC4 - ASSERT - Validation passed
@@ -430,7 +430,7 @@
       - validation.failed == false
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 # TC4b - Delete vPC pair after minimal test
@@ -449,7 +449,7 @@
   register: result
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC4b - ASSERT - Check if delete successfully
@@ -459,7 +459,7 @@
       - result.changed == true
   when:
     - test_fabric_type == "LANClassic"
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 # TC5 - Create vPC pair with defaults (state omitted)
@@ -614,7 +614,7 @@
   register: result
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC7 - ASSERT - Verify default vpc_pair_details path
@@ -630,7 +630,7 @@
       - result.logs | to_json is search('"keepAliveVrf"')
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC7 - API - Query direct vpcPair state for switch1
@@ -640,7 +640,7 @@
   register: tc7_vpc_pair_direct
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC7 - VALIDATE - Verify pair state after default details update
@@ -654,7 +654,7 @@
   register: tc7_validation
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC7 - ASSERT - Validation passed
@@ -665,7 +665,7 @@
       - tc7_validation.failed == false
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 # TC7b - Merge without vpc_pair_details should preserve existing details
@@ -685,7 +685,7 @@
   register: result
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC7b - ASSERT - Update without details applied
@@ -695,7 +695,7 @@
       - result.changed == true
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC7b - API - Query direct vpcPair state for switch1
@@ -705,7 +705,7 @@
   register: tc7b_vpc_pair_direct
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC7b - VALIDATE - Verify omitted details are preserved
@@ -719,7 +719,7 @@
   register: tc7b_validation
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC7b - ASSERT - Validation passed
@@ -730,7 +730,7 @@
       - tc7b_validation.failed == false
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 # TC8 - Merge with vpc_pair_details custom template settings
@@ -757,6 +757,7 @@
   failed_when: false
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC8 - ASSERT - Verify custom details update outcome
@@ -768,6 +769,7 @@
         (result.msg is defined and result.msg is search("templateDO"))
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC8 - SETUP - Track custom-template availability
@@ -775,6 +777,7 @@
     tc8_template_unavailable: "{{ result.msg is defined and result.msg is search('templateDO') }}"
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC8 - ASSERT - Verify custom vpc_pair_details path
@@ -788,6 +791,7 @@
       - result.logs | to_json is search('"templateConfig"')
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
     - result.changed == true
   tags: merge
 
@@ -798,6 +802,7 @@
   register: tc8_vpc_pair_direct
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
     - result.changed == true
   tags: merge
 
@@ -812,6 +817,7 @@
   register: tc8_validation
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
     - result.changed == true
   tags: merge
 
@@ -823,6 +829,7 @@
       - tc8_validation.failed == false
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
     - result.changed == true
   tags: merge
 
@@ -839,7 +846,7 @@
     config:
       - peer1_switch_id: "INVALID_SERIAL"
         peer2_switch_id: "{{ test_switch2 }}"
-        use_virtual_peer_link: true
+        use_virtual_peer_link: "{{ supports_vpc_fabric_peering | bool }}"
   register: result
   failed_when: false
   when: not (tc8_template_unavailable | default(false))
@@ -889,7 +896,7 @@
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
-        use_virtual_peer_link: true
+        use_virtual_peer_link: "{{ supports_vpc_fabric_peering | bool }}"
   register: result
   until: result is not failed
   retries: 3
@@ -964,7 +971,7 @@
       }}
   tags: merge
 
-- name: MERGE - TC10 - ASSERT - Verify use_virtual_peer_link is true in gathered output
+- name: MERGE - TC10 - ASSERT - Verify use_virtual_peer_link matches fabric support
   ansible.builtin.assert:
     that:
       - tc10_gather_result.failed == false
@@ -974,7 +981,7 @@
           tc10_gathered_pair.use_virtual_peer_link
           | default(tc10_gathered_pair.useVirtualPeerLink | default(false))
           | bool
-        ) == true
+        ) == (supports_vpc_fabric_peering | bool)
   tags: merge
 
 - name: MERGE - TC10 - API - Query vpcPairSupport checkPairing for both peers
@@ -1107,7 +1114,7 @@
     that:
       - tc10_vpc_pairs.failed == false
       - tc10_pair_from_list is mapping
-      - tc10_gather_vpl == true
+      - tc10_gather_vpl == (supports_vpc_fabric_peering | bool)
       - not tc10_list_has_vpl or tc10_list_vpl == tc10_gather_vpl
     quiet: true
   vars:
@@ -1190,7 +1197,7 @@
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
-        use_virtual_peer_link: true
+        use_virtual_peer_link: "{{ supports_vpc_fabric_peering | bool }}"
   register: result
   tags: merge
 
@@ -1385,7 +1392,7 @@
     config:
       - peer1_switch_id: "{{ blocked_switch_id }}"
         peer2_switch_id: "{{ allowed_switch_id }}"
-        use_virtual_peer_link: true
+        use_virtual_peer_link: "{{ supports_vpc_fabric_peering | bool }}"
   register: result
   failed_when: false
   when: tc14_supported_scenario
@@ -1969,7 +1976,7 @@
   register: result
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC23 - API - Query direct vpcPair state for extended details verification
@@ -1979,7 +1986,7 @@
   register: tc23_vpc_pair_direct
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC23 - VALIDATE - Verify extended vpc_pair_details state
@@ -1995,7 +2002,7 @@
   register: tc23_validation
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 - name: MERGE - TC23 - ASSERT - Extended details validation passed
@@ -2008,7 +2015,7 @@
       - tc23_validation.failed == false
   when:
     - vpc_pair_details_expected_supported | default(false) | bool
-    - supports_vpc_fabric_peering | default(true) | bool
+    - supports_vpc_fabric_peering | default(false) | bool
   tags: merge
 
 # TC23b - Reject vpc_pair_details on iBGP/eBGP-type VXLAN fabrics
