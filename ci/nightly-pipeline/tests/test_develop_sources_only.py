@@ -449,6 +449,13 @@ p.write_text(json.dumps(s)); m.exit_json(changed=True,before=[],after=[])
     }
     selected_tasks = [task for task in tasks if task.get("name") in selected_names]
     assert len(selected_tasks) == len(selected_names)
+    detach_tasks = [task for task in selected_tasks if task.get("name", "").startswith("Detach reserved members")]
+    assert len(detach_tasks) == 3
+    for task in detach_tasks:
+        module_args = task[next(key for key in task if key.startswith("cisco.nd.nd_interface_port_channel_"))]
+        assert module_args["state"] == "merged"
+        assert module_args["config_actions"]["deploy"] is True
+        assert module_args["config"][0]["config_data"]["network_os"]["policy"]["ports"] == "{{ _ndp_pc_detachment.members_after }}"
     play = tmp_path / "detach.yaml"
     play.write_text(yaml.safe_dump([{
         "hosts": "localhost", "connection": "local", "gather_facts": False,

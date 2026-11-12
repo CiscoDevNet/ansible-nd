@@ -254,6 +254,13 @@ def test_standalone_port_channel_restore_is_exact_and_refuses_drift(tmp_path,pro
         'switch_ip':'192.0.2.1','fabric_name':'TEST','module':'access','policy_type':'accessPoHost',
         'members_before':['Ethernet1/10','Ethernet1/30'],'members_after':['Ethernet1/30']}
     restore=yaml.safe_load((TASKS/'restore_interface_operation.yaml').read_text())
+    restore_tasks=[task for task in restore if task.get('name','').startswith('Restore reserved members to the standalone')]
+    assert len(restore_tasks)==3
+    restore_args=[task[next(key for key in task if key.startswith('cisco.nd.nd_interface_port_channel_'))]
+                  for task in restore_tasks]
+    assert all(task['state']=='merged' for task in restore_args)
+    assert all(task['config'][0]['config_data']['network_os']['policy']['ports']=='{{ _ndp_restore_operation.members_before }}'
+               for task in restore_args)
     play=tmp_path/'restore-pc.yaml'; play.write_text(yaml.safe_dump([{'hosts':'localhost','connection':'local',
         'gather_facts':False,'vars':{'ansible_python_interpreter':sys.executable,
         '_ndp_restore_operation':operation},'tasks':restore}],sort_keys=False))
