@@ -1,0 +1,30 @@
+---
+- name: Require a distinct same-fabric switch and one reserved independent parent
+  ansible.builtin.assert:
+    that:
+      - test_breakout_coupled_safe_fixture.switch_id is string
+      - test_breakout_coupled_safe_fixture.switch_id | length > 0
+      - test_breakout_coupled_safe_fixture.switch_id != test_breakout_coupled_switch_id
+      - >-
+        test_breakout_coupled_safe_fixture.fabric_name | default(test_breakout_coupled_fabric_name) ==
+        test_breakout_coupled_fabric_name
+      - test_breakout_coupled_safe_fixture.native_interfaces | length == 1
+      - test_breakout_coupled_safe_fixture.profiles.map_a.child_lanes | length == 1
+    fail_msg: "The optional safe-switch fixture needs a distinct serial, same fabric and one reserved independent family."
+
+- name: Require canonical names throughout the optional safe-switch fixture
+  ansible.builtin.include_tasks: coupled_validate_names.yaml
+  vars:
+    coupled_names_fixture: "{{ test_breakout_coupled_safe_fixture }}"
+
+- name: Validate complete safe-switch fixture locally without issuing GETs
+  cisco.nd.nd_manage_breakout_interfaces_validate:
+    fabric_name: "{{ test_breakout_coupled_fabric_name }}"
+    switch_id: "{{ test_breakout_coupled_safe_fixture.switch_id }}"
+    fixture: "{{ test_breakout_coupled_safe_fixture }}"
+    expected_profile: native
+    validate_only: true
+    whole_switch: true
+    include_speeds: true
+    topology_only: true
+  check_mode: false

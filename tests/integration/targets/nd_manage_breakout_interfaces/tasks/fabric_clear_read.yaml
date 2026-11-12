@@ -1,0 +1,37 @@
+---
+# Independent fabric-wide safety evidence. Never import production discovery
+# helpers or infer completeness from a page smaller than the requested limit.
+- name: Initialize strict fabric-wide Ethernet observation
+  ansible.builtin.set_fact:
+    breakout_fabric_rows: []
+    breakout_fabric_offset: 0
+    breakout_fabric_total: -1
+    breakout_fabric_pages: 0
+    breakout_fabric_page_fingerprints: []
+    breakout_fabric_identities: []
+    breakout_fabric_broken_keys: []
+
+- name: Consume the complete unscoped Ethernet inventory before drawing conclusions
+  ansible.builtin.include_tasks: fabric_clear_page.yaml
+
+- name: Require exact complete fabric-wide row coverage
+  ansible.builtin.assert:
+    that:
+      - breakout_fabric_rows | length == breakout_fabric_total | int
+      - breakout_fabric_pages | int > 0
+      - breakout_fabric_identities | length == breakout_fabric_rows | length
+      - breakout_fabric_identities | unique | length == breakout_fabric_identities | length
+    fail_msg: Incomplete or duplicate fabric-wide evidence cannot authorize destructive overridden testing.
+
+- name: Independently classify physical non-FEX breakout children across every switch
+  ansible.builtin.set_fact:
+    breakout_fabric_broken_keys: >-
+      {{ (breakout_fabric_broken_keys + [item.switchId ~ '/' ~
+         (item.interfaceName | regex_replace('(?i)^ethernet', 'Ethernet') | regex_replace('/[1-9][0-9]*$', ''))]) | unique | list }}
+  loop: "{{ breakout_fabric_rows }}"
+  loop_control:
+    label: "{{ item.switchId }}/{{ item.interfaceName }}"
+  when:
+    - item.interfaceName is match('(?i)^Ethernet[1-9][0-9]*/[1-9][0-9]*/[1-9][0-9]*$')
+    - item.physicalInterface is sameas true
+    - item.fex is sameas false

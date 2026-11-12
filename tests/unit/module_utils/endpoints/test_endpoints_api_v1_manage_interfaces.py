@@ -352,6 +352,7 @@ def test_ep_manage_interfaces_00160():
     instance.fabric_name = "fab/one"
     instance.endpoint_params.cluster_name = "cluster-a"
     instance.endpoint_params.filter = "interfaceName:Ethernet1/1"
+    instance.endpoint_params.include_all = True
     instance.endpoint_params.max = 500
     instance.endpoint_params.offset = 0
     instance.endpoint_params.sort = "interfaceName:asc"
@@ -363,6 +364,7 @@ def test_ep_manage_interfaces_00160():
     assert set(query.split("&")) == {
         "clusterName=cluster-a",
         "filter=interfaceName%3AEthernet1%2F1",
+        "includeAll=true",
         "max=500",
         "offset=0",
         "sort=interfaceName%3Aasc",

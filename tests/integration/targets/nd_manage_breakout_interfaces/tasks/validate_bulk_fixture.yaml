@@ -1,0 +1,85 @@
+---
+# Distinct control names do not prove independent hardware. These local checks
+# enforce disjoint declared COMPLETE footprints; completeness and supported maps
+# remain prerequisites supplied by the lab owner, not learned after a write.
+- name: Validate optional bulk fixture structure before any controller mutation
+  ansible.builtin.assert:
+    that:
+      - breakout_bulk_candidate is mapping
+      - breakout_bulk_candidate.control_parent is defined
+      - breakout_bulk_candidate.control_parent is match('^Ethernet[1-9][0-9]*/[1-9][0-9]*$')
+      - breakout_bulk_candidate.switch_id | default(test_switch_serial) is string
+      - breakout_bulk_candidate.switch_id | default(test_switch_serial) | trim | length > 0
+      - breakout_bulk_candidate.native_interfaces is sequence
+      - breakout_bulk_candidate.native_interfaces is not string
+      - breakout_bulk_candidate.native_interfaces is not mapping
+      - breakout_bulk_candidate.native_interfaces | length > 0
+      - breakout_bulk_candidate.native_interfaces | unique | length == breakout_bulk_candidate.native_interfaces | length
+      - breakout_bulk_candidate.native_interfaces | select('match', '^Ethernet[1-9][0-9]*/[1-9][0-9]*$') | list | length == breakout_bulk_candidate.native_interfaces | length
+      - breakout_bulk_candidate.control_parent in breakout_bulk_candidate.native_interfaces
+      - breakout_bulk_candidate.profiles is mapping
+      - breakout_bulk_candidate.profiles.map_a is mapping
+      - breakout_bulk_candidate.guard_interfaces | default([]) is sequence
+      - breakout_bulk_candidate.guard_interfaces | default([]) is not string
+      - breakout_bulk_candidate.guard_interfaces | default([]) is not mapping
+      - breakout_bulk_candidate.guard_interfaces | default([]) | unique | length == breakout_bulk_candidate.guard_interfaces | default([]) | length
+      - breakout_bulk_candidate.guard_interfaces | default([]) | select('match', '^Ethernet[1-9][0-9]*/[1-9][0-9]*$') | list | length == breakout_bulk_candidate.guard_interfaces | default([]) | length
+      - breakout_bulk_candidate.native_interfaces | intersect(breakout_bulk_candidate.guard_interfaces | default([])) | length == 0
+    fail_msg: Supply canonical serial identities and complete, reserved, independently acting hardware footprints.
+
+- name: Parse the complete bulk fixture locally without any controller GET
+  cisco.nd.nd_manage_breakout_interfaces_validate:
+    fabric_name: "{{ test_fabric_name }}"
+    switch_id: "{{ breakout_bulk_candidate.switch_id | default(test_switch_serial) }}"
+    fixture: "{{ breakout_bulk_candidate }}"
+    expected_profile: map_a
+    validate_only: true
+  check_mode: false
+  register: breakout_bulk_fixture_validation
+
+- name: Require local-only bulk fixture parsing to remain read-only
+  ansible.builtin.assert:
+    that:
+      - not breakout_bulk_fixture_validation.changed
+      - not (breakout_bulk_fixture_validation.failed | default(false))
+      - breakout_bulk_fixture_validation.validated
+      - breakout_bulk_fixture_validation.observation_calls == []
+      - breakout_bulk_fixture_validation.snapshot is not defined
+
+- name: Validate a supplied observer filter before any mutation
+  ansible.builtin.assert:
+    that:
+      - breakout_bulk_candidate.interface_filter is string
+      - breakout_bulk_candidate.interface_filter | trim | length > 0
+    fail_msg: A custom interface_filter must be nonempty and cover all reserved families and guards.
+  when: breakout_bulk_candidate.interface_filter is defined
+
+- name: Validate every supplied bulk map profile locally
+  ansible.builtin.include_tasks: validate_bulk_profile.yaml
+  loop: "{{ breakout_bulk_candidate.profiles | dict2items }}"
+  loop_control:
+    loop_var: breakout_bulk_candidate_profile
+
+- name: Reject overlapping declared bulk hardware groups on the same switch
+  ansible.builtin.assert:
+    that:
+      - >-
+        breakout_bulk_candidate.switch_id | default(test_switch_serial) != item.switch_id
+        or breakout_bulk_candidate.native_interfaces | intersect(item.native_interfaces) | length == 0
+      - >-
+        breakout_bulk_candidate.switch_id | default(test_switch_serial) != item.switch_id
+        or breakout_bulk_candidate.guard_interfaces | default([]) | intersect(item.native_interfaces) | length == 0
+      - >-
+        breakout_bulk_candidate.switch_id | default(test_switch_serial) != item.switch_id
+        or breakout_bulk_candidate.native_interfaces | intersect(item.guard_interfaces | default([])) | length == 0
+    fail_msg: >-
+      Bulk fixtures must describe disjoint complete groups on each switch.
+      Parents 21 and 23 in one declared 21-24 quad are not independent targets.
+  loop: "{{ breakout_bulk_fixtures }}"
+  loop_control:
+    label: "{{ item.switch_id }}/{{ item.control_parent }}"
+
+- name: Save the locally validated fixture with its explicit serial identity
+  ansible.builtin.set_fact:
+    breakout_bulk_fixtures: >-
+      {{ breakout_bulk_fixtures + [({'switch_id': test_switch_serial} | combine(breakout_bulk_candidate))] }}

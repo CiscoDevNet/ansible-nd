@@ -1,0 +1,16 @@
+---
+- name: Independently inspect safe-switch state separately from the production invocation
+  cisco.nd.nd_manage_breakout_interfaces_validate:
+    fabric_name: "{{ test_breakout_coupled_fabric_name }}"
+    switch_id: "{{ test_breakout_coupled_safe_fixture.switch_id }}"
+    fixture: "{{ test_breakout_coupled_safe_fixture }}"
+    expected_profile: "{{ coupled_safe_profile | default('native') }}"
+    observe_only: "{{ coupled_safe_observe_only | default(false) }}"
+    baseline: "{{ coupled_safe_baseline | default(omit) }}"
+    whole_switch: true
+    include_speeds: true
+    topology_only: true
+    retries: 1
+    interval: 0
+  check_mode: false
+  register: coupled_safe_observation

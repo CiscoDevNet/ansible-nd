@@ -31,6 +31,8 @@ in the ND Manage API.
   (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/normalize)
 - `EpManageInterfacesRemove` - Bulk delete interfaces
   (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/remove)
+- `EpManageInterfacesBreakout` - Break out physical interfaces
+  (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/breakout)
 """
 
 from __future__ import annotations
@@ -87,6 +89,25 @@ class ManageInterfacesSummaryEndpointParams(ClusterNameMixin, FilterMixin, MaxMi
     """Endpoint-specific query parameters for fabric interface summaries."""
 
     sort: str | None = Field(default=None, min_length=1, description="Sort field and direction")
+    include_all: bool | None = Field(default=None, description="Include all interfaces rather than managed interfaces only")
+
+
+class EpManageInterfacesBreakout(FabricNameMixin, NDEndpointBaseModel):
+    """POST ``interfaces[]`` to ``/fabrics/{fabric_name}/interfaceActions/breakout``."""
+
+    class_name: Literal["EpManageInterfacesBreakout"] = Field(default="EpManageInterfacesBreakout", frozen=True, description="Class name")
+
+    @property
+    def path(self) -> str:
+        """Build the breakout action URL; require the fabric name."""
+        if self.fabric_name is None:
+            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "interfaceActions", "breakout")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return POST."""
+        return HttpVerbEnum.POST
 
 
 class _EpManageInterfacesBase(FabricNameMixin, SwitchSerialNumberMixin, InterfaceNameMixin, NDEndpointBaseModel):

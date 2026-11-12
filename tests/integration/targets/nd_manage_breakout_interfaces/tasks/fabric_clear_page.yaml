@@ -1,0 +1,92 @@
+---
+- name: Bound fabric-wide pagination before issuing another GET
+  ansible.builtin.assert:
+    that: breakout_fabric_pages | int < 100
+    fail_msg: Fabric-wide inventory exceeded the explicit pagination bound; no global clear is authorized.
+
+- name: Read one fabric-wide Ethernet summary page without a switch selector
+  cisco.nd.nd_rest:
+    method: GET
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name | urlencode }}/interfacesSummary?includeAll=true&filter=interfaceType%3Aethernet&max=1000&offset={{ breakout_fabric_offset }}
+  check_mode: false
+  register: breakout_fabric_page
+
+- name: Require explicit successful structured fabric-wide response evidence
+  ansible.builtin.assert:
+    that:
+      - not (breakout_fabric_page.failed | default(false) | bool)
+      - not (breakout_fabric_page.skipped | default(false) | bool)
+      - breakout_fabric_page.status is integer and breakout_fabric_page.status is not boolean
+      - breakout_fabric_page.status == 200
+      - breakout_fabric_page.current is mapping
+      - breakout_fabric_page.current.meta is mapping
+      - breakout_fabric_page.current.meta.counts is mapping
+      - breakout_fabric_page.current.meta.counts.total is integer
+      - breakout_fabric_page.current.meta.counts.total is not boolean
+      - breakout_fabric_page.current.meta.counts.total >= 0
+      - breakout_fabric_page.current.meta.counts.remaining is integer
+      - breakout_fabric_page.current.meta.counts.remaining is not boolean
+      - breakout_fabric_page.current.meta.counts.remaining >= 0
+    fail_msg: Global-clear tests require explicit HTTP 200 and consistent total/remaining pagination evidence.
+
+- name: Extract a page without treating null or omitted nonempty arrays as empty
+  ansible.builtin.set_fact:
+    breakout_fabric_page_rows: >-
+      {{ [] if ('interfaces' not in breakout_fabric_page.current
+         and breakout_fabric_offset | int == 0
+         and breakout_fabric_page.current.meta.counts.total == 0
+         and breakout_fabric_page.current.meta.counts.remaining == 0)
+         else breakout_fabric_page.current.interfaces | default(none) }}
+
+- name: Validate page structure and arithmetic before accepting any rows
+  ansible.builtin.assert:
+    that:
+      - breakout_fabric_page_rows is sequence and breakout_fabric_page_rows is not string and breakout_fabric_page_rows is not mapping
+      - breakout_fabric_page_rows | select('mapping') | list | length == breakout_fabric_page_rows | length
+      - breakout_fabric_total | int == -1 or breakout_fabric_total | int == breakout_fabric_page.current.meta.counts.total
+      - breakout_fabric_offset | int + breakout_fabric_page_rows | length + breakout_fabric_page.current.meta.counts.remaining == breakout_fabric_page.current.meta.counts.total
+      - breakout_fabric_page.current.meta.counts.remaining == 0 or breakout_fabric_page_rows | length > 0
+      - breakout_fabric_page_rows | length == 0 or (breakout_fabric_page_rows | to_json) not in breakout_fabric_page_fingerprints
+    fail_msg: Missing, repeated, empty intermediate or inconsistent pages are not evidence that the fabric is safe to clear.
+
+- name: Require complete switch, name and physical classification for each Ethernet row
+  ansible.builtin.assert:
+    that:
+      - item.switchId is string and item.switchId | trim | length > 0
+      - item.interfaceName is string and item.interfaceName | trim | length > 0
+      - item.physicalInterface is boolean
+      - not item.physicalInterface or item.fex is boolean
+      - >-
+        not (item.physicalInterface and item.fex is sameas false)
+        or item.interfaceName is match('(?i)^Ethernet[1-9][0-9]*/[1-9][0-9]*(?:/[1-9][0-9]*)?(?:[.][0-9]+)?$')
+      - (item.switchId ~ '/' ~ (item.interfaceName | lower)) not in breakout_fabric_identities
+    fail_msg: An unclassifiable or duplicate physical-family candidate blocks global-clear tests.
+  loop: "{{ breakout_fabric_page_rows }}"
+  loop_control:
+    label: "{{ item.switchId | default('?') }}/{{ item.interfaceName | default('?') }}"
+
+- name: Accumulate canonical composite identities without trusting response ordering
+  ansible.builtin.set_fact:
+    breakout_fabric_identities: "{{ breakout_fabric_identities + [item.switchId ~ '/' ~ (item.interfaceName | lower)] }}"
+  loop: "{{ breakout_fabric_page_rows }}"
+  loop_control:
+    label: "{{ item.switchId }}/{{ item.interfaceName }}"
+
+- name: Reject duplicate identities within the current page before accepting or continuing it
+  ansible.builtin.assert:
+    that:
+      - breakout_fabric_identities | unique | length == breakout_fabric_identities | length
+    fail_msg: Duplicate composite interface identities within one page block acceptance and further pagination.
+
+- name: Accept the validated page and retain exact complete-row evidence
+  ansible.builtin.set_fact:
+    breakout_fabric_rows: "{{ breakout_fabric_rows + breakout_fabric_page_rows }}"
+    breakout_fabric_offset: "{{ breakout_fabric_offset | int + breakout_fabric_page_rows | length }}"
+    breakout_fabric_total: "{{ breakout_fabric_page.current.meta.counts.total }}"
+    breakout_fabric_pages: "{{ breakout_fabric_pages | int + 1 }}"
+    breakout_fabric_page_fingerprints: "{{ breakout_fabric_page_fingerprints + [breakout_fabric_page_rows | to_json] }}"
+
+- name: Read the next page only when explicit remaining count requires it
+  ansible.builtin.include_tasks: fabric_clear_page.yaml
+  when: breakout_fabric_page.current.meta.counts.remaining > 0

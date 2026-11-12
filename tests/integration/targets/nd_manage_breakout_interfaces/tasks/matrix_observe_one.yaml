@@ -1,0 +1,29 @@
+---
+- name: Read one matrix footprint using independently declared expectations
+  cisco.nd.nd_manage_breakout_interfaces_validate:
+    fabric_name: "{{ test_fabric_name }}"
+    switch_id: "{{ test_switch_serial }}"
+    fixture: "{{ breakout_matrix_fixtures[breakout_matrix_index] }}"
+    expected_profile: "{{ breakout_matrix_profiles[breakout_matrix_index] }}"
+    observe_only: "{{ breakout_matrix_observe_only | default(false) }}"
+    baseline: "{{ breakout_matrix_baselines.get(breakout_matrix_index | string, omit) }}"
+    whole_switch: true
+    owned_interfaces: "{{ breakout_matrix_owned }}"
+    include_speeds: true
+    topology_only: "{{ breakout_matrix_index in (breakout_matrix_topology_only_indices | default([])) }}"
+    retries: 1
+    interval: 0
+  check_mode: false
+  register: breakout_matrix_observation
+
+- name: Preserve the independent matrix snapshot without replacing expectations
+  ansible.builtin.set_fact:
+    breakout_matrix_snapshots: >-
+      {{ breakout_matrix_snapshots | combine({(breakout_matrix_index | string): breakout_matrix_observation.snapshot}) }}
+
+- name: Protect outside families even for diagnostic observe-only snapshots
+  ansible.builtin.assert:
+    that:
+      - breakout_matrix_observation.snapshot.outside_families == breakout_matrix_baselines[breakout_matrix_index | string].outside_families
+      - breakout_matrix_observation.snapshot.outside_policy_maps == breakout_matrix_baselines[breakout_matrix_index | string].outside_policy_maps
+  when: (breakout_matrix_index | string) in breakout_matrix_baselines

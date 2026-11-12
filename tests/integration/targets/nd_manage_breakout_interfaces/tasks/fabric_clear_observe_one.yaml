@@ -1,0 +1,32 @@
+---
+- name: Independently validate owned footprint and protect all outside families on its switch
+  cisco.nd.nd_manage_breakout_interfaces_validate:
+    fabric_name: "{{ test_fabric_name }}"
+    switch_id: "{{ breakout_fabric_fixtures[breakout_fabric_index].switch_id }}"
+    fixture: "{{ breakout_fabric_fixtures[breakout_fabric_index] }}"
+    expected_profile: "{{ breakout_fabric_profiles[breakout_fabric_index] }}"
+    observe_only: "{{ breakout_fabric_observe_only | default(false) }}"
+    baseline: "{{ breakout_fabric_baselines.get(breakout_fabric_index | string, omit) }}"
+    whole_switch: true
+    include_speeds: true
+    owned_interfaces: >-
+      {{ breakout_fabric_fixtures | selectattr('switch_id', 'equalto', breakout_fabric_fixtures[breakout_fabric_index].switch_id) |
+         map(attribute='native_interfaces') | flatten | unique | list }}
+    retries: "{{ test_breakout_observe_retries }}"
+    interval: "{{ test_breakout_observe_interval }}"
+  check_mode: false
+  register: breakout_fabric_observation
+
+- name: Require a complete independent read-only fabric-clear snapshot
+  ansible.builtin.assert:
+    that:
+      - not (breakout_fabric_observation.failed | default(false) | bool)
+      - not breakout_fabric_observation.changed
+      - breakout_fabric_observation.snapshot.families is mapping
+      - breakout_fabric_observation.snapshot.outside_families is mapping
+      - breakout_fabric_observation.snapshot.outside_policy_maps is mapping
+
+- name: Retain the fresh fixture-indexed independent snapshot
+  ansible.builtin.set_fact:
+    breakout_fabric_snapshots: >-
+      {{ breakout_fabric_snapshots | combine({(breakout_fabric_index | string): breakout_fabric_observation.snapshot}) }}

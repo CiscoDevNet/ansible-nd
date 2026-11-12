@@ -1,0 +1,17 @@
+---
+- name: Validate suite selection before any controller operation
+  ansible.builtin.assert:
+    that:
+      - not ansible_check_mode
+      - testcase in ['all', 'lifecycle', 'validation', 'output', 'bulk', 'check_mode', 'overridden', 'api_failures', 'fabric_clear', 'coupled']
+    fail_msg: Run this role without global --check; individual cases exercise check mode.
+
+- name: Validate ordinary fixtures and capture the pre-mutation baseline
+  ansible.builtin.include_tasks: setup.yaml
+  when: testcase not in ['coupled', 'fabric_clear']
+
+- name: Run selected breakout test cases
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/{{ breakout_test_case }}.yaml"
+  loop: "{{ ['lifecycle', 'validation', 'check_mode', 'output', 'bulk', 'overridden', 'api_failures', 'fabric_clear', 'coupled'] if testcase == 'all' else [testcase] }}"
+  loop_control:
+    loop_var: breakout_test_case

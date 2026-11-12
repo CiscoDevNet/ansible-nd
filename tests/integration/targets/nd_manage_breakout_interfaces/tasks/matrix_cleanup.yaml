@@ -1,0 +1,62 @@
+---
+# This is fresh, explicit test teardown, never rollback evidence. Every recovery
+# case has already captured its post-inverse state before reaching this helper.
+- name: Obtain fresh evidence before considering owned matrix teardown
+  ansible.builtin.include_tasks: matrix_observe.yaml
+  vars:
+    breakout_matrix_observe_only: true
+
+- name: Do not replay uncertain or unsuccessful matrix mutations
+  ansible.builtin.assert:
+    that:
+      - breakout_matrix_last_result is mapping
+      - breakout_matrix_last_result.api_outcomes is defined
+      - breakout_matrix_last_result.api_outcomes is sequence and breakout_matrix_last_result.api_outcomes is not string and breakout_matrix_last_result.api_outcomes is not mapping
+      - >-
+        breakout_matrix_last_result.api_outcomes | map(attribute='outcome', default='unknown') |
+        reject('in', ['success', 'failed', 'unknown', 'noop', 'planned']) | list | length == 0
+      - >-
+        (breakout_matrix_last_result.recovery | default([], true) |
+         map(attribute='status', default='unknown') | reject('equalto', 'response_confirmed') | list | length) == 0
+      - >-
+        (breakout_matrix_last_result.api_outcomes | default([], true) |
+         map(attribute='outcome', default='unknown') | select('equalto', 'unknown') | list | length) == 0
+        or (ansible_verbosity | int >= 3
+            and (breakout_matrix_last_result.api_calls | default([]) |
+                 selectattr('method', 'equalto', 'POST') | list | length) > 0
+            and (breakout_matrix_last_result.api_calls | default([]) |
+                 selectattr('method', 'equalto', 'POST') |
+                 selectattr('http_status', 'in', [200, 201, 204, 207, 400, 409, 422]) | list | length)
+                == (breakout_matrix_last_result.api_calls | default([]) |
+                    selectattr('method', 'equalto', 'POST') | list | length))
+    fail_msg: Matrix teardown is read-only after an uncompleted forward/inverse operation; no write will be replayed.
+
+- name: Select only currently broken, explicitly owned parent families
+  ansible.builtin.set_fact:
+    breakout_matrix_cleanup_config: []
+
+- name: Build fresh scoped teardown targets from the independent observation
+  ansible.builtin.set_fact:
+    breakout_matrix_cleanup_config: >-
+      {{ breakout_matrix_cleanup_config + [{'switch_id': test_switch_serial, 'interface_names': [item]}] }}
+  loop: "{{ breakout_matrix_owned }}"
+  when: >-
+    (breakout_matrix_snapshots.values() | map(attribute='families') | list |
+     map('dict2items') | flatten | selectattr('key', 'equalto', item) |
+     rejectattr('value.children', 'equalto', []) | list | length) > 0
+
+- name: Unbreak only fresh owned targets without hardware-collateral compensation
+  cisco.nd.nd_manage_breakout_interfaces:
+    fabric_name: "{{ test_fabric_name }}"
+    state: deleted
+    config: "{{ breakout_matrix_cleanup_config }}"
+    verify:
+      enabled: false
+  check_mode: false
+  register: breakout_matrix_cleanup_result
+  when: breakout_matrix_cleanup_config | length > 0
+
+- name: Independently verify both reserved footprints are native after teardown
+  ansible.builtin.include_tasks: matrix_observe.yaml
+  vars:
+    breakout_matrix_profiles: [native, native]

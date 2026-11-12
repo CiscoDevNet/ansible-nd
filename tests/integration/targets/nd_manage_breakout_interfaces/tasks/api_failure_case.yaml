@@ -1,0 +1,303 @@
+---
+- name: Initialize a real API rejection case with an immutable native prerequisite
+  ansible.builtin.set_fact:
+    breakout_matrix_last_result: {}
+    breakout_matrix_failure: {}
+    breakout_failure_config: "{{ test_breakout_preserved_config if breakout_failure_case.state | default('merged') == 'overridden' else [] }}"
+    breakout_failure_profiles: [native, native]
+    breakout_failure_before_snapshots: {}
+    breakout_matrix_topology_only_indices: []
+    breakout_failure_partial_indices: []
+    breakout_failure_partial_policy_diagnostics: {}
+
+- name: Execute one genuine rejected-request scenario and a corrected follow-up
+  block:
+    - name: Prove the native starting condition instead of pre-cleaning unknown resources
+      ansible.builtin.include_tasks: matrix_observe.yaml
+      vars:
+        breakout_matrix_profiles: [native, native]
+
+    - name: Prepare the family needed for explicit delete or omitted-family preservation
+      cisco.nd.nd_manage_breakout_interfaces:
+        fabric_name: "{{ test_fabric_name }}"
+        state: merged
+        config:
+          - switch_id: "{{ test_switch_serial }}"
+            interface_names: "{{ [breakout_matrix_fixtures[1 if breakout_failure_case.prepare_omitted | default(false) else 0].control_parent] }}"
+            breakout_map: "{{ breakout_matrix_fixtures[1 if breakout_failure_case.prepare_omitted | default(false) else 0].profiles.map_a.breakout_map }}"
+      register: breakout_matrix_last_result
+      when: breakout_failure_case.prepare_delete | default(false) or breakout_failure_case.prepare_omitted | default(false)
+
+    - name: Verify the deliberately established broken baseline
+      ansible.builtin.include_tasks: matrix_observe.yaml
+      vars:
+        breakout_matrix_profiles: "{{ ['native', 'map_a'] if breakout_failure_case.prepare_omitted | default(false) else ['map_a', 'native'] }}"
+      when: breakout_failure_case.prepare_delete | default(false) or breakout_failure_case.prepare_omitted | default(false)
+
+    - name: Explicitly unbreak before requesting a different unsupported map
+      cisco.nd.nd_manage_breakout_interfaces:
+        fabric_name: "{{ test_fabric_name }}"
+        state: deleted
+        config:
+          - switch_id: "{{ test_switch_serial }}"
+            interface_names: "{{ [breakout_matrix_fixtures[0].control_parent] }}"
+      register: breakout_matrix_last_result
+      when: breakout_failure_case.prepare_delete | default(false)
+
+    - name: Independently prove the successful deletion before its separate failed creation
+      ansible.builtin.include_tasks: matrix_observe.yaml
+      vars:
+        breakout_matrix_profiles: [native, native]
+      when: breakout_failure_case.prepare_delete | default(false)
+
+    - name: Build the ordered real bulk payload without assuming response ordering
+      ansible.builtin.set_fact:
+        breakout_failure_config: >-
+          {{ breakout_failure_config + [{'switch_id': test_switch_serial,
+               'interface_names': [breakout_matrix_fixtures[item.index].control_parent],
+               'breakout_map': (breakout_matrix_fixtures[item.index].profiles.map_a.breakout_map if item.valid else test_breakout_invalid_map)}] }}
+      loop: "{{ breakout_failure_case.entries }}"
+
+    - name: Freeze exact per-case pre-action evidence after any deliberate preparation
+      ansible.builtin.set_fact:
+        breakout_failure_before_snapshots: "{{ breakout_matrix_snapshots }}"
+
+    - name: "{{ breakout_failure_case.id }} - {{ breakout_failure_case.name }}"
+      cisco.nd.nd_manage_breakout_interfaces:
+        fabric_name: "{{ test_fabric_name }}"
+        state: "{{ breakout_failure_case.state | default('merged') }}"
+        config: "{{ breakout_failure_config }}"
+      register: breakout_matrix_last_result
+      ignore_errors: true
+
+    - name: Read actual accepted state before any correction or teardown
+      ansible.builtin.include_tasks: matrix_observe.yaml
+      vars:
+        breakout_matrix_observe_only: true
+
+    - name: Preserve the original failed request and independent evidence
+      ansible.builtin.set_fact:
+        breakout_failure_original_result: "{{ breakout_matrix_last_result }}"
+        breakout_failure_original_snapshots: "{{ breakout_matrix_snapshots }}"
+
+    - name: Require honest failure without compensation when no collateral occurred
+      ansible.builtin.assert:
+        that:
+          - breakout_matrix_last_result.failed | bool
+          - breakout_matrix_last_result.recovery | default([]) | length == 0
+          - breakout_matrix_last_result.api_outcomes | selectattr('outcome', 'in', ['failed', 'unknown']) | list | length > 0
+          - breakout_matrix_last_result.after_status == 'observed'
+          - breakout_matrix_last_result.verification.enabled | bool
+          - breakout_matrix_last_result.verification.complete | bool
+          - breakout_matrix_last_result.verification.phases | length == 1
+          - breakout_matrix_last_result.verification.phases[0].switch_id == test_switch_serial
+          - breakout_matrix_last_result.verification.phases[0].collateral == []
+          - >-
+            (breakout_matrix_last_result.may_have_changed | bool) ==
+            (breakout_matrix_last_result.api_outcomes | selectattr('outcome', 'equalto', 'unknown') | list | length > 0)
+          - breakout_matrix_last_result.api_calls | selectattr('method', 'equalto', 'POST') | list | length == 1
+          - breakout_matrix_last_result.api_calls | selectattr('method', 'equalto', 'POST') | map(attribute='path') | select('search', '/interfaceActions/remove') | list | length == 0
+          - >-
+            breakout_matrix_last_result.api_calls | selectattr('method', 'equalto', 'POST') |
+            selectattr('http_status', 'in', [200, 201, 204, 207, 400, 409, 422]) | list | length == 1
+        fail_msg: A rejected map is not assumed unchanged or rolled back; retain the original response and independent state.
+
+    - name: Require every invalid-map target to remain physically native
+      ansible.builtin.assert:
+        that:
+          - breakout_matrix_snapshots[item.index | string].families[breakout_matrix_fixtures[item.index].control_parent].native
+          - breakout_matrix_snapshots[item.index | string].families[breakout_matrix_fixtures[item.index].control_parent].children == []
+      loop: "{{ breakout_failure_case.entries }}"
+      when: not item.valid
+
+    - name: Identify physically applied valid families without a successful per-item response
+      ansible.builtin.set_fact:
+        breakout_failure_partial_indices: "{{ breakout_failure_partial_indices + [item.index] }}"
+        breakout_failure_partial_policy_diagnostics: >-
+          {{ breakout_failure_partial_policy_diagnostics | combine({(item.index | string): {
+               'interface_name': breakout_matrix_fixtures[item.index].control_parent,
+               'expected_policy_maps': breakout_matrix_fixtures[item.index].profiles.map_a.policy_maps |
+                                       default({breakout_matrix_fixtures[item.index].control_parent:
+                                                breakout_matrix_fixtures[item.index].profiles.map_a.breakout_map}),
+               'observed_policy_maps': breakout_failure_original_snapshots[item.index | string].policy_maps,
+               'note': 'Physical application is verified separately; failed or unreported creation does not prove policy intent.'}}) }}
+      loop: "{{ breakout_failure_case.entries }}"
+      when:
+        - item.valid
+        - breakout_failure_original_snapshots[item.index | string].families[breakout_matrix_fixtures[item.index].control_parent].children | length > 0
+        - >-
+          breakout_failure_original_result.api_outcomes |
+          selectattr('switch_id', 'equalto', test_switch_serial) |
+          selectattr('interface_name', 'equalto', breakout_matrix_fixtures[item.index].control_parent) |
+          selectattr('outcome', 'in', ['failed', 'unknown']) | list | length == 1
+
+    - name: Validate an applied valid item against its declared profile, never its returned map
+      cisco.nd.nd_manage_breakout_interfaces_validate:
+        fabric_name: "{{ test_fabric_name }}"
+        switch_id: "{{ test_switch_serial }}"
+        fixture: "{{ breakout_matrix_fixtures[item.index] }}"
+        expected_profile: >-
+          {{ 'map_a' if breakout_matrix_snapshots[item.index | string].families[breakout_matrix_fixtures[item.index].control_parent].children | length > 0 else 'native' }}
+        whole_switch: true
+        owned_interfaces: "{{ breakout_matrix_owned }}"
+        include_speeds: true
+        topology_only: "{{ item.index in breakout_failure_partial_indices }}"
+        baseline: "{{ breakout_matrix_baselines[item.index | string] }}"
+        retries: 1
+        interval: 0
+      check_mode: false
+      loop: "{{ breakout_failure_case.entries }}"
+      when: item.valid
+
+    - name: Require independently observed partial creation to remain reported as changed
+      ansible.builtin.assert:
+        that:
+          - >-
+            breakout_failure_original_snapshots[item.index | string].families[breakout_matrix_fixtures[item.index].control_parent] ==
+            breakout_failure_before_snapshots[item.index | string].families[breakout_matrix_fixtures[item.index].control_parent]
+            or (breakout_failure_original_result.changed | bool)
+        fail_msg: An observed accepted change cannot be hidden by changed=false merely because another item failed or was unreported.
+      loop: "{{ breakout_failure_case.entries }}"
+      when: item.valid
+
+    - name: Validate reported observed family state against independent post-failure evidence
+      ansible.builtin.assert:
+        that:
+          - reported_family | length == 1
+          - reported_family[0].evidence == 'post_action_discovery'
+          - reported_family[0].broken_out == (observed_family.children | length > 0)
+          - reported_family[0].children == observed_family.children
+        fail_msg: Guarded partial failure must report the observed family, not stale baseline or predicted state.
+      vars:
+        reported_family: >-
+          {{ breakout_failure_original_result.after |
+             selectattr('switch_id', 'equalto', test_switch_serial) |
+             selectattr('interface_name', 'equalto', breakout_matrix_fixtures[item.index].control_parent) | list }}
+        observed_family: "{{ breakout_failure_original_snapshots[item.index | string].families[breakout_matrix_fixtures[item.index].control_parent] }}"
+      loop: >-
+        {{ breakout_failure_case.entries +
+           ([{'index': 1, 'valid': true}] if breakout_failure_case.prepare_omitted | default(false) else []) }}
+
+    - name: Correlate reported per-item success with independently observed application
+      ansible.builtin.assert:
+        that:
+          - >-
+            (breakout_failure_original_result.api_outcomes |
+             selectattr('switch_id', 'equalto', test_switch_serial) |
+             selectattr('interface_name', 'equalto', breakout_matrix_fixtures[item.index].control_parent) | list | length) == 1
+          - >-
+            (breakout_failure_original_result.api_outcomes |
+             selectattr('switch_id', 'equalto', test_switch_serial) |
+             selectattr('interface_name', 'equalto', breakout_matrix_fixtures[item.index].control_parent) |
+             selectattr('outcome', 'equalto', 'success') | list | length) == 0
+            or (item.valid and
+                breakout_matrix_snapshots[item.index | string].families[breakout_matrix_fixtures[item.index].control_parent].children | length > 0)
+      loop: "{{ breakout_failure_case.entries }}"
+
+    - name: Require omitted baseline family to survive failed overridden creation
+      cisco.nd.nd_manage_breakout_interfaces_validate:
+        fabric_name: "{{ test_fabric_name }}"
+        switch_id: "{{ test_switch_serial }}"
+        fixture: "{{ breakout_matrix_fixtures[1] }}"
+        expected_profile: map_a
+        whole_switch: true
+        owned_interfaces: "{{ breakout_matrix_owned }}"
+        include_speeds: true
+        baseline: "{{ breakout_matrix_baselines['1'] }}"
+        retries: 1
+        interval: 0
+      check_mode: false
+      when: breakout_failure_case.prepare_omitted | default(false)
+
+    - name: Explain observed partial application without claiming missing identities succeeded
+      ansible.builtin.debug:
+        msg:
+          original_result: "{{ breakout_failure_original_result }}"
+          independently_observed: "{{ breakout_failure_original_snapshots }}"
+          partial_policy_diagnostics: "{{ breakout_failure_partial_policy_diagnostics }}"
+
+    - name: Build corrected user intent using only fixture-declared supported maps
+      ansible.builtin.set_fact:
+        breakout_correction_config: "{{ test_breakout_preserved_config if breakout_failure_case.state | default('merged') == 'overridden' else [] }}"
+
+    - name: Add correctly mapped desired parents
+      ansible.builtin.set_fact:
+        breakout_correction_config: >-
+          {{ breakout_correction_config + [{'switch_id': test_switch_serial,
+              'interface_names': [breakout_matrix_fixtures[item].control_parent],
+              'breakout_map': breakout_matrix_fixtures[item].profiles.map_a.breakout_map}] }}
+      loop: "{{ [0] if breakout_failure_case.state | default('merged') == 'overridden' else [0, 1] }}"
+
+    - name: Apply corrected intent as a new user task rather than automatic rollback
+      cisco.nd.nd_manage_breakout_interfaces:
+        fabric_name: "{{ test_fabric_name }}"
+        state: "{{ breakout_failure_case.state | default('merged') }}"
+        config: "{{ breakout_correction_config }}"
+      register: breakout_matrix_last_result
+
+    - name: Validate corrected creation versus existing-family no-op by composite identity
+      ansible.builtin.assert:
+        that:
+          - >-
+            breakout_matrix_last_result.api_outcomes |
+            selectattr('switch_id', 'equalto', test_switch_serial) |
+            selectattr('interface_name', 'equalto', breakout_matrix_fixtures[item].control_parent) |
+            map(attribute='outcome') | list ==
+            (['noop'] if breakout_failure_original_snapshots[item | string].families[breakout_matrix_fixtures[item].control_parent].children | length > 0
+             else ['success'])
+      loop: "{{ [0] if breakout_failure_case.state | default('merged') == 'overridden' else [0, 1] }}"
+
+    - name: Independently prove the corrected desired topology and maps
+      ansible.builtin.include_tasks: matrix_observe.yaml
+      vars:
+        breakout_matrix_profiles: "{{ ['map_a', 'native'] if breakout_failure_case.state | default('merged') == 'overridden' else ['map_a', 'map_a'] }}"
+        breakout_matrix_topology_only_indices: "{{ breakout_failure_partial_indices }}"
+
+    - name: Preserve partial existing-family topology and policy intent exactly across corrected no-ops
+      ansible.builtin.assert: &breakout_partial_noop_preservation
+        that:
+          - breakout_matrix_snapshots[item | string].families == breakout_failure_original_snapshots[item | string].families
+          - breakout_matrix_snapshots[item | string].policy_maps == breakout_failure_original_snapshots[item | string].policy_maps
+          - >-
+            breakout_matrix_last_result.api_outcomes |
+            selectattr('switch_id', 'equalto', test_switch_serial) |
+            selectattr('interface_name', 'equalto', breakout_matrix_fixtures[item].control_parent) |
+            map(attribute='outcome') | list == ['noop']
+        fail_msg: A corrected no-op must preserve the exact partial family and its observed policy intent, including a missing policy.
+      loop: "{{ breakout_failure_partial_indices }}"
+
+    - name: Repeat the corrected task and require genuine idempotency
+      cisco.nd.nd_manage_breakout_interfaces:
+        fabric_name: "{{ test_fabric_name }}"
+        state: "{{ breakout_failure_case.state | default('merged') }}"
+        config: "{{ breakout_correction_config }}"
+      register: breakout_matrix_last_result
+
+    - name: Require corrected intent to be an unchanged no-op without mutation requests
+      ansible.builtin.assert:
+        that:
+          - not breakout_matrix_last_result.changed
+          - breakout_matrix_last_result.api_outcomes | map(attribute='outcome') | unique | list == ['noop']
+          - breakout_matrix_last_result.api_calls | selectattr('method', 'equalto', 'POST') | list | length == 0
+
+    - name: Independently validate topology and fresh successful policy maps after the repeated correction
+      ansible.builtin.include_tasks: matrix_observe.yaml
+      vars:
+        breakout_matrix_profiles: "{{ ['map_a', 'native'] if breakout_failure_case.state | default('merged') == 'overridden' else ['map_a', 'map_a'] }}"
+        breakout_matrix_topology_only_indices: "{{ breakout_failure_partial_indices }}"
+
+    - name: Recheck exact partial no-op preservation after idempotency
+      ansible.builtin.assert: *breakout_partial_noop_preservation
+      loop: "{{ breakout_failure_partial_indices }}"
+
+  rescue:
+    - name: Preserve the original failed scenario before teardown
+      ansible.builtin.set_fact:
+        breakout_matrix_failure: {task: "{{ ansible_failed_task.name }}", result: "{{ ansible_failed_result }}"}
+  always:
+    - name: Clean only observed owned independent families after evidence was captured
+      ansible.builtin.include_tasks: matrix_cleanup.yaml
+    - name: Retain API failure scenario regressions after cleanup
+      ansible.builtin.assert:
+        that: breakout_matrix_failure | length == 0
+        fail_msg: "Original API failure scenario regression: {{ breakout_matrix_failure }}"

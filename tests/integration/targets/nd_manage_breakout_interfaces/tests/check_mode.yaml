@@ -1,0 +1,185 @@
+---
+# Can run independently on the reserved native fixture. Broken-family
+# predictions and alias handling are also tested during the lifecycle.
+- name: CHECK MODE - Capture independently verified native starting state
+  ansible.builtin.include_tasks: ../tasks/observe.yaml
+  vars:
+    breakout_expected_profile: native
+
+- name: CHECK MODE - Save native state and define explicit prediction contracts
+  ansible.builtin.set_fact:
+    breakout_check_mode_baseline: "{{ breakout_observation.snapshot }}"
+    breakout_native_predictions:
+      - {state: merged, verify: true, child: false, changed: true, outcome: planned}
+      - {state: merged, verify: false, child: false, changed: true, outcome: planned}
+      - {state: deleted, verify: true, child: false, changed: false, outcome: noop}
+      - {state: deleted, verify: false, child: false, changed: false, outcome: noop}
+      - {state: deleted, verify: true, child: true, changed: false, outcome: noop}
+      - {state: deleted, verify: false, child: true, changed: false, outcome: noop}
+
+- name: CHECK MODE - Predict native creation or already-native family deletion
+  cisco.nd.nd_manage_breakout_interfaces:
+    fabric_name: "{{ test_fabric_name }}"
+    state: "{{ native_prediction.state }}"
+    config:
+      - switch_id: "{{ test_switch_serial }}"
+        interface_names: ["{{ breakout_control_parent ~ '/1' if native_prediction.child else breakout_control_parent }}"]
+        breakout_map: "{{ breakout_map_a if native_prediction.state == 'merged' else omit }}"
+    verify:
+      enabled: "{{ native_prediction.verify }}"
+  check_mode: true
+  register: breakout_native_prediction_results
+  loop: "{{ breakout_native_predictions }}"
+  loop_control:
+    loop_var: native_prediction
+    label: "{{ native_prediction }}"
+
+- name: CHECK MODE - Validate prediction semantics and absence of all mutation calls
+  ansible.builtin.assert:
+    that:
+      - not (prediction_result.failed | default(false) | bool)
+      - (prediction_result.changed | bool) == prediction_result.native_prediction.changed
+      - prediction_result.after_status == 'predicted'
+      - prediction_result.api_outcomes | length == 1
+      - prediction_result.api_outcomes[0].outcome == prediction_result.native_prediction.outcome
+      - prediction_result.api_outcomes[0].switch_id == test_switch_serial
+      - prediction_result.api_outcomes[0].interface_name == breakout_control_parent
+      - prediction_result.verification is not defined
+      - prediction_result.recovery == []
+      - prediction_result.api_calls | default([]) | rejectattr('method', 'equalto', 'GET') | list | length == 0
+      - not prediction_result.native_prediction.changed or prediction_after[0].children is not defined
+      - not prediction_result.native_prediction.changed or prediction_after[0].evidence == 'prediction'
+      - not prediction_result.native_prediction.changed or prediction_after[0].requested_breakout_map == breakout_map_a
+  vars:
+    prediction_after: >-
+      {{ prediction_result.after | selectattr('switch_id', 'equalto', test_switch_serial) |
+         selectattr('interface_name', 'equalto', breakout_control_parent) | list }}
+  loop: "{{ breakout_native_prediction_results.results }}"
+  loop_control:
+    loop_var: prediction_result
+    label: "{{ prediction_result.native_prediction }}"
+
+- name: CHECK MODE - Require real discovery and guarded metadata for every native prediction
+  ansible.builtin.include_tasks: ../tasks/assert_check_mode.yaml
+  vars:
+    breakout_check_result: "{{ prediction_result }}"
+  loop: "{{ breakout_native_prediction_results.results }}"
+  loop_control:
+    loop_var: prediction_result
+    label: "{{ prediction_result.native_prediction }}"
+
+- name: CHECK MODE - Independently prove no prediction changed topology, speeds or policy intent
+  ansible.builtin.include_tasks: ../tasks/observe.yaml
+  vars:
+    breakout_expected_profile: native
+    breakout_observe_baseline: "{{ breakout_check_mode_baseline }}"
+    breakout_observe_unchanged: true
+
+# These authoritative scopes are safe on a shared lab only because every
+# invocation is check mode. Actual clear tests remain separately opted in.
+- name: CHECK MODE - Independently enumerate every existing fabric breakout for clear predictions
+  ansible.builtin.include_tasks: ../tasks/fabric_clear_read.yaml
+
+- name: CHECK MODE - Initialize complete physical identity and speed baseline
+  ansible.builtin.set_fact:
+    breakout_check_mode_fabric_baseline: {}
+
+- name: CHECK MODE - Capture every physical non-FEX identity and available speed without volatile status fields
+  ansible.builtin.set_fact:
+    breakout_check_mode_fabric_baseline: >-
+      {{ breakout_check_mode_fabric_baseline | combine({
+          (item.switchId ~ '/' ~ (item.interfaceName | lower)): {'speed': item.speed | default(none)} }) }}
+  loop: "{{ breakout_fabric_rows }}"
+  loop_control:
+    label: "{{ item.switchId }}/{{ item.interfaceName }}"
+  when:
+    - item.physicalInterface is sameas true
+    - item.fex is sameas false
+
+- name: CHECK MODE - Define selected-switch and fabric-wide clear predictions without writes
+  ansible.builtin.set_fact:
+    breakout_clear_predictions:
+      - name: selected-switch empty interface list
+        config:
+          - switch_id: "{{ test_switch_serial }}"
+            interface_names: []
+        expected_keys: "{{ breakout_fabric_broken_keys | select('match', '^' ~ test_switch_serial ~ '/') | sort | list }}"
+      - name: explicit empty fabric config
+        config: []
+        expected_keys: "{{ breakout_fabric_broken_keys | sort }}"
+      - name: omitted fabric config
+        expected_keys: "{{ breakout_fabric_broken_keys | sort }}"
+
+- name: CHECK MODE - Predict authoritative clear scopes without invoking remove
+  cisco.nd.nd_manage_breakout_interfaces:
+    fabric_name: "{{ test_fabric_name }}"
+    state: overridden
+    config: "{{ clear_prediction.config | default(omit) }}"
+  check_mode: true
+  register: breakout_clear_prediction_results
+  loop: "{{ breakout_clear_predictions }}"
+  loop_control:
+    loop_var: clear_prediction
+    label: "{{ clear_prediction.name }}"
+
+- name: CHECK MODE - Match exact planned families and require GET-only clear predictions
+  ansible.builtin.assert:
+    that:
+      - not (clear_result.failed | default(false) | bool)
+      - (clear_result.changed | bool) == (clear_result.clear_prediction.expected_keys | length > 0)
+      - clear_result.after_status == 'predicted'
+      - clear_result.api_outcomes | map(attribute='outcome') | unique | list == (['planned'] if clear_result.changed else [])
+      - clear_result.api_outcomes | map(attribute='action') | unique | list == (['unbreakout'] if clear_result.changed else [])
+      - >-
+        clear_result.api_outcomes | map(attribute='switch_id') |
+        zip(clear_result.api_outcomes | map(attribute='interface_name')) |
+        map('join', '/') | sort | list == clear_result.clear_prediction.expected_keys
+      - clear_result.after | selectattr('broken_out', 'equalto', true) | list | length == 0
+      - clear_result.verification is not defined
+      - clear_result.recovery == []
+      - clear_result.api_calls | default([]) | rejectattr('method', 'equalto', 'GET') | list | length == 0
+  loop: "{{ breakout_clear_prediction_results.results }}"
+  loop_control:
+    loop_var: clear_result
+    label: "{{ clear_result.clear_prediction.name }}"
+
+- name: CHECK MODE - Require real discovery and guarded metadata for every clear prediction
+  ansible.builtin.include_tasks: ../tasks/assert_check_mode.yaml
+  vars:
+    breakout_check_result: "{{ clear_result }}"
+  loop: "{{ breakout_clear_prediction_results.results }}"
+  loop_control:
+    loop_var: clear_result
+    label: "{{ clear_result.clear_prediction.name }}"
+
+- name: CHECK MODE - Re-read complete fabric topology after all clear predictions
+  ansible.builtin.include_tasks: ../tasks/fabric_clear_read.yaml
+
+- name: CHECK MODE - Initialize fresh complete physical identity and speed projection
+  ansible.builtin.set_fact:
+    breakout_check_mode_fabric_after: {}
+
+- name: CHECK MODE - Project every current physical non-FEX identity and available speed
+  ansible.builtin.set_fact:
+    breakout_check_mode_fabric_after: >-
+      {{ breakout_check_mode_fabric_after | combine({
+          (item.switchId ~ '/' ~ (item.interfaceName | lower)): {'speed': item.speed | default(none)} }) }}
+  loop: "{{ breakout_fabric_rows }}"
+  loop_control:
+    label: "{{ item.switchId }}/{{ item.interfaceName }}"
+  when:
+    - item.physicalInterface is sameas true
+    - item.fex is sameas false
+
+- name: CHECK MODE - Prove no fabric-wide family was added or removed by a prediction
+  ansible.builtin.assert:
+    that:
+      - breakout_fabric_broken_keys | sort == breakout_clear_predictions[1].expected_keys
+      - breakout_check_mode_fabric_after == breakout_check_mode_fabric_baseline
+
+- name: CHECK MODE - Prove reserved native parents, outside children, speeds and intent remain unchanged
+  ansible.builtin.include_tasks: ../tasks/observe.yaml
+  vars:
+    breakout_expected_profile: native
+    breakout_observe_baseline: "{{ breakout_check_mode_baseline }}"
+    breakout_observe_unchanged: true
