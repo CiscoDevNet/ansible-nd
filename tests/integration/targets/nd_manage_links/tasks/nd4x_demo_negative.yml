@@ -1,0 +1,474 @@
+---
+- name: Define nd_manage_links negative harness data
+  ansible.builtin.set_fact:
+    nd4x_negative_common_args:
+      output_level: "{{ nd_output_level | default('debug') }}"
+      fabric_name: "{{ test_fabric_numbered }}"
+      link_scope: manage
+    nd4x_negative_snapshot_path: "/api/v1/manage/links?fabricName={{ test_fabric_numbered }}&max={{ nd4x_links_page_size }}&offset=0"
+    nd4x_negative_config:
+      - {src_fabric_name: "{{ test_fabric_numbered }}", dst_fabric_name: "{{ test_fabric_numbered }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/30, dst_interface_name: Ethernet1/30, config_data: {policy_type: numbered, template_inputs: {src_ip: 10.99.30.1, dst_ip: 10.99.30.2, mtu: 9216, interface_admin_state: true}}}
+
+- name: Create numbered baseline for discriminated-union tests
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_links
+    state: merged
+    config: "{{ nd4x_negative_config }}"
+    common_args: "{{ nd4x_negative_common_args }}"
+    expected:
+      check_mode: {changed: true, failed: false}
+      apply: {changed: true, failed: false}
+      idempotency: {changed: false, failed: false}
+    check_mode_queries:
+      - name: Snapshot numbered negative-test link scope
+        path: "{{ nd4x_negative_snapshot_path }}"
+        expected_status: 200
+        pagination:
+          page_size: "{{ nd4x_links_page_size }}"
+          collection_key: links
+          max_pages: "{{ nd4x_links_max_pages }}"
+        unordered_paths: [/links]
+  register: nd4x_negative_baseline
+
+- name: Attempt invalid field on numbered link
+  cisco.nd.nd_manage_links:
+    output_level: "{{ nd_output_level | default('debug') }}"
+    fabric_name: "{{ test_fabric_numbered }}"
+    link_scope: manage
+    config:
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/30
+        dst_interface_name: Ethernet1/30
+        config_data:
+          policy_type: numbered
+          template_inputs:
+            src_ip: 10.99.30.1
+            dst_ip: 10.99.30.2
+            ebgp_multihop: 5
+    state: merged
+  check_mode: true
+  register: nd4x_invalid_numbered
+  ignore_errors: true
+
+- name: Verify invalid numbered field was rejected
+  ansible.builtin.assert:
+    that:
+      - nd4x_invalid_numbered is failed
+      - nd4x_invalid_numbered.msg is search('ebgp_multihop|[Ee]xtra|not permitted')
+
+- name: Attempt invalid field on unnumbered link
+  cisco.nd.nd_manage_links:
+    output_level: "{{ nd_output_level | default('debug') }}"
+    fabric_name: "{{ test_fabric_numbered }}"
+    link_scope: manage
+    config:
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/40
+        dst_interface_name: Ethernet1/40
+        config_data:
+          policy_type: unnumbered
+          template_inputs:
+            src_ip: 10.99.40.1
+            dst_ip: 10.99.40.2
+            mtu: 9216
+    state: merged
+  check_mode: true
+  register: nd4x_invalid_unnumbered
+  ignore_errors: true
+
+- name: Verify invalid unnumbered field was rejected
+  ansible.builtin.assert:
+    that:
+      - nd4x_invalid_unnumbered is failed
+      - nd4x_invalid_unnumbered.msg is search('src_ip|[Ee]xtra|not permitted')
+
+- name: Attempt invalid field on preprovision link
+  cisco.nd.nd_manage_links:
+    output_level: "{{ nd_output_level | default('debug') }}"
+    fabric_name: "{{ test_fabric_numbered }}"
+    link_scope: manage
+    config:
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/41
+        dst_interface_name: Ethernet1/41
+        config_data:
+          policy_type: preprovision
+          template_inputs:
+            src_ebgp_asn: "65001"
+            dst_ebgp_asn: "65002"
+    state: merged
+  check_mode: true
+  register: nd4x_invalid_preprovision
+  ignore_errors: true
+
+- name: Verify invalid preprovision field was rejected
+  ansible.builtin.assert:
+    that:
+      - nd4x_invalid_preprovision is failed
+      - nd4x_invalid_preprovision.msg is search('src_ebgp_asn|[Ee]xtra|not permitted')
+
+- name: Attempt layer2Dci-only field on numbered link
+  cisco.nd.nd_manage_links:
+    output_level: "{{ nd_output_level | default('debug') }}"
+    fabric_name: "{{ test_fabric_numbered }}"
+    link_scope: manage
+    config:
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/42
+        dst_interface_name: Ethernet1/42
+        config_data:
+          policy_type: numbered
+          template_inputs:
+            src_ip: 10.99.42.1
+            dst_ip: 10.99.42.2
+            trunk_allowed_vlans: "100,200"
+    state: merged
+  check_mode: true
+  register: nd4x_invalid_l2dci
+  ignore_errors: true
+
+- name: Verify invalid layer2Dci field was rejected
+  ansible.builtin.assert:
+    that:
+      - nd4x_invalid_l2dci is failed
+      - nd4x_invalid_l2dci.msg is search('trunk_allowed_vlans|[Ee]xtra|not permitted')
+
+- name: Reject in-place policy-type change
+  cisco.nd.nd_manage_links:
+    output_level: "{{ nd_output_level | default('debug') }}"
+    fabric_name: "{{ test_fabric_numbered }}"
+    link_scope: manage
+    config:
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/30
+        dst_interface_name: Ethernet1/30
+        config_data:
+          policy_type: ebgpVrfLite
+          template_inputs:
+            src_ebgp_asn: "65001"
+            dst_ebgp_asn: "65002"
+            src_ip_address_mask: 10.99.30.1/24
+            dst_ip_address: 10.99.30.2
+    state: merged
+  check_mode: true
+  register: nd4x_policy_change
+  ignore_errors: true
+
+- name: Verify in-place policy-type change was rejected
+  ansible.builtin.assert:
+    that:
+      - nd4x_policy_change is failed
+      - nd4x_policy_change.msg is search('policy_type')
+
+- name: Apply persistent preprovision intent over realized numbered link
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_links
+    state: merged
+    config:
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/30
+        dst_interface_name: Ethernet1/30
+        config_data:
+          policy_type: preprovision
+          template_inputs:
+            mtu: 9000
+            speed: auto
+            src_interface_description: persistent intent applied on realized link
+    common_args: "{{ nd4x_negative_common_args }}"
+    expected:
+      check_mode: {changed: true, failed: false}
+      apply: {changed: true, failed: false}
+      idempotency: {changed: false, failed: false}
+    check_mode_queries:
+      - name: Snapshot persistent-intent link scope
+        path: "{{ nd4x_negative_snapshot_path }}"
+        expected_status: 200
+        pagination:
+          page_size: "{{ nd4x_links_page_size }}"
+          collection_key: links
+          max_pages: "{{ nd4x_links_max_pages }}"
+        unordered_paths: [/links]
+    nd_queries:
+      - name: Validate persistent-intent realized link
+        path: "{{ nd4x_negative_snapshot_path }}"
+        method: get
+        expected_status: 200
+        expect:
+          - jsonpath: "$.current.meta.counts.remaining"
+            equals: 0
+          - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.dstInterfaceName == 'Ethernet1/30')].configData.policyType"
+            equals: numbered
+          - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.dstInterfaceName == 'Ethernet1/30')].configData.templateInputs.mtu"
+            equals: 9000
+          - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.dstInterfaceName == 'Ethernet1/30')].configData.templateInputs.speed"
+            equals: auto
+  register: nd4x_persistent_intent
+
+- name: Verify persistent intent is idempotent on second harness call
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_links
+    state: merged
+    config:
+      - src_fabric_name: "{{ test_fabric_numbered }}"
+        dst_fabric_name: "{{ test_fabric_numbered }}"
+        src_switch_name: "{{ test_switch_a }}"
+        dst_switch_name: "{{ test_switch_b }}"
+        src_interface_name: Ethernet1/30
+        dst_interface_name: Ethernet1/30
+        config_data:
+          policy_type: preprovision
+          template_inputs:
+            mtu: 9000
+            speed: auto
+            src_interface_description: persistent intent applied on realized link
+    common_args: "{{ nd4x_negative_common_args }}"
+    expected:
+      check_mode: {changed: false, failed: false}
+      apply: {changed: false, failed: false}
+      idempotency: {changed: false, failed: false}
+    check_mode_queries:
+      - name: Snapshot persistent-intent link scope again
+        path: "{{ nd4x_negative_snapshot_path }}"
+        expected_status: 200
+        pagination:
+          page_size: "{{ nd4x_links_page_size }}"
+          collection_key: links
+          max_pages: "{{ nd4x_links_max_pages }}"
+        unordered_paths: [/links]
+    nd_queries:
+      - name: Validate persistent-intent realized link remains idempotent
+        path: "{{ nd4x_negative_snapshot_path }}"
+        method: get
+        expected_status: 200
+        expect:
+          - jsonpath: "$.current.meta.counts.remaining"
+            equals: 0
+          - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.dstInterfaceName == 'Ethernet1/30')].configData.policyType"
+            equals: numbered
+          - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.dstInterfaceName == 'Ethernet1/30')].configData.templateInputs.mtu"
+            equals: 9000
+          - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.dstInterfaceName == 'Ethernet1/30')].configData.templateInputs.speed"
+            equals: auto
+  register: nd4x_persistent_intent_again
+
+- name: Verify persistent intent results and realized fields
+  ansible.builtin.assert:
+    that:
+      - nd4x_persistent_intent.first_run_result.changed | bool
+      - not nd4x_persistent_intent_again.first_run_result.changed | bool
+      - >-
+        nd4x_persistent_intent.first_run_result.after
+        | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+        | selectattr('dst_interface_name', 'equalto', 'Ethernet1/30')
+        | selectattr('config_data.policy_type', 'equalto', 'numbered')
+        | list | length == 1
+      - >-
+        (nd4x_persistent_intent.first_run_result.after
+        | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+        | selectattr('dst_interface_name', 'equalto', 'Ethernet1/30')
+        | list | first).config_data.template_inputs.mtu == 9000
+      - >-
+        (nd4x_persistent_intent.first_run_result.after
+        | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+        | selectattr('dst_interface_name', 'equalto', 'Ethernet1/30')
+        | list | first).config_data.template_inputs.speed == 'auto'
+      - >-
+        (nd4x_persistent_intent_again.first_run_result.after
+        | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+        | selectattr('dst_interface_name', 'equalto', 'Ethernet1/30')
+        | list | first).config_data.policy_type == 'numbered'
+      - >-
+        (nd4x_persistent_intent_again.first_run_result.after
+        | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+        | selectattr('dst_interface_name', 'equalto', 'Ethernet1/30')
+        | list | first).config_data.template_inputs.mtu == 9000
+      - >-
+        (nd4x_persistent_intent_again.first_run_result.after
+        | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+        | selectattr('dst_interface_name', 'equalto', 'Ethernet1/30')
+        | list | first).config_data.template_inputs.speed == 'auto'
+
+- name: Clean up numbered negative-test baseline
+  cisco.nd.nd_manage_links:
+    output_level: "{{ nd_output_level | default('debug') }}"
+    fabric_name: "{{ test_fabric_numbered }}"
+    link_scope: manage
+    config: "{{ nd4x_negative_config }}"
+    state: deleted
+  ignore_errors: true
+
+- name: Optional cross-policy delete and recreate coverage
+  when: nd_test_cross_policy_fabric is defined
+  block:
+    - name: Define cross-policy harness data
+      ansible.builtin.set_fact:
+        nd4x_cross_common_args:
+          output_level: "{{ nd_output_level | default('debug') }}"
+          fabric_name: "{{ nd_test_cross_policy_fabric }}"
+          link_scope: manage
+        nd4x_cross_snapshot_path: "/api/v1/manage/links?fabricName={{ nd_test_cross_policy_fabric }}&max={{ nd4x_links_page_size }}&offset=0"
+        nd4x_cross_identity:
+          - src_fabric_name: "{{ nd_test_cross_policy_fabric }}"
+            dst_fabric_name: "{{ nd_test_cross_policy_fabric }}"
+            src_switch_name: "{{ test_switch_a }}"
+            dst_switch_name: "{{ test_switch_b }}"
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+        nd4x_cross_numbered_config:
+          - src_fabric_name: "{{ nd_test_cross_policy_fabric }}"
+            dst_fabric_name: "{{ nd_test_cross_policy_fabric }}"
+            src_switch_name: "{{ test_switch_a }}"
+            dst_switch_name: "{{ test_switch_b }}"
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: numbered
+              template_inputs:
+                src_ip: 10.99.30.1
+                dst_ip: 10.99.30.2
+                mtu: 9216
+                interface_admin_state: true
+        nd4x_cross_vrflite_config:
+          - src_fabric_name: "{{ nd_test_cross_policy_fabric }}"
+            dst_fabric_name: "{{ nd_test_cross_policy_fabric }}"
+            src_switch_name: "{{ test_switch_a }}"
+            dst_switch_name: "{{ test_switch_b }}"
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: ebgpVrfLite
+              template_inputs:
+                src_ebgp_asn: "65001"
+                dst_ebgp_asn: "65002"
+                src_ip_address_mask: 10.99.30.1/24
+                dst_ip_address: 10.99.30.2
+                link_mtu: 9216
+
+    - name: Cross-policy pre-clean
+      cisco.nd.nd_manage_links:
+        output_level: "{{ nd_output_level | default('debug') }}"
+        fabric_name: "{{ nd_test_cross_policy_fabric }}"
+        link_scope: manage
+        config: "{{ nd4x_cross_identity }}"
+        state: deleted
+      ignore_errors: true
+
+    - name: Cross-policy create numbered link
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_links
+        state: merged
+        common_args: "{{ nd4x_cross_common_args }}"
+        config: "{{ nd4x_cross_numbered_config }}"
+        expected: {check_mode: {changed: true, failed: false}, apply: {changed: true, failed: false}, idempotency: {changed: false, failed: false}}
+        check_mode_queries:
+          - {name: Snapshot cross-policy scope before numbered create, path: "{{ nd4x_cross_snapshot_path }}", expected_status: 200, pagination: {page_size: "{{ nd4x_links_page_size }}", collection_key: links, max_pages: "{{ nd4x_links_max_pages }}"}, unordered_paths: [/links]}
+
+    - name: Cross-policy delete numbered link
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_links
+        state: deleted
+        common_args: "{{ nd4x_cross_common_args }}"
+        config: "{{ nd4x_cross_identity }}"
+        expected: {check_mode: {changed: true, failed: false}, apply: {changed: true, failed: false}, idempotency: {changed: false, failed: false}}
+        check_mode_queries:
+          - {name: Snapshot cross-policy scope before delete, path: "{{ nd4x_cross_snapshot_path }}", expected_status: 200, pagination: {page_size: "{{ nd4x_links_page_size }}", collection_key: links, max_pages: "{{ nd4x_links_max_pages }}"}, unordered_paths: [/links]}
+
+    - name: Cross-policy recreate with ebgpVrfLite
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_links
+        state: merged
+        common_args: "{{ nd4x_cross_common_args }}"
+        config: "{{ nd4x_cross_vrflite_config }}"
+        expected: {check_mode: {changed: true, failed: false}, apply: {changed: true, failed: false}, idempotency: {changed: false, failed: false}}
+        check_mode_queries:
+          - {name: Snapshot cross-policy scope before recreation, path: "{{ nd4x_cross_snapshot_path }}", expected_status: 200, pagination: {page_size: "{{ nd4x_links_page_size }}", collection_key: links, max_pages: "{{ nd4x_links_max_pages }}"}, unordered_paths: [/links]}
+        nd_queries:
+          - name: Validate recreated eBGP VRF Lite link
+            path: "{{ nd4x_cross_snapshot_path }}"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.meta.counts.remaining"
+                equals: 0
+              - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.dstInterfaceName == 'Ethernet1/30')].configData.policyType"
+                equals: ebgpVrfLite
+              - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.dstInterfaceName == 'Ethernet1/30')].configData.templateInputs.srcEbgpAsn"
+                equals: '65001'
+              - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.dstInterfaceName == 'Ethernet1/30')].configData.templateInputs.dstEbgpAsn"
+                equals: '65002'
+              - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.dstInterfaceName == 'Ethernet1/30')].configData.templateInputs.srcIpAddressMask"
+                equals: 10.99.30.1/24
+              - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.dstInterfaceName == 'Ethernet1/30')].configData.templateInputs.dstIpAddress"
+                equals: 10.99.30.2
+              - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/30' & @.dstInterfaceName == 'Ethernet1/30')].configData.templateInputs.linkMtu"
+                equals: 9216
+      register: nd4x_cross_recreate
+
+    - name: Verify cross-policy recreation
+      ansible.builtin.assert:
+        that:
+          - nd4x_cross_recreate.first_run_result.changed | bool
+          - >-
+            (nd4x_cross_recreate.first_run_result.after
+            | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+            | selectattr('dst_interface_name', 'equalto', 'Ethernet1/30')
+            | list | length) == 1
+          - >-
+            (nd4x_cross_recreate.first_run_result.after
+            | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+            | list | first).config_data.policy_type == 'ebgpVrfLite'
+          - >-
+            (nd4x_cross_recreate.first_run_result.after
+            | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+            | list | first).config_data.template_inputs.src_ebgp_asn == '65001'
+          - >-
+            (nd4x_cross_recreate.first_run_result.after
+            | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+            | list | first).config_data.template_inputs.dst_ebgp_asn == '65002'
+          - >-
+            (nd4x_cross_recreate.first_run_result.after
+            | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+            | list | first).config_data.template_inputs.src_ip_address_mask == '10.99.30.1/24'
+          - >-
+            (nd4x_cross_recreate.first_run_result.after
+            | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+            | list | first).config_data.template_inputs.dst_ip_address == '10.99.30.2'
+          - >-
+            (nd4x_cross_recreate.first_run_result.after
+            | selectattr('src_interface_name', 'equalto', 'Ethernet1/30')
+            | list | first).config_data.template_inputs.link_mtu == 9216
+
+  always:
+    - name: Final cleanup of optional cross-policy link
+      cisco.nd.nd_manage_links:
+        output_level: "{{ nd_output_level | default('debug') }}"
+        fabric_name: "{{ nd_test_cross_policy_fabric }}"
+        link_scope: manage
+        config:
+          - src_fabric_name: "{{ nd_test_cross_policy_fabric }}"
+            dst_fabric_name: "{{ nd_test_cross_policy_fabric }}"
+            src_switch_name: "{{ test_switch_a }}"
+            dst_switch_name: "{{ test_switch_b }}"
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+        state: deleted
+      when: nd_test_cross_policy_fabric is defined
+      ignore_errors: true

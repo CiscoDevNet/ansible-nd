@@ -1,0 +1,99 @@
+---
+- name: Define multisiteUnderlay harness scenario data
+  ansible.builtin.set_fact:
+    nd4x_policy_name: multisiteUnderlay
+    nd4x_fabric_name: "{{ test_fabric_msite_src }}"
+    nd4x_gathered_src_fabric_name: "{{ test_fabric_msite_src }}"
+    nd4x_gathered_dst_fabric_name: "{{ test_fabric_msite_dst }}"
+    nd4x_primary_interface: Ethernet1/42
+    nd4x_removed_interfaces: [Ethernet1/43]
+    nd4x_create_count: 2
+    nd4x_run_overridden: false
+    nd4x_run_selector_tests: false
+    nd4x_run_reversed: false
+    nd4x_run_secret: false
+    nd4x_common_args:
+      output_level: "{{ nd_output_level | default('debug') }}"
+      fabric_name: "{{ test_fabric_msite_src }}"
+      link_scope: manage
+    nd4x_module_args: {}
+    nd4x_snapshot_path: "/api/v1/manage/links?fabricName={{ test_fabric_msite_src }}&max={{ nd4x_links_page_size }}&offset=0"
+    nd4x_check_mode_queries:
+      - name: Snapshot all managed multisiteUnderlay links
+        path: "/api/v1/manage/links?fabricName={{ test_fabric_msite_src }}&max={{ nd4x_links_page_size }}&offset=0"
+        expected_status: 200
+        pagination:
+          page_size: "{{ nd4x_links_page_size }}"
+          collection_key: links
+          max_pages: "{{ nd4x_links_max_pages }}"
+        unordered_paths: [/links]
+      - name: Snapshot destination-fabric multisiteUnderlay links
+        path: "/api/v1/manage/links?fabricName={{ test_fabric_msite_dst }}&max={{ nd4x_links_page_size }}&offset=0"
+        expected_status: 200
+        pagination:
+          page_size: "{{ nd4x_links_page_size }}"
+          collection_key: links
+          max_pages: "{{ nd4x_links_max_pages }}"
+        unordered_paths: [/links]
+    nd4x_nd_queries:
+      - name: Validate managed multisiteUnderlay links
+        path: "/api/v1/manage/links?fabricName={{ test_fabric_msite_src }}&max={{ nd4x_links_page_size }}&offset=0"
+        method: get
+        expected_status: 200
+      - name: Validate destination-fabric multisiteUnderlay links
+        path: "/api/v1/manage/links?fabricName={{ test_fabric_msite_dst }}&max={{ nd4x_links_page_size }}&offset=0"
+        method: get
+        expected_status: 200
+    nd4x_create_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/42' & @.configData.policyType == 'multisiteUnderlay')]"
+        exists: true
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/42' & @.configData.policyType == 'multisiteUnderlay')].configData.templateInputs.linkMtu"
+        equals: 9216
+    nd4x_update_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/42' & @.configData.policyType == 'multisiteUnderlay')].configData.templateInputs.linkMtu"
+        equals: 1500
+    nd4x_replace_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/42' & @.configData.policyType == 'multisiteUnderlay')].configData.templateInputs.linkMtu"
+        equals: 9216
+    nd4x_override_expectations: []
+    nd4x_recreate_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/43' & @.configData.policyType == 'multisiteUnderlay')]"
+        exists: true
+    nd4x_delete_one_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/42' & @.configData.policyType == 'multisiteUnderlay')]"
+        exists: false
+    nd4x_delete_bulk_expectations:
+      - jsonpath: "$.current.links[?(@.srcInterfaceName == 'Ethernet1/43' & @.configData.policyType == 'multisiteUnderlay')]"
+        exists: false
+    nd4x_cleanup_config:
+      - {src_fabric_name: "{{ test_fabric_msite_src }}", dst_fabric_name: "{{ test_fabric_msite_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/42, dst_interface_name: Ethernet1/42}
+      - {src_fabric_name: "{{ test_fabric_msite_src }}", dst_fabric_name: "{{ test_fabric_msite_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/43, dst_interface_name: Ethernet1/43}
+    nd4x_create_config:
+      - {src_fabric_name: "{{ test_fabric_msite_src }}", dst_fabric_name: "{{ test_fabric_msite_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/42, dst_interface_name: Ethernet1/42, config_data: {policy_type: multisiteUnderlay, template_inputs: {src_ebgp_asn: "65001", dst_ebgp_asn: "65002", src_ip_address_mask: "10.99.42.1/30", dst_ip_address: "10.99.42.2", link_mtu: 9216, speed: auto, ebgp_bfd: false, ebgp_maximum_paths: 2, src_interface_description: "ansible msite-underlay 42 source", dst_interface_description: "ansible msite-underlay 42 destination"}}}
+      - {src_fabric_name: "{{ test_fabric_msite_src }}", dst_fabric_name: "{{ test_fabric_msite_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/43, dst_interface_name: Ethernet1/43, config_data: {policy_type: multisiteUnderlay, template_inputs: {src_ebgp_asn: "65001", dst_ebgp_asn: "65002", src_ip_address_mask: "10.99.43.1/30", dst_ip_address: "10.99.43.2", link_mtu: 9216, speed: auto, ebgp_maximum_paths: 2}}}
+    nd4x_update_config:
+      - {src_fabric_name: "{{ test_fabric_msite_src }}", dst_fabric_name: "{{ test_fabric_msite_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/42, dst_interface_name: Ethernet1/42, config_data: {policy_type: multisiteUnderlay, template_inputs: {src_ebgp_asn: "65001", dst_ebgp_asn: "65002", src_ip_address_mask: "10.99.42.1/30", dst_ip_address: "10.99.42.2", link_mtu: 1500, speed: auto, ebgp_bfd: false, ebgp_maximum_paths: 2, src_interface_description: "updated msite-underlay source"}}}
+    nd4x_replace_config:
+      - {src_fabric_name: "{{ test_fabric_msite_src }}", dst_fabric_name: "{{ test_fabric_msite_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/42, dst_interface_name: Ethernet1/42, config_data: {policy_type: multisiteUnderlay, template_inputs: {src_ebgp_asn: "65001", dst_ebgp_asn: "65002", src_ip_address_mask: "10.99.42.1/30", dst_ip_address: "10.99.42.2", link_mtu: 9216, speed: auto}}}
+    nd4x_override_config: []
+    nd4x_recreate_config:
+      - {src_fabric_name: "{{ test_fabric_msite_src }}", dst_fabric_name: "{{ test_fabric_msite_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/43, dst_interface_name: Ethernet1/43, config_data: {policy_type: multisiteUnderlay, template_inputs: {src_ebgp_asn: "65001", dst_ebgp_asn: "65002", src_ip_address_mask: "10.99.43.1/30", dst_ip_address: "10.99.43.2", link_mtu: 9216, ebgp_maximum_paths: 2}}}
+    nd4x_delete_one_config:
+      - {src_fabric_name: "{{ test_fabric_msite_src }}", dst_fabric_name: "{{ test_fabric_msite_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/42, dst_interface_name: Ethernet1/42}
+    nd4x_delete_bulk_config:
+      - {src_fabric_name: "{{ test_fabric_msite_src }}", dst_fabric_name: "{{ test_fabric_msite_dst }}", src_switch_name: "{{ test_switch_a }}", dst_switch_name: "{{ test_switch_b }}", src_interface_name: Ethernet1/43, dst_interface_name: Ethernet1/43}
+
+- name: Run multisiteUnderlay harness lifecycle
+  ansible.builtin.include_tasks: nd4x_demo_link_lifecycle.yml
+
+- name: Verify multisiteUnderlay policy-specific returned values
+  ansible.builtin.assert:
+    that:
+      - >-
+        (nd4x_create.first_run_result.after
+        | selectattr('src_interface_name', 'equalto', 'Ethernet1/42')
+        | first).config_data.template_inputs.link_mtu == 9216
+      - >-
+        (nd4x_update.first_run_result.after
+        | selectattr('src_interface_name', 'equalto', 'Ethernet1/42')
+        | first).config_data.template_inputs.link_mtu == 1500

@@ -1,0 +1,192 @@
+---
+- name: Run nd_manage_links apply-time negative scenario
+  block:
+    - name: Confirm the apply-negative fabric does not exist before the test
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_apply_negative_fabric }}"
+        method: get
+      register: nd4x_apply_negative_fabric_precheck
+      failed_when: false
+
+    - name: Require the apply-negative fabric to be absent
+      ansible.builtin.assert:
+        that:
+          - nd4x_apply_negative_fabric_precheck.status | int == 404
+        fail_msg: >-
+          The apply-time negative scenario requires fabric
+          {{ test_apply_negative_fabric }} to be absent. The precheck returned
+          status {{ nd4x_apply_negative_fabric_precheck.status | default('unknown') }}:
+          {{ nd4x_apply_negative_fabric_precheck.jsondata | default(nd4x_apply_negative_fabric_precheck.msg | default('missing')) }}.
+
+    - name: Submit schema-valid config to a controller resource that must not exist
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_links
+        state: merged
+        check_mode: false
+        idempotency: false
+        common_args:
+          fabric_name: "{{ test_apply_negative_fabric }}"
+          link_scope: manage
+        config:
+          - src_fabric_name: "{{ test_apply_negative_fabric }}"
+            dst_fabric_name: "{{ test_apply_negative_fabric }}"
+            src_switch_name: "{{ test_switch_a }}"
+            dst_switch_name: "{{ test_switch_b }}"
+            src_interface_name: Ethernet1/90
+            dst_interface_name: Ethernet1/90
+            config_data:
+              policy_type: numbered
+              template_inputs:
+                src_ip: 10.99.90.1
+                dst_ip: 10.99.90.2
+                mtu: 9216
+                interface_admin_state: true
+        expected:
+          apply:
+            changed: false
+            failed: true
+      register: nd4x_apply_negative
+
+    - name: Verify the action plugin returns the expected apply-time failure
+      ansible.builtin.assert:
+        that:
+          - nd4x_apply_negative.first_run_result.failed | bool
+          - not nd4x_apply_negative.first_run_result.changed | bool
+          - >-
+            nd4x_apply_negative.first_run_result.msg
+            is search('(?i)not found|does not exist|unknown fabric|404')
+        fail_msg: >-
+          The apply-time negative test failed for an unexpected reason:
+          {{ nd4x_apply_negative.first_run_result.msg | default('no error message') }}
+
+    - name: Verify failed apply did not produce an idempotency phase
+      ansible.builtin.assert:
+        that:
+          - nd4x_apply_negative.idempotency_attempts | default(0) | int == 0
+        fail_msg: >-
+          The harness attempted idempotency after an expected apply failure:
+          {{ nd4x_apply_negative.idempotency_attempts | default('unknown') }}
+
+  always:
+    - name: Clean up any accidentally-created apply-negative link
+      cisco.nd.nd_manage_links:
+        output_level: "{{ nd_output_level | default('debug') }}"
+        fabric_name: "{{ test_apply_negative_fabric }}"
+        link_scope: manage
+        config:
+          - src_fabric_name: "{{ test_apply_negative_fabric }}"
+            dst_fabric_name: "{{ test_apply_negative_fabric }}"
+            src_switch_name: "{{ test_switch_a }}"
+            dst_switch_name: "{{ test_switch_b }}"
+            src_interface_name: Ethernet1/90
+            dst_interface_name: Ethernet1/90
+        state: deleted
+      register: nd4x_apply_negative_cleanup
+      failed_when: false
+      when:
+        - nd4x_scope_lock_acquired | default(false) | bool
+        - nd4x_apply_negative_fabric_precheck.status | int == 404
+      tags:
+        - always
+
+    - name: Read apply-negative fabric after cleanup
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_apply_negative_fabric }}"
+        method: get
+      register: nd4x_apply_negative_fabric_after
+      failed_when: false
+      when:
+        - nd4x_scope_lock_acquired | default(false) | bool
+        - nd4x_apply_negative_fabric_precheck.status | int == 404
+      tags:
+        - always
+
+    - name: Read links if the apply-negative fabric unexpectedly exists
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/links?fabricName={{ test_apply_negative_fabric }}&max={{ nd4x_links_page_size }}&offset=0"
+        method: get
+      register: nd4x_apply_negative_links_after
+      failed_when: false
+      when:
+        - nd4x_scope_lock_acquired | default(false) | bool
+        - nd4x_apply_negative_fabric_precheck.status | int == 404
+        - nd4x_apply_negative_fabric_after.status | int == 200
+      tags:
+        - always
+
+    - name: Assert apply-negative link read succeeded when the fabric exists
+      ansible.builtin.assert:
+        that:
+          - nd4x_apply_negative_links_after.status | int == 200
+          - not nd4x_apply_negative_links_after.failed | default(false) | bool
+          - nd4x_apply_negative_links_after.jsondata is mapping
+          - nd4x_apply_negative_links_after.jsondata.links is defined
+          - nd4x_apply_negative_links_after.jsondata.links is sequence
+          - nd4x_apply_negative_links_after.jsondata.meta is mapping
+          - nd4x_apply_negative_links_after.jsondata.meta.counts is mapping
+          - nd4x_apply_negative_links_after.jsondata.meta.counts.remaining is defined
+          - (nd4x_apply_negative_links_after.jsondata.meta.counts.remaining | string) == '0'
+        fail_msg: >-
+          Could not verify apply-negative cleanup in the unexpectedly existing
+          fabric. Expected HTTP 200 with a links collection, got status
+          {{ nd4x_apply_negative_links_after.status | default('unknown') }},
+          failed={{ nd4x_apply_negative_links_after.failed | default(false) }},
+          response={{ nd4x_apply_negative_links_after.jsondata | default('missing') }}.
+      when:
+        - nd4x_scope_lock_acquired | default(false) | bool
+        - nd4x_apply_negative_fabric_precheck.status | int == 404
+        - nd4x_apply_negative_fabric_after.status | int == 200
+      tags:
+        - always
+
+    - name: Identify any accidentally-created apply-negative link
+      ansible.builtin.set_fact:
+        nd4x_apply_negative_remaining_links: >-
+          {%- set matches = [] -%}
+          {%- for link in nd4x_apply_negative_links_after.jsondata.links -%}
+            {%- if (
+                  link.srcFabricName == test_apply_negative_fabric
+                  and link.dstFabricName == test_apply_negative_fabric
+                  and link.srcSwitchName == test_switch_a
+                  and link.dstSwitchName == test_switch_b
+                  and link.srcInterfaceName == 'Ethernet1/90'
+                  and link.dstInterfaceName == 'Ethernet1/90'
+                ) or (
+                  link.srcFabricName == test_apply_negative_fabric
+                  and link.dstFabricName == test_apply_negative_fabric
+                  and link.srcSwitchName == test_switch_b
+                  and link.dstSwitchName == test_switch_a
+                  and link.srcInterfaceName == 'Ethernet1/90'
+                  and link.dstInterfaceName == 'Ethernet1/90'
+                ) -%}
+              {%- set _ = matches.append(link) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ matches }}
+      when:
+        - nd4x_scope_lock_acquired | default(false) | bool
+        - nd4x_apply_negative_fabric_precheck.status | int == 404
+        - nd4x_apply_negative_fabric_after.status | int == 200
+      tags:
+        - always
+
+    - name: Verify apply-negative cleanup and final fabric state
+      ansible.builtin.assert:
+        that:
+          - nd4x_apply_negative_fabric_after.status | int == 404
+          - >-
+            not nd4x_apply_negative_cleanup.failed | default(false) | bool
+            or ((nd4x_apply_negative_cleanup.msg | default('')) is search('(?i)not found|does not exist|unknown fabric|404'))
+          - >-
+            nd4x_apply_negative_fabric_after.status | int != 200
+            or nd4x_apply_negative_remaining_links | length == 0
+        fail_msg: >-
+          Apply-negative cleanup was not verified. Fabric status after cleanup:
+          {{ nd4x_apply_negative_fabric_after.status | default('unknown') }};
+          cleanup result: {{ nd4x_apply_negative_cleanup | default('missing') }};
+          remaining links: {{ nd4x_apply_negative_remaining_links | default('not queried') }}.
+      when:
+        - nd4x_scope_lock_acquired | default(false) | bool
+        - nd4x_apply_negative_fabric_precheck.status | int == 404
+      tags:
+        - always
