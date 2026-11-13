@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.attachment_deploy_targets import RequestedSwitchTargets
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_network import (
     BaseNetworkStrategy,
 )
@@ -139,6 +140,7 @@ class NetworkStateMachine:
         if effects is not None:
             self.coordinator._network_staging_effects = effects
         desired_attachments = self.coordinator._desired_attachment_map(module_args, strategy)
+        requested_attachments = dict(desired_attachments)
         desired_network_names = self.coordinator._configured_network_names(config)
 
         sm, original_config, original_state = self.coordinator._new_state_machine(module_args, strategy)
@@ -256,7 +258,9 @@ class NetworkStateMachine:
                 pre_attach,
                 post_attach,
                 defer_deploy,
-                existing_names=current_network_name_set if self._check_mode() else None,
+                existing_names=current_network_name_set,
+                requested_attachments=requested_attachments,
+                changed_network_names=set(self._network_names_from_models(getattr(sm, "sent", None) or [])),
             )
         finally:
             self.coordinator._restore_state_machine_params(original_config, original_state)
@@ -285,6 +289,8 @@ class NetworkStateMachine:
         post_attach: dict[str, Any],
         defer_deploy: bool,
         existing_names: set[str] | None = None,
+        requested_attachments: dict[tuple[str, str], dict[str, Any]] | None = None,
+        changed_network_names: set[str] | None = None,
     ) -> dict[str, Any]:
         """
         Deploy or defer pending work produced by attachment phases.
@@ -299,33 +305,74 @@ class NetworkStateMachine:
         detach_payloads = self.coordinator._build_delete_deploy_payloads(config, detach_targets, strategy=strategy) if detach_targets else []
         if detach_targets and not detach_payloads:
             raise ValueError("Cannot deploy Network attachment removals without affected switch IDs.")
-        deploy_payloads = self.coordinator._build_deploy_payloads(
-            config,
-            {},
-            post_attach.get("deploy_targets", {}),
-        )
+        post_targets = post_attach.get("deploy_targets", {})
+        actions = getattr(self.coordinator, "config_actions", None)
+        if requested_attachments and actions and actions.type == "switch":
+            selection = RequestedSwitchTargets(requested_attachments)
+
+            def pending_targets() -> dict[str, set[str]]:
+                pending_result = result
+                if self._should_query_pending_networks(result, config):
+                    self._trace("deploy_pending_query_start")
+                    current_networks, query_trace = self.coordinator._query_current_networks_with_trace(module_args, strategy)
+                    self.coordinator._merge_api_trace(result, query_trace)
+                    pending_result = {"after": current_networks}
+                if changed_network_names:
+                    return self.coordinator._build_pending_network_deploy_targets(
+                        pending_result, config, module_args, strategy, existing_names, changed_names=changed_network_names
+                    )
+                return self.coordinator._build_pending_network_deploy_targets(pending_result, config, module_args, strategy, existing_names)
+
+            find_pending = actions.deploy_requested()
+            selected_targets = selection.select(post_targets, pending_targets if find_pending else None)
+            deploy_payloads = self.coordinator._build_deploy_payloads(config, {}, selected_targets)
+        elif actions and actions.type in ("resource", "switch"):
+            pending_result = result
+            if self._should_query_pending_networks(result, config):
+                self._trace("deploy_pending_query_start")
+                current_networks, query_trace = self.coordinator._query_current_networks_with_trace(module_args, strategy)
+                self.coordinator._merge_api_trace(result, query_trace)
+                pending_result = {"after": current_networks}
+            if changed_network_names:
+                pending = self.coordinator._build_pending_network_deploy_targets(
+                    pending_result, config, module_args, strategy, existing_names, changed_names=changed_network_names
+                )
+            else:
+                pending = self.coordinator._build_pending_network_deploy_targets(pending_result, config, module_args, strategy, existing_names)
+            if actions.type == "resource":
+                # Detaches have a mandatory resource-scoped deploy already;
+                # only independently pending switches need an optional one.
+                pending = {name: set(ids).difference(detach_targets.get(name, set())) for name, ids in pending.items()}
+            # New resources with no attachments still need a no_targets action,
+            # including when check mode has no controller status for them yet.
+            if changed_network_names is None and result.get("changed") and existing_names is not None:
+                for name in set(self.coordinator._configured_network_names(config)) - existing_names:
+                    pending.setdefault(name, set())
+            deploy_payloads = self.coordinator._build_deploy_payloads(config, post_targets, pending)
+        else:
+            deploy_payloads = self.coordinator._build_deploy_payloads(config, {}, post_targets)
+            if not deploy_payloads and not detach_targets:
+                deploy_payloads = self.coordinator._build_pending_network_deploy_payloads(
+                    result,
+                    config,
+                    module_args,
+                    strategy,
+                    existing_names,
+                )
+                self._trace("deploy_payloads_from_result", payload_count=len(deploy_payloads), payloads=deploy_payloads)
+            if not deploy_payloads and not detach_targets and self._should_query_pending_networks(result, config):
+                self._trace("deploy_pending_query_start")
+                current_networks, query_trace = self.coordinator._query_current_networks_with_trace(module_args, strategy)
+                self.coordinator._merge_api_trace(result, query_trace)
+                deploy_payloads = self.coordinator._build_pending_network_deploy_payloads(
+                    {"after": current_networks},
+                    config,
+                    module_args,
+                    strategy,
+                    existing_names,
+                )
+                self._trace("deploy_pending_query_end", current_count=len(current_networks), payload_count=len(deploy_payloads), payloads=deploy_payloads)
         self._trace("deploy_payloads_from_attachments", payload_count=len(deploy_payloads), payloads=deploy_payloads)
-        if not deploy_payloads and not detach_targets:
-            deploy_payloads = self.coordinator._build_pending_network_deploy_payloads(
-                result,
-                config,
-                module_args,
-                strategy,
-                existing_names,
-            )
-            self._trace("deploy_payloads_from_result", payload_count=len(deploy_payloads), payloads=deploy_payloads)
-        if not deploy_payloads and not detach_targets and self._should_query_pending_networks(result, config):
-            self._trace("deploy_pending_query_start")
-            current_networks, query_trace = self.coordinator._query_current_networks_with_trace(module_args, strategy)
-            self.coordinator._merge_api_trace(result, query_trace)
-            deploy_payloads = self.coordinator._build_pending_network_deploy_payloads(
-                {"after": current_networks},
-                config,
-                module_args,
-                strategy,
-                existing_names,
-            )
-            self._trace("deploy_pending_query_end", current_count=len(current_networks), payload_count=len(deploy_payloads), payloads=deploy_payloads)
         if not deploy_payloads and not detach_payloads:
             return result
 
@@ -333,25 +380,22 @@ class NetworkStateMachine:
             result["_deferred_deploy_payloads"] = [{"_undeploy": True, **payload} for payload in detach_payloads] + deploy_payloads
             return result
 
-        if self._check_mode():
+        if self._check_mode() and detach_payloads:
             self.coordinator._merge_api_trace(
                 result,
-                {
-                    "changed": True,
-                    "failed": False,
-                    "check_mode_deploy_payloads": detach_payloads + deploy_payloads,
-                },
+                {"changed": True, "failed": False, "check_mode_deploy_payloads": detach_payloads},
             )
-            return result
+        elif not self._check_mode():
+            for deploy_payload in detach_payloads:
+                self._trace("undeploy_start", deploy_payload=deploy_payload)
+                deploy_trace = self.coordinator._deploy_network_attachments(module_args, strategy, deploy_payload, undeploy=True)
+                self.coordinator._merge_api_trace(result, deploy_trace)
+                self._trace("undeploy_end", deploy_payload=deploy_payload)
 
-        for deploy_payload in detach_payloads:
-            self._trace("undeploy_start", deploy_payload=deploy_payload)
-            deploy_trace = self.coordinator._deploy_network_attachments(module_args, strategy, deploy_payload, undeploy=True)
-            self.coordinator._merge_api_trace(result, deploy_trace)
-            self._trace("undeploy_end", deploy_payload=deploy_payload)
         for deploy_payload in deploy_payloads:
             self._trace("deploy_start", deploy_payload=deploy_payload)
-            deploy_trace = self.coordinator._deploy_network_attachments(
+            deploy = getattr(self.coordinator, "_run_network_config_actions", self.coordinator._deploy_network_attachments)
+            deploy_trace = deploy(
                 module_args,
                 strategy,
                 deploy_payload,

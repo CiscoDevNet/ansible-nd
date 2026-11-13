@@ -156,7 +156,7 @@ def test_deploy_only_request_reaches_deploy_phase(monkeypatch, check_mode):
     _InventoryOrchestrator.writes = []
     monkeypatch.setattr(coordinator_module, "NDNetworkOrchestrator", _InventoryOrchestrator)
     deployed = []
-    monkeypatch.setattr(coordinator, "_build_pending_network_deploy_payloads", lambda *_args: [{"networkNames": ["N"]}])
+    monkeypatch.setattr(coordinator, "_build_pending_network_deploy_payloads", lambda *_args: [{"networkNames": ["N"], "switchIds": ["S1"]}])
     monkeypatch.setattr(coordinator, "_deploy_network_attachments", lambda *_args, **_kwargs: deployed.append(True) or {"changed": True})
     result = NetworkStateMachine(coordinator).run({"state": "merged", "config": [entry]}, strategy)
     assert result["changed"] is True

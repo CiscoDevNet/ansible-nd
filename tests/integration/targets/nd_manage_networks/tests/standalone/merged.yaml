@@ -94,7 +94,6 @@
         vlan_name: ansible_nd_net_merged_l2_vlan
         attach: "{{ nd_network_deploy_attach_block }}"
         deploy: true
-        deploy_type: switch
       - network_name: ansible-nd-net-merged-l3
         layer: layer3
         network_id: "{{ nd_network_base_id + 2 }}"
@@ -106,7 +105,6 @@
         routing_tag: 12345
         netflow_enable: false
         deploy: true
-        deploy_type: network
   delegate_to: localhost
   tags: merged
 

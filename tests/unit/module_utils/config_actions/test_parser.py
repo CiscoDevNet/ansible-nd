@@ -29,7 +29,7 @@ def test_config_actions_parser_00000() -> None:
     actions = parse_config_actions(params={}, raw_args={}, policy=RESOURCE_CONFIG_ACTIONS)
     assert actions.provided is False
     assert actions.deploy is True
-    assert actions.type == "switch"
+    assert actions.type == "resource"
     assert actions.save is False
 
 
@@ -146,7 +146,7 @@ def test_config_actions_parser_00060() -> None:
     actions = parse_config_actions(params={}, raw_args={}, policy=RESOURCE_CONFIG_ACTIONS, state="gathered")
     assert actions.save is False
     assert actions.deploy is False
-    assert actions.type == "switch"
+    assert actions.type == "resource"
 
 
 def test_config_actions_parser_00070() -> None:

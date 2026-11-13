@@ -1722,7 +1722,6 @@ def test_vrfs_00025_config_model_accepts_supported_attachment_fields():
     config = {
         "vrf_name": "ansible-vrf-attach",
         "deploy": False,
-        "deploy_type": "vrf",
         "attach": [
             {
                 "ip_address": "192.168.1.224",
@@ -1747,7 +1746,7 @@ def test_vrfs_00025_config_model_accepts_supported_attachment_fields():
 
     for parsed in (standalone, parent):
         assert parsed["deploy"] is False
-        assert parsed["deploy_type"] == "vrf"
+        assert "deploy_type" not in parsed
         attachment = parsed["attach"][0]
         assert attachment["ip_address"] == "192.168.1.224"
         assert attachment["freeform_config"] == "interface loopback10\n description test"

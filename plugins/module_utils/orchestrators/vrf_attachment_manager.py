@@ -23,6 +23,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.on
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import (
     EpManageSwitchesListGet,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switch_actions import (
+    EpManageSwitchActionsDeployPost,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics_networks import (
+    EpOneManageFabricsSwitchActionsDeployPost,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_actions_models import (
     VrfDeployRequestModel,
 )
@@ -44,7 +50,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_config_utils import (
     configured_vrf_names,
     deploy_enabled_by_vrf,
-    deploy_type_by_vrf,
+    deploy_scope_by_vrf,
 )
 
 
@@ -122,7 +128,7 @@ class VrfAttachmentManager:
             return {}
 
         vrf_names = configured_vrf_names(config)
-        deploy_enabled = deploy_enabled_by_vrf(config)
+        deploy_enabled = deploy_enabled_by_vrf(config, getattr(self.coordinator, "config_actions", None))
 
         query_all = state == "overridden"
         query_vrf_names = current_vrf_names
@@ -159,7 +165,8 @@ class VrfAttachmentManager:
         deploy_targets: dict[str, set[str]] = {}
         for payload in payloads:
             vrf_name = payload.get("vrfName")
-            if deploy_enabled.get(vrf_name, True):
+            # Detach cleanup is mandatory even when optional deployment is disabled.
+            if phase == "pre" or deploy_enabled.get(vrf_name, True):
                 self.coordinator._record_deploy_target(deploy_targets, vrf_name, payload.get("switchId"))
 
         trace = self.coordinator._post_vrf_attachments(
@@ -714,10 +721,23 @@ class VrfAttachmentManager:
             return
         deploy_targets.setdefault(vrf_name, set()).add(switch_id)
 
+    @staticmethod
+    def build_detach_deploy_payloads(deploy_targets: dict[str, set[str]]) -> list[dict[str, Any]]:
+        """Build resource-filtered requests for switch-scoped detach cleanup."""
+        grouped: dict[tuple[str, ...], set[str]] = {}
+        for vrf_name, switch_ids in (deploy_targets or {}).items():
+            if not vrf_name or not switch_ids or not all(switch_ids):
+                raise ValueError("Cannot deploy VRF attachment removals without VRF names and affected switch IDs.")
+            grouped.setdefault(tuple(sorted(switch_ids)), set()).add(vrf_name)
+        return [
+            VrfDeployRequestModel(vrf_names=sorted(vrf_names), switch_ids=list(switch_ids)).to_payload() for switch_ids, vrf_names in sorted(grouped.items())
+        ]
+
     def build_deploy_payloads(
         self,
         config: list[dict],
         *target_maps: dict[str, set[str]],
+        actions: Any | None = None,
     ) -> list[dict[str, Any]]:
         """Build deploy requests from one or more VRF/switch maps."""
         deploy_targets: dict[str, set[str]] = {}
@@ -728,20 +748,33 @@ class VrfAttachmentManager:
         if not deploy_targets:
             return []
 
-        deploy_type = deploy_type_by_vrf(config)
+        selected_actions = actions if actions is not None else getattr(self.coordinator, "config_actions", None)
+        deploy_scope = deploy_scope_by_vrf(config, selected_actions)
         payloads: list[dict[str, Any]] = []
         vrf_level_names: list[str] = []
         switch_groups: dict[tuple[str, ...], list[str]] = {}
+        switch_scope_ids: set[str] = set()
+        switch_scope_no_targets: list[str] = []
 
         for vrf_name in sorted(deploy_targets.keys()):
-            if deploy_type.get(vrf_name, "switch") == "vrf":
-                vrf_level_names.append(vrf_name)
+            scope = deploy_scope.get(vrf_name, "resource")
+            if scope == "resource":
+                switch_ids = sorted(deploy_targets.get(vrf_name) or [])
+                if switch_ids:
+                    switch_groups.setdefault(tuple(switch_ids), []).append(vrf_name)
+                else:
+                    # A names-only placeholder lets config actions report no_targets;
+                    # it must never be sent to the controller as a deploy request.
+                    vrf_level_names.append(vrf_name)
                 continue
             switch_ids = sorted(deploy_targets.get(vrf_name) or [])
             if switch_ids:
-                switch_groups.setdefault(tuple(switch_ids), []).append(vrf_name)
+                switch_scope_ids.update(switch_ids)
             else:
-                vrf_level_names.append(vrf_name)
+                switch_scope_no_targets.append(vrf_name)
+
+        if switch_scope_ids:
+            payloads.append({"switchIds": sorted(switch_scope_ids)})
 
         for switch_ids, vrf_names in sorted(switch_groups.items()):
             payloads.append(VrfDeployRequestModel(vrf_names=sorted(vrf_names), switch_ids=list(switch_ids)).to_payload())
@@ -749,19 +782,25 @@ class VrfAttachmentManager:
         if vrf_level_names:
             payloads.append(VrfDeployRequestModel(vrf_names=sorted(vrf_level_names)).to_payload())
 
+        if switch_scope_no_targets and not switch_scope_ids:
+            payloads.append(VrfDeployRequestModel(vrf_names=sorted(switch_scope_no_targets)).to_payload())
+
         return payloads
 
-    def build_pending_vrf_deploy_payloads(
+    def build_pending_vrf_deploy_targets(
         self,
         result: dict[str, Any],
         config: list[dict],
         module_args: dict,
         strategy: BaseVrfStrategy,
         existing_names: set[str] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Build a deploy request for configured VRFs already pending in ND."""
-        deploy_enabled = deploy_enabled_by_vrf(config)
-        deploy_type = deploy_type_by_vrf(config)
+        actions: Any | None = None,
+        changed_names: set[str] | None = None,
+    ) -> dict[str, set[str]]:
+        """Collect affected switches for configured VRFs changed or pending in ND."""
+        selected_actions = actions if actions is not None else getattr(self.coordinator, "config_actions", None)
+        deploy_enabled = deploy_enabled_by_vrf(config, selected_actions)
+        deploy_scope = deploy_scope_by_vrf(config, selected_actions)
         configured_vrfs = set(configured_vrf_names(config))
         pending_statuses = {"pending", "inProgress"}
         pending_vrfs: set[str] = set()
@@ -776,57 +815,58 @@ class VrfAttachmentManager:
             after_vrfs.add(vrf_name)
             if not deploy_enabled.get(vrf_name, True):
                 continue
-            if str(vrf_status or "").strip() in pending_statuses:
+            if vrf_name in (changed_names or set()) or str(vrf_status or "").strip() in pending_statuses:
                 pending_vrfs.add(vrf_name)
 
-        vrf_level_names: set[str] = set()
-        switch_level_names = {vrf_name for vrf_name in pending_vrfs if deploy_type.get(vrf_name, "switch") == "switch"}
-        vrf_level_names.update(pending_vrfs.difference(switch_level_names))
-
+        switch_level_names = {vrf_name for vrf_name in pending_vrfs if deploy_scope.get(vrf_name, "resource") == "switch"}
         deploy_enabled_names = {vrf_name for vrf_name in after_vrfs if deploy_enabled.get(vrf_name, True)}
-        attachment_query_names = sorted((deploy_enabled_names.difference(vrf_level_names)).union(switch_level_names))
+        attachment_query_names = sorted(deploy_enabled_names)
         # Simulated creations have no controller attachment metadata yet.
         if existing_names is not None:
             attachment_query_names = [name for name in attachment_query_names if name in existing_names]
         attachment_details = self.coordinator._current_attachment_details(module_args, strategy, attachment_query_names) if attachment_query_names else []
 
-        if switch_level_names:
-            switch_ids_by_vrf: dict[str, set[str]] = {vrf_name: set() for vrf_name in switch_level_names}
-            for attachment in attachment_details:
-                vrf_name = attachment.get("vrfName")
-                switch_id = attachment.get("switchId")
-                if vrf_name in switch_ids_by_vrf and switch_id:
-                    switch_ids_by_vrf[vrf_name].add(switch_id)
+        for vrf_name in pending_vrfs:
+            deploy_target_map.setdefault(vrf_name, set())
 
-            for vrf_name in sorted(switch_level_names):
-                switch_ids = sorted(switch_ids_by_vrf.get(vrf_name) or [])
-                if switch_ids:
-                    deploy_target_map[vrf_name] = set(switch_ids)
-                else:
-                    vrf_level_names.add(vrf_name)
-
+        attached_vrfs: set[str] = set()
         for attachment in attachment_details:
             vrf_name = attachment.get("vrfName")
             switch_id = attachment.get("switchId")
             if vrf_name not in configured_vrfs or not deploy_enabled.get(vrf_name, True):
                 continue
-            if attachment.get("attach") is True and self.attachment_has_pending_delete_work(attachment):
-                if deploy_type.get(vrf_name, "switch") == "vrf" or not switch_id:
-                    deploy_target_map.setdefault(vrf_name, set())
-                else:
-                    deploy_target_map.setdefault(vrf_name, set()).add(switch_id)
-            elif attachment.get("attach") is False and self.attachment_has_pending_delete_work(attachment):
-                if deploy_type.get(vrf_name, "switch") == "vrf" or not switch_id:
-                    deploy_target_map.setdefault(vrf_name, set())
-                else:
-                    deploy_target_map.setdefault(vrf_name, set()).add(switch_id)
+            attached = attachment.get("attach")
+            scope = deploy_scope.get(vrf_name, "resource")
+            pending_attachment = (attached is True or attached is False) and self.attachment_has_pending_delete_work(attachment)
+            if attached is True and switch_id:
+                attached_vrfs.add(vrf_name)
+            if vrf_name in switch_level_names and switch_id and (attached is True or pending_attachment):
+                deploy_target_map[vrf_name].add(switch_id)
+            pending_definition = scope == "resource" and vrf_name in pending_vrfs and attached is True
+            if pending_attachment or pending_definition:
+                targets = deploy_target_map.setdefault(vrf_name, set())
+                if switch_id:
+                    targets.add(switch_id)
 
-        for vrf_name in vrf_level_names:
+        # A configured unattached VRF still needs a no-target action result,
+        # even when its definition is already in sync and has no pending work.
+        for vrf_name in deploy_enabled_names.difference(attached_vrfs):
             deploy_target_map.setdefault(vrf_name, set())
 
-        if not deploy_target_map:
-            return []
-        return self.coordinator._build_deploy_payloads(config, deploy_target_map)
+        return deploy_target_map
+
+    def build_pending_vrf_deploy_payloads(
+        self,
+        result: dict[str, Any],
+        config: list[dict],
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+        existing_names: set[str] | None = None,
+        actions: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        """Build deploy requests for configured VRFs already pending in ND."""
+        targets = self.build_pending_vrf_deploy_targets(result, config, module_args, strategy, existing_names, actions)
+        return self.build_deploy_payloads(config, targets, actions=actions)
 
     def wait_for_vrfs_delete_ready(
         self,
@@ -888,7 +928,8 @@ class VrfAttachmentManager:
             }
             retry_targets = self._merge_deploy_target_maps(attachment_retry_targets, vrf_retry_targets)
             if retry_targets:
-                for deploy_payload in self.build_deploy_payloads(module_args.get("config") or [], retry_targets):
+                scoped_targets = {name: switch_ids for name, switch_ids in retry_targets.items() if switch_ids}
+                for deploy_payload in self.build_detach_deploy_payloads(scoped_targets):
                     self.deploy_vrf_attachments(module_args, strategy, deploy_payload)
                 for vrf_name in vrf_retry_targets:
                     retried_vrfs[vrf_name] = retried_vrfs.get(vrf_name, 0) + 1
@@ -955,4 +996,30 @@ class VrfAttachmentManager:
         )
         trace = self.coordinator._finalize_api_trace(results)
         self._trace("vrf_attachment_deploy_end", changed=trace.get("changed"), failed=trace.get("failed"))
+        return trace
+
+    def deploy_vrf_switches(
+        self,
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+        deploy_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Deploy pending fabric configuration to the selected switches."""
+        switch_ids = deploy_payload.get("switchIds") or []
+        if not switch_ids:
+            raise ValueError("Switch deployment requires affected switch IDs.")
+        self._trace("vrf_switch_deploy_start", deploy_payload=deploy_payload)
+        orchestrator, results = self.coordinator._new_vrf_orchestrator(module_args, strategy)
+        endpoint_cls = EpOneManageFabricsSwitchActionsDeployPost if strategy.is_multicluster else EpManageSwitchActionsDeployPost
+        endpoint = orchestrator._make_endpoint(endpoint_cls)
+        if not strategy.is_multicluster:
+            endpoint.endpoint_params.force_show_run = False
+        orchestrator._request(
+            path=endpoint.path,
+            verb=endpoint.verb,
+            data={"switchIds": list(switch_ids)},
+            operation_type=OperationType.UPDATE,
+        )
+        trace = self.coordinator._finalize_api_trace(results)
+        self._trace("vrf_switch_deploy_end", changed=trace.get("changed"), failed=trace.get("failed"))
         return trace

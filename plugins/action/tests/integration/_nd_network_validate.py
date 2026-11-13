@@ -195,7 +195,6 @@ IGNORED_EXPECTED_FIELDS = {
     "attach",
     "child_fabric_config",
     "deploy",
-    "deploy_type",
 }
 
 

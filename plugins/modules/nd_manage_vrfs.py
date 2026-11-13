@@ -53,6 +53,29 @@ options:
     type: str
     choices: [ merged, replaced, overridden, deleted, gathered, staged ]
     default: merged
+  config_actions:
+    description:
+      - Controls optional deployment after VRF changes.
+      - When omitted, deployment is enabled and scoped by VRF name and affected switch IDs.
+      - C(type=switch) deploys pending configuration on affected switches, including configuration from other resources.
+      - In V(merged), when the task lists attachment switches, optional switch deployment is limited to those switches.
+        Existing attachments omitted from the task remain attached.
+      - When the task lists no switches, affected current attachments supply the switch targets; no targets are reported as a skip.
+      - C(type=resource) deploys the named VRFs to their affected switches.
+      - When no switch targets exist, deployment is skipped with C(no_targets) for either scope.
+      - Per-item C(config[].deploy) overrides are supported only with C(type=resource).
+      - C(state=staged) always skips deployment.
+    type: dict
+    suboptions:
+      deploy:
+        description: Whether to deploy pending VRF changes.
+        type: bool
+        default: true
+      type:
+        description: Scope for optional deployment.
+        type: str
+        choices: [ switch, resource ]
+        default: resource
   deletion_mode:
     description:
       - V(standard) retains the ordinary detach, optional deployment, and VRF deletion workflow.
@@ -80,7 +103,7 @@ options:
         standard VXLAN core and fabric-instance options are not applicable.
       - For parent fabrics each item may include a C(child_fabric_config)
         list to provide per-child-fabric overrides. The parent-level
-        C(attach), C(deploy), and C(deploy_type) options are applied only on
+        C(attach) and C(deploy) options are applied only on
         the parent fabric and are not sent to child fabrics.
       - On Fabric groups and Multi-cluster Fabric groups, child-only properties must be placed under
         C(child_fabric_config). Supplying them at the top level is rejected for
@@ -413,27 +436,17 @@ options:
         type: str
       deploy:
         description:
-          - Deploy pending VRF attachment changes for this VRF.
+          - Per-VRF deployment override.
           - For parent fabrics, deployment is performed once after all child
             fabric tasks complete.
           - Applies only to parent/standalone VRF attachments, not child fabric
             override entries.
+          - Valid only when O(config_actions.type=resource).
+          - When omitted, inherits O(config_actions.deploy).
           - For C(state=deleted), the C(deploy) value is ignored; the module
-            detaches existing attachments, deploys the detach using
-            C(deploy_type), and then removes the VRF.
+            deploys the required detach and then removes the VRF.
         type: bool
         default: true
-      deploy_type:
-        description:
-          - Scope of the deploy operation when C(deploy=true).
-          - C(switch) deploys only the switches affected by this VRF attachment
-            operation when switch identifiers are available.
-          - C(vrf) deploys the pending VRF changes for this VRF.
-        type: str
-        default: switch
-        choices:
-          - switch
-          - vrf
       attach:
         description:
           - Parent/standalone switch attachment entries for this VRF.
@@ -668,8 +681,8 @@ EXAMPLES = r"""
                 - "65000:50110"
               export_evpn_rt:
                 - "65000:50110"
-        deploy: true
-        deploy_type: switch
+    config_actions:
+      type: switch
 
 # Standalone fabric - create VRF with TRM
 - name: Create VRF with Tenant Routed Multicast enabled
@@ -717,7 +730,6 @@ EXAMPLES = r"""
               loopback_ipv4_address: 10.255.101.1
               loopback_ipv6_address: 2001:db8:101::1
         deploy: true
-        deploy_type: vrf
         child_fabric_config:
           - fabric_name: child_fabric_1
             l3vni_wo_vlan: false
@@ -901,6 +913,11 @@ msg:
   returned: on failure and on selected no-op or child-fabric failure paths
   type: str
   sample: "Unexpected error: controller rejected VRF payload"
+config_actions:
+  description: Per-target optional deploy plan and execution results.
+  returned: when an optional deploy is planned, completed, or skipped
+  type: list
+  elements: dict
 fabric_type:
   description:
     - Resolved fabric topology used by the workflow.
@@ -998,6 +1015,8 @@ import logging
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_spec import config_actions_spec
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import RESOURCE_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
     NDStateMachineError,
 )
@@ -1020,6 +1039,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_argumen
 
 def main():
     argument_spec = nd_argument_spec()
+    argument_spec.update(config_actions_spec(RESOURCE_CONFIG_ACTIONS))
     config_spec = vrf_parent_argument_spec()
     config_spec.update(vrf_standalone_argument_spec())
     argument_spec.update(

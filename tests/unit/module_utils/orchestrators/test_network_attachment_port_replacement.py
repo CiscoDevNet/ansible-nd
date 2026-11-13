@@ -143,7 +143,7 @@ def test_changed_or_removed_group_target_stages_bounded_detach_and_exact_reattac
     calls, remaining = _record_attachment_phases(state, current, desired)
 
     assert calls == [
-        (OperationType.DELETE, [{"networkName": "BLUE", "switchId": "S1", "vlanId": 191, "attach": False}], {}),
+        (OperationType.DELETE, [{"networkName": "BLUE", "switchId": "S1", "vlanId": 191, "attach": False}], {"BLUE": {"S1"}}),
         (OperationType.CREATE, [desired[("BLUE", "S1")]], {}),
     ]
     assert remaining[("SHARED", "S1")] == current[("SHARED", "S1")]
@@ -210,7 +210,7 @@ def test_known_ios_xe_target_change_stages_exact_attachment_replacement(state, o
     calls, remaining = _record_attachment_phases(state, current, desired)
 
     assert calls == [
-        (OperationType.DELETE, [{"networkName": "BLUE", "switchId": "S1", "vlanId": 191, "attach": False}], {}),
+        (OperationType.DELETE, [{"networkName": "BLUE", "switchId": "S1", "vlanId": 191, "attach": False}], {"BLUE": {"S1"}}),
         (OperationType.CREATE, [desired[("BLUE", "S1")]], {}),
     ]
     assert remaining[("SHARED", "S1")] == current[("SHARED", "S1")]
