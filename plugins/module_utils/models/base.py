@@ -69,6 +69,40 @@ class NDBaseModel(BaseModel, ABC):
     identifiers: ClassVar[Optional[List[str]]] = None
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
 
+    # --- Gathered Filtering Configuration ---
+
+    supports_gathered_filtering: ClassVar[bool] = False
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = ()
+
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """
+        Normalize one gathered-state filter item.
+
+        The base implementation makes no changes. Models can override this
+        when filter values require module-specific normalization.
+        """
+        return filter_item
+
+    @classmethod
+    def matches_gathered_filter(
+        cls,
+        criteria: dict,
+        candidate: dict,
+    ) -> bool:
+        """Return whether a gathered candidate matches one filter item."""
+        return issubset(criteria, candidate)
+
+    @classmethod
+    def get_argument_spec(cls) -> dict[str, Any]:
+        """Return the Ansible argument spec for this model's module.
+
+        Used by the state machine to derive gathered output pruning. Models
+        that support gathered state should override this to return the full
+        module argument spec including ``config.options``.
+        """
+        return {}
+
     # --- Serialization Configuration ---
 
     exclude_from_diff: ClassVar[Set[str]] = set()
@@ -108,9 +142,9 @@ class NDBaseModel(BaseModel, ABC):
     # only after omit/read-back and explicit-value probes establish a deterministic value for every supported
     # release/fabric in scope. Dynamic, conditional, release-divergent, or otherwise unresolved values must be
     # preserved or omitted instead. A wrong value here breaks replaced/overridden idempotency.
-    # Values MUST be in the model's DUMPED form, not the schema-declared form: when a validator coerces a field
-    # on read (e.g. loopback `routeMapTag` schema integer 12345 stored as string "12345"), the table must hold
-    # the coerced value or the default never matches and the field silently reopens issue #410 for that model.
+    # Values MUST be in the model's DUMPED form, not an unnormalized controller echo: when a validator coerces a field
+    # on read (e.g. a numeric-string loopback `routeMapTag` to integer 12345), the table must hold the coerced value
+    # or the default never matches and the field silently reopens issue #410 for that model.
     reverse_diff_defaults: ClassVar[Dict[str, Any]] = {}
 
     # Keys (field ALIASES / wire keys) stripped from this model's level of the reverse-pass dump regardless of

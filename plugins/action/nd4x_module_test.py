@@ -149,7 +149,10 @@ class ActionModule(ActionBase):
         if not isinstance(module_name, str) or not module_name.strip():
             raise AnsibleActionFail("Argument module must be a non-empty string")
 
-        if "state" in args and (not isinstance(state, str) or not state.strip()):
+        # Ansible can materialize an omitted optional module argument as None.
+        # Treat that the same as an absent state so the target module's own
+        # default remains effective.
+        if state is not None and (not isinstance(state, str) or not state.strip()):
             raise AnsibleActionFail("Argument state must be a non-empty string when provided")
 
         for name in ("common_args", "module_args", "expected"):
@@ -855,6 +858,11 @@ class ActionModule(ActionBase):
 
                 current = query_result["current"]
                 if not pagination:
+                    remaining = self._snapshot_remaining(current, query_result)
+                    if remaining is not None and remaining > 0:
+                        raise AnsibleActionFail(
+                            "Check-mode snapshot query %s reports %s remaining records but pagination is not configured" % (query_label, remaining)
+                        )
                     first_current = current
                     break
                 if not isinstance(current, dict) or not isinstance(current.get(collection_key), list):
@@ -883,6 +891,31 @@ class ActionModule(ActionBase):
             )
 
         return snapshots
+
+    @staticmethod
+    def _snapshot_remaining(current, query_result):
+        """Return explicit remaining-row metadata from an unpaginated response."""
+        candidates = []
+        for response in (current, query_result):
+            if not isinstance(response, dict):
+                continue
+            candidates.append(response)
+            for metadata_key in ("meta", "metadata"):
+                metadata = response.get(metadata_key)
+                if isinstance(metadata, dict):
+                    candidates.append(metadata)
+                    counts = metadata.get("counts")
+                    if isinstance(counts, dict):
+                        candidates.append(counts)
+
+        remaining = next((candidate["remaining"] for candidate in candidates if "remaining" in candidate), None)
+        if remaining is None:
+            return None
+
+        try:
+            return int(remaining)
+        except (TypeError, ValueError):
+            raise AnsibleActionFail("Check-mode snapshot query returned invalid remaining count %s" % remaining)
 
     @staticmethod
     def _pagination_path(path, page_size, offset):

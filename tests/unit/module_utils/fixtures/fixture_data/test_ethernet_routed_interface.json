@@ -844,7 +844,7 @@
     },
     "test_preflight_delete_00720b": {
         "TEST_NOTES": [
-            "00720: interfaceList -- Ethernet1/7 is a member of port-channel 10"
+            "00720: interfaceList -- Ethernet1/7 has routedHost intent and stale portChannelId 10 with no parent claim"
         ],
         "RETURN_CODE": 200,
         "METHOD": "GET",
@@ -2157,6 +2157,255 @@
                     "code": 0,
                     "description": "Error at /configData/networkOS/policy/mtu: value is not one of the allowed values",
                     "message": "Schema validation failed"
+                }
+            ]
+        }
+    },
+    "nx_normalize_before_31_32": {
+        "TEST_NOTES": [
+            "Complete current interface inventory for normalize ownership checks; accepted resets are observed as exact trunk defaults."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaces?switchId=FDO11111AAA&max=500&offset=0",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "switchId": "FDO11111AAA",
+                    "interfaceName": "Ethernet1/31",
+                    "interfaceType": "ethernet",
+                    "operData": {
+                        "portChannelId": -1
+                    },
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "routedHost",
+                                "ip": "10.99.31.1",
+                                "prefix": 30
+                            }
+                        }
+                    }
+                },
+                {
+                    "switchId": "FDO11111AAA",
+                    "interfaceName": "Ethernet1/32",
+                    "interfaceType": "ethernet",
+                    "operData": {
+                        "portChannelId": -1
+                    },
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "routedHost",
+                                "ip": "10.99.31.1",
+                                "prefix": 30
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "nx_normalize_before_31": {
+        "TEST_NOTES": [
+            "Complete current interface inventory for normalize ownership checks; accepted resets are observed as exact trunk defaults."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaces?switchId=FDO11111AAA&max=500&offset=0",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "switchId": "FDO11111AAA",
+                    "interfaceName": "Ethernet1/31",
+                    "interfaceType": "ethernet",
+                    "operData": {
+                        "portChannelId": -1
+                    },
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "routedHost",
+                                "ip": "10.99.31.1",
+                                "prefix": 30
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "nx_normalize_before_peer_31": {
+        "TEST_NOTES": [
+            "Complete current interface inventory for normalize ownership checks; accepted resets are observed as exact trunk defaults."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaces?switchId=FDO22222BBB&max=500&offset=0",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "switchId": "FDO22222BBB",
+                    "interfaceName": "Ethernet1/31",
+                    "interfaceType": "ethernet",
+                    "operData": {
+                        "portChannelId": -1
+                    },
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "routedHost",
+                                "ip": "10.99.31.1",
+                                "prefix": 30
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "nx_normalize_after_31_32": {
+        "TEST_NOTES": [
+            "Complete current interface inventory for normalize ownership checks; accepted resets are observed as exact trunk defaults."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaces?switchId=FDO11111AAA&max=500&offset=0",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "switchId": "FDO11111AAA",
+                    "interfaceName": "Ethernet1/31",
+                    "interfaceType": "ethernet",
+                    "operData": {
+                        "portChannelId": -1
+                    },
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost",
+                                "adminState": true,
+                                "allowedVlans": "none"
+                            }
+                        }
+                    }
+                },
+                {
+                    "switchId": "FDO11111AAA",
+                    "interfaceName": "Ethernet1/32",
+                    "interfaceType": "ethernet",
+                    "operData": {
+                        "portChannelId": -1
+                    },
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost",
+                                "adminState": true,
+                                "allowedVlans": "none"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "nx_normalize_after_31_only": {
+        "TEST_NOTES": [
+            "Complete current interface inventory for normalize ownership checks; accepted resets are observed as exact trunk defaults."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaces?switchId=FDO11111AAA&max=500&offset=0",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "switchId": "FDO11111AAA",
+                    "interfaceName": "Ethernet1/31",
+                    "interfaceType": "ethernet",
+                    "operData": {
+                        "portChannelId": -1
+                    },
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost",
+                                "adminState": true,
+                                "allowedVlans": "none"
+                            }
+                        }
+                    }
+                },
+                {
+                    "switchId": "FDO11111AAA",
+                    "interfaceName": "Ethernet1/32",
+                    "interfaceType": "ethernet",
+                    "operData": {
+                        "portChannelId": -1
+                    },
+                    "configData": {
+                        "mode": "routed",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "routedHost",
+                                "ip": "10.99.31.1",
+                                "prefix": 30
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "nx_normalize_after_31": {
+        "TEST_NOTES": [
+            "Complete current interface inventory for normalize ownership checks; accepted resets are observed as exact trunk defaults."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaces?switchId=FDO11111AAA&max=500&offset=0",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "switchId": "FDO11111AAA",
+                    "interfaceName": "Ethernet1/31",
+                    "interfaceType": "ethernet",
+                    "operData": {
+                        "portChannelId": -1
+                    },
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost",
+                                "adminState": true,
+                                "allowedVlans": "none"
+                            }
+                        }
+                    }
                 }
             ]
         }

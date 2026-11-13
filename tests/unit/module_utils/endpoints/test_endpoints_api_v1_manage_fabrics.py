@@ -1018,7 +1018,7 @@ def test_endpoints_api_v1_manage_fabrics_00930():
 # =============================================================================
 
 
-def test_endpoints_api_v1_manage_fabrics_00800():
+def test_endpoints_api_v1_manage_fabrics_00935():
     """
     # Summary
 
@@ -1037,7 +1037,7 @@ def test_endpoints_api_v1_manage_fabrics_00800():
     assert candidates.verb == HttpVerbEnum.GET
 
 
-def test_endpoints_api_v1_manage_fabrics_00810():
+def test_endpoints_api_v1_manage_fabrics_00936():
     """
     # Summary
 

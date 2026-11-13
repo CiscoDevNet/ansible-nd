@@ -102,6 +102,7 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
 
     model_class: ClassVar[Type[NDBaseModel]] = FabricUpdateGroupModel
     supports_bulk_create: ClassVar[bool] = True
+    supports_gathered_server_filtering: ClassVar[bool] = False
 
     create_endpoint: Type[NDEndpointBaseModel] = EpFabricSoftwareUpdatePlanAttachGroup
     update_endpoint: Type[NDEndpointBaseModel] = EpFabricUpdateGroupPut

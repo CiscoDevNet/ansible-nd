@@ -895,7 +895,7 @@ def test_base_model_reverse_diff_00610() -> None:
     assert "switchIp" not in data
     policy = data["configData"]["networkOS"]["policy"]
     assert "adminState" not in policy  # reverse_diff_defaults: adminState True stripped
-    assert "routeMapTag" not in policy  # reverse_diff_defaults: "12345" (dumped form) stripped
+    assert "routeMapTag" not in policy  # reverse_diff_defaults: integer 12345 stripped
     assert policy["description"] == "kept"
 
 

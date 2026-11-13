@@ -20,6 +20,7 @@ IOS-XE member-mode preflight, and the routed wire shape through the inherited bu
 from __future__ import annotations
 
 import inspect
+from typing import Any
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
@@ -100,6 +101,250 @@ def _build_xe_model(
             },
         }
     )
+
+
+class _RecordingRoutedOrchestrator(PortChannelRoutedInterfaceOrchestrator):
+    """Record exact mutation, preview, and deployment targets without a controller."""
+
+    def model_post_init(self, __context) -> None:
+        super().model_post_init(__context)
+        self._writes: list[dict[str, Any]] = []
+        self._previews: list[list[tuple[str, str]]] = []
+        self._deployments: list[list[tuple[str, str]]] = []
+        self._pending_config: dict[tuple[str, str], str] = {}
+        self._fail_put = False
+
+    def _resolve_switch_id(self, switch_ip: str) -> str:
+        return SWITCH_ID if switch_ip == "192.168.1.1" else "OTHER_SWITCH"
+
+    def _request(self, *, path: str, verb: Any, data: Any = None, **kwargs) -> dict:
+        if self._fail_put:
+            raise RuntimeError("PUT rejected")
+        self._writes.append({"path": path, "verb": verb, "data": data})
+        return {}
+
+    def _preview_interfaces(self, payload: dict) -> dict:
+        pairs = [(item["interfaceName"], item["switchId"]) for item in payload["interfaces"]]
+        self._previews.append(pairs)
+        rows = []
+        for name, switch_id in pairs:
+            config = self._pending_config.get((name, switch_id), "")
+            rows.append(
+                {
+                    "interfaceName": name,
+                    "switchId": switch_id,
+                    "status": "success",
+                    "combinedConfigs": [{"configType": "pending", "lines": len(config.splitlines()), "config": config}],
+                }
+            )
+        return {"configurationDiffs": rows}
+
+    def _deploy_interfaces(self, pairs: list[tuple[str, str]]) -> dict:
+        self._deployments.append(list(pairs))
+        return {}
+
+
+def _recording_routed_orchestrator(*, check_mode: bool = False) -> _RecordingRoutedOrchestrator:
+    rest_send = _build_rest_send(ResponseGenerator(iter(())), check_mode=check_mode)
+    instance = _RecordingRoutedOrchestrator(rest_send=rest_send)
+    instance.deploy = True
+    return instance
+
+
+def _cache_xe_members(instance: _RecordingRoutedOrchestrator, *, parent_ports: list[str], member_id: int = 120) -> None:
+    instance._switch_interfaces_cache[SWITCH_ID] = {
+        "port-channel120": {
+            "interfaceName": "port-channel120",
+            "interfaceType": "portChannel",
+            "switchId": SWITCH_ID,
+            "configData": {"networkOS": {"networkOSType": "ios-xe", "policy": {"policyType": "iosXeL3PortChannel", "ports": parent_ports}}},
+        },
+        "gigabitethernet1/0/16": {
+            "interfaceName": "GigabitEthernet1/0/16",
+            "interfaceType": "ethernet",
+            "switchId": SWITCH_ID,
+            "operData": {"portChannelId": member_id},
+        },
+        "gigabitethernet1/0/17": {
+            "interfaceName": "GigabitEthernet1/0/17",
+            "interfaceType": "ethernet",
+            "switchId": SWITCH_ID,
+            "operData": {"portChannelId": member_id},
+        },
+        "gigabitethernet1/0/18": {
+            "interfaceName": "GigabitEthernet1/0/18",
+            "interfaceType": "ethernet",
+            "switchId": SWITCH_ID,
+            "operData": {"portChannelId": 999},
+        },
+    }
+
+
+@pytest.mark.parametrize("pass_previous", [True, False], ids=["standalone_previous_model", "workflow_cached_inventory"])
+def test_xe_routed_member_removal_deploys_only_exact_removed_member(pass_previous: bool) -> None:
+    """An accepted empty-membership PUT must deploy the member where IOS-XE queues the detach."""
+
+    instance = _recording_routed_orchestrator()
+    _cache_xe_members(instance, parent_ports=["GigabitEthernet1/0/16", "GigabitEthernet1/0/17"])
+    member = ("GigabitEthernet1/0/16", SWITCH_ID)
+    instance._pending_config[member] = "interface GigabitEthernet1/0/16\n no channel-group 120 mode active\n no description\n"
+    previous = _build_xe_model(ports=["GigabitEthernet1/0/16", "GigabitEthernet1/0/17"])
+    desired = _build_xe_model(ports=["GigabitEthernet1/0/17"])
+
+    instance.update(desired, **({"previous_model": previous} if pass_previous else {}))
+    assert len(instance._writes) == 1
+    assert instance._previews == [[member]]
+    assert instance.pending_deploys == (("port-channel120", SWITCH_ID), member)
+    instance.deploy_pending()
+    assert instance._deployments == [[("port-channel120", SWITCH_ID), member]]
+
+
+def test_xe_routed_explicit_empty_ports_deploys_former_member() -> None:
+    """The reported ports=[] replacement includes the physical member in the deploy request."""
+
+    instance = _recording_routed_orchestrator()
+    _cache_xe_members(instance, parent_ports=["GigabitEthernet1/0/16"])
+    instance._switch_interfaces_cache[SWITCH_ID]["gigabitethernet1/0/17"]["operData"]["portChannelId"] = -1
+    member = ("GigabitEthernet1/0/16", SWITCH_ID)
+    instance._pending_config[member] = "interface GigabitEthernet1/0/16\n no channel-group 120 mode active\n no description\n"
+
+    instance.update(_build_xe_model(ports=[]), previous_model=_build_xe_model(ports=["GigabitEthernet1/0/16"]))
+    instance.deploy_pending()
+    assert instance._previews == [[member]]
+    assert instance._deployments == [[("port-channel120", SWITCH_ID), member]]
+
+
+def test_xe_routed_workflow_staging_retains_exact_removed_member_target() -> None:
+    """The workflow's deploy=False source still queues Gi16 for its later consolidated deploy."""
+
+    instance = _recording_routed_orchestrator()
+    instance.deploy = False
+    instance.workflow_deploy_requested = True
+    _cache_xe_members(instance, parent_ports=["GigabitEthernet1/0/16"])
+    instance._switch_interfaces_cache[SWITCH_ID]["gigabitethernet1/0/17"]["operData"]["portChannelId"] = -1
+    member = ("GigabitEthernet1/0/16", SWITCH_ID)
+    instance._pending_config[member] = "interface GigabitEthernet1/0/16\n no channel-group 120 mode active\n"
+
+    instance.update(_build_xe_model(ports=[]))
+    assert instance._previews == [[member]]
+    assert instance.pending_deploys == (("port-channel120", SWITCH_ID), member)
+    assert instance.deploy_pending() is None
+    assert instance._deployments == []
+
+
+def test_xe_routed_empty_ports_deploys_all_and_only_former_members() -> None:
+    """Two removed members are deployed without a third Ethernet on another channel-group."""
+
+    instance = _recording_routed_orchestrator()
+    members = [("GigabitEthernet1/0/16", SWITCH_ID), ("GigabitEthernet1/0/17", SWITCH_ID)]
+    _cache_xe_members(instance, parent_ports=[name for name, _sid in members])
+    for name, sid in members:
+        instance._pending_config[(name, sid)] = f"interface {name}\n no channel-group 120 mode active\n"
+
+    instance.update(_build_xe_model(ports=[]), previous_model=_build_xe_model(ports=[name for name, _sid in members]))
+    instance.deploy_pending()
+    assert instance._previews == [members]
+    assert instance._deployments == [[("port-channel120", SWITCH_ID), *members]]
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_xe_routed_no_diff_replay_recovers_only_pending_detach(check_mode: bool) -> None:
+    """A parent with ports=[] can be converged while its former member still has pending CLI."""
+
+    instance = _recording_routed_orchestrator(check_mode=check_mode)
+    _cache_xe_members(instance, parent_ports=[])
+    instance._switch_interfaces_cache[SWITCH_ID]["gigabitethernet1/0/17"]["operData"]["portChannelId"] = -1
+    member = ("GigabitEthernet1/0/16", SWITCH_ID)
+    instance._pending_config[member] = "interface GigabitEthernet1/0/16\n no channel-group 120 mode active\n"
+
+    assert instance.reconcile_no_diff([_build_xe_model(ports=[])]) is True
+    assert instance._previews == [[("port-channel120", SWITCH_ID)], [member]]
+    assert instance.pending_deploys == (() if check_mode else (member,))
+    assert instance._writes == []
+    if not check_mode:
+        instance.deploy_pending()
+        assert instance._deployments == [[member]]
+
+
+def test_xe_routed_detach_skips_converged_member_and_rejects_unrelated_pending_cli() -> None:
+    """Stale operational membership alone never authorizes an unrelated member deployment."""
+
+    instance = _recording_routed_orchestrator()
+    _cache_xe_members(instance, parent_ports=[])
+    instance._switch_interfaces_cache[SWITCH_ID]["gigabitethernet1/0/17"]["operData"]["portChannelId"] = -1
+    member = ("GigabitEthernet1/0/16", SWITCH_ID)
+    assert instance.reconcile_no_diff([_build_xe_model(ports=[])]) is False
+    assert instance.pending_deploys == ()
+
+    instance._pending_config[member] = "interface GigabitEthernet1/0/16\n description unrelated staged change\n"
+    with pytest.raises(RuntimeError, match="does not prove channel-group 120 removal"):
+        instance.reconcile_no_diff([_build_xe_model(ports=[])])
+    assert instance.pending_deploys == ()
+
+
+def test_xe_routed_rejected_put_never_queues_removed_member() -> None:
+    """A failed parent mutation must not authorize a physical member deployment."""
+
+    instance = _recording_routed_orchestrator()
+    _cache_xe_members(instance, parent_ports=["GigabitEthernet1/0/16"])
+    instance._fail_put = True
+    with pytest.raises(RuntimeError, match="PUT rejected"):
+        instance.update(_build_xe_model(ports=[]), previous_model=_build_xe_model(ports=["GigabitEthernet1/0/16"]))
+    assert instance.pending_deploys == ()
+    assert instance._previews == []
+
+
+def test_xe_routed_update_rejects_pending_cli_for_another_channel_group() -> None:
+    """An accepted parent PUT cannot widen deployment to an unrelated pending member change."""
+
+    instance = _recording_routed_orchestrator()
+    _cache_xe_members(instance, parent_ports=["GigabitEthernet1/0/16"])
+    instance._switch_interfaces_cache[SWITCH_ID]["gigabitethernet1/0/17"]["operData"]["portChannelId"] = -1
+    member = ("GigabitEthernet1/0/16", SWITCH_ID)
+    instance._pending_config[member] = "interface GigabitEthernet1/0/16\n no channel-group 999 mode active\n"
+
+    with pytest.raises(RuntimeError, match="does not prove channel-group 120 removal"):
+        instance.update(_build_xe_model(ports=[]), previous_model=_build_xe_model(ports=["GigabitEthernet1/0/16"]))
+    assert [write["verb"] for write in instance._writes] == [HttpVerbEnum.PUT, HttpVerbEnum.GET]
+    assert instance.pending_deploys == (("port-channel120", SWITCH_ID),)
+    assert instance._deployments == []
+
+
+def test_xe_routed_detach_rejects_other_pending_commands_on_same_member() -> None:
+    """A valid detach line must not authorize an unrelated shutdown on that port."""
+
+    instance = _recording_routed_orchestrator()
+    _cache_xe_members(instance, parent_ports=["GigabitEthernet1/0/16"])
+    member = ("GigabitEthernet1/0/16", SWITCH_ID)
+    instance._pending_config[member] = "interface GigabitEthernet1/0/16\n no channel-group 120 mode active\n shutdown\n"
+
+    with pytest.raises(RuntimeError, match="unrelated CLI"):
+        instance.update(_build_xe_model(ports=[]), previous_model=_build_xe_model(ports=["GigabitEthernet1/0/16"]))
+    assert [write["verb"] for write in instance._writes] == [HttpVerbEnum.PUT, HttpVerbEnum.GET]
+    assert instance.pending_deploys == (("port-channel120", SWITCH_ID),)
+    assert instance._deployments == []
+
+
+def test_nx_routed_member_removal_does_not_queue_explicit_physical_deploy() -> None:
+    """NX-OS continues using its established parent-driven member deployment."""
+
+    instance = _recording_routed_orchestrator()
+    instance.update(_build_nx_model(ports=[]), previous_model=_build_nx_model(ports=["Ethernet1/10"]))
+    assert instance.pending_deploys == (("port-channel20", SWITCH_ID),)
+    assert instance._previews == []
+
+
+def test_routed_pc_bulk_full_guard_keeps_member_changes_on_put() -> None:
+    """Only the live-qualified memberless case may use full-policy bulk modify."""
+    instance = PortChannelRoutedInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    assert instance.supports_bulk_full_modify is True
+    current = {"configData": {"networkOS": {"policy": {"policyType": "l3Po", "ports": []}}}}
+
+    assert instance._bulk_full_modify_guard(_build_nx_model(ports=[]), current) is True
+    assert instance._bulk_full_modify_guard(_build_nx_model(ports=["Ethernet1/10"]), current) is False
+    current["configData"]["networkOS"]["policy"]["ports"] = ["Ethernet1/10"]
+    assert instance._bulk_full_modify_guard(_build_nx_model(ports=[]), current) is False
+    assert instance._bulk_full_modify_guard(_build_nx_model(ports=["ethernet1/10"]), current) is False
 
 
 # =============================================================================
@@ -204,21 +449,21 @@ def test_port_channel_routed_orchestrator_00200(ports, match) -> None:
 
     ## Classes and Methods
 
-    - PortChannelBaseOrchestrator.XE_MEMBER_HOST_POLICY
+    - interface_membership.get_member_policy_descriptor_for_parent()
     - PortChannelBaseOrchestrator._validate_xe_member_modes()
     """
     method_name = inspect.stack()[0][3]
 
     def responses():
         yield responses_pc_routed(f"{method_name}a")
-        yield responses_pc_routed("test_port_channel_routed_orchestrator_capable_switches_shared")
         yield responses_pc_routed(f"{method_name}b")
+        yield responses_pc_routed("test_port_channel_routed_orchestrator_capable_switches_shared")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()), check_mode=True)
     instance = PortChannelRoutedInterfaceOrchestrator(rest_send=rest_send)
     with pytest.raises(RuntimeError, match=match):
         instance.preflight([_build_xe_model(ports=ports)])
-    assert len(rest_send.responses) == 3
+    assert len(rest_send.responses) == 2
 
 
 def test_port_channel_routed_orchestrator_00210() -> None:
@@ -241,8 +486,8 @@ def test_port_channel_routed_orchestrator_00210() -> None:
 
     def responses():
         yield responses_pc_routed(f"{method_name}a")
-        yield responses_pc_routed("test_port_channel_routed_orchestrator_capable_switches_shared")
         yield responses_pc_routed(f"{method_name}b")
+        yield responses_pc_routed("test_port_channel_routed_orchestrator_capable_switches_shared")
 
     instance = PortChannelRoutedInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     with does_not_raise():
@@ -268,8 +513,8 @@ def test_port_channel_routed_orchestrator_00220() -> None:
 
     def responses():
         yield responses_pc_routed(f"{method_name}a")
-        yield responses_pc_routed("test_port_channel_routed_orchestrator_capable_switches_shared")
         yield responses_pc_routed(f"{method_name}b")
+        yield responses_pc_routed("test_port_channel_routed_orchestrator_capable_switches_shared")
 
     instance = PortChannelRoutedInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     with pytest.raises(RuntimeError, match=r"already in use.*current owner=port-channel121"):
@@ -391,7 +636,7 @@ def test_port_channel_routed_orchestrator_00400(check_mode: bool) -> None:
 
     - Two NX-OS and two IOS-XE routed port-channels on two capable switches
     - `preflight` does not raise
-    - The first two responses are the switches list and the `capableSwitches` GET; four in all
+    - The responses are the switches list, both member inventories, and the `capableSwitches` GET; four in all
 
     ## Classes and Methods
 
@@ -401,7 +646,7 @@ def test_port_channel_routed_orchestrator_00400(check_mode: bool) -> None:
     method_name = inspect.stack()[0][3]
 
     def responses():
-        for key in "abcd":
+        for key in "acdb":
             yield responses_pc_routed(f"{method_name}{key}")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()), check_mode=check_mode)
@@ -417,7 +662,12 @@ def test_port_channel_routed_orchestrator_00400(check_mode: bool) -> None:
         instance.preflight(models)
 
     paths = [response.get("REQUEST_PATH") for response in rest_send.responses]
-    assert paths[:2] == ["/api/v1/manage/fabrics/fabric_1/switches", "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=routed"]
+    assert paths == [
+        "/api/v1/manage/fabrics/fabric_1/switches",
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "/api/v1/manage/fabrics/fabric_1/switches/CAT9KV1701/interfaces",
+        "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=portChannel&mode=routed",
+    ]
     assert len(rest_send.responses) == 4
 
 
@@ -442,6 +692,7 @@ def test_port_channel_routed_orchestrator_00410() -> None:
 
     def responses():
         yield responses_pc_routed(f"{method_name}a")
+        yield responses_pc_routed("test_port_channel_routed_orchestrator_00400d")
         yield responses_pc_routed(f"{method_name}b")
 
     rest_send = _build_rest_send(ResponseGenerator(responses()))

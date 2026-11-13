@@ -18,7 +18,7 @@ Unlike physical ethernet interfaces, SVIs support both `interfaceActions/remove`
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
@@ -57,7 +57,8 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
 
     ### RuntimeError
 
-    - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
+    - Via `validate_prerequisites` if the fabric does not exist, or is in deployment-freeze mode for a state
+      that mutates configuration.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `create` if the create API request fails.
     - Via `update` if the update API request fails.
@@ -72,8 +73,16 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
     # Capability preflight (PR #571 review): `capableSwitches?interfaceType=svi&mode=managed` lists every switch of a VXLAN and a
     # Campus VXLAN fabric, Catalyst included (lab-verified 2026-09-21 on ND 4.2.1.10 and 4.3.1.175).
     interface_type: ClassVar[str] = "svi"
+    staged_delete_echo_interface_types: ClassVar[frozenset[str]] = frozenset({"svi"})
     interface_mode: ClassVar[str] = "managed"
     supports_bulk_create: ClassVar[bool] = True
+    supports_bulk_full_modify: ClassVar[bool] = True
+    # TODO(4.3.1) TBD
+    # Observed request-path limitation: modify-create can reject a removed SVI
+    # as an overlay-only edit even after its interface/VLAN are absent. Use the
+    # supported grouped POST creation path; existing SVI updates still qualify
+    # for bulk full modify.
+    supports_bulk_modify_create: ClassVar[bool] = False
     supports_bulk_delete: ClassVar[bool] = True
     xe_removal_requires_discovery: ClassVar[bool] = True
 
@@ -84,6 +93,24 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
     query_all_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesListGet
     create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesRemove
+
+    def _canonicalize_bulk_wire_echo(self, config_data: dict[str, Any]) -> bool:
+        """Normalize the ND 4.3.1 NX-OS SVI HSRP-version GET echo for writes.
+
+        # TODO(4.3.1) svi-hsrpversion-string-echo-431: remove this when ND's
+        # GET and modify schemas agree. Its PUT schema already needs integer 1/2.
+        """
+        network_os = config_data.get("networkOS")
+        policy = network_os.get("policy") if isinstance(network_os, dict) else None
+        if not isinstance(policy, dict) or policy.get("policyType") != "svi":
+            return True
+        version = policy.get("hsrpVersion")
+        if version is None:
+            return True
+        if isinstance(version, str) and version in {"1", "2"}:
+            policy["hsrpVersion"] = int(version)
+            return True
+        return isinstance(version, int) and not isinstance(version, bool) and version in {1, 2}
 
     def create(self, model_instance: SviInterfaceModel, **kwargs) -> ResponseType:
         """
@@ -237,7 +264,7 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
         ### RuntimeError
 
         - If the fabric does not exist on the target ND node.
-        - If the fabric is in deployment-freeze mode.
+        - If the fabric is in deployment-freeze mode and the state mutates configuration.
         - If the query API request fails.
         """
         managed_policy_types = self._managed_policy_types()

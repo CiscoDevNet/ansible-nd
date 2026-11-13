@@ -15,13 +15,14 @@ import copy
 import inspect
 import json
 import logging
-from time import sleep
+from time import monotonic, process_time, sleep
 from typing import Any, Optional, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.response_handler import ResponseHandlerProtocol
 from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.sender import SenderProtocol
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
+from ansible_collections.cisco.nd.plugins.module_utils.rest.read_history import compact_consumed_get_response
 
 
 class RestSend:  # pylint: disable=too-many-public-methods
@@ -130,8 +131,13 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self._send_interval: int = 5
         self._sender: Optional[SenderProtocol] = None
         self._timeout: int = 300
+        self._max_attempts: int | None = None
         self._unit_test: bool = False
         self._verb: HttpVerbEnum = HttpVerbEnum.GET
+        # Counts dispatches even if the transport raises before recording a response.
+        self.mutation_attempt_count = 0
+        self.deployment_attempt_count = 0
+        self.performance_profile = None
 
         # See save_settings() and restore_settings()
         self.saved_timeout: Optional[int] = None
@@ -340,18 +346,43 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self.sender.verb = self.verb
         self.sender.payload = self.payload
         success = False
+        attempts = 0
         while timeout > 0 and success is False:
             msg = f"{self.class_name}.{method_name}: "
             msg += "Calling sender.commit(): "
             msg += f"timeout {timeout}, success {success}, verb {self.verb}, path {self.path}."
             self.log.debug(msg)
 
+            profile = self.performance_profile
+            start_wall, start_cpu = (monotonic(), process_time()) if profile is not None else (0.0, 0.0)
+            if self.verb != HttpVerbEnum.GET:
+                request_path = str(self.path or "")
+                if "interfaceActions/deploy" in request_path:
+                    self.deployment_attempt_count += 1
+                elif "interfaceActions/preview" not in request_path:
+                    self.mutation_attempt_count += 1
             try:
+                attempts += 1
                 self.sender.commit()
             except ValueError as error:
+                if profile is not None:
+                    profile.record_request(
+                        verb=self.verb.value, path=self.path, payload=self._payload, response=None, start_wall=start_wall, start_cpu=start_cpu
+                    )
                 raise ValueError(error) from error
+            except Exception:  # pylint: disable=broad-except
+                if profile is not None:
+                    profile.record_request(
+                        verb=self.verb.value, path=self.path, payload=self._payload, response=None, start_wall=start_wall, start_cpu=start_cpu
+                    )
+                raise
 
-            self.response_current = self.sender.response
+            response = self.sender.response
+            if profile is not None:
+                profile.record_request(
+                    verb=self.verb.value, path=self.path, payload=self._payload, response=response, start_wall=start_wall, start_cpu=start_cpu
+                )
+            self.response_current = response
             # Handle controller response and derive result
             try:
                 self.response_handler.response = self.response_current
@@ -365,19 +396,22 @@ class RestSend:  # pylint: disable=too-many-public-methods
                 self.log.debug(msg)
                 raise ValueError(msg) from error
 
-            msg = f"{self.class_name}.{method_name}: "
-            msg += f"timeout: {timeout}. "
-            msg += f"result_current: {json.dumps(self.result_current, indent=4, sort_keys=True)}."
-            self.log.debug(msg)
+            if self.log.isEnabledFor(logging.DEBUG):
+                msg = f"{self.class_name}.{method_name}: "
+                msg += f"timeout: {timeout}. "
+                msg += f"result_current: {json.dumps(self.result_current, indent=4, sort_keys=True)}."
+                self.log.debug(msg)
 
-            msg = f"{self.class_name}.{method_name}: "
-            msg += f"timeout: {timeout}. "
-            msg += "response_current: "
-            msg += f"{json.dumps(self.response_current, indent=4, sort_keys=True)}."
-            self.log.debug(msg)
+                msg = f"{self.class_name}.{method_name}: "
+                msg += f"timeout: {timeout}. "
+                msg += "response_current: "
+                msg += f"{json.dumps(self.response_current, indent=4, sort_keys=True)}."
+                self.log.debug(msg)
 
             success = self.result_current["success"]
             if success is False:
+                if self.max_attempts is not None and attempts >= self.max_attempts:
+                    break
                 if self.result_current.get("retryable", True) is False:
                     msg = f"{self.class_name}.{method_name}: "
                     msg += "Terminal failure (retryable=False). Not retrying. "
@@ -396,6 +430,17 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self._result.append(self.result_current)
         self._committed_payload = copy.deepcopy(self._payload)
         self._payload = None
+
+    @property
+    def max_attempts(self) -> int | None:
+        """Limit request-loop sends without altering the default retry policy."""
+        return self._max_attempts
+
+    @max_attempts.setter
+    def max_attempts(self, value: int | None) -> None:
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
+            raise ValueError("max_attempts must be a positive integer or None")
+        self._max_attempts = value
 
     @property
     def success(self) -> bool:
@@ -598,6 +643,33 @@ class RestSend:  # pylint: disable=too-many-public-methods
         """
         return copy.deepcopy(self._response)
 
+    def iter_request_outcomes(self):
+        """Yield immutable accounting metadata without copying controller bodies."""
+        for response, result in zip(self._response, self._result):
+            yield (
+                str(response.get("METHOD") or "").upper(),
+                str(response.get("REQUEST_PATH") or ""),
+                result.get("changed") is True,
+            )
+
+    def compact_successful_read_history(self, response_start: int, *, path: str) -> None:
+        """Drop only consumed successful read bodies for an explicit internal caller.
+
+        Current response, response count, error bodies, mutations and result
+        records remain intact. Ordinary and standalone callers do not opt in.
+        """
+        for index in range(response_start, len(self._response)):
+            response = self._response[index]
+            result = self._result[index] if index < len(self._result) else {}
+            if result.get("success") is True and result.get("changed") is not True:
+                self._response[index] = compact_consumed_get_response(response, path=path)
+
+    def history_since(self, response_start: int, result_start: int) -> tuple[list[dict], list[dict]]:
+        """Return isolated new records without copying the entire accumulated history."""
+        if response_start < 0 or result_start < 0:
+            raise ValueError("History offsets must be non-negative")
+        return copy.deepcopy(self._response[response_start:]), copy.deepcopy(self._result[result_start:])
+
     @property
     def response_count(self) -> int:
         """
@@ -701,6 +773,23 @@ class RestSend:  # pylint: disable=too-many-public-methods
         `commit()` must be called first.
         """
         return copy.deepcopy(self._result)
+
+    @property
+    def result_count(self) -> int:
+        """
+        # Summary
+
+        Return the number of accumulated result records without copying the result history.
+
+        Like `response_count`, this is a cheap freshness token. Callers can snapshot both counts before a request and read
+        `response_current` / `result_current` only when the corresponding count grew, avoiding both stale-current attribution and
+        repeated deep copies of an ever-growing history.
+
+        ## Raises
+
+        None
+        """
+        return len(self._result)
 
     def add_result(self, value: dict) -> None:
         """

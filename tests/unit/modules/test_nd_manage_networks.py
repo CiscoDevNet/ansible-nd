@@ -66,3 +66,6 @@ def test_nd_manage_networks_requires_pydantic_immediately_after_module_creation(
     ]
     assert events[1][1] is events[2][1]
     assert events[0][1].kwargs["supports_check_mode"] is True
+    spec = events[0][1].kwargs["argument_spec"]
+    assert "deploy_type" not in spec
+    assert spec["config"]["options"]["deploy_type"]["default"] == "switch"

@@ -1,0 +1,61 @@
+---
+- name: NEGATIVE | Capture all three physical policies
+  ansible.builtin.include_tasks: read_interfaces.yaml
+
+- name: NEGATIVE | Record the rejected-input checkpoint
+  ansible.builtin.set_fact:
+    dot1q_checkpoint: "{{ dot1q_readback.results | map(attribute='current.configData') | list }}"
+
+- name: NEGATIVE | Reject unsupported platform, policy, field, units, and empty groups
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host:
+    fabric_name: "{{ test_fabric_name }}"
+    state: "{{ item.state | default('merged') }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names: "{{ item.names | default([test_interface_names[0]]) }}"
+        config_data: "{{ item.config_data | default({'network_os': {'policy': {}}}) }}"
+  check_mode: "{{ item.check_mode | default(false) }}"
+  loop:
+    - label: IOS-XE
+      expected: network_os_type
+      config_data: {network_os: {network_os_type: ios-xe, policy: {access_vlan: 150}}}
+    - label: foreign host policy
+      expected: policy_type
+      config_data: {network_os: {policy: {policy_type: accessHost, access_vlan: 150}}}
+    - label: unsupported monitor field
+      expected: monitor
+      config_data: {network_os: {policy: {monitor: true}}}
+    - label: mixed storm-control units
+      expected: 'percentage and PPS'
+      config_data:
+        network_os:
+          policy:
+            storm_control: true
+            storm_control_broadcast_level: 10.0
+            storm_control_multicast_level_pps: 1000
+    - label: empty named group in ordinary overridden
+      expected: interface_names
+      state: overridden
+      names: []
+    - label: empty named group in check-mode overridden
+      expected: interface_names
+      state: overridden
+      names: []
+      check_mode: true
+  loop_control:
+    label: "{{ item.label }}"
+  register: dot1q_negative_results
+  ignore_errors: true
+
+- name: NEGATIVE | Require each expected diagnostic instead of an unrelated failure
+  ansible.builtin.assert:
+    that:
+      - item is failed
+      - item.item.expected in item.msg
+    fail_msg: "Expected rejection for {{ item.item.label }}; received {{ item.msg | default('no diagnostic') }}."
+  loop: "{{ dot1q_negative_results.results }}"
+  loop_control:
+    label: "{{ item.item.label }}"
+
+- name: NEGATIVE | Prove no rejected input changed controller intent
+  ansible.builtin.include_tasks: assert_unchanged.yaml

@@ -16,14 +16,13 @@ from __future__ import annotations
 
 from typing import ClassVar, Type
 
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import GatheredLuceneSpec
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
     AccessHostPolicyTypeEnum,
     XeAccessHostPolicyTypeEnum,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import (
-    EthernetAccessInterfaceModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import EthernetAccessInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import EthernetBaseOrchestrator
 
 
@@ -44,6 +43,15 @@ class EthernetAccessInterfaceOrchestrator(EthernetBaseOrchestrator):
     """
 
     model_class: ClassVar[Type[NDBaseModel]] = EthernetAccessInterfaceModel
+    MEMBER_FAMILY: ClassVar[str] = "access"
+
+    supports_gathered_server_filtering: ClassVar[bool] = True
+    gathered_lucene_spec: ClassVar[GatheredLuceneSpec] = GatheredLuceneSpec(
+        base_terms=(("interfaceType", "ethernet"),),
+        field_map={
+            ("interface_name",): "interfaceName",
+        },
+    )
 
     def _managed_policy_types(self) -> set[str]:
         """
@@ -57,3 +65,10 @@ class EthernetAccessInterfaceOrchestrator(EthernetBaseOrchestrator):
         None
         """
         return {e.value for e in AccessHostPolicyTypeEnum} | {e.value for e in XeAccessHostPolicyTypeEnum}
+
+    def query_all(self, model_instance: NDBaseModel | None = None, **kwargs):
+        """Return access hosts plus named compatible member planning projections."""
+        result = super().query_all(model_instance=model_instance, **kwargs)
+        if not isinstance(result, list):
+            return result
+        return self._append_named_member_projections(result)

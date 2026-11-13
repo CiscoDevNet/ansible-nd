@@ -33,6 +33,8 @@ wrapping or flattening.
 from __future__ import annotations
 
 import re
+from contextvars import ContextVar
+from copy import deepcopy
 from typing import Annotated, Any, ClassVar, Literal, Optional  # Optional needed for Annotated runtime expr (see types.py)
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -69,6 +71,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.types import Ascii
 _ALLOWED_VLANS_SHAPE = re.compile(r"^(none|all|(\d+(-\d+)?)(,\d+(-\d+)?)*)$")
 # Single VLAN id or range token (e.g. "100" or "100-200"). Range bounds are validated separately.
 _VLAN_ID_OR_RANGE_SHAPE = re.compile(r"^\d+(-\d+)?$")
+
+# True only while EthernetTrunkHostPolicyModel.merge() applies a prevalidated
+# vlan_mapping/vlan_mapping_entries pair. Assignment validation runs after
+# every setattr in NDBaseModel.merge(), so without this guard a valid
+# false -> true transition is rejected before the entries are assigned.
+_VLAN_MAPPING_VALIDATION_SUSPENDED: ContextVar[bool] = ContextVar("ethernet_trunk_vlan_mapping_validation_suspended", default=False)
 
 # Public argspec `speed` choices: the union of the NX-OS and IOS-XE speed enums, in NX order with the XE-only extras appended.
 # The Ansible argspec cannot express the per-policy_type subset (that stays with the Pydantic branch models), but listing the
@@ -385,9 +393,46 @@ class EthernetTrunkHostPolicyModel(StormControlMutexMixin):
 
         - If `vlan_mapping` is true and `vlan_mapping_entries` is missing or empty.
         """
+        if _VLAN_MAPPING_VALIDATION_SUSPENDED.get():
+            return self
         if self.vlan_mapping is True and not self.vlan_mapping_entries:
             raise ValueError("vlan_mapping_entries must be provided when vlan_mapping is true.")
         return self
+
+    def merge(self, other: NDBaseModel) -> NDBaseModel:
+        """
+        Merge VLAN-mapping intent without exposing an invalid intermediate assignment.
+
+        `NDBaseModel.merge` assigns explicitly configured fields in model order. Since `vlan_mapping` precedes
+        `vlan_mapping_entries`, assignment validation would otherwise reject a valid proposal containing both while the entries
+        still have their existing value. Validate the final pair before mutation, then suspend only this invariant while the shared
+        merge applies both fields.
+
+        ## Raises
+
+        ### ValueError
+
+        - If the final merged policy enables VLAN mapping without entries.
+        """
+        if not isinstance(other, type(self)):
+            return super().merge(other)
+
+        proposed_vlan_mapping = getattr(other, "vlan_mapping", None)
+        proposed_vlan_mapping_entries = getattr(other, "vlan_mapping_entries", None)
+        final_vlan_mapping = proposed_vlan_mapping if "vlan_mapping" in other.model_fields_set and proposed_vlan_mapping is not None else self.vlan_mapping
+        final_vlan_mapping_entries = (
+            proposed_vlan_mapping_entries
+            if "vlan_mapping_entries" in other.model_fields_set and proposed_vlan_mapping_entries is not None
+            else self.vlan_mapping_entries
+        )
+        if final_vlan_mapping is True and not final_vlan_mapping_entries:
+            raise ValueError("vlan_mapping_entries must be provided when vlan_mapping is true.")
+
+        token = _VLAN_MAPPING_VALIDATION_SUSPENDED.set(True)
+        try:
+            return super().merge(other)
+        finally:
+            _VLAN_MAPPING_VALIDATION_SUSPENDED.reset(token)
 
 
 class XeEthernetTrunkHostPolicyModel(InterfacePolicyStrictBase):
@@ -546,6 +591,14 @@ class EthernetTrunkHostConfigDataModel(NDNestedModel):
         return data
 
 
+class EthernetTrunkHostGatheredPolicyFilterModel(NDNestedModel):
+    """Validate policy fields supported by partial gathered filters."""
+
+    admin_state: bool | None = Field(default=None, alias="adminState")
+    allowed_vlans: AllowedVlans = Field(default=None, alias="allowedVlans")
+    native_vlan: int | None = Field(default=None, alias="nativeVlan", ge=1, le=4094)
+
+
 class EthernetTrunkHostInterfaceModel(NDBaseModel):
     """
     # Summary
@@ -564,6 +617,17 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
 
     identifiers: ClassVar[list[str] | None] = ["switch_ip", "interface_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
+
+    # --- Gathered Filtering Configuration ---
+
+    supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "switch_ip",
+        "interface_name",
+        "config_data.network_os.policy.admin_state",
+        "config_data.network_os.policy.allowed_vlans",
+        "config_data.network_os.policy.native_vlan",
+    )
 
     # --- Serialization Configuration ---
 
@@ -614,6 +678,70 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
         """
         return normalize_ethernet_interface_name(value)
 
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """
+        # Summary
+
+        Validate and normalize a partial gathered-state filter.
+
+        Gathered filters are not complete EthernetTrunkHostInterfaceModel instances,
+        so their values do not automatically pass through the complete resource
+        model. Apply the relevant partial-policy validation and preserve the
+        interface-name normalization used by complete resources.
+
+        ## Raises
+
+        ### ValidationError
+
+        - If a supported nested policy criterion fails its normal field
+          validation.
+        """
+        normalized = deepcopy(filter_item)
+
+        switch_ip = normalized.get("switch_ip")
+        if isinstance(switch_ip, str):
+            normalized["switch_ip"] = switch_ip.strip()
+
+        if "interface_name" in normalized:
+            interface_name = normalized["interface_name"]
+            if isinstance(interface_name, str):
+                interface_name = interface_name.strip()
+            normalized["interface_name"] = normalize_ethernet_interface_name(interface_name)
+
+        config_data = normalized.get("config_data")
+        if not isinstance(config_data, dict):
+            return normalized
+
+        network_os = config_data.get("network_os")
+        if not isinstance(network_os, dict):
+            return normalized
+
+        policy = network_os.get("policy")
+        if not isinstance(policy, dict):
+            return normalized
+
+        validated_policy = EthernetTrunkHostGatheredPolicyFilterModel.model_validate(
+            policy,
+            by_name=True,
+            context={"mode": "config", "state": "gathered"},
+        )
+        network_os["policy"] = validated_policy.model_dump(
+            by_alias=False,
+            exclude_none=True,
+            context={"mode": "config"},
+        )
+
+        return normalized
+
+    def to_gathered_config(self, **kwargs: Any) -> dict[str, Any]:
+        """Return gathered output in the module's grouped input shape."""
+        config = super().to_gathered_config(**kwargs)
+        interface_name = config.pop("interface_name", None)
+        if interface_name is not None:
+            config["interface_names"] = [interface_name]
+        return config
+
     # --- Argument Spec ---
 
     @classmethod
@@ -632,17 +760,17 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
             config=dict(
                 type="list",
                 elements="dict",
-                required=True,
+                required=False,
                 options=dict(
-                    switch_ip=dict(type="str", required=True),
-                    interface_names=dict(type="list", elements="str", required=True),
+                    switch_ip=dict(type="str", required=False),
+                    interface_names=dict(type="list", elements="str", required=False),
                     config_data=dict(
                         type="dict",
                         options=dict(
                             network_os=dict(
                                 type="dict",
                                 options=dict(
-                                    network_os_type=dict(type="str", default="nx-os", choices=["nx-os", "ios-xe"]),
+                                    network_os_type=dict(type="str", choices=["nx-os", "ios-xe"]),
                                     policy=dict(
                                         type="dict",
                                         options=dict(
@@ -709,6 +837,6 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
         )

@@ -18,9 +18,33 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.enums import (
+    HttpVerbEnum,
+    OperationType,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
+
+
+@pytest.mark.parametrize("verbosity", [0, 2, 3])
+def test_explicit_unchanged_wins_over_http_acceptance(verbosity):
+    output = NDOutput("normal")
+    output.set_changed(False)
+    output.assign(failed=True)
+    result = output.format_with_verbosity(verbosity, _make_results_write_and_query())
+    assert result["changed"] is False
+    assert result["failed"] is True
+
+
+def test_unknown_snapshot_omitted_but_evidence_retained():
+    output = NDOutput("normal")
+    output.set_changed(True)
+    output.assign(diff={"before": [], "after": [{"name": "planned"}]}, action_results=[{"identifier": "confirmed"}])
+    output.mark_after_unknown()
+    result = output.format()
+    assert "after" not in result and "diff" not in result
+    assert result["changed"] and result["action_results"]
+
 
 # =============================================================================
 # Helpers
@@ -196,16 +220,24 @@ class TestNDOutputFormat:
         - NDOutput.format()
         - NDConfigCollection.get_diff_collection()
         """
-        from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
-            EthernetTrunkHostInterfaceModel,
-        )
+        from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import EthernetTrunkHostInterfaceModel
         from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 
         def response(policy):
-            return {"switchIp": "192.0.2.10", "interfaceName": "Ethernet1/1", "configData": {"networkOS": {"policy": policy}}}
+            return {
+                "switchIp": "192.0.2.10",
+                "interfaceName": "Ethernet1/1",
+                "configData": {"networkOS": {"policy": policy}},
+            }
 
         before_item = EthernetTrunkHostInterfaceModel.from_response(
-            response({"policyType": "trunkHost", "stormControlBroadcastLevel": 50.0, "stormControlBroadcastLevelPps": 12345})
+            response(
+                {
+                    "policyType": "trunkHost",
+                    "stormControlBroadcastLevel": 50.0,
+                    "stormControlBroadcastLevelPps": 12345,
+                }
+            )
         )
         after_item = EthernetTrunkHostInterfaceModel.from_response(response({"policyType": "trunkHost", "stormControlBroadcastLevelPps": 12345}))
         before = NDConfigCollection(model_class=EthernetTrunkHostInterfaceModel, items=[before_item])
@@ -230,6 +262,7 @@ class TestNDOutputGatheredState:
         """state='gathered' keeps the common snapshot keys empty."""
         output = NDOutput("info", state="gathered")
         result = output.format()
+
         assert result["before"] == []
         assert result["after"] == []
         for key in ("diff", "proposed"):
@@ -340,7 +373,10 @@ class TestNDOutputGatheredState:
         assert result["gathered"] == [
             {
                 "src_switch_name": "leaf1",
-                "config_data": {"policy_type": "numbered", "template_inputs": {"anyKey": 1}},
+                "config_data": {
+                    "policy_type": "numbered",
+                    "template_inputs": {"anyKey": 1},
+                },
             }
         ]
 
@@ -552,7 +588,13 @@ class TestFormatWithVerbosityLevel3:
         output = NDOutput("normal")
         results = _make_results_write_and_query()
         result = output.format_with_verbosity(3, results)
-        for key in ("api_response", "api_result", "api_diff", "api_metadata", "api_payload"):
+        for key in (
+            "api_response",
+            "api_result",
+            "api_diff",
+            "api_metadata",
+            "api_payload",
+        ):
             assert len(result[key]) == 2, f"{key} should have 2 entries"
 
     def test_verbosity_3_payload_contains_correct_data(self):

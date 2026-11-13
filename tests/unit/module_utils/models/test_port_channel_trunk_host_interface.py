@@ -173,7 +173,7 @@ def test_port_channel_trunk_host_interface_00100():
     assert instance.policy_type == "trunkPoHost"
     assert instance.port_channel_mode is None
     assert instance.port_type_edge_trunk is None
-    assert instance.ports is None
+    assert instance.ports == []
     assert instance.qos is None
     assert instance.qos_policy is None
     assert instance.queuing_policy is None
@@ -288,7 +288,7 @@ def test_port_channel_trunk_host_interface_00120():
         # Any casing of the full prefix canonicalizes to "Ethernet".
         (["ETHERNET1/2", "etHernet1/3"], ["Ethernet1/2", "Ethernet1/3"]),
         ([], []),
-        (None, None),
+        (None, []),
         # Digits and separators after the alphabetic prefix are preserved (breakout/subinterface forms).
         (["ethernet1/1/1"], ["Ethernet1/1/1"]),
         # A prefix that matches no canonical family passes through verbatim; it is never re-cased.
@@ -321,7 +321,7 @@ def test_port_channel_trunk_host_interface_00180(value, expected):
     - Already-canonical values pass through unchanged
     - Digits/separators after the prefix are preserved
     - An unlisted family (`TenGigabitEthernet...`) passes through verbatim
-    - Empty list and None pass through
+    - Empty list passes through and None canonicalizes to an empty member list
 
     ## Classes and Methods
 

@@ -723,8 +723,8 @@ def test_subinterface_unmanaged_interface_00704(monkeypatch) -> None:
     """
     # Summary
 
-    Verify `query_all` skips a switch whose interface-list DATA is a non-dict (e.g. ND returns a bare JSON array
-    instead of `{"interfaces": [...]}`) instead of raising `AttributeError` on `.get()`.
+    Verify `query_all` fails closed when interface-list DATA is a non-dict (for example, ND returns a bare JSON
+    array instead of `{"interfaces": [...]}`), rather than publishing an incomplete inventory.
 
     ## Test
 
@@ -732,7 +732,7 @@ def test_subinterface_unmanaged_interface_00704(monkeypatch) -> None:
     - Fabric summary returns valid (local, default)
     - Switches list returns one switch
     - That switch's interfaces GET returns a bare list as DATA
-    - `query_all` returns [] without raising
+    - `query_all` raises a diagnostic error before publishing any interface state
 
     ## Classes and Methods
 
@@ -751,10 +751,8 @@ def test_subinterface_unmanaged_interface_00704(monkeypatch) -> None:
 
     orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
 
-    with does_not_raise():
-        result = orchestrator.query_all()
-
-    assert result == []
+    with pytest.raises(RuntimeError, match=r"invalid response type list.*offset=0.*pages_fetched=1"):
+        orchestrator.query_all()
 
 
 def test_subinterface_unmanaged_interface_00705(monkeypatch) -> None:

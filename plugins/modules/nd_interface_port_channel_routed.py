@@ -197,6 +197,9 @@ options:
                   ports:
                     description:
                     - The list of member ethernet interface names (e.g. C(Ethernet1/10), C(GigabitEthernet1/0/2)).
+                    - With O(state=merged), omitting this option preserves the current membership; setting V([]) explicitly removes
+                      every member. With O(state=replaced) or O(state=overridden), omission is a full-state reset to V([]).
+                    - When O(config_actions.deploy=true), a membership clear is deployed to the switch and can detach live links.
                     - Applies to all policy_type values.
                     type: list
                     elements: str
@@ -248,11 +251,14 @@ options:
         description:
         - Whether to deploy port-channel changes after mutations are complete.
         - When V(true), all queued port-channel changes are deployed in a single bulk API call at the end of module
-          execution via the C(interfaceActions/deploy) API. Only the port-channels modified by this task are deployed.
+          execution via the C(interfaceActions/deploy) API. An explicitly named interface can also be deployed when this task
+          makes no ND intent change, but only if its preview shows pending switch configuration (possibly staged by another task or operator).
         - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
-        - When V(true) and the module fails after the controller has already accepted a subset of the requested changes, that
-          accepted subset is still deployed and is named in the failure message, so a failed task does not leave accepted
-          changes staged but undeployed.
+        - When V(true) and the module fails after the controller accepts a subset of the requested changes, the module attempts
+          to deploy that subset and names any unconfirmed targets in the failure message.
+        - Replaying the same port-channel config with V(true) previews unchanged intent and deploys it when pending switch
+          configuration remains. For an accepted deletion whose controller intent is already absent, replay the exact identifiers
+          with O(state=deleted); an O(state=overridden) omission alone cannot identify an already-absent target on a later run.
         - Setting O(config_actions.deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
         - Deployment is opt-in. Set O(config_actions.deploy=true) explicitly to push changes to switches.
         type: bool
@@ -475,7 +481,9 @@ output_level:
   sample: normal
 before:
   description:
-  - The existing configuration of the targeted interfaces before the module ran, structured the same as the O(config) parameter.
+  - The existing matching port-channel configuration in the module's query scope before the module ran, structured like O(config).
+  - The list can include matching interfaces on the selected switches that were not explicitly listed in O(config); O(state=overridden)
+    uses fabric-wide scope.
   - An empty list when no matching interface configuration existed.
   returned: always
   type: list
@@ -496,7 +504,8 @@ before:
           port_channel_mode: active
 after:
   description:
-  - The configuration of the targeted interfaces after the module ran, structured the same as the O(config) parameter.
+  - The matching port-channel configuration in the same query scope after the module ran, structured like O(config).
+  - Successfully deleted interfaces are absent. The list can include matching interfaces not explicitly listed in O(config).
   - In check mode, the configuration that would result had the module run outside of check mode.
   returned: always
   type: list
@@ -517,17 +526,13 @@ after:
           - Ethernet1/10
           port_channel_mode: active
 diff:
-  description: The per-interface difference between C(before) and C(after).
+  description:
+  - Reserved for the per-interface difference between C(before) and C(after).
+  - Currently always an empty list for this module family; compare C(before) and C(after) directly.
   returned: always
   type: list
   elements: dict
-  sample:
-  - switch_ip: 192.168.1.1
-    interface_name: port-channel20
-    config_data:
-      network_os:
-        policy:
-          mtu: 1500
+  sample: []
 proposed:
   description: The configuration the module proposed to apply, before reconciliation with the controller.
   returned: when O(output_level) is V(info) or V(debug)
@@ -542,12 +547,14 @@ proposed:
         policy:
           mtu: 1500
 logs:
-  description: Internal diagnostic log messages collected during the run.
+  description:
+  - Reserved for internal diagnostic log messages collected during the run.
+  - Currently always an empty list for this module family; use the C(ND_LOGGING_CONFIG) file-based logging
+    described in the collection docs instead.
   returned: when O(output_level) is V(debug)
   type: list
   elements: str
-  sample:
-  - "Querying existing port-channel interface configuration"
+  sample: []
 msg:
   description: A human-readable error message, present only when the module fails.
   returned: on failure

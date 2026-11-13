@@ -431,6 +431,8 @@ fails. For other paginated responses, the query fails if
 `max_pages` defaults to `10000`. If that limit is reached without a page
 shorter than `page_size`, the query fails instead of returning a truncated
 snapshot.
+Without `pagination`, a query also fails when the response metadata reports
+that records remain, rather than treating the partial response as complete.
 
 The harness performs:
 
