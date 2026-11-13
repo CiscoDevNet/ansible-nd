@@ -683,14 +683,19 @@ class VrfWorkflowCoordinator:
             self._trace("parent_deferred_deploys_start", deploy_payload_count=len(deploy_payloads))
             for deploy_payload in deploy_payloads:
                 if deploy_payload:
-                    self._trace("parent_deferred_deploy_start", deploy_payload=deploy_payload)
-                    deploy_trace = self._run_vrf_config_actions(
-                        parent_module_args,
-                        self.strategy,
-                        deploy_payload,
-                    )
+                    detach_cleanup = deploy_payload.get("_vrf_detach_cleanup", False)
+                    request_payload = {key: value for key, value in deploy_payload.items() if key != "_vrf_detach_cleanup"}
+                    self._trace("parent_deferred_deploy_start", deploy_payload=request_payload)
+                    if detach_cleanup and self.module.check_mode:
+                        deploy_trace = {"changed": True, "failed": False, "check_mode_deploy_payloads": [request_payload]}
+                    elif detach_cleanup:
+                        deploy_trace = self._deploy_vrf_attachments(parent_module_args, self.strategy, request_payload)
+                    else:
+                        deploy_trace = self._run_vrf_config_actions(parent_module_args, self.strategy, request_payload)
                     self._merge_api_trace(parent_result, deploy_trace)
-                    self._trace("parent_deferred_deploy_end", deploy_payload=deploy_payload)
+                    self._trace("parent_deferred_deploy_end", deploy_payload=request_payload)
+                    if parent_result.get("failed", False):
+                        break
 
         # Step 6 — aggregate and structure results
         result = self._build_structured_result(parent_result, child_results, parent_fabric, fabric_type, log_type)
@@ -1264,6 +1269,10 @@ class VrfWorkflowCoordinator:
         """Build deploy requests from one or more VRF/switch maps."""
         return self.attachments.build_deploy_payloads(config, *target_maps, actions=getattr(self, "config_actions", None))
 
+    def _build_detach_deploy_payloads(self, deploy_targets: dict[str, set[str]]) -> list[dict[str, Any]]:
+        """Build resource-filtered deploys for mandatory switch-scoped detach work."""
+        return self.attachments.build_detach_deploy_payloads(deploy_targets)
+
     def _build_pending_vrf_deploy_payloads(
         self,
         result: dict[str, Any],
@@ -1281,6 +1290,19 @@ class VrfWorkflowCoordinator:
             strategy,
             existing_names=existing_names,
             actions=actions if actions is not None else getattr(self, "config_actions", None),
+        )
+
+    def _build_pending_vrf_deploy_targets(
+        self,
+        result: dict[str, Any],
+        config: list[dict],
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+        existing_names: set[str] | None = None,
+    ) -> dict[str, set[str]]:
+        """Collect pending VRF targets before selecting the deploy scope."""
+        return self.attachments.build_pending_vrf_deploy_targets(
+            result, config, module_args, strategy, existing_names, actions=getattr(self, "config_actions", None)
         )
 
     def _query_current_vrfs(

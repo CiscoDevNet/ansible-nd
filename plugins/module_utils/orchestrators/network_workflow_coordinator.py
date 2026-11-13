@@ -1282,6 +1282,24 @@ class NetworkWorkflowCoordinator:
             result, config, module_args, strategy, existing_names=existing_names, actions=getattr(self, "config_actions", None)
         )
 
+    def _build_pending_network_deploy_targets(
+        self,
+        result: dict[str, Any],
+        config: list[dict],
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        existing_names: set[str] | None = None,
+    ) -> dict[str, set[str]]:
+        """Collect pending Network targets before selecting the deploy scope."""
+        return self.attachments.build_pending_network_deploy_targets(
+            result,
+            config,
+            module_args,
+            strategy,
+            existing_names,
+            actions=getattr(self, "config_actions", None),
+        )
+
     def _query_current_networks(
         self,
         module_args: dict,

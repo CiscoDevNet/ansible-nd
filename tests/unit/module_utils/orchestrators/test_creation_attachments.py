@@ -282,7 +282,10 @@ def test_mixed_preview_retains_existing_pending_deployment(workflow, resource, t
     result = coordinator([existing, new], check=check).run()
     assert result["changed"] is True
     assert controller.missing_queries == []
-    expected = {controller.names: ["EXISTING"], "switchIds": ["SW1"]}
+    # Resource scope adds attachment switch IDs for an MSD parent.
+    expected = {controller.names: ["EXISTING"]}
+    if topology == "group":
+        expected["switchIds"] = ["SW1"]
     if check:
         assert result["check_mode_deploy_payloads"] == [expected]
         assert controller.writes == []

@@ -942,7 +942,7 @@ class NetworkAttachmentManager:
         )
         if network_level:
             payloads.append(NetworkSwitchesListModel(network_names=sorted(network_level)).to_payload())
-        if no_target:
+        if no_target and not switch_scope_targets:
             payloads.append(NetworkSwitchesListModel(network_names=sorted(no_target)).to_payload())
         return payloads
 
@@ -964,6 +964,7 @@ class NetworkAttachmentManager:
         Never widen a missing switch target to an unscoped Network request.
         """
         deploy_scopes = deploy_scope_by_network(config, actions)
+        default_scope = getattr(actions, "type", None) or "resource"
         mcfg_parent = bool(strategy and getattr(strategy, "is_multicluster", False) and getattr(strategy, "is_parent", False))
         msd_parent = bool(
             strategy and getattr(strategy, "is_multisite", False) and getattr(strategy, "is_parent", False) and not getattr(strategy, "is_multicluster", False)
@@ -972,7 +973,7 @@ class NetworkAttachmentManager:
         network_groups: dict[tuple[str, ...], set[str]] = {}
         for target_map in deploy_target_maps:
             for network_name, target_switch_ids in (target_map or {}).items():
-                scope = deploy_scopes.get(network_name, "resource")
+                scope = deploy_scopes.get(network_name, default_scope)
                 if scope == "resource" and msd_parent and target_switch_ids:
                     network_groups.setdefault(tuple(sorted(target_switch_ids)), set()).add(network_name)
                 elif scope == "resource" and not (mcfg_parent or msd_parent):
@@ -991,7 +992,7 @@ class NetworkAttachmentManager:
             payloads.append(NetworkSwitchesListModel(network_names=sorted(network_level)).to_payload())
         return payloads
 
-    def build_pending_network_deploy_payloads(
+    def build_pending_network_deploy_targets(
         self,
         result: dict[str, Any],
         config: list[dict],
@@ -999,9 +1000,11 @@ class NetworkAttachmentManager:
         strategy: BaseNetworkStrategy,
         existing_names: set[str] | None = None,
         actions: Any | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, set[str]]:
+        """Collect affected switches for configured Networks pending in ND."""
         configured = set(configured_network_names(config))
         deploy_enabled = deploy_enabled_by_network(config, actions)
+        deploy_scopes = deploy_scope_by_network(config, actions)
         pending_statuses = {"pending", "outofsync", "failed", "inprogress", "deploymentinprogress"}
         deploy_targets: dict[str, set[str]] = {}
         after_names: set[str] = set()
@@ -1025,16 +1028,28 @@ class NetworkAttachmentManager:
                 if network_name not in configured or not deploy_enabled.get(network_name, True):
                     continue
                 attachment_pending = self.attachment_status(attachment).lower() in pending_statuses
-                if attachment.get("attach") is True and attachment_pending:
+                pending_definition = network_name in pending_network_names and deploy_scopes.get(network_name, "resource") == "switch"
+                if attachment.get("attach") is True and (attachment_pending or pending_definition):
                     self.record_deploy_target(deploy_targets, network_name, switch_id)
                 if attachment.get("attach") is False and self.attachment_has_pending_delete_work(attachment):
                     self.record_deploy_target(deploy_targets, network_name, switch_id)
         for network_name in pending_network_names:
             deploy_targets.setdefault(network_name, set())
 
-        if not deploy_targets:
-            return []
-        return self.build_deploy_payloads(config, deploy_targets, strategy=strategy, actions=actions)
+        return deploy_targets
+
+    def build_pending_network_deploy_payloads(
+        self,
+        result: dict[str, Any],
+        config: list[dict],
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        existing_names: set[str] | None = None,
+        actions: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        """Build deploy requests for configured Networks already pending in ND."""
+        targets = self.build_pending_network_deploy_targets(result, config, module_args, strategy, existing_names, actions)
+        return self.build_deploy_payloads(config, targets, strategy=strategy, actions=actions)
 
     def deploy_network_attachments(
         self,
@@ -1111,7 +1126,8 @@ class NetworkAttachmentManager:
             deadline, timeout_seconds = self.delete_wait_deadline(len(pending))
         started_at = DeleteReadinessPolicy.now()
         last_blockers: dict[str, list[dict[str, Any]]] = {}
-        retried_targets: dict[tuple[str, str], int] = {}
+        retried_targets: dict[tuple[str, str, str], int] = {}
+        actions = getattr(self.coordinator, "config_actions", None)
         while True:
             attachments = self._current_attachment_details_for_wait(module_args, strategy, sorted(pending))
             blockers: dict[str, list[dict[str, Any]]] = {name: [] for name in pending}
@@ -1136,7 +1152,7 @@ class NetworkAttachmentManager:
                             retry_targets[network_name].add(switch_id)
                         retried_targets[retry_key] = retried_targets.get(retry_key, 0) + 1
             if retry_targets:
-                for deploy_payload in self.build_delete_deploy_payloads(module_args.get("config") or [], retry_targets, strategy=strategy):
+                for deploy_payload in self.build_delete_deploy_payloads(module_args.get("config") or [], retry_targets, strategy=strategy, actions=actions):
                     self.deploy_network_attachments(module_args, strategy, deploy_payload, undeploy=True)
             ready = {name for name, values in blockers.items() if not values}
             pending.difference_update(ready)
@@ -1175,6 +1191,7 @@ class NetworkAttachmentManager:
         last_blockers: dict[str, list[dict[str, Any]]] = {}
         retried_targets: dict[tuple[str, str, str], int] = {}
         retried_networks: dict[str, int] = {}
+        actions = getattr(self.coordinator, "config_actions", None)
         while True:
             attachments = self._current_attachment_details_for_wait(module_args, strategy, sorted(pending))
             blockers: dict[str, list[dict[str, Any]]] = {name: [] for name in pending}
@@ -1216,7 +1233,7 @@ class NetworkAttachmentManager:
             }
             retry_targets = self._merge_deploy_target_maps(attachment_retry_targets, network_retry_targets)
             if retry_targets:
-                for deploy_payload in self.build_delete_deploy_payloads(module_args.get("config") or [], retry_targets, strategy=strategy):
+                for deploy_payload in self.build_delete_deploy_payloads(module_args.get("config") or [], retry_targets, strategy=strategy, actions=actions):
                     self.deploy_network_attachments(module_args, strategy, deploy_payload, undeploy=True)
                 for network_name in network_retry_targets:
                     retried_networks[network_name] = retried_networks.get(network_name, 0) + 1
