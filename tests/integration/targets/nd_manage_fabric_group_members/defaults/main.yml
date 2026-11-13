@@ -1,0 +1,19 @@
+---
+# Dedicated resources owned by the opt-in ND 4.x fabric group members harness.
+# The harness checks that these names do not already exist before creating them.
+nd4x_fgm_fabric_group: ansible_nd4x_fgm_group
+nd4x_fgm_member_fabrics:
+  - name: ansible_nd4x_fgm_member_1
+    bgp_asn: "65201"
+  - name: ansible_nd4x_fgm_member_2
+    bgp_asn: "65202"
+  - name: ansible_nd4x_fgm_member_3
+    bgp_asn: "65203"
+
+nd4x_fgm_group_config:
+  management:
+    l2_vni_range: "160000-169000"
+    l3_vni_range: "170000-179000"
+    anycast_gateway_mac: "2020.0000.00cc"
+    multisite_loopback_ip_range: "10.61.0.0/24"
+    multisite_underlay_subnet_range: "10.61.1.0/24"
