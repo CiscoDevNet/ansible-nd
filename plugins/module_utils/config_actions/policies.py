@@ -62,6 +62,7 @@ RESOURCE_CONFIG_ACTIONS = ConfigActionsPolicy(
     allowed_types=frozenset({"switch", "resource"}),
     deploy_requires_save=False,
     resource_interaction="type_resource_gated",
+    resource_requires_switch_targets=True,
 )
 
 LEGACY_CONFIG_ACTIONS = ConfigActionsPolicy(

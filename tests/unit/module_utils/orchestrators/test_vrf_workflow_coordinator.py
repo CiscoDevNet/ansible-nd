@@ -1417,7 +1417,7 @@ def test_vrf_delete_wait_blocks_on_pending_attachment_even_when_vrf_status_is_re
         )
 
 
-def test_vrf_delete_wait_retries_undeploy_for_pending_status():
+def test_vrf_delete_wait_does_not_retry_name_only_without_switch_targets():
     class Module:
         params = {}
 
@@ -1450,7 +1450,7 @@ def test_vrf_delete_wait_retries_undeploy_for_pending_status():
             _StandaloneStrategy(),
         )
 
-    assert deploy_payloads == [{"vrfNames": ["BLUE"]}]
+    assert deploy_payloads == []
 
 
 @pytest.mark.parametrize(
@@ -1497,8 +1497,8 @@ def test_vrf_delete_wait_retries_and_blocks_failed_or_out_of_sync_status(source,
             _StandaloneStrategy(),
         )
 
-    expected = {"vrfNames": ["BLUE"]}
-    assert deploy_payloads == [expected]
+    expected = [{"vrfNames": ["BLUE"], "switchIds": [switch_id]}] if switch_id else []
+    assert deploy_payloads == expected
 
 
 @pytest.mark.parametrize(
@@ -2470,7 +2470,7 @@ def test_vrf_workflow_coordinator_00030_build_pending_vrf_deploy_payload():
         _ParentStrategy(),
     )
 
-    assert payloads == [{"vrfNames": ["ansible-msd-vrf"]}]
+    assert payloads == [{"vrfNames": ["ansible-deployed", "ansible-msd-vrf"]}]
 
 
 def test_vrf_workflow_coordinator_00031_build_pending_vrf_deploy_payload_for_pending_detach():
@@ -2497,7 +2497,7 @@ def test_vrf_workflow_coordinator_00031_build_pending_vrf_deploy_payload_for_pen
         _ParentStrategy(),
     )
 
-    assert payloads == [{"vrfNames": ["ansible-msd-vrf"]}]
+    assert payloads == [{"vrfNames": ["ansible-msd-vrf"], "switchIds": ["SERIAL1"]}]
 
 
 def test_vrf_workflow_coordinator_00031a_build_pending_vrf_deploy_payload_for_pending_attach():
@@ -2524,7 +2524,7 @@ def test_vrf_workflow_coordinator_00031a_build_pending_vrf_deploy_payload_for_pe
         _ParentStrategy(),
     )
 
-    assert payloads == [{"vrfNames": ["ansible-msd-vrf"]}]
+    assert payloads == [{"vrfNames": ["ansible-msd-vrf"], "switchIds": ["SERIAL1"]}]
 
 
 def test_vrf_workflow_coordinator_00032_pending_detach_deploy_payload_honors_deploy_false():
@@ -2553,11 +2553,11 @@ def test_vrf_workflow_coordinator_00032_pending_detach_deploy_payload_honors_dep
     assert payloads == []
 
 
-def test_vrf_workflow_coordinator_00040_resource_scope_uses_names_without_switch_ids():
+def test_vrf_workflow_coordinator_00040_resource_scope_groups_names_by_switch_ids():
     """
     # Summary
 
-    Verify one resource scope applies consistently to all configured VRFs.
+    Verify resource scope groups VRFs by their exact target switches.
     """
     coordinator = VrfWorkflowCoordinator.__new__(VrfWorkflowCoordinator)
     coordinator.config_actions = ConfigActions(save=False, deploy=True, type="resource", provided=True)
@@ -2573,7 +2573,8 @@ def test_vrf_workflow_coordinator_00040_resource_scope_uses_names_without_switch
     )
 
     assert payloads == [
-        {"vrfNames": ["ansible-switch-scope", "ansible-vrf-scope"]},
+        {"vrfNames": ["ansible-switch-scope"], "switchIds": ["SERIAL1"]},
+        {"vrfNames": ["ansible-vrf-scope"], "switchIds": ["SERIAL2"]},
     ]
 
 
@@ -2799,7 +2800,7 @@ def test_vrf_workflow_coordinator_00070_deleted_deploys_before_delete():
 
     def deploy(_args, _strategy, payload):
         call_order.append("deploy")
-        assert payload == {"vrfNames": ["ansible-msd-vrf"]}
+        assert payload == {"vrfNames": ["ansible-msd-vrf"], "switchIds": ["SERIAL1"]}
         return {}
 
     def wait(_args, _strategy, vrf_names=None):
@@ -3063,6 +3064,7 @@ def test_vrf_workflow_coordinator_00080_overridden_deploys_omitted_detach_before
         call_order.append("deploy")
         assert payload == {
             "vrfNames": ["ansible-delete-vrf"],
+            "switchIds": ["SERIAL1"],
         }
         return {}
 
@@ -3174,7 +3176,7 @@ def test_vrf_workflow_coordinator_overridden_omitted_delete_keeps_switch_scope_o
         ],
     )
 
-    assert deploy_payloads == [{"vrfNames": ["ansible-delete-vrf"]}]
+    assert deploy_payloads == [{"vrfNames": ["ansible-delete-vrf"], "switchIds": ["SERIAL1"]}]
     assert traces == [{"deploy_targets": {"ansible-delete-vrf": {"SERIAL1"}}}, {}]
 
 
@@ -3234,7 +3236,7 @@ def test_vrf_workflow_coordinator_check_mode_deleted_skips_deploy_and_wait():
 
     assert call_order == ["detach", "delete"]
     assert result["changed"] is True
-    assert result["check_mode_deploy_payloads"] == [{"vrfNames": ["ansible-msd-vrf"]}]
+    assert result["check_mode_deploy_payloads"] == [{"vrfNames": ["ansible-msd-vrf"], "switchIds": ["SERIAL1"]}]
 
 
 def test_vrf_workflow_coordinator_deleted_deploys_pending_vrfs_before_delete():
@@ -3261,7 +3263,7 @@ def test_vrf_workflow_coordinator_deleted_deploys_pending_vrfs_before_delete():
         call_order.append("deploy")
         assert args == module_args
         assert strategy.fabric_name == "MCFG_C"
-        assert payload == {"vrfNames": ["ansible-nd-vrf-mcfg-merged"]}
+        assert payload == {"vrfNames": ["ansible-nd-vrf-mcfg-merged"], "switchIds": ["SERIAL1"]}
         return {"changed": True, "failed": False}
 
     def wait(args, strategy, vrf_names):
@@ -3270,6 +3272,9 @@ def test_vrf_workflow_coordinator_deleted_deploys_pending_vrfs_before_delete():
         assert strategy.fabric_name == "MCFG_C"
         assert vrf_names == ["ansible-nd-vrf-mcfg-merged"]
 
+    object.__setattr__(
+        coordinator, "_current_attachment_details", lambda *_args: [{"vrfName": "ansible-nd-vrf-mcfg-merged", "switchId": "SERIAL1", "attach": True}]
+    )
     object.__setattr__(coordinator, "_deploy_vrf_attachments", deploy)
     object.__setattr__(coordinator, "_wait_for_vrfs_delete_ready", wait)
 

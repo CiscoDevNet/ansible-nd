@@ -56,12 +56,13 @@ options:
   config_actions:
     description:
       - Controls optional deployment after VRF changes.
-      - When omitted, deployment is enabled and scoped by VRF name.
+      - When omitted, deployment is enabled and scoped by VRF name and affected switch IDs.
       - C(type=switch) deploys pending configuration on affected switches, including configuration from other resources.
       - In V(merged), when the task lists attachment switches, optional switch deployment is limited to those switches.
         Existing attachments omitted from the task remain attached.
       - When the task lists no switches, affected current attachments supply the switch targets; no targets are reported as a skip.
-      - C(type=resource) deploys by VRF name, including VRFs without attachments.
+      - C(type=resource) deploys the named VRFs to their affected switches.
+      - When no switch targets exist, deployment is skipped with C(no_targets) for either scope.
       - Per-item C(config[].deploy) overrides are supported only with C(type=resource).
       - C(state=staged) always skips deployment.
     type: dict

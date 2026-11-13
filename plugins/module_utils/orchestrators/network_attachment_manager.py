@@ -175,7 +175,7 @@ class NetworkAttachmentManager:
         deploy_targets: dict[str, set[str]] = {}
         for payload in payloads:
             network_name = payload.get("networkName")
-            if deploy_enabled.get(network_name, True):
+            if phase == "pre" or deploy_enabled.get(network_name, True):
                 self.record_deploy_target(deploy_targets, network_name, payload.get("switchId"))
 
         trace = self.post_network_attachments(
@@ -911,38 +911,28 @@ class NetworkAttachmentManager:
         deploy_enabled = deploy_enabled_by_network(config, actions)
         deploy_scopes = deploy_scope_by_network(config, actions)
         grouped: dict[tuple[str, ...], set[str]] = {}
-        network_level: set[str] = set()
         no_target: set[str] = set()
         switch_scope_targets: set[str] = set()
+        merged_targets: dict[str, set[str]] = {}
         for target_map in deploy_target_maps:
             for network_name, switch_ids in (target_map or {}).items():
-                if not deploy_enabled.get(network_name, True):
-                    continue
-                scope = deploy_scopes.get(network_name, "resource")
-                msd_parent = bool(
-                    strategy
-                    and getattr(strategy, "is_parent", False)
-                    and getattr(strategy, "is_multisite", False)
-                    and not getattr(strategy, "is_multicluster", False)
-                )
-                if scope == "switch":
-                    if switch_ids:
-                        switch_scope_targets.update(switch_ids)
-                    else:
-                        no_target.add(network_name)
-                elif scope == "resource" and msd_parent and switch_ids:
-                    grouped.setdefault(tuple(sorted(switch_ids)), set()).add(network_name)
-                elif scope == "resource":
-                    network_level.add(network_name)
-                else:
-                    grouped.setdefault(tuple(sorted(switch_ids)), set()).add(network_name)
+                if deploy_enabled.get(network_name, True):
+                    merged_targets.setdefault(network_name, set()).update(switch_ids or set())
+        for network_name, switch_ids in merged_targets.items():
+            scope = deploy_scopes.get(network_name, "resource")
+            if scope == "switch" and switch_ids:
+                switch_scope_targets.update(switch_ids)
+            elif switch_ids:
+                grouped.setdefault(tuple(sorted(switch_ids)), set()).add(network_name)
+            else:
+                no_target.add(network_name)
         payloads = [{"switchIds": sorted(switch_scope_targets)}] if switch_scope_targets else []
         payloads.extend(
             [NetworkSwitchesListModel(network_names=sorted(names), switch_ids=list(switch_ids)).to_payload() for switch_ids, names in sorted(grouped.items())]
         )
-        if network_level:
-            payloads.append(NetworkSwitchesListModel(network_names=sorted(network_level)).to_payload())
-        if no_target and not switch_scope_targets:
+        # A names-only placeholder carries no targets to the shared controller,
+        # which reports a no_targets skip without calling the controller API.
+        if no_target and (not switch_scope_targets or grouped):
             payloads.append(NetworkSwitchesListModel(network_names=sorted(no_target)).to_payload())
         return payloads
 
@@ -959,37 +949,22 @@ class NetworkAttachmentManager:
         Delete must deploy the detach/undeploy work before the Network delete is
         attempted, regardless of per-Network ``deploy``. Standalone and MSD
         honor the selected config action scope without deploying unrelated switch configuration.
-        Switch scope includes Network names and affected switch IDs; Network
-        scope includes Network names. MCFG parent retains affected switch IDs.
+        All scopes include Network names and affected switch IDs.
         Never widen a missing switch target to an unscoped Network request.
         """
-        deploy_scopes = deploy_scope_by_network(config, actions)
-        default_scope = getattr(actions, "type", None) or "resource"
-        mcfg_parent = bool(strategy and getattr(strategy, "is_multicluster", False) and getattr(strategy, "is_parent", False))
-        msd_parent = bool(
-            strategy and getattr(strategy, "is_multisite", False) and getattr(strategy, "is_parent", False) and not getattr(strategy, "is_multicluster", False)
-        )
-        network_level: set[str] = set()
+        del config, strategy, actions
         network_groups: dict[tuple[str, ...], set[str]] = {}
+        merged_targets: dict[str, set[str]] = {}
         for target_map in deploy_target_maps:
             for network_name, target_switch_ids in (target_map or {}).items():
-                scope = deploy_scopes.get(network_name, default_scope)
-                if scope == "resource" and msd_parent and target_switch_ids:
-                    network_groups.setdefault(tuple(sorted(target_switch_ids)), set()).add(network_name)
-                elif scope == "resource" and not (mcfg_parent or msd_parent):
-                    network_level.add(network_name)
-                elif scope == "resource" and msd_parent and not target_switch_ids:
-                    network_level.add(network_name)
-                elif not target_switch_ids:
-                    continue
-                else:
-                    network_groups.setdefault(tuple(sorted(target_switch_ids)), set()).add(network_name)
+                merged_targets.setdefault(network_name, set()).update(target_switch_ids or set())
+        for network_name, target_switch_ids in merged_targets.items():
+            if target_switch_ids:
+                network_groups.setdefault(tuple(sorted(target_switch_ids)), set()).add(network_name)
         payloads = [
             NetworkSwitchesListModel(network_names=sorted(names), switch_ids=list(target_ids)).to_payload()
             for target_ids, names in sorted(network_groups.items())
         ]
-        if network_level:
-            payloads.append(NetworkSwitchesListModel(network_names=sorted(network_level)).to_payload())
         return payloads
 
     def build_pending_network_deploy_targets(
@@ -1000,11 +975,11 @@ class NetworkAttachmentManager:
         strategy: BaseNetworkStrategy,
         existing_names: set[str] | None = None,
         actions: Any | None = None,
+        changed_names: set[str] | None = None,
     ) -> dict[str, set[str]]:
         """Collect affected switches for configured Networks pending in ND."""
         configured = set(configured_network_names(config))
         deploy_enabled = deploy_enabled_by_network(config, actions)
-        deploy_scopes = deploy_scope_by_network(config, actions)
         pending_statuses = {"pending", "outofsync", "failed", "inprogress", "deploymentinprogress"}
         deploy_targets: dict[str, set[str]] = {}
         after_names: set[str] = set()
@@ -1017,22 +992,33 @@ class NetworkAttachmentManager:
             if name in configured and deploy_enabled.get(name, True) and status.lower() in pending_statuses:
                 pending_network_names.add(name)
 
+        # The accepted/planned definition update can still carry an old
+        # controller status. Use exact per-resource state-machine evidence.
+        changed_deploy_names = {name for name in (changed_names or set()) if name in configured and deploy_enabled.get(name, True)}
+        pending_network_names.update(changed_deploy_names)
+        after_names.update(changed_deploy_names)
+
         # Simulated creations have no controller attachment metadata yet.
         queryable_names = after_names if existing_names is None else after_names.intersection(existing_names)
         deploy_enabled_names = sorted(name for name in queryable_names if deploy_enabled.get(name, True))
         if deploy_enabled_names:
             attachment_details = self.current_attachment_details_ignore_missing(module_args, strategy, deploy_enabled_names)
+            names_with_attached_switches: set[str] = set()
             for attachment in attachment_details:
                 network_name = attachment.get("networkName")
                 switch_id = attachment.get("switchId")
                 if network_name not in configured or not deploy_enabled.get(network_name, True):
                     continue
+                if attachment.get("attach") is True and switch_id:
+                    names_with_attached_switches.add(network_name)
                 attachment_pending = self.attachment_status(attachment).lower() in pending_statuses
-                pending_definition = network_name in pending_network_names and deploy_scopes.get(network_name, "resource") == "switch"
+                pending_definition = network_name in pending_network_names
                 if attachment.get("attach") is True and (attachment_pending or pending_definition):
                     self.record_deploy_target(deploy_targets, network_name, switch_id)
                 if attachment.get("attach") is False and self.attachment_has_pending_delete_work(attachment):
                     self.record_deploy_target(deploy_targets, network_name, switch_id)
+            for name in set(deploy_enabled_names) - names_with_attached_switches:
+                deploy_targets.setdefault(name, set())
         for network_name in pending_network_names:
             deploy_targets.setdefault(network_name, set())
 

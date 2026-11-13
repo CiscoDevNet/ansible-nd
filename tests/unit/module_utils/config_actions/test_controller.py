@@ -16,7 +16,7 @@ import pytest
 
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.controller import ConfigActionsController
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
-from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import RESOURCE_CONFIG_ACTIONS, SWITCH_CONFIG_ACTIONS
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import LEGACY_CONFIG_ACTIONS, RESOURCE_CONFIG_ACTIONS, SWITCH_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActionsContext
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModuleError
 
@@ -193,7 +193,7 @@ def test_config_actions_controller_00020() -> None:
     backend = RecordingBackend()
     result = ConfigActionsController(RESOURCE_CONFIG_ACTIONS, backend).execute(
         actions,
-        ConfigActionsContext(fabric_names=("FAB1",), resources=("BLUE",)),
+        ConfigActionsContext(fabric_names=("FAB1",), resources=("BLUE",), switch_ids=("SER1",)),
     )
     assert backend.calls == [("deploy_resources", ("FAB1", ("BLUE",)))]
     assert result.status == "completed"
@@ -224,7 +224,7 @@ def test_config_actions_controller_00025() -> None:
     backend = RecordingBackend()
     result = ConfigActionsController(RESOURCE_CONFIG_ACTIONS, backend).execute(
         actions,
-        ConfigActionsContext(fabric_names=("FAB1",), resources=("BLUE",)),
+        ConfigActionsContext(fabric_names=("FAB1",), resources=("BLUE",), switch_ids=("SER1",)),
     )
     assert actions.deploy is False
     assert actions.resource_deploy_enabled(0) is True
@@ -314,6 +314,7 @@ def test_config_actions_controller_00036() -> None:
                 "FAB1": ("BLUE", "GREEN", "BLUE"),
                 "FAB2": ("RED",),
             },
+            switch_ids_by_fabric={"FAB1": ("FAB1-S1",), "FAB2": ("FAB2-S1",)},
         ),
     )
     assert backend.calls == [
@@ -512,6 +513,69 @@ def test_resource_switch_deploy_without_targets_is_skipped(check_mode: bool) -> 
     assert result.actions[0].error == "no_targets"
 
 
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("resources,switch_ids", [(("BLUE",), ()), ((), ("SER1",)), ((), ())])
+def test_resource_deploy_requires_both_names_and_switch_ids(check_mode: bool, resources: tuple[str, ...], switch_ids: tuple[str, ...]) -> None:
+    """Unattached resources and nameless targets skip in both execution modes."""
+    params = {"config_actions": {"deploy": True, "type": "resource"}}
+    actions = parse_config_actions(params=params, raw_args=params, policy=RESOURCE_CONFIG_ACTIONS)
+    backend = RecordingBackend()
+    result = ConfigActionsController(RESOURCE_CONFIG_ACTIONS, backend).execute(
+        actions, ConfigActionsContext(fabric_names=("FAB1",), check_mode=check_mode, resources=resources, switch_ids=switch_ids)
+    )
+    assert not backend.calls
+    assert result.status == "skipped"
+    assert result.reason == "no_targets"
+    assert result.actions[0].error == "no_targets"
+
+
+def test_other_policies_can_deploy_by_resource_name_without_switch_targets() -> None:
+    """The resource-family rule does not change legacy generic controller users."""
+    params = {"config_actions": {"save": False, "deploy": True, "type": "resource"}}
+    actions = parse_config_actions(params=params, raw_args=params, policy=LEGACY_CONFIG_ACTIONS)
+    backend = RecordingBackend()
+    result = ConfigActionsController(LEGACY_CONFIG_ACTIONS, backend).execute(actions, ConfigActionsContext(fabric_names=("FAB1",), resources=("BLUE",)))
+    assert result.status == "completed"
+    assert backend.calls == [("deploy_resources", ("FAB1", ("BLUE",)))]
+
+
+def test_resource_deploy_rejects_flat_switch_ids_for_multiple_fabrics() -> None:
+    """Resource switch targets must not be applied to the wrong fabric."""
+    params = {"config_actions": {"deploy": True, "type": "resource"}}
+    actions = parse_config_actions(params=params, raw_args=params, policy=RESOURCE_CONFIG_ACTIONS)
+    backend = RecordingBackend()
+    with pytest.raises(ValueError, match="requires switch_ids_by_fabric"):
+        ConfigActionsController(RESOURCE_CONFIG_ACTIONS, backend).execute(
+            actions,
+            ConfigActionsContext(
+                fabric_names=("FAB1", "FAB2"),
+                switch_ids=("SER1",),
+                resources_by_fabric={"FAB1": ("BLUE",), "FAB2": ("GREEN",)},
+            ),
+        )
+    assert not backend.calls
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_resource_deploy_checks_switch_targets_per_fabric(check_mode: bool) -> None:
+    """An attached resource on one fabric cannot activate an unattached resource on another."""
+    params = {"config_actions": {"deploy": True, "type": "resource"}}
+    actions = parse_config_actions(params=params, raw_args=params, policy=RESOURCE_CONFIG_ACTIONS)
+    backend = RecordingBackend()
+    result = ConfigActionsController(RESOURCE_CONFIG_ACTIONS, backend).execute(
+        actions,
+        ConfigActionsContext(
+            fabric_names=("FAB1", "FAB2"),
+            check_mode=check_mode,
+            resources_by_fabric={"FAB1": ("BLUE",), "FAB2": ("GREEN",)},
+            switch_ids_by_fabric={"FAB1": ("SER1",), "FAB2": ()},
+        ),
+    )
+    assert [step.status for step in result.actions] == ["planned" if check_mode else "completed", "skipped"]
+    assert result.actions[1].error == "no_targets"
+    assert backend.calls == ([] if check_mode else [("deploy_resources", ("FAB1", ("BLUE",)))])
+
+
 def test_config_actions_controller_00060() -> None:
     """
     # Summary
@@ -536,7 +600,7 @@ def test_config_actions_controller_00060() -> None:
     backend = RecordingBackend()
     result = ConfigActionsController(RESOURCE_CONFIG_ACTIONS, backend).execute(
         actions,
-        ConfigActionsContext(fabric_names=("FAB1",), check_mode=True, resources=("BLUE",)),
+        ConfigActionsContext(fabric_names=("FAB1",), check_mode=True, resources=("BLUE",), switch_ids=("SER1",)),
     )
     assert not backend.calls
     assert result.status == "planned"

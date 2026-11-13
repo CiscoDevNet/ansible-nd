@@ -28,6 +28,7 @@ from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActions
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.attachment_deploy_targets import RequestedSwitchTargets
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_config_utils import deploy_enabled_by_vrf
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_vrf import (
     BaseVrfStrategy,
 )
@@ -250,6 +251,7 @@ class VrfStateMachine:
                 defer_deploy,
                 existing_names=current_vrf_name_set if self._check_mode() else None,
                 requested_attachments=requested_attachments,
+                changed_vrf_names=set(self._vrf_names_from_models(getattr(sm, "sent", ()))),
             )
         finally:
             self.coordinator._restore_state_machine_params(original_config, original_state)
@@ -279,32 +281,51 @@ class VrfStateMachine:
         defer_deploy: bool,
         existing_names: set[str] | None = None,
         requested_attachments: dict[tuple[str, str], dict[str, Any]] | None = None,
+        changed_vrf_names: set[str] | None = None,
     ) -> dict[str, Any]:
         """Deploy or defer pending work produced by attachment phases."""
         pre_targets = pre_attach.get("deploy_targets", {})
         post_targets = post_attach.get("deploy_targets", {})
         actions = getattr(self.coordinator, "config_actions", None)
         switch_scope = bool(actions and actions.type == "switch")
-        detach_payloads = self.coordinator._build_detach_deploy_payloads(pre_targets) if switch_scope and pre_targets else []
+        detach_payloads = self.coordinator._build_detach_deploy_payloads(pre_targets) if pre_targets else []
+        changed_kwargs = {"changed_names": changed_vrf_names} if changed_vrf_names else {}
         if requested_attachments and switch_scope:
             selection = RequestedSwitchTargets(requested_attachments)
 
             def pending_targets() -> dict[str, set[str]]:
-                return self.coordinator._build_pending_vrf_deploy_targets(result, config, module_args, strategy, existing_names)
+                return self.coordinator._build_pending_vrf_deploy_targets(result, config, module_args, strategy, existing_names, **changed_kwargs)
 
             selected_targets = selection.select(post_targets, pending_targets if actions.deploy_requested() else None)
             deploy_payloads = self.coordinator._build_deploy_payloads(config, selected_targets)
         else:
-            deploy_payloads = self.coordinator._build_deploy_payloads(config, {} if switch_scope else pre_targets, post_targets)
-            if not deploy_payloads and not detach_payloads:
-                deploy_payloads = self.coordinator._build_pending_vrf_deploy_payloads(
-                    result,
-                    config,
-                    module_args,
-                    strategy,
-                    existing_names,
-                )
-                self._trace("deploy_payloads_from_result", payload_count=len(deploy_payloads), payloads=deploy_payloads)
+            if not switch_scope and actions and actions.deploy_requested():
+                pending_targets = self.coordinator._build_pending_vrf_deploy_targets(result, config, module_args, strategy, existing_names, **changed_kwargs)
+                # Detaches have their own mandatory resource-filtered deploy.
+                # Do not repeat those switches in the optional resource deploy.
+                pending_targets = {name: set(switch_ids).difference(pre_targets.get(name, set())) for name, switch_ids in pending_targets.items()}
+                deploy_payloads = self.coordinator._build_deploy_payloads(config, post_targets, pending_targets)
+            else:
+                deploy_payloads = self.coordinator._build_deploy_payloads(config, post_targets)
+                if not deploy_payloads and not detach_payloads:
+                    if changed_vrf_names:
+                        targets = self.coordinator._build_pending_vrf_deploy_targets(result, config, module_args, strategy, existing_names, **changed_kwargs)
+                        deploy_payloads = self.coordinator._build_deploy_payloads(config, targets)
+                    else:
+                        deploy_payloads = self.coordinator._build_pending_vrf_deploy_payloads(
+                            result,
+                            config,
+                            module_args,
+                            strategy,
+                            existing_names,
+                        )
+            self._trace("deploy_payloads_from_result", payload_count=len(deploy_payloads), payloads=deploy_payloads)
+            if not deploy_payloads and not detach_payloads and result.get("changed") and actions and actions.deploy_requested():
+                # A newly simulated or unattached resource may not yet have a
+                # controller status. Report a skipped deploy instead of silence.
+                names = changed_vrf_names or self.coordinator._configured_vrf_names(config)
+                deploy_enabled = deploy_enabled_by_vrf(config, actions)
+                deploy_payloads = self.coordinator._build_deploy_payloads(config, {name: set() for name in names if deploy_enabled.get(name, False)})
         self._trace("deploy_payloads_from_attachments", payload_count=len(deploy_payloads), payloads=deploy_payloads)
         if not deploy_payloads and not detach_payloads:
             return result
@@ -497,11 +518,7 @@ class VrfStateMachine:
         """Return detach trace plus deploy traces, waiting when deploy occurs."""
         traces = [detach_trace] if detach_trace else []
         detach_targets = detach_trace.get("deploy_targets", {}) if detach_trace else {}
-        actions = getattr(self.coordinator, "config_actions", None)
-        if actions and actions.type == "switch":
-            deploy_payloads = self.coordinator._build_detach_deploy_payloads(detach_targets)
-        else:
-            deploy_payloads = self.coordinator._build_deploy_payloads(config, detach_targets)
+        deploy_payloads = self.coordinator._build_detach_deploy_payloads(detach_targets) if detach_targets else []
         self._trace("delete_deploy_payloads_built", payload_count=len(deploy_payloads), payloads=deploy_payloads)
         if self._check_mode():
             if deploy_payloads:
@@ -557,6 +574,9 @@ class VrfStateMachine:
             strategy,
             actions=ConfigActions(save=False, deploy=True, type="resource", provided=False),
         )
+        # Cleanup is sent directly, so discard no-target placeholders rather
+        # than issuing a broader name-only request outside the controller.
+        deploy_payloads = [payload for payload in deploy_payloads if payload.get("switchIds")]
         if not deploy_payloads:
             return []
 

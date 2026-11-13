@@ -1299,10 +1299,11 @@ class VrfWorkflowCoordinator:
         module_args: dict,
         strategy: BaseVrfStrategy,
         existing_names: set[str] | None = None,
+        changed_names: set[str] | None = None,
     ) -> dict[str, set[str]]:
-        """Collect pending VRF targets before selecting the deploy scope."""
+        """Collect changed or pending VRF targets before selecting deploy scope."""
         return self.attachments.build_pending_vrf_deploy_targets(
-            result, config, module_args, strategy, existing_names, actions=getattr(self, "config_actions", None)
+            result, config, module_args, strategy, existing_names, actions=getattr(self, "config_actions", None), changed_names=changed_names
         )
 
     def _query_current_vrfs(

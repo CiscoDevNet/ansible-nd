@@ -165,7 +165,8 @@ class VrfAttachmentManager:
         deploy_targets: dict[str, set[str]] = {}
         for payload in payloads:
             vrf_name = payload.get("vrfName")
-            if deploy_enabled.get(vrf_name, True):
+            # Detach cleanup is mandatory even when optional deployment is disabled.
+            if phase == "pre" or deploy_enabled.get(vrf_name, True):
                 self.coordinator._record_deploy_target(deploy_targets, vrf_name, payload.get("switchId"))
 
         trace = self.coordinator._post_vrf_attachments(
@@ -749,10 +750,6 @@ class VrfAttachmentManager:
 
         selected_actions = actions if actions is not None else getattr(self.coordinator, "config_actions", None)
         deploy_scope = deploy_scope_by_vrf(config, selected_actions)
-        strategy = getattr(self.coordinator, "strategy", None)
-        msd_parent = bool(
-            strategy and getattr(strategy, "is_parent", False) and getattr(strategy, "is_multisite", False) and not getattr(strategy, "is_multicluster", False)
-        )
         payloads: list[dict[str, Any]] = []
         vrf_level_names: list[str] = []
         switch_groups: dict[tuple[str, ...], list[str]] = {}
@@ -763,9 +760,11 @@ class VrfAttachmentManager:
             scope = deploy_scope.get(vrf_name, "resource")
             if scope == "resource":
                 switch_ids = sorted(deploy_targets.get(vrf_name) or [])
-                if msd_parent and switch_ids:
+                if switch_ids:
                     switch_groups.setdefault(tuple(switch_ids), []).append(vrf_name)
                 else:
+                    # A names-only placeholder lets config actions report no_targets;
+                    # it must never be sent to the controller as a deploy request.
                     vrf_level_names.append(vrf_name)
                 continue
             switch_ids = sorted(deploy_targets.get(vrf_name) or [])
@@ -796,16 +795,14 @@ class VrfAttachmentManager:
         strategy: BaseVrfStrategy,
         existing_names: set[str] | None = None,
         actions: Any | None = None,
+        changed_names: set[str] | None = None,
     ) -> dict[str, set[str]]:
-        """Collect affected switches for configured VRFs already pending in ND."""
+        """Collect affected switches for configured VRFs changed or pending in ND."""
         selected_actions = actions if actions is not None else getattr(self.coordinator, "config_actions", None)
         deploy_enabled = deploy_enabled_by_vrf(config, selected_actions)
         deploy_scope = deploy_scope_by_vrf(config, selected_actions)
         configured_vrfs = set(configured_vrf_names(config))
         pending_statuses = {"pending", "inProgress"}
-        strategy_is_msd_parent = bool(
-            getattr(strategy, "is_parent", False) and getattr(strategy, "is_multisite", False) and not getattr(strategy, "is_multicluster", False)
-        )
         pending_vrfs: set[str] = set()
         deploy_target_map: dict[str, set[str]] = {}
         after_vrfs: set[str] = set()
@@ -818,17 +815,12 @@ class VrfAttachmentManager:
             after_vrfs.add(vrf_name)
             if not deploy_enabled.get(vrf_name, True):
                 continue
-            if str(vrf_status or "").strip() in pending_statuses:
+            if vrf_name in (changed_names or set()) or str(vrf_status or "").strip() in pending_statuses:
                 pending_vrfs.add(vrf_name)
 
-        vrf_level_names: set[str] = set()
         switch_level_names = {vrf_name for vrf_name in pending_vrfs if deploy_scope.get(vrf_name, "resource") == "switch"}
-        vrf_level_names.update(pending_vrfs.difference(switch_level_names))
-
         deploy_enabled_names = {vrf_name for vrf_name in after_vrfs if deploy_enabled.get(vrf_name, True)}
-        attachment_query_names = sorted(
-            deploy_enabled_names if strategy_is_msd_parent else (deploy_enabled_names.difference(vrf_level_names)).union(switch_level_names)
-        )
+        attachment_query_names = sorted(deploy_enabled_names)
         # Simulated creations have no controller attachment metadata yet.
         if existing_names is not None:
             attachment_query_names = [name for name in attachment_query_names if name in existing_names]
@@ -837,21 +829,29 @@ class VrfAttachmentManager:
         for vrf_name in pending_vrfs:
             deploy_target_map.setdefault(vrf_name, set())
 
+        attached_vrfs: set[str] = set()
         for attachment in attachment_details:
             vrf_name = attachment.get("vrfName")
             switch_id = attachment.get("switchId")
             if vrf_name not in configured_vrfs or not deploy_enabled.get(vrf_name, True):
                 continue
-            if vrf_name in switch_level_names and switch_id:
-                deploy_target_map[vrf_name].add(switch_id)
             attached = attachment.get("attach")
             scope = deploy_scope.get(vrf_name, "resource")
             pending_attachment = (attached is True or attached is False) and self.attachment_has_pending_delete_work(attachment)
-            pending_msd_definition = strategy_is_msd_parent and scope == "resource" and vrf_name in pending_vrfs and attached is True
-            if pending_attachment or pending_msd_definition:
+            if attached is True and switch_id:
+                attached_vrfs.add(vrf_name)
+            if vrf_name in switch_level_names and switch_id and (attached is True or pending_attachment):
+                deploy_target_map[vrf_name].add(switch_id)
+            pending_definition = scope == "resource" and vrf_name in pending_vrfs and attached is True
+            if pending_attachment or pending_definition:
                 targets = deploy_target_map.setdefault(vrf_name, set())
-                if switch_id and (scope == "switch" or (strategy_is_msd_parent and scope == "resource")):
+                if switch_id:
                     targets.add(switch_id)
+
+        # A configured unattached VRF still needs a no-target action result,
+        # even when its definition is already in sync and has no pending work.
+        for vrf_name in deploy_enabled_names.difference(attached_vrfs):
+            deploy_target_map.setdefault(vrf_name, set())
 
         return deploy_target_map
 
@@ -928,7 +928,8 @@ class VrfAttachmentManager:
             }
             retry_targets = self._merge_deploy_target_maps(attachment_retry_targets, vrf_retry_targets)
             if retry_targets:
-                for deploy_payload in self.build_deploy_payloads(module_args.get("config") or [], retry_targets):
+                scoped_targets = {name: switch_ids for name, switch_ids in retry_targets.items() if switch_ids}
+                for deploy_payload in self.build_detach_deploy_payloads(scoped_targets):
                     self.deploy_vrf_attachments(module_args, strategy, deploy_payload)
                 for vrf_name in vrf_retry_targets:
                     retried_vrfs[vrf_name] = retried_vrfs.get(vrf_name, 0) + 1
