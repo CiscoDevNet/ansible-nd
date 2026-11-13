@@ -17,10 +17,29 @@ PUT-as-replace reset body used by the ethernet interface orchestrators' delete p
 
 from __future__ import annotations
 
+from copy import deepcopy
+
+import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import (
     InterfaceDefaultConfig,
     InterfaceDefaultPolicyModel,
+    has_typed_routed_sibling_residue,
 )
+
+
+def _normalized_trunk(**residue) -> dict:
+    """
+    # Summary
+
+    Return the `configData` of a normalized `trunkHost` interface carrying the given routed residue fields.
+
+    ## Raises
+
+    None
+    """
+    config_data = deepcopy(InterfaceDefaultConfig.to_reset_payload("Ethernet1/31", "FDO11111AAA")["configData"])
+    config_data["networkOS"]["policy"].update(residue)
+    return config_data
 
 
 def test_interface_default_config_00000() -> None:
@@ -120,3 +139,57 @@ def test_interface_default_config_00110() -> None:
     assert payload["configData"]["mode"] == "trunk"
     assert payload["configData"]["networkOS"]["networkOSType"] == "nx-os"
     assert payload["configData"]["networkOS"]["policy"] == {"adminState": True, "policyType": "trunkHost", "allowedVlans": "none"}
+
+
+@pytest.mark.parametrize(
+    "residue",
+    [
+        # ND 4.2.1.10 echo (typed values), lab 2026-11-12: a port that carried an address, a tag and PIM settings.
+        {"ip": "10.99.31.5", "prefix": 30, "routingTag": 54321, "ipRedirects": False, "pimSparse": True, "pimDrPriority": 100},
+        # ND 4.2.1.10 echo of a routed port that never had an address.
+        {"ipRedirects": False, "pimSparse": False, "pimDrPriority": 1},
+        # ND 4.3.1.175 echo (string values).
+        {"ip": "10.99.31.1", "prefix": "30", "ipRedirects": "false", "pimSparse": "true", "pimDrPriority": "100"},
+        {"ipRedirects": "false", "pimSparse": "false", "pimDrPriority": "1"},
+        # Schema bounds and the nullable form.
+        {"pimDrPriority": 4294967295},
+        {"pimDrPriority": None},
+    ],
+)
+def test_interface_default_config_00200(residue) -> None:
+    """
+    # Summary
+
+    Verify a normalized `trunkHost` policy that retains `pimDrPriority` with the other routed sibling fields is classified as
+    correctable routed residue (issue #692).
+
+    ## Test
+
+    - Build a default `trunkHost` `configData` and add the residue ND 4.2.1 and 4.3.1 leave after `interfaceActions/normalize`
+    - `has_typed_routed_sibling_residue` returns `True` for typed and string echoes, the schema bounds and a null value
+
+    ## Classes and Methods
+
+    - has_typed_routed_sibling_residue()
+    """
+    assert has_typed_routed_sibling_residue(_normalized_trunk(**residue)) is True
+
+
+@pytest.mark.parametrize("value", [0, 4294967296, -1, True, 1.0, "", "abc", "01", "1.0", " 1", [1]])
+def test_interface_default_config_00210(value) -> None:
+    """
+    # Summary
+
+    Verify a retained `pimDrPriority` whose value is outside the routed schema (integer 1-4294967295, or its canonical decimal string)
+    grants no exception.
+
+    ## Test
+
+    - Build a default `trunkHost` `configData` whose only residue is an unqualified `pimDrPriority`
+    - `has_typed_routed_sibling_residue` returns `False`
+
+    ## Classes and Methods
+
+    - has_typed_routed_sibling_residue()
+    """
+    assert has_typed_routed_sibling_residue(_normalized_trunk(pimDrPriority=value)) is False
