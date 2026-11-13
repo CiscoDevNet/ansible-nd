@@ -176,7 +176,7 @@ def test_new_attachment_and_other_pending_resource_share_one_scoped_deploy(kind,
         _attachment(kind, "RED", "SW3"),
         _attachment(kind, "RED", "SW4"),
     ]
-    coordinator, machine, strategy, switch_calls, _ = _case(kind, "standalone", check_mode, rows)
+    coordinator, machine, strategy, switch_calls, _attachment_calls = _case(kind, "standalone", check_mode, rows)
     config = [
         {f"{kind}_name": "BLUE", "attach": [{"ip_address": "192.0.2.1"}]},
         {f"{kind}_name": "RED", "attach": [{"ip_address": "192.0.2.3"}]},
@@ -202,7 +202,7 @@ def test_new_attachment_and_other_pending_resource_share_one_scoped_deploy(kind,
 def test_does_not_deploy_in_sync_requested_switch_for_another_pending_switch(kind, check_mode):
     rows = [_attachment(kind, "BLUE", "SW1"), _attachment(kind, "BLUE", "SW2")]
     rows[0]["status"] = "inSync"
-    _, machine, strategy, switch_calls, attachment_deploy_calls = _case(kind, "standalone", check_mode, rows)
+    _coordinator, machine, strategy, switch_calls, attachment_deploy_calls = _case(kind, "standalone", check_mode, rows)
     config = [{f"{kind}_name": "BLUE", "attach": [{"ip_address": "192.0.2.1"}]}]
     args = {"fabric_name": "FAB1", "state": "merged", "config": config}
     existing = {"changed": False, "failed": False, "after": [{f"{kind}_name": "BLUE", f"{kind}_status": "deployed"}]}
@@ -226,7 +226,7 @@ def test_resource_without_attach_does_not_widen_an_explicit_task_switch_selectio
         _attachment(kind, "RED", "SW1"),
         _attachment(kind, "RED", "SW2"),
     ]
-    _, machine, strategy, switch_calls, _ = _case(kind, "standalone", check_mode, rows)
+    _coordinator, machine, strategy, switch_calls, _attachment_calls = _case(kind, "standalone", check_mode, rows)
     config = [{f"{kind}_name": "BLUE", "attach": [{"ip_address": "192.0.2.1"}]}, {f"{kind}_name": "RED"}]
     args = {"fabric_name": "FAB1", "state": "merged", "config": config}
 
@@ -240,7 +240,7 @@ def test_resource_without_attach_does_not_widen_an_explicit_task_switch_selectio
 @pytest.mark.parametrize("kind", ["vrf", "network"])
 def test_vpc_peer_in_attachment_changes_is_not_an_unrequested_deploy_target(kind):
     rows = [_attachment(kind, "BLUE", "SW1", "SW2"), _attachment(kind, "BLUE", "SW2", "SW1")]
-    _, machine, strategy, switch_calls, _ = _case(kind, "standalone", False, rows)
+    _coordinator, machine, strategy, switch_calls, _attachment_calls = _case(kind, "standalone", False, rows)
     config = [{f"{kind}_name": "BLUE", "attach": [{"ip_address": "192.0.2.1"}]}]
     args = {"fabric_name": "FAB1", "state": "merged", "config": config}
 
@@ -261,7 +261,7 @@ def test_vpc_peer_in_attachment_changes_is_not_an_unrequested_deploy_target(kind
 @pytest.mark.parametrize("kind", ["vrf", "network"])
 @pytest.mark.parametrize("check_mode", [False, True])
 def test_detach_only_deployment_keeps_the_detached_switch(kind, check_mode):
-    _, machine, strategy, switch_calls, attachment_deploy_calls = _case(kind, "standalone", check_mode, [])
+    _coordinator, machine, strategy, switch_calls, attachment_deploy_calls = _case(kind, "standalone", check_mode, [])
     config = [{f"{kind}_name": "BLUE", "attach": [{"ip_address": "192.0.2.1"}]}]
     args = {"fabric_name": "FAB1", "state": "replaced", "config": config}
 
@@ -359,7 +359,7 @@ def test_parent_dispatches_real_deferred_cleanup_after_child_before_selected_swi
     detached = _attachment(kind, "BLUE", "SW2")
     detached["attach"] = False
     rows = [_attachment(kind, "BLUE", "SW1"), detached]
-    coordinator, machine, strategy, _, _ = _case(kind, topology, False, rows)
+    coordinator, machine, strategy, _switch_calls, _attachment_calls = _case(kind, topology, False, rows)
     strategy.fabric_data["members"] = [{"fabricName": "CHILD"}]
     child_option = {"l3vni_wo_vlan": True} if kind == "vrf" else {"multicast_group_address": "239.1.1.53"}
     config = [
@@ -413,7 +413,7 @@ def test_parent_dispatches_real_deferred_cleanup_after_child_before_selected_swi
 def test_failed_vrf_detach_cleanup_stops_optional_switch_deploy(deferred):
     """A failed resource-scoped cleanup must stop the subsequent switch deploy."""
     rows = [_attachment("vrf", "BLUE", "SW1")]
-    coordinator, machine, strategy, switch_calls, _ = _case("vrf", "msd", False, rows)
+    coordinator, machine, strategy, switch_calls, _attachment_calls = _case("vrf", "msd", False, rows)
     config = [{"vrf_name": "BLUE", "attach": [{"ip_address": "192.0.2.1"}]}]
     args = {"fabric_name": "FAB1", "state": "replaced", "config": config}
     coordinator.module.params.update(args)
@@ -459,7 +459,7 @@ def test_pending_network_definition_without_attach_targets_current_attached_swit
             row.pop("status")
         else:
             row["status"] = status
-    _, machine, strategy, switch_calls, _ = _case("network", "standalone", check_mode, rows)
+    _coordinator, machine, strategy, switch_calls, _attachment_calls = _case("network", "standalone", check_mode, rows)
     config = [{"network_name": "BLUE"}]
     args = {"fabric_name": "FAB1", "state": "merged", "config": config}
 
@@ -584,7 +584,7 @@ def test_vrf_delete_cleanup_targets_only_detached_resources_and_switches(state, 
 @pytest.mark.parametrize("kind", ["vrf", "network"])
 def test_no_explicit_attachment_keeps_existing_pending_target_selection(kind):
     rows = [_attachment(kind, "BLUE", "SW1"), _attachment(kind, "BLUE", "SW2")]
-    _, machine, strategy, switch_calls, _ = _case(kind, "standalone", False, rows)
+    _coordinator, machine, strategy, switch_calls, _attachment_calls = _case(kind, "standalone", False, rows)
     config = [{f"{kind}_name": "BLUE"}]
     args = {"fabric_name": "FAB1", "state": "merged", "config": config}
 
