@@ -469,8 +469,8 @@ def test_pending_network_definition_without_attach_targets_current_attached_swit
 
 
 @pytest.mark.parametrize("check_mode", [False, True])
-@pytest.mark.parametrize("topology", ["standalone", "msd"])
-def test_pending_network_resource_scope_keeps_name_only_when_attachments_are_in_sync(check_mode, topology):
+@pytest.mark.parametrize("topology", ["standalone", "msd", "mcfg"])
+def test_pending_network_resource_scope_includes_attached_switches_when_attachments_are_in_sync(check_mode, topology):
     rows = [_attachment("network", "BLUE", "SW1"), _attachment("network", "BLUE", "SW2")]
     for row in rows:
         row["status"] = "inSync"
@@ -481,7 +481,7 @@ def test_pending_network_resource_scope_keeps_name_only_when_attachments_are_in_
 
     result = machine._deploy_after_attachment_changes(_result("network", "BLUE"), config, args, strategy, {}, {}, False)
 
-    payload = {"networkNames": ["BLUE"]}
+    payload = {"networkNames": ["BLUE"], "switchIds": ["SW1", "SW2"]}
     assert switch_calls == []
     if check_mode:
         assert attachment_calls == []
@@ -493,7 +493,7 @@ def test_pending_network_resource_scope_keeps_name_only_when_attachments_are_in_
 @pytest.mark.parametrize("check_mode", [False, True])
 @pytest.mark.parametrize("topology", ["standalone", "msd", "mcfg"])
 @pytest.mark.parametrize("include_pending_detach", [False, True])
-def test_pending_vrf_resource_scope_keeps_msd_attachment_targets(check_mode, topology, include_pending_detach):
+def test_pending_vrf_resource_scope_keeps_attachment_targets(check_mode, topology, include_pending_detach):
     rows = [_attachment("vrf", "BLUE", "SW1"), _attachment("vrf", "BLUE", "SW2")]
     for row in rows:
         row["status"] = "inSync"
@@ -508,9 +508,7 @@ def test_pending_vrf_resource_scope_keeps_msd_attachment_targets(check_mode, top
 
     result = machine._deploy_after_attachment_changes(_result("vrf", "BLUE"), config, args, strategy, {}, {}, False)
 
-    payload = {"vrfNames": ["BLUE"]}
-    if topology == "msd":
-        payload["switchIds"] = ["SW1", "SW2"] + (["SW3"] if include_pending_detach else [])
+    payload = {"vrfNames": ["BLUE"], "switchIds": ["SW1", "SW2"] + (["SW3"] if include_pending_detach else [])}
     assert switch_calls == []
     if check_mode:
         assert attachment_calls == []
@@ -519,21 +517,48 @@ def test_pending_vrf_resource_scope_keeps_msd_attachment_targets(check_mode, top
         assert attachment_calls == [(payload, {})]
 
 
+@pytest.mark.parametrize("kind", ["vrf", "network"])
+@pytest.mark.parametrize("topology", ["standalone", "msd", "mcfg"])
 @pytest.mark.parametrize("check_mode", [False, True])
-def test_pending_unattached_msd_vrf_resource_scope_uses_name_only(check_mode):
-    coordinator, machine, strategy, switch_calls, attachment_calls = _case("vrf", "msd", check_mode, [])
+def test_pending_unattached_resource_scope_skips_deploy(kind, topology, check_mode):
+    coordinator, machine, strategy, switch_calls, attachment_calls = _case(kind, topology, check_mode, [])
     coordinator.config_actions = ConfigActions(save=False, deploy=True, type="resource", provided=True)
-    config = [{"vrf_name": "BLUE"}]
+    config = [{f"{kind}_name": "BLUE"}]
     args = {"fabric_name": "FAB1", "state": "merged", "config": config}
 
-    result = machine._deploy_after_attachment_changes(_result("vrf", "BLUE"), config, args, strategy, {}, {}, False)
+    result = machine._deploy_after_attachment_changes(_result(kind, "BLUE"), config, args, strategy, {}, {}, False)
 
+    assert switch_calls == []
+    assert attachment_calls == []
+    assert not result.get("check_mode_deploy_payloads")
+    assert result["config_actions"][0]["status"] == "skipped"
+    assert result["config_actions"][0]["reason"] == "no_targets"
+
+
+@pytest.mark.parametrize("kind", ["vrf", "network"])
+@pytest.mark.parametrize("topology", ["standalone", "msd", "mcfg"])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_resource_scope_keeps_target_groups_and_reports_unattached_resource(kind, topology, check_mode):
+    rows = [_attachment(kind, "BLUE", "SW1"), _attachment(kind, "RED", "SW2")]
+    coordinator, machine, strategy, switch_calls, attachment_calls = _case(kind, topology, check_mode, rows)
+    coordinator.config_actions = ConfigActions(save=False, deploy=True, type="resource", provided=True)
+    config = [{f"{kind}_name": name} for name in ("BLUE", "RED", "EMPTY")]
+    args = {"fabric_name": "FAB1", "state": "merged", "config": config}
+
+    result = machine._deploy_after_attachment_changes(_result(kind, "BLUE", "RED", "EMPTY"), config, args, strategy, {}, {}, False)
+
+    name_key = f"{kind}Names"
+    payloads = [{name_key: ["BLUE"], "switchIds": ["SW1"]}, {name_key: ["RED"], "switchIds": ["SW2"]}]
     assert switch_calls == []
     if check_mode:
         assert attachment_calls == []
-        assert result["check_mode_deploy_payloads"] == [{"vrfNames": ["BLUE"]}]
+        assert result["check_mode_deploy_payloads"] == payloads
     else:
-        assert attachment_calls == [({"vrfNames": ["BLUE"]}, {})]
+        assert attachment_calls == [(payload, {}) for payload in payloads]
+    skipped = [action for action in result["config_actions"] if action["status"] == "skipped"]
+    assert len(skipped) == 1
+    assert skipped[0]["reason"] == "no_targets"
+    assert skipped[0]["targets"]["resources"] == ["EMPTY"]
 
 
 @pytest.mark.parametrize("state", ["deleted", "overridden"])

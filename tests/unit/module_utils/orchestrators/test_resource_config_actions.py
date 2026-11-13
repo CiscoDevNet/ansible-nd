@@ -113,7 +113,7 @@ def test_network_resource_deploy_is_planned_in_check_mode():
     coordinator = NetworkWorkflowCoordinator(module=_Module(check_mode=True), strategy=_Strategy())
     coordinator.config_actions = ConfigActions(save=False, deploy=True, type="resource", provided=True)
     coordinator._deploy_network_attachments = lambda *_args: pytest.fail("check mode must not call the deploy endpoint")
-    payload = {"networkNames": ["BLUE_NET"]}
+    payload = {"networkNames": ["BLUE_NET"], "switchIds": ["SERIAL1"]}
 
     trace = coordinator._run_network_config_actions({"state": "merged"}, coordinator.strategy, payload)
 
@@ -150,16 +150,23 @@ def test_switch_deploy_without_targets_is_a_structured_skip():
     assert trace["config_actions"][0]["actions"][0]["error"] == "no_targets"
 
 
-def test_resource_deploy_without_attachments_uses_resource_name():
-    coordinator = NetworkWorkflowCoordinator(module=_Module(), strategy=_Strategy())
+@pytest.mark.parametrize("coordinator_class,payload_key", [(NetworkWorkflowCoordinator, "networkNames"), (VrfWorkflowCoordinator, "vrfNames")])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_resource_deploy_without_attachments_is_a_structured_skip(coordinator_class, payload_key, check_mode):
+    coordinator = coordinator_class(module=_Module(check_mode=check_mode), strategy=_Strategy())
     coordinator.config_actions = ConfigActions(save=False, deploy=True, type="resource", provided=False)
-    payloads = []
-    coordinator._deploy_network_attachments = lambda _args, _strategy, payload: payloads.append(payload) or {"changed": True, "failed": False}
+    if payload_key == "networkNames":
+        coordinator._deploy_network_attachments = lambda *_args: pytest.fail("unattached Network must not invoke endpoint")
+        run = coordinator._run_network_config_actions
+    else:
+        coordinator._deploy_vrf_attachments = lambda *_args: pytest.fail("unattached VRF must not invoke endpoint")
+        run = coordinator._run_vrf_config_actions
 
-    trace = coordinator._run_network_config_actions({"state": "merged"}, coordinator.strategy, {"networkNames": ["BLUE_NET"]})
+    trace = run({"state": "merged"}, coordinator.strategy, {payload_key: ["BLUE"]})
 
-    assert payloads == [{"networkNames": ["BLUE_NET"]}]
-    assert trace["config_actions"][0]["status"] == "completed"
+    assert trace["config_actions"][0]["status"] == "skipped"
+    assert trace["config_actions"][0]["reason"] == "no_targets"
+    assert not trace.get("check_mode_deploy_payloads")
 
 
 def test_network_backend_failure_is_preserved_by_controller_facade():
@@ -174,7 +181,7 @@ def test_network_backend_failure_is_preserved_by_controller_facade():
         coordinator._run_network_config_actions(
             {"state": "merged"},
             coordinator.strategy,
-            {"networkNames": ["BLUE_NET"]},
+            {"networkNames": ["BLUE_NET"], "switchIds": ["SERIAL1"]},
         )
 
 

@@ -258,8 +258,9 @@ class NetworkStateMachine:
                 pre_attach,
                 post_attach,
                 defer_deploy,
-                existing_names=current_network_name_set if self._check_mode() else None,
+                existing_names=current_network_name_set,
                 requested_attachments=requested_attachments,
+                changed_network_names=set(self._network_names_from_models(getattr(sm, "sent", None) or [])),
             )
         finally:
             self.coordinator._restore_state_machine_params(original_config, original_state)
@@ -289,6 +290,7 @@ class NetworkStateMachine:
         defer_deploy: bool,
         existing_names: set[str] | None = None,
         requested_attachments: dict[tuple[str, str], dict[str, Any]] | None = None,
+        changed_network_names: set[str] | None = None,
     ) -> dict[str, Any]:
         """
         Deploy or defer pending work produced by attachment phases.
@@ -315,11 +317,38 @@ class NetworkStateMachine:
                     current_networks, query_trace = self.coordinator._query_current_networks_with_trace(module_args, strategy)
                     self.coordinator._merge_api_trace(result, query_trace)
                     pending_result = {"after": current_networks}
+                if changed_network_names:
+                    return self.coordinator._build_pending_network_deploy_targets(
+                        pending_result, config, module_args, strategy, existing_names, changed_names=changed_network_names
+                    )
                 return self.coordinator._build_pending_network_deploy_targets(pending_result, config, module_args, strategy, existing_names)
 
             find_pending = actions.deploy_requested()
             selected_targets = selection.select(post_targets, pending_targets if find_pending else None)
             deploy_payloads = self.coordinator._build_deploy_payloads(config, {}, selected_targets)
+        elif actions and actions.type in ("resource", "switch"):
+            pending_result = result
+            if self._should_query_pending_networks(result, config):
+                self._trace("deploy_pending_query_start")
+                current_networks, query_trace = self.coordinator._query_current_networks_with_trace(module_args, strategy)
+                self.coordinator._merge_api_trace(result, query_trace)
+                pending_result = {"after": current_networks}
+            if changed_network_names:
+                pending = self.coordinator._build_pending_network_deploy_targets(
+                    pending_result, config, module_args, strategy, existing_names, changed_names=changed_network_names
+                )
+            else:
+                pending = self.coordinator._build_pending_network_deploy_targets(pending_result, config, module_args, strategy, existing_names)
+            if actions.type == "resource":
+                # Detaches have a mandatory resource-scoped deploy already;
+                # only independently pending switches need an optional one.
+                pending = {name: set(ids).difference(detach_targets.get(name, set())) for name, ids in pending.items()}
+            # New resources with no attachments still need a no_targets action,
+            # including when check mode has no controller status for them yet.
+            if changed_network_names is None and result.get("changed") and existing_names is not None:
+                for name in set(self.coordinator._configured_network_names(config)) - existing_names:
+                    pending.setdefault(name, set())
+            deploy_payloads = self.coordinator._build_deploy_payloads(config, post_targets, pending)
         else:
             deploy_payloads = self.coordinator._build_deploy_payloads(config, {}, post_targets)
             if not deploy_payloads and not detach_targets:

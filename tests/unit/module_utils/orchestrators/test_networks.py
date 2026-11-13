@@ -4716,7 +4716,9 @@ def test_network_resource_scope_deploys_by_name_without_item_scope_fields():
 
     assert "deploy" in model.to_config()
     assert NetworkConfigModel.model_fields.get("deploy_type") is None
-    assert NetworkAttachmentManager.build_deploy_payloads([model.to_config()], {"BLUE_NET": {"FDO123"}}) == [{"networkNames": ["BLUE_NET"]}]
+    assert NetworkAttachmentManager.build_deploy_payloads([model.to_config()], {"BLUE_NET": {"FDO123"}}) == [
+        {"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}
+    ]
 
 
 def test_transform_l2_network_payload_uses_manage_schema_shape():
@@ -5520,9 +5522,7 @@ def test_network_delete_uses_config_action_scope(check_mode, scope):
         detach_trace={"deploy_targets": {"BLUE_NET": {"SERIAL1", "SERIAL2"}}},
         wait_network_names=["BLUE_NET"],
     )
-    expected_payload = {"networkNames": ["BLUE_NET"]}
-    if scope == "switch":
-        expected_payload["switchIds"] = ["SERIAL1", "SERIAL2"]
+    expected_payload = {"networkNames": ["BLUE_NET"], "switchIds": ["SERIAL1", "SERIAL2"]}
 
     if check_mode:
         assert coordinator.deploy_calls == []
@@ -6020,6 +6020,18 @@ def test_network_attachment_only_detach_uses_default_resource_scope(check_mode, 
             assert target_maps == ({}, {})
             return []
 
+        def _deploy_enabled_by_network(self, _config):
+            return {"BLUE_NET": True}
+
+        def _configured_network_names(self, _config):
+            return ["BLUE_NET"]
+
+        def _query_current_networks_with_trace(self, *_args):
+            return [], {"changed": False}
+
+        def _build_pending_network_deploy_targets(self, *_args):
+            return {}
+
         def _build_pending_network_deploy_payloads(self, *_args):
             raise AssertionError("detach targets must not fall back to Network deployment")
 
@@ -6040,7 +6052,7 @@ def test_network_attachment_only_detach_uses_default_resource_scope(check_mode, 
         {},
         defer_deploy,
     )
-    expected_payload = {"networkNames": ["BLUE_NET"]}
+    expected_payload = {"networkNames": ["BLUE_NET"], "switchIds": ["SERIAL1"]}
     if defer_deploy:
         assert result["_deferred_deploy_payloads"] == [{"_undeploy": True, **expected_payload}]
         assert coordinator.deploy_calls == []
@@ -6088,8 +6100,20 @@ def test_network_mixed_detach_and_attach_deploys_detach_first_at_selected_scope(
             return NetworkAttachmentManager.build_delete_deploy_payloads(config, *target_maps, strategy=strategy, actions=self.config_actions)
 
         def _build_deploy_payloads(self, _config, *target_maps):
-            assert target_maps == ({}, {"BLUE_NET": {"SERIAL2"}})
+            assert target_maps == ({"BLUE_NET": {"SERIAL2"}}, {})
             return [{"networkNames": ["BLUE_NET"], "switchIds": ["SERIAL2"]}]
+
+        def _deploy_enabled_by_network(self, _config):
+            return {"BLUE_NET": True}
+
+        def _configured_network_names(self, _config):
+            return ["BLUE_NET"]
+
+        def _query_current_networks_with_trace(self, *_args):
+            return [], {"changed": False}
+
+        def _build_pending_network_deploy_targets(self, *_args):
+            return {}
 
         def _merge_api_trace(self, result, trace):
             result["changed"] = result.get("changed", False) or trace.get("changed", False)
@@ -6276,7 +6300,7 @@ def test_delete_deploy_payloads_ignore_deploy_false():
         {"BLUE_NET": {"FDO123"}},
     )
 
-    assert payloads == [{"networkNames": ["BLUE_NET"]}]
+    assert payloads == [{"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}]
 
 
 def test_delete_deploy_payloads_resource_scope_uses_names():
@@ -6290,7 +6314,7 @@ def test_delete_deploy_payloads_resource_scope_uses_names():
         {"BLUE_NET": {"FDO123"}},
     )
 
-    assert payloads == [{"networkNames": ["BLUE_NET"]}]
+    assert payloads == [{"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}]
 
 
 def test_delete_deploy_payloads_resource_scope_batches_names():
@@ -6307,7 +6331,11 @@ def test_delete_deploy_payloads_resource_scope_batches_names():
         },
     )
 
-    assert payloads == [{"networkNames": ["BLUE_NET", "GREEN_NET", "RED_NET"]}]
+    assert payloads == [
+        {"networkNames": ["BLUE_NET"], "switchIds": ["SERIAL1"]},
+        {"networkNames": ["GREEN_NET"], "switchIds": ["SERIAL1", "SERIAL2"]},
+        {"networkNames": ["RED_NET"], "switchIds": ["SERIAL3"]},
+    ]
 
 
 def test_delete_deploy_payloads_group_resource_targets_without_cross_deploy():
@@ -6348,7 +6376,7 @@ def test_mcfg_parent_normal_deploy_keeps_resource_switch_targets():
         strategy=_mcfg_parent_orchestrator().strategy,
     )
 
-    assert payloads == [{"networkNames": ["BLUE_NET"]}]
+    assert payloads == [{"networkNames": ["BLUE_NET"], "switchIds": ["SERIAL1", "SERIAL2"]}]
 
 
 def test_msd_parent_resource_deploy_includes_attached_switch_targets():
@@ -6394,7 +6422,7 @@ def test_switch_scope_deploy_payload_contains_only_union_of_affected_switch_ids(
 
 
 def test_delete_deploy_payloads_without_switch_ids_do_not_fall_back_to_network_scope():
-    assert NetworkAttachmentManager.build_delete_deploy_payloads([{"network_name": "BLUE_NET"}], {"BLUE_NET": set()}) == [{"networkNames": ["BLUE_NET"]}]
+    assert NetworkAttachmentManager.build_delete_deploy_payloads([{"network_name": "BLUE_NET"}], {"BLUE_NET": set()}) == []
 
 
 @pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
@@ -6459,9 +6487,7 @@ def test_network_cleanup_preserves_resource_scope_across_states(strategy_cls, ch
         state_machine._prepend_traces(result, traces)
     else:
         result = state_machine.run_deleted(args, strategy)
-    expected_payload = {"networkNames": ["N"]}
-    if scope == "switch" or strategy.is_multicluster or strategy.is_multisite:
-        expected_payload["switchIds"] = ["SW1"]
+    expected_payload = {"networkNames": ["N"], "switchIds": ["SW1"]}
     if check_mode:
         assert result["check_mode_deploy_payloads"] == [expected_payload]
         assert events == ["dependencies", "detach"] + ([] if operation == "overridden" else ["delete"])
@@ -6472,11 +6498,11 @@ def test_network_cleanup_preserves_resource_scope_across_states(strategy_cls, ch
 @pytest.mark.parametrize(
     "network_status,attachment_status,attached,deploy,expected",
     [
-        ("pending", "pending", True, True, [{"networkNames": ["BLUE_NET"]}]),
+        ("pending", "pending", True, True, [{"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}]),
         ("pending", None, None, True, [{"networkNames": ["BLUE_NET"]}]),
         (ConfigurationStatus.PENDING, None, None, True, [{"networkNames": ["BLUE_NET"]}]),
-        ("deployed", "pending", False, True, [{"networkNames": ["BLUE_NET"]}]),
-        (ConfigurationStatus.DEPLOYED, ConfigurationStatus.PENDING, False, True, [{"networkNames": ["BLUE_NET"]}]),
+        ("deployed", "pending", False, True, [{"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}]),
+        (ConfigurationStatus.DEPLOYED, ConfigurationStatus.PENDING, False, True, [{"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}]),
         ("deployed", "pending", False, False, []),
     ],
 )
@@ -6825,7 +6851,7 @@ def test_pending_attachment_delete_wait_retries_undeploy_by_resource_name(wait_f
             _orchestrator().strategy,
         )
 
-    expected_payload = {"networkNames": ["BLUE_NET"]}
+    expected_payload = {"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}
     assert deploy_payloads == [(expected_payload, True)]
 
 
@@ -6866,12 +6892,10 @@ def test_network_delete_readiness_retry_preserves_requested_scope(wait_for_defin
     with pytest.raises(RuntimeError, match="Timed out waiting for network"):
         wait(args, strategy, ["BLUE_NET"], deadline=0, timeout_seconds=0)
 
-    if not has_switch_id and (scope == "switch" or strategy.is_multicluster):
+    if not has_switch_id:
         assert deploy_calls == []
     else:
-        expected = {"networkNames": ["BLUE_NET"]}
-        if has_switch_id and (scope == "switch" or strategy.is_multisite or strategy.is_multicluster):
-            expected["switchIds"] = ["SW1"]
+        expected = {"networkNames": ["BLUE_NET"], "switchIds": ["SW1"]}
         assert deploy_calls == [(expected, True)]
 
 
@@ -6934,7 +6958,7 @@ def test_pending_network_delete_wait_retries_undeploy():
             _orchestrator().strategy,
         )
 
-    assert deploy_payloads == [({"networkNames": ["BLUE_NET"]}, True)]
+    assert deploy_payloads == []
 
 
 def test_network_delete_wait_allows_deployed_definition_after_detached_attachment_rows():
@@ -7040,7 +7064,7 @@ def test_network_delete_wait_blocks_and_retries_failed_or_out_of_sync_attachment
             _orchestrator().strategy,
         )
 
-    assert deploy_payloads == [({"networkNames": ["BLUE_NET"]}, True)]
+    assert deploy_payloads == [({"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}, True)]
 
 
 @pytest.mark.parametrize("status", ["failed", "outOfSync"])
@@ -7079,7 +7103,7 @@ def test_network_delete_wait_retries_and_blocks_failed_or_out_of_sync_network_st
             _orchestrator().strategy,
         )
 
-    assert deploy_payloads == [({"networkNames": ["BLUE_NET"]}, True)]
+    assert deploy_payloads == []
 
 
 def test_network_response_omits_disable_rt_auto_without_normalizing_rt_auto():
@@ -8155,3 +8179,229 @@ def test_network_single_name_query_accepts_endpoint_without_filter_parameters():
     object.__setattr__(orchestrator, "_make_endpoint", lambda _cls: SimpleNamespace(path="/networks", verb=HttpVerbEnum.GET))
     object.__setattr__(orchestrator, "_request", lambda **_kwargs: {"networks": [{"networkName": "N"}]})
     assert orchestrator.query_by_names(["N"]) == [{"networkName": "N", "fabricName": "fab1"}]
+
+
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
+def test_resource_network_targets_preserve_per_resource_switch_sets(strategy_cls):
+    strategy = strategy_cls(fabric_name="FAB1", fabric_data={"managementType": "vxlanIbgp"})
+    config = [{"network_name": name} for name in ("BLUE", "RED", "GREEN", "EMPTY")]
+    actions = ConfigActions(save=False, deploy=True, type="resource", provided=True)
+    payloads = NetworkAttachmentManager.build_deploy_payloads(
+        config,
+        {"BLUE": {"SW1"}, "RED": {"SW3"}, "EMPTY": set()},
+        {"BLUE": {"SW2"}, "GREEN": {"SW3"}},
+        strategy=strategy,
+        actions=actions,
+    )
+    assert payloads == [
+        {"networkNames": ["BLUE"], "switchIds": ["SW1", "SW2"]},
+        {"networkNames": ["GREEN", "RED"], "switchIds": ["SW3"]},
+        {"networkNames": ["EMPTY"]},
+    ]
+
+
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_resource_network_planning_combines_direct_pending_and_unattached_targets(strategy_cls, check_mode):
+    config = [{"network_name": name} for name in ("BLUE", "RED", "NEW")]
+    module_args = {"fabric_name": "FAB1", "state": "merged", "config": config}
+    module = _Module(module_args)
+    module.check_mode = check_mode
+    strategy = strategy_cls(fabric_name="FAB1", fabric_data={"managementType": "vxlanIbgp"})
+    coordinator = NetworkWorkflowCoordinator(module, strategy)
+    coordinator.config_actions = ConfigActions(save=False, deploy=True, type="resource", provided=True)
+    coordinator.attachments.current_attachment_details_ignore_missing = lambda *_args: [
+        {"networkName": "BLUE", "switchId": "SW2", "attach": True, "status": "inSync"},
+        {"networkName": "RED", "switchId": "SW3", "attach": True, "status": "pending"},
+    ]
+    calls = []
+    coordinator._deploy_network_attachments = lambda _args, _strategy, payload: calls.append(payload) or {"changed": True, "failed": False}
+    result = {
+        "changed": True,
+        "after": [{"network_name": "BLUE", "network_status": "pending"}, {"network_name": "RED", "network_status": "pending"}, {"network_name": "NEW"}],
+    }
+    result = NetworkStateMachine(coordinator)._deploy_after_attachment_changes(
+        result,
+        config,
+        module_args,
+        strategy,
+        {},
+        {"deploy_targets": {"BLUE": {"SW1"}}},
+        False,
+        existing_names={"BLUE", "RED"},
+    )
+    expected = [
+        {"networkNames": ["BLUE"], "switchIds": ["SW1", "SW2"]},
+        {"networkNames": ["RED"], "switchIds": ["SW3"]},
+    ]
+    if check_mode:
+        assert calls == []
+        assert result["check_mode_deploy_payloads"] == expected
+    else:
+        assert calls == expected
+    assert any(item["status"] == "skipped" and item["reason"] == "no_targets" for item in result["config_actions"])
+
+
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_new_unattached_network_skips_resource_deploy_even_without_status(strategy_cls, check_mode):
+    config = [{"network_name": "NEW"}]
+    module_args = {"fabric_name": "FAB1", "state": "merged", "config": config}
+    module = _Module(module_args)
+    module.check_mode = check_mode
+    strategy = strategy_cls(fabric_name="FAB1", fabric_data={"managementType": "vxlanIbgp"})
+    coordinator = NetworkWorkflowCoordinator(module, strategy)
+    coordinator.config_actions = ConfigActions(save=False, deploy=True, type="resource", provided=True)
+    coordinator._deploy_network_attachments = lambda *_args: pytest.fail("unattached Network cannot be deployed")
+    result = NetworkStateMachine(coordinator)._deploy_after_attachment_changes(
+        {"changed": True, "after": [{"network_name": "NEW"}]}, config, module_args, strategy, {}, {}, False, existing_names=set()
+    )
+    assert result["changed"] is True
+    assert result["config_actions"][0]["status"] == "skipped"
+    assert result["config_actions"][0]["reason"] == "no_targets"
+    assert not result.get("check_mode_deploy_payloads")
+
+
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("scope", ["resource", "switch"])
+def test_network_changed_definition_targets_attached_switches_despite_stale_status(strategy_cls, check_mode, scope):
+    config = [{"network_name": "BLUE"}, {"network_name": "RED"}]
+    module_args = {"fabric_name": "FAB1", "state": "merged", "config": config}
+    module = _Module(module_args)
+    module.check_mode = check_mode
+    strategy = strategy_cls(fabric_name="FAB1", fabric_data={"managementType": "vxlanIbgp"})
+    coordinator = NetworkWorkflowCoordinator(module, strategy)
+    coordinator.config_actions = ConfigActions(save=False, deploy=True, type=scope, provided=True)
+    coordinator.attachments.current_attachment_details_ignore_missing = lambda *_args: [
+        {"networkName": "BLUE", "switchId": "SW1", "attach": True, "status": "inSync"},
+        {"networkName": "RED", "switchId": "SW2", "attach": True, "status": "inSync"},
+    ]
+    calls = []
+    coordinator._deploy_network_attachments = lambda _args, _strategy, payload: calls.append(payload) or {"changed": True, "failed": False}
+    coordinator._deploy_network_switches = lambda _args, _strategy, payload: calls.append(payload) or {"changed": True, "failed": False}
+    result = NetworkStateMachine(coordinator)._deploy_after_attachment_changes(
+        {"changed": True, "after": [{"network_name": "BLUE", "network_status": "deployed"}, {"network_name": "RED", "network_status": "deployed"}]},
+        config,
+        module_args,
+        strategy,
+        {},
+        {},
+        False,
+        existing_names={"BLUE", "RED"},
+        changed_network_names={"BLUE"},
+    )
+    expected = {"networkNames": ["BLUE"], "switchIds": ["SW1"]} if scope == "resource" else {"switchIds": ["SW1"]}
+    if check_mode:
+        assert calls == []
+        assert result["check_mode_deploy_payloads"] == [expected]
+    else:
+        assert calls == [expected]
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_network_new_unattached_explicit_changed_evidence_skips_even_without_after(check_mode):
+    config = [{"network_name": "NEW"}]
+    module_args = {"fabric_name": "FAB1", "state": "merged", "config": config}
+    module = _Module(module_args)
+    module.check_mode = check_mode
+    strategy = StandaloneNetworkStrategy(fabric_name="FAB1", fabric_data={"managementType": "vxlanIbgp"})
+    coordinator = NetworkWorkflowCoordinator(module, strategy)
+    coordinator.config_actions = ConfigActions(save=False, deploy=True, type="resource", provided=True)
+    coordinator._query_current_networks_with_trace = lambda *_args: ([], {"changed": False})
+    coordinator._deploy_network_attachments = lambda *_args: pytest.fail("unattached Network cannot be deployed")
+    result = NetworkStateMachine(coordinator)._deploy_after_attachment_changes(
+        {"changed": True}, config, module_args, strategy, {}, {}, False, existing_names=set(), changed_network_names={"NEW"}
+    )
+    assert result["config_actions"][0]["status"] == "skipped"
+    assert result["config_actions"][0]["reason"] == "no_targets"
+    assert not result.get("check_mode_deploy_payloads")
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_network_resource_deploy_excludes_detached_switch_but_keeps_pending_retained_switch(check_mode):
+    config = [{"network_name": "BLUE"}]
+    args = {"fabric_name": "FAB1", "state": "replaced", "config": config}
+    module = _Module(args)
+    module.check_mode = check_mode
+    strategy = StandaloneNetworkStrategy(fabric_name="FAB1", fabric_data={"managementType": "vxlanIbgp"})
+    coordinator = NetworkWorkflowCoordinator(module, strategy)
+    coordinator.config_actions = ConfigActions(save=False, deploy=True, type="resource", provided=True)
+    coordinator.attachments.current_attachment_details_ignore_missing = lambda *_args: [
+        {"networkName": "BLUE", "switchId": "SW1", "attach": False, "status": "pending"},
+        {"networkName": "BLUE", "switchId": "SW2", "attach": True, "status": "pending"},
+    ]
+    calls = []
+    coordinator._deploy_network_attachments = lambda _args, _strategy, payload, **kwargs: calls.append((payload, kwargs)) or {
+        "changed": True,
+        "failed": False,
+    }
+    result = NetworkStateMachine(coordinator)._deploy_after_attachment_changes(
+        {"changed": True, "after": [{"network_name": "BLUE", "network_status": "pending"}]},
+        config,
+        args,
+        strategy,
+        {"deploy_targets": {"BLUE": {"SW1"}}},
+        {},
+        False,
+        existing_names={"BLUE"},
+    )
+    detach = {"networkNames": ["BLUE"], "switchIds": ["SW1"]}
+    retained = {"networkNames": ["BLUE"], "switchIds": ["SW2"]}
+    if check_mode:
+        assert calls == []
+        assert result["check_mode_deploy_payloads"] == [detach, retained]
+    else:
+        assert calls == [(detach, {"undeploy": True}), (retained, {})]
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("scope", ["resource", "switch"])
+def test_existing_unattached_network_reports_no_targets_without_treating_insync_attached_as_targetless(check_mode, scope):
+    config = [{"network_name": "EMPTY"}, {"network_name": "ATTACHED"}]
+    args = {"fabric_name": "FAB1", "state": "merged", "config": config}
+    module = _Module(args)
+    module.check_mode = check_mode
+    strategy = StandaloneNetworkStrategy(fabric_name="FAB1", fabric_data={"managementType": "vxlanIbgp"})
+    coordinator = NetworkWorkflowCoordinator(module, strategy)
+    coordinator.config_actions = ConfigActions(save=False, deploy=True, type=scope, provided=True)
+    coordinator.attachments.current_attachment_details_ignore_missing = lambda *_args: [
+        {"networkName": "ATTACHED", "switchId": "SW1", "attach": True, "status": "inSync"}
+    ]
+    coordinator._deploy_network_attachments = lambda *_args: pytest.fail("idempotent Network cannot be deployed")
+    coordinator._deploy_network_switches = lambda *_args: pytest.fail("idempotent Network cannot be deployed")
+    result = NetworkStateMachine(coordinator)._deploy_after_attachment_changes(
+        {"changed": False, "after": [{"network_name": "EMPTY", "network_status": "deployed"}, {"network_name": "ATTACHED", "network_status": "deployed"}]},
+        config,
+        args,
+        strategy,
+        {},
+        {},
+        False,
+        existing_names={"EMPTY", "ATTACHED"},
+        changed_network_names=set(),
+    )
+    assert result["changed"] is False
+    assert len(result["config_actions"]) == 1
+    assert result["config_actions"][0]["status"] == "skipped"
+    assert result["config_actions"][0]["reason"] == "no_targets"
+    assert not result.get("check_mode_deploy_payloads")
+
+
+@pytest.mark.parametrize("state", ["replaced", "overridden"])
+@pytest.mark.parametrize("disable_item", [False, True])
+def test_network_attachment_pre_detach_retains_mandatory_targets_when_deploy_disabled(state, disable_item):
+    coordinator = _NetworkAttachmentCoordinator()
+    coordinator.config_actions = ConfigActions(save=False, deploy=False, type="resource", provided=True)
+    manager = _RecordingNetworkAttachmentManager(coordinator)
+    config = [{"network_name": "BLUE", "deploy": False}] if disable_item else [{"network_name": "BLUE"}]
+    trace = manager.apply_phase(
+        {"state": state, "config": config},
+        _orchestrator().strategy,
+        phase="pre",
+        desired={},
+        current_network_names=["BLUE"],
+        current={("BLUE", "SW1"): {"networkName": "BLUE", "switchId": "SW1", "attach": True, "vlanId": 100}},
+    )
+    assert trace["deploy_targets"] == {"BLUE": {"SW1"}}
+    assert trace["payloads"] == [{"networkName": "BLUE", "switchId": "SW1", "vlanId": 100, "attach": False}]
