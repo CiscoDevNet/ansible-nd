@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from typing import Annotated, ClassVar, Literal
 
-from ansible_collections.cisco.nd.plugins.module_utils.models.release_metadata import NDMinimumVersion
+from ansible_collections.cisco.nd.plugins.module_utils.models.release_metadata import (
+    NDMinimumVersion,
+)
 
-from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
@@ -25,12 +26,16 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
     BootstrapSubnetModel,
     FabricDhcpGatewayAddress,
+    FabricIPv4CIDR,
+    FabricManagementModel,
     NetflowSamplerModel,
     NetflowSettingsModel,
     ScheduledBackupTime,
     validate_bgp_asn_value,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import FabricBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import (
+    FabricBaseModel,
+)
 
 """
 # Comprehensive Pydantic models for External Connectivity fabric management via Nexus Dashboard
@@ -64,11 +69,13 @@ class ExternalNetflowSettingsModel(NetflowSettingsModel):
     """External NetFlow settings, including template-supported samplers."""
 
     netflow_sampler_collection: list[NetflowSamplerModel] | None = Field(
-        alias="netflowSamplerCollection", description="List of NetFlow samplers", default=None
+        alias="netflowSamplerCollection",
+        description="List of NetFlow samplers",
+        default=None,
     )
 
 
-class ExternalConnectivityManagementModel(NDNestedModel):
+class ExternalConnectivityManagementModel(FabricManagementModel):
     """
     # Summary
 
@@ -83,32 +90,56 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     - `TypeError` - If required string fields are not provided
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        validate_assignment=True,
+        populate_by_name=True,
+        extra="allow",
+    )
 
     _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
 
     # Hidden Hypershield proxy response values are not public parameters. Keep
     # their writable state across full replacement while gathered output omits it.
-    _opaque_replacement_fields: ClassVar[set[str]] = {"hypershieldConnectivityProxyServer", "hypershieldConnectivityProxyServerPort"}
+    _opaque_replacement_fields: ClassVar[set[str]] = {
+        "hypershieldConnectivityProxyServer",
+        "hypershieldConnectivityProxyServerPort",
+    }
     replacement_preserve_fields: ClassVar[set[str]] = _opaque_replacement_fields
     config_exclude_fields: ClassVar[set[str]] = _opaque_replacement_fields
 
     empty_string_means_unset: ClassVar[bool] = True
 
     # Fabric Type (required for discriminated union)
-    type: Literal[FabricTypeEnum.EXTERNAL_CONNECTIVITY] = Field(description="Fabric management type", default=FabricTypeEnum.EXTERNAL_CONNECTIVITY)
+    type: Literal[FabricTypeEnum.EXTERNAL_CONNECTIVITY] = Field(
+        description="Fabric management type",
+        default=FabricTypeEnum.EXTERNAL_CONNECTIVITY,
+    )
 
     # Core Configuration
-    bgp_asn: str | None = Field(alias="bgpAsn", description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]", default=None)
+    bgp_asn: str | None = Field(
+        alias="bgpAsn",
+        description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]",
+        default=None,
+    )
 
     # Name under management section is optional — propagated from FabricExternalConnectivityModel.fabric_name during validation
-    name: str | None = Field(description="Fabric name", min_length=1, max_length=64, default=None)
+    name: str | None = Field(
+        description="Fabric name", min_length=1, max_length=64, default=None
+    )
 
     # AAA
-    aaa: bool = Field(description="Include AAA configs from Advanced tab during device bootup", default=False)
+    aaa: bool = Field(
+        description="Include AAA configs from Advanced tab during device bootup",
+        default=False,
+    )
 
     # SSH
-    advanced_ssh_option: bool = Field(alias="advancedSshOption", description="Enable only, when IP Authorization is enabled in the AAA Server", default=False)
+    advanced_ssh_option: bool = Field(
+        alias="advancedSshOption",
+        description="Enable only, when IP Authorization is enabled in the AAA Server",
+        default=False,
+    )
 
     # Loopback
     allow_same_loopback_ip_on_switches: bool = Field(
@@ -119,12 +150,16 @@ class ExternalConnectivityManagementModel(NDNestedModel):
 
     # Smart Switch
     allow_smart_switch_onboarding: bool = Field(
-        alias="allowSmartSwitchOnboarding", description="Enable onboarding of smart switches to Hypershield for firewall service", default=False
+        alias="allowSmartSwitchOnboarding",
+        description="Enable onboarding of smart switches to Hypershield for firewall service",
+        default=False,
     )
 
     # Bootstrap Subnet Collection
     bootstrap_subnet_collection: list[BootstrapSubnetModel] = Field(
-        alias="bootstrapSubnetCollection", description="List of IPv4 or IPv6 subnets to be used for bootstrap", default_factory=list
+        alias="bootstrapSubnetCollection",
+        description="List of IPv4 or IPv6 subnets to be used for bootstrap",
+        default_factory=list,
     )
 
     # CDP
@@ -138,21 +173,47 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     )
 
     # BGP Configuration
-    create_bgp_config: bool = Field(alias="createBgpConfig", description="Generate BGP configuration for core and edge routers", default=True)
+    create_bgp_config: bool = Field(
+        alias="createBgpConfig",
+        description="Generate BGP configuration for core and edge routers",
+        default=True,
+    )
 
     # Bootstrap Settings
-    day0_bootstrap: bool = Field(alias="day0Bootstrap", description="Support day 0 touchless switch bringup", default=False)
-    day0_plug_and_play: bool = Field(alias="day0PlugAndPlay", description="Enable Plug n Play for Catalyst 9000 switches", default=False)
+    day0_bootstrap: bool = Field(
+        alias="day0Bootstrap",
+        description="Support day 0 touchless switch bringup",
+        default=False,
+    )
+    day0_plug_and_play: bool = Field(
+        alias="day0PlugAndPlay",
+        description="Enable Plug n Play for Catalyst 9000 switches",
+        default=False,
+    )
 
     # DHCP
-    dhcp_end_address: FabricDhcpGatewayAddress = Field(alias="dhcpEndAddress", description="DHCP Scope End Address For Switch POAP", default=None)
-    dhcp_protocol_version: DhcpProtocolVersionEnum = Field(
-        alias="dhcpProtocolVersion", description="IP protocol version for Local DHCP Server", default=DhcpProtocolVersionEnum.DHCPV4
+    dhcp_end_address: FabricDhcpGatewayAddress = Field(
+        alias="dhcpEndAddress",
+        description="DHCP Scope End Address For Switch POAP",
+        default=None,
     )
-    dhcp_start_address: FabricDhcpGatewayAddress = Field(alias="dhcpStartAddress", description="DHCP Scope Start Address For Switch POAP", default=None)
+    dhcp_protocol_version: DhcpProtocolVersionEnum = Field(
+        alias="dhcpProtocolVersion",
+        description="IP protocol version for Local DHCP Server",
+        default=DhcpProtocolVersionEnum.DHCPV4,
+    )
+    dhcp_start_address: FabricDhcpGatewayAddress = Field(
+        alias="dhcpStartAddress",
+        description="DHCP Scope Start Address For Switch POAP",
+        default=None,
+    )
 
     # DNS
-    dns_collection: list[str] = Field(alias="dnsCollection", description="List of IPv4 and IPv6 DNS addresses", default_factory=list)
+    dns_collection: list[str] = Field(
+        alias="dnsCollection",
+        description="List of IPv4 and IPv6 DNS addresses",
+        default_factory=list,
+    )
     dns_vrf_collection: list[str] = Field(
         alias="dnsVrfCollection",
         description="DNS Server VRFs. One VRF for all DNS servers or a list of VRFs, one per DNS server",
@@ -160,60 +221,146 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     )
 
     # Domain
-    domain_name: str = Field(alias="domainName", description="Domain name for DHCP server PnP block", default="")
+    domain_name: str = Field(
+        alias="domainName",
+        description="Domain name for DHCP server PnP block",
+        default="",
+        json_schema_extra={
+            "nd_string_constraints": {
+                "allow_empty": True,
+                "pattern": r"^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,6}$"
+            }
+        },
+    )
 
     # DPU Pinning
     enable_dpu_pinning: bool = Field(
-        alias="enableDpuPinning", description="Enable pinning of VRFs and networks to specific DPUs on smart switches", default=False
+        alias="enableDpuPinning",
+        description="Enable pinning of VRFs and networks to specific DPUs on smart switches",
+        default=False,
     )
 
     # Extra Config
-    extra_config_aaa: str = Field(alias="extraConfigAaa", description="Additional CLIs for AAA Configuration", default="")
-    extra_config_fabric: str = Field(alias="extraConfigFabric", description="Additional CLIs for all switches", default="")
+    extra_config_aaa: str = Field(
+        alias="extraConfigAaa",
+        description="Additional CLIs for AAA Configuration",
+        default="",
+    )
+    extra_config_fabric: str = Field(
+        alias="extraConfigFabric",
+        description="Additional CLIs for all switches",
+        default="",
+    )
     extra_config_nxos_bootstrap: str = Field(
-        alias="extraConfigNxosBootstrap", description="Additional CLIs required during device bootup/login e.g. AAA/Radius (NX-OS)", default=""
+        alias="extraConfigNxosBootstrap",
+        description="Additional CLIs required during device bootup/login e.g. AAA/Radius (NX-OS)",
+        default="",
     )
     extra_config_xe_bootstrap: str = Field(
-        alias="extraConfigXeBootstrap", description="Additional CLIs required during device bootup/login e.g. AAA/Radius (IOS-XE)", default=""
+        alias="extraConfigXeBootstrap",
+        description="Additional CLIs required during device bootup/login e.g. AAA/Radius (IOS-XE)",
+        default="",
     )
 
     # Inband Management
-    inband_day0_bootstrap: bool = Field(alias="inbandDay0Bootstrap", description="Support day 0 touchless switch bringup via inband management", default=False)
-    inband_management: bool = Field(alias="inbandManagement", description="Import switches with reachability over the switch front-panel ports", default=False)
+    inband_day0_bootstrap: bool = Field(
+        alias="inbandDay0Bootstrap",
+        description="Support day 0 touchless switch bringup via inband management",
+        default=False,
+    )
+    inband_management: bool = Field(
+        alias="inbandManagement",
+        description="Import switches with reachability over the switch front-panel ports",
+        default=False,
+    )
 
     # Interface Statistics
     interface_statistics_load_interval: int = Field(
-        alias="interfaceStatisticsLoadInterval", description="Interface Statistics Load Interval Time in seconds", ge=5, le=300, default=10
+        alias="interfaceStatisticsLoadInterval",
+        description="Interface Statistics Load Interval Time in seconds",
+        ge=5,
+        le=300,
+        default=10,
     )
 
     # Local DHCP Server
-    local_dhcp_server: bool = Field(alias="localDhcpServer", description="Automatic IP Assignment For POAP from Local DHCP Server", default=False)
+    local_dhcp_server: bool = Field(
+        alias="localDhcpServer",
+        description="Automatic IP Assignment For POAP from Local DHCP Server",
+        default=False,
+    )
 
     # Management
     management_gateway: FabricDhcpGatewayAddress = Field(
-        alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default=None
+        alias="managementGateway",
+        description="Default Gateway For Management VRF On The Switch",
+        default=None,
     )
-    management_ipv4_prefix: int = Field(alias="managementIpv4Prefix", description="Switch Mgmt IP Subnet Prefix if ipv4", ge=8, le=30, default=24)
-    management_ipv6_prefix: int = Field(alias="managementIpv6Prefix", description="Switch Management IP Subnet Prefix if ipv6", default=64)
+    management_ipv4_prefix: int = Field(
+        alias="managementIpv4Prefix",
+        description="Switch Mgmt IP Subnet Prefix if ipv4",
+        ge=8,
+        le=30,
+        default=24,
+    )
+    management_ipv6_prefix: int = Field(
+        alias="managementIpv6Prefix",
+        description="Switch Management IP Subnet Prefix if ipv6",
+        ge=64,
+        le=126,
+        default=64,
+    )
 
     # Monitored Mode
-    monitored_mode: bool = Field(alias="monitoredMode", description="If enabled, fabric is only monitored. No configuration will be deployed", default=False)
+    monitored_mode: bool = Field(
+        alias="monitoredMode",
+        description="If enabled, fabric is only monitored. No configuration will be deployed",
+        default=False,
+    )
 
     # MPLS Handoff
-    mpls_handoff: bool = Field(alias="mplsHandoff", description="Enable MPLS Handoff", default=False)
-    mpls_loopback_identifier: int = Field(alias="mplsLoopbackIdentifier", description="Underlay MPLS Loopback Identifier", default=101)
-    mpls_loopback_ip_range: str = Field(alias="mplsLoopbackIpRange", description="MPLS Loopback IP Address Range", default="10.102.0.0/25")
+    mpls_handoff: bool = Field(
+        alias="mplsHandoff", description="Enable MPLS Handoff", default=False
+    )
+    mpls_loopback_identifier: int = Field(
+        alias="mplsLoopbackIdentifier",
+        description="Underlay MPLS Loopback Identifier",
+        ge=0,
+        le=1023,
+        default=101,
+    )
+    mpls_loopback_ip_range: FabricIPv4CIDR = Field(
+        alias="mplsLoopbackIpRange",
+        description="MPLS Loopback IP Address Range",
+        default="10.102.0.0/25",
+    )
 
     # Netflow Settings
     netflow_settings: ExternalNetflowSettingsModel = Field(
-        alias="netflowSettings", description="Settings associated with netflow", default_factory=ExternalNetflowSettingsModel
+        alias="netflowSettings",
+        description="Settings associated with netflow",
+        default_factory=ExternalNetflowSettingsModel,
     )
 
     # NX-API Settings
     nxapi: bool = Field(description="Enable NX-API over HTTPS", default=False)
-    nxapi_http: bool = Field(alias="nxapiHttp", description="Enable NX-API over HTTP", default=False)
-    nxapi_http_port: int = Field(alias="nxapiHttpPort", description="HTTP port for NX-API", ge=1, le=65535, default=80)
-    nxapi_https_port: int = Field(alias="nxapiHttpsPort", description="HTTPS port for NX-API", ge=1, le=65535, default=443)
+    nxapi_http: bool = Field(
+        alias="nxapiHttp", description="Enable NX-API over HTTP", default=False
+    )
+    nxapi_http_port: int = Field(
+        alias="nxapiHttpPort",
+        description="HTTP port for NX-API",
+        ge=1,
+        le=65535,
+        default=80,
+    )
+    nxapi_https_port: int = Field(
+        alias="nxapiHttpsPort",
+        description="HTTPS port for NX-API",
+        ge=1,
+        le=65535,
+        default=443,
+    )
 
     # Performance Monitoring
     performance_monitoring: bool = Field(
@@ -224,75 +371,163 @@ class ExternalConnectivityManagementModel(NDNestedModel):
 
     # Power Redundancy
     power_redundancy_mode: PowerRedundancyModeEnum = Field(
-        alias="powerRedundancyMode", description="Default Power Supply Mode for NX-OS Switches", default=PowerRedundancyModeEnum.REDUNDANT
+        alias="powerRedundancyMode",
+        description="Default Power Supply Mode for NX-OS Switches",
+        default=PowerRedundancyModeEnum.REDUNDANT,
     )
 
     # PTP
     ptp: bool = Field(description="Enable Precision Time Protocol (PTP)", default=False)
-    ptp_domain_id: int = Field(alias="ptpDomainId", description="Multiple Independent PTP Clocking Subdomains on a Single Network", ge=0, le=127, default=0)
-    ptp_loopback_id: int = Field(alias="ptpLoopbackId", description="Precision Time Protocol Source Loopback Id", ge=0, le=1023, default=0)
+    ptp_domain_id: int = Field(
+        alias="ptpDomainId",
+        description="Multiple Independent PTP Clocking Subdomains on a Single Network",
+        ge=0,
+        le=127,
+        default=0,
+    )
+    ptp_loopback_id: int = Field(
+        alias="ptpLoopbackId",
+        description="Precision Time Protocol Source Loopback Id",
+        ge=0,
+        le=1023,
+        default=0,
+    )
 
     # Backup / Restore
     real_time_backup: bool | None = Field(
-        alias="realTimeBackup", description="Hourly Fabric Backup only if there is any config deployment since last backup", default=None
+        alias="realTimeBackup",
+        description="Hourly Fabric Backup only if there is any config deployment since last backup",
+        default=None,
     )
 
     # Interface Statistics Collection
     real_time_interface_statistics_collection: bool = Field(
-        alias="realTimeInterfaceStatisticsCollection", description="Enable Real Time Interface Statistics Collection. Valid for NX-OS only", default=False
+        alias="realTimeInterfaceStatisticsCollection",
+        description="Enable Real Time Interface Statistics Collection. Valid for NX-OS only",
+        default=False,
     )
 
     # Scheduled Backup
-    scheduled_backup: bool | None = Field(alias="scheduledBackup", description="Enable backup at the specified time daily", default=None)
+    scheduled_backup: bool | None = Field(
+        alias="scheduledBackup",
+        description="Enable backup at the specified time daily",
+        default=None,
+    )
     scheduled_backup_time: ScheduledBackupTime = Field(
-        alias="scheduledBackupTime", description="Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59)", default=None
+        alias="scheduledBackupTime",
+        description="Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59)",
+        default=None,
     )
 
     # SNMP
-    snmp_trap: bool = Field(alias="snmpTrap", description="Configure Nexus Dashboard as a receiver for SNMP traps", default=True)
+    snmp_trap: bool = Field(
+        alias="snmpTrap",
+        description="Configure Nexus Dashboard as a receiver for SNMP traps",
+        default=True,
+    )
 
     # Sub-Interface
     sub_interface_dot1q_range: str = Field(
-        alias="subInterfaceDot1qRange", description="Per aggregation dot1q range for VRF-Lite connectivity (minimum: 2, maximum: 4093)", default="2-511"
+        alias="subInterfaceDot1qRange",
+        description="Per aggregation dot1q range for VRF-Lite connectivity (minimum: 2, maximum: 4093)",
+        default="2-511",
+        json_schema_extra={"nd_integer_range": {"minimum": 2, "maximum": 4093}},
     )
 
     # Hypershield / Connectivity
-    connectivity_domain_name: str | None = Field(alias="connectivityDomainName", description="Domain name to connect to Hypershield", default=None)
+    connectivity_domain_name: str | None = Field(
+        alias="connectivityDomainName",
+        description="Domain name to connect to Hypershield",
+        default=None,
+        min_length=1,
+        max_length=63,
+        json_schema_extra={
+            "nd_string_constraints": {
+                "pattern": r"^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,6}$"
+            }
+        },
+    )
     hypershield_connectivity_source_intf: str | None = Field(
-        alias="hypershieldConnectivitySourceIntf", description="Loopback interface on smart switch for communication with Hypershield", default=None
+        alias="hypershieldConnectivitySourceIntf",
+        description="Loopback interface on smart switch for communication with Hypershield",
+        min_length=1,
+        max_length=40,
+        default=None,
     )
 
     # Additional controls present in the ND 4.3.1 External_Fabric template.
-    ai_monitoring: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(alias="aiMonitoring", description="Enable AI monitoring features.", default=None)
+    ai_monitoring: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="aiMonitoring", description="Enable AI monitoring features.", default=None
+    )
     allow_smart_switch_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
-        alias="allowSmartSwitchHA", description="Enable high availability configuration for smart switches.", default=None
+        alias="allowSmartSwitchHA",
+        description="Enable high availability configuration for smart switches.",
+        default=None,
     )
-    auto_smart_switch_vpc_pair_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
-        alias="autoSmartSwitchVpcPairHA", description="Enable automatic high availability configuration for smart-switch vPC pairs.", default=None
+    auto_smart_switch_vpc_pair_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = (
+        Field(
+            alias="autoSmartSwitchVpcPairHA",
+            description="Enable automatic high availability configuration for smart-switch vPC pairs.",
+            default=None,
+        )
     )
-    enable_remote_switch_backup: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
-        alias="enableRemoteSwitchBackup", description="Enable remote switch backup.", default=None
+    enable_remote_switch_backup: Annotated[bool | None, NDMinimumVersion("4.3.1")] = (
+        Field(
+            alias="enableRemoteSwitchBackup",
+            description="Enable remote switch backup.",
+            default=None,
+        )
     )
-    hypershield_ha_peer_link_subnet: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
-        alias="hypershieldHAPeerLinkSubnet", description="IPv4 subnet pool for HA peer-link connectivity.", default=None
+    hypershield_ha_peer_link_subnet: Annotated[
+        FabricIPv4CIDR, NDMinimumVersion("4.3.1")
+    ] = Field(
+        alias="hypershieldHAPeerLinkSubnet",
+        description="IPv4 subnet pool for HA peer-link connectivity.",
+        default=None,
     )
-    hypershield_ha_peer_link_subnet_granularity: Annotated[Literal["/30", "/31"] | None, NDMinimumVersion("4.3.1")] = Field(
-        alias="hypershieldHAPeerLinkSubnetGranularity", description="Subnet prefix size for HA peer-link allocations.", default=None
+    hypershield_ha_peer_link_subnet_granularity: Annotated[
+        Literal["/30", "/31"] | None, NDMinimumVersion("4.3.1")
+    ] = Field(
+        alias="hypershieldHAPeerLinkSubnetGranularity",
+        description="Subnet prefix size for HA peer-link allocations.",
+        default=None,
     )
-    hypershield_ha_source_intf: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
-        alias="hypershieldHASourceIntf", description="Loopback interface used as the HA source.", min_length=3, max_length=40, default=None
+    hypershield_ha_source_intf: Annotated[str | None, NDMinimumVersion("4.3.1")] = (
+        Field(
+            alias="hypershieldHASourceIntf",
+            description="Loopback interface used as the HA source.",
+            min_length=3,
+            max_length=40,
+            default=None,
+        )
     )
-    hypershield_ha_source_subnet: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
-        alias="hypershieldHASourceSubnet", description="IPv4 subnet pool for the HA source loopback.", default=None
+    hypershield_ha_source_subnet: Annotated[FabricIPv4CIDR, NDMinimumVersion("4.3.1")] = (
+        Field(
+            alias="hypershieldHASourceSubnet",
+            description="IPv4 subnet pool for the HA source loopback.",
+            default=None,
+        )
     )
     hypershield_ha_vlan: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
-        alias="hypershieldHAVlan", description="VLAN used for smart-switch HA communication.", ge=2, le=4094, default=None
+        alias="hypershieldHAVlan",
+        description="VLAN used for smart-switch HA communication.",
+        ge=2,
+        le=4094,
+        default=None,
     )
-    use_hypershield_source_loopback_for_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
-        alias="useHypershieldSourceLoopbackForHA", description="Reuse the Hypershield source loopback for HA.", default=None
+    use_hypershield_source_loopback_for_ha: Annotated[
+        bool | None, NDMinimumVersion("4.3.1")
+    ] = Field(
+        alias="useHypershieldSourceLoopbackForHA",
+        description="Reuse the Hypershield source loopback for HA.",
+        default=None,
     )
     ios_xe_tor_bootstrap_vlan: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
-        alias="iosXeTorBootstrapVlan", description="Catalyst ToR bootstrap VLAN for inband PnP.", ge=1, le=4094, default=None
+        alias="iosXeTorBootstrapVlan",
+        description="Catalyst ToR bootstrap VLAN for inband PnP.",
+        ge=1,
+        le=4094,
+        default=None,
     )
     remote_storage_server: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
         alias="remoteStorageServer",
@@ -301,11 +536,19 @@ class ExternalConnectivityManagementModel(NDNestedModel):
         pattern=r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$",
         default=None,
     )
-    software_update_in_monitored_mode: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
-        alias="softwareUpdateInMonitoredMode", description="Allow image management while the fabric is in monitored mode.", default=None
+    software_update_in_monitored_mode: Annotated[
+        bool | None, NDMinimumVersion("4.3.1")
+    ] = Field(
+        alias="softwareUpdateInMonitoredMode",
+        description="Allow image management while the fabric is in monitored mode.",
+        default=None,
     )
-    strict_config_compliance_mode: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
-        alias="strictConfigComplianceMode", description="Enable bidirectional configuration compliance checks.", default=None
+    strict_config_compliance_mode: Annotated[bool | None, NDMinimumVersion("4.3.1")] = (
+        Field(
+            alias="strictConfigComplianceMode",
+            description="Enable bidirectional configuration compliance checks.",
+            default=None,
+        )
     )
 
     @field_validator("bgp_asn")
@@ -347,4 +590,6 @@ class FabricExternalConnectivityModel(FabricBaseModel):
     _fabric_type: ClassVar[FabricTypeEnum] = FabricTypeEnum.EXTERNAL_CONNECTIVITY
 
     # Core Management Configuration
-    management: ExternalConnectivityManagementModel | None = Field(description="External Connectivity management configuration", default=None)
+    management: ExternalConnectivityManagementModel | None = Field(
+        description="External Connectivity management configuration", default=None
+    )

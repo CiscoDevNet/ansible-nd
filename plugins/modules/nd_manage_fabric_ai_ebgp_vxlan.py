@@ -850,7 +850,7 @@ options:
             - Available in ND 4.3.1 or later.
             type: list
             elements: dict
-            options:
+            suboptions:
               key_id:
                 description:
                 - Key identifier (0 to 65535).
@@ -864,7 +864,7 @@ options:
                 - "Key type: 6 or 7."
                 - Available in ND 4.3.1 or later.
                 type: str
-                required: true
+                default: "7"
                 choices: [ "6", "7" ]
               key_string:
                 description:
@@ -918,6 +918,7 @@ options:
                 - Interpret accept lifetime in local time.
                 - Available in ND 4.3.1 or later.
                 type: bool
+                default: false
               send_lifetime_start:
                 description:
                 - Send lifetime start time in HH:MM:SS format.
@@ -956,6 +957,7 @@ options:
                 - Interpret send lifetime in local time.
                 - Available in ND 4.3.1 or later.
                 type: bool
+                default: false
           nxapi:
             description:
             - Enable NX-API over HTTPS.
@@ -1138,7 +1140,8 @@ options:
                     required: true
                   record_template:
                     description:
-                    - Template type for the record.
+                    - In ND 4.2.1, one of `netflowIpv4Record` or `netflowLayer2Record`.
+                    - In ND 4.3.1 or later, a string value is accepted.
                     type: str
                     required: true
                   layer2_record:
@@ -1701,7 +1704,7 @@ options:
                 - compatibility
                 - disabled
                 - enabled
-                default: enabled
+                default: disabled
               traffic_analytics_scope:
                 description:
                 - Traffic analytics scope.
@@ -1720,7 +1723,7 @@ options:
                 choices:
                 - disabled
                 - enabled
-                default: enabled
+                default: disabled
           microburst:
             description:
             - Microburst detection settings.
@@ -1758,7 +1761,7 @@ options:
             suboptions:
               server:
                 description:
-                - NAS server address.
+                - Name of the configured NAS server for flow collection.
                 type: str
                 default: ""
               export_settings:
@@ -1793,7 +1796,7 @@ options:
                 description:
                 - Energy cost per unit.
                 type: float
-                default: 1.2
+                default: 0.1
       external_streaming_settings:
         description:
         - External streaming settings.

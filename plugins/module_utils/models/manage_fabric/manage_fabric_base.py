@@ -31,12 +31,14 @@ from typing import Any, ClassVar, Literal, get_args, get_origin
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_spec import config_actions_spec
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.release_metadata import NDMinimumVersion
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import NdFabricName
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     HAS_PYDANTIC,
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     SecretStr,
     model_validator,
 )
@@ -131,6 +133,8 @@ def serialize_secret_value(value, info):
 
 def _python_type_to_ansible(annotation) -> str:
     """Map a Python type annotation to an Ansible argument spec type string."""
+    if get_origin(annotation) is typing.Annotated:
+        return _python_type_to_ansible(get_args(annotation)[0])
     if annotation is bool:
         return "bool"
     if annotation is int:
@@ -175,6 +179,129 @@ def _project_config_to_argument_spec(config: dict[str, Any], options: dict[str, 
     return {key: _project_value_to_argument_spec(config[key], options[key]) for key in options if key in config}
 
 
+def _omit_unset_release_gated_defaults(model: NDBaseModel, config: dict[str, Any]) -> None:
+    """Keep model defaults for gated fields out of gathered replay when absent in the response."""
+    for field_name, field_info in type(model).model_fields.items():
+        if field_name not in config:
+            continue
+        has_release_gate = any(isinstance(metadata, NDMinimumVersion) for metadata in getattr(field_info, "metadata", ()))
+        if has_release_gate and field_name not in model.model_fields_set:
+            config.pop(field_name, None)
+            continue
+
+        value = getattr(model, field_name, None)
+        config_value = config.get(field_name)
+        if isinstance(value, NDBaseModel) and isinstance(config_value, dict):
+            _omit_unset_release_gated_defaults(value, config_value)
+        elif isinstance(value, list) and isinstance(config_value, list):
+            for child, child_config in zip(value, config_value):
+                if isinstance(child, NDBaseModel) and isinstance(child_config, dict):
+                    _omit_unset_release_gated_defaults(child, child_config)
+
+
+def _declared_fabric_secret_values(model: NDBaseModel) -> set[str]:
+    """Collect modeled response secrets for Ansible's value scrubber."""
+    values: set[str] = set()
+    for name in type(model).secret_field_keys():
+        values.update(model._secret_strings(getattr(model, name, None)))
+    for name in type(model).model_fields:
+        value = getattr(model, name, None)
+        if isinstance(value, NDBaseModel):
+            values.update(_declared_fabric_secret_values(value))
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, NDBaseModel):
+                    values.update(_declared_fabric_secret_values(item))
+    return values
+
+
+def _normalize_unreported_release_defaults(model: NDBaseModel) -> None:
+    """Keep newer defaults absent from API responses out of merged payloads."""
+    for name, field in type(model).model_fields.items():
+        value = getattr(model, name, None)
+        if name not in model.model_fields_set and any(isinstance(item, NDMinimumVersion) for item in field.metadata):
+            if value is not None:
+                if type(None) not in get_args(field.annotation):
+                    raise ValueError(f"Release-gated field {name!r} must allow omission from controller responses")
+                object.__setattr__(model, name, None)
+        elif isinstance(value, NDBaseModel):
+            _normalize_unreported_release_defaults(value)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, NDBaseModel):
+                    _normalize_unreported_release_defaults(item)
+
+
+def _release_defaults_for_comparison(model: NDBaseModel, data: dict[str, Any]) -> None:
+    """Compare absent release defaults without adding them to model/payload state."""
+    secret_names = type(model).secret_field_keys()
+    for name, field in type(model).model_fields.items():
+        if name in secret_names:
+            continue
+        alias = field.alias or name
+        value = getattr(model, name, None)
+        if (
+            alias not in data
+            and name not in model.model_fields_set
+            and not field.is_required()
+            and field.default_factory is None
+            and field.default is not None
+            and any(isinstance(item, NDMinimumVersion) for item in field.metadata)
+        ):
+            data[alias] = field.default
+        elif isinstance(value, NDBaseModel) and isinstance(data.get(alias), dict):
+            _release_defaults_for_comparison(value, data[alias])
+        elif isinstance(value, list) and isinstance(data.get(alias), list):
+            for item, item_data in zip(value, data[alias]):
+                if isinstance(item, NDBaseModel) and isinstance(item_data, dict):
+                    _release_defaults_for_comparison(item, item_data)
+
+
+def _complete_supplied_model_list_items(model: NDBaseModel, data: dict[str, Any]) -> None:
+    """Compare supplied typed lists with the item defaults their PUT sends.
+
+    Fabric merge replaces a supplied list as a whole. An unset item default is
+    therefore outbound state, even though ``exclude_unset`` correctly keeps
+    omitted scalar fields and whole lists out of the merged comparison. Dump
+    these items through the normal comparison serializer so aliases and secret
+    masks match the existing model. Release-default projections stay confined
+    to comparison data; the item and its version-filtered payload are unchanged.
+    """
+    for name, field in type(model).model_fields.items():
+        alias = field.alias or name
+        if alias not in data:
+            continue
+        value = getattr(model, name, None)
+        if isinstance(value, NDBaseModel) and isinstance(data[alias], dict):
+            _complete_supplied_model_list_items(value, data[alias])
+            continue
+        annotation, _ = _unwrap_optional(field.annotation)
+        if get_origin(annotation) is not list:
+            continue
+        item_type, _ = _unwrap_optional(get_args(annotation)[0])
+        if not isinstance(item_type, type) or not issubclass(item_type, NDBaseModel):
+            continue
+        if not isinstance(value, list) or not isinstance(data[alias], list) or len(value) != len(data[alias]):
+            continue
+        complete_items = []
+        for item, serialized in zip(value, data[alias]):
+            if isinstance(item, NDBaseModel):
+                serialized = item.model_dump(by_alias=True, exclude_none=True, mode="json")
+                _release_defaults_for_comparison(item, serialized)
+            complete_items.append(serialized)
+        data[alias] = complete_items
+
+
+def _controller_default_field_owner(model: NDBaseModel, path: tuple[str, ...]) -> NDBaseModel | None:
+    """Find a declared object-field owner without materializing absent objects."""
+    owner = model
+    for name in path[:-1]:
+        if not isinstance(owner, NDBaseModel):
+            return None
+        owner = getattr(owner, name, None)
+    return owner if isinstance(owner, NDBaseModel) else None
+
+
 def _build_options_from_model(model_cls, exclude_fields: set[str] | None = None) -> dict[str, Any]:
     """
     Build Ansible argument spec options dict from a pydantic model's fields.
@@ -217,6 +344,8 @@ def _build_options_from_model(model_cls, exclude_fields: set[str] | None = None)
             spec["type"] = "list"
             if list_args:
                 element_type = list_args[0]
+                while get_origin(element_type) is typing.Annotated:
+                    element_type = get_args(element_type)[0]
                 if _is_pydantic_model(element_type):
                     spec["elements"] = "dict"
                     nested_options = _build_options_from_model(element_type)
@@ -300,6 +429,9 @@ class FabricBaseModel(NDBaseModel):
             raise TypeError(f"{cls.__name__} must define a '_fabric_type' ClassVar with a FabricTypeEnum value")
 
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
+
+    # Resolved by fabric release preflight; never serialized as configuration.
+    _nd_controller_default_comparisons: dict[tuple[str, ...], Any] = PrivateAttr(default_factory=dict)
 
     # ── ClassVars (shared across all fabric models) ──
     identifiers: ClassVar[list[str] | None] = ["fabric_name"]
@@ -436,5 +568,55 @@ class FabricBaseModel(NDBaseModel):
     def to_gathered_config(self, **kwargs) -> dict[str, Any]:
         """Return configuration limited recursively to public Ansible options."""
         config = self.to_config(**kwargs)
+        _omit_unset_release_gated_defaults(self, config)
         options = type(self).get_argument_spec()["config"]["options"]
         return _project_config_to_argument_spec(config, options)
+
+    def collect_replacement_secret_values(self) -> set[str]:
+        """Register public and opaque controller-returned secrets for masking."""
+        return super().collect_replacement_secret_values() | _declared_fabric_secret_values(self)
+
+    @classmethod
+    def from_response(cls, response: dict[str, Any], **kwargs) -> NDBaseModel:
+        """Preserve API omission of release-gated defaults in the stored state."""
+        model = super().from_response(response, **kwargs)
+        _normalize_unreported_release_defaults(model)
+        return model
+
+    def to_diff_dict(self, **kwargs) -> dict[str, Any]:
+        """Compare outbound typed-list defaults and full-state release defaults."""
+        data = super().to_diff_dict(**kwargs)
+        if kwargs.get("exclude_unset", False):
+            _complete_supplied_model_list_items(self, data)
+        else:
+            _release_defaults_for_comparison(self, data)
+        return data
+
+    def get_diff(self, other: NDBaseModel, exclude_unset: bool = False) -> bool:
+        """Ignore an omitted controller-owned field only at its resolved default.
+
+        Exact-state omission still resets nondefault values. Matching default
+        echoes are removed only from a temporary comparison copy; neither the
+        original controller model nor the proposed payload is changed.
+        """
+        if exclude_unset or not isinstance(other, type(self)):
+            return super().get_diff(other, exclude_unset=exclude_unset)
+        matching_paths = []
+        for path, expected in other._nd_controller_default_comparisons.items():
+            proposed_owner = _controller_default_field_owner(other, path)
+            existing_owner = _controller_default_field_owner(self, path)
+            if proposed_owner is None or existing_owner is None:
+                continue
+            name = path[-1]
+            if name in proposed_owner.model_fields_set or getattr(proposed_owner, name, None) is not None:
+                continue
+            if getattr(existing_owner, name, None) == expected:
+                matching_paths.append(path)
+        if not matching_paths:
+            return super().get_diff(other, exclude_unset=False)
+        comparison_existing = self.model_copy(deep=True)
+        for path in matching_paths:
+            owner = _controller_default_field_owner(comparison_existing, path)
+            object.__setattr__(owner, path[-1], None)
+            owner.model_fields_set.discard(path[-1])
+        return NDBaseModel.get_diff(comparison_existing, other, exclude_unset=False)

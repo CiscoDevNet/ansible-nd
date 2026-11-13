@@ -145,9 +145,9 @@ def test_manage_fabric_replacement_00025() -> None:
     """
     # Summary
 
-    Verify hidden authentication fields are preserved without entering normal
-    output, their nested string values are available to Ansible's no-log
-    scrubber, and arbitrary response metadata is not replayed.
+    Verify public authentication fields reset when omitted from an exact
+    replacement, remain masked in normalized existing output, and register
+    their values with Ansible's no-log scrubber. Response metadata is not replayed.
 
     ## Classes and Methods
 
@@ -157,18 +157,22 @@ def test_manage_fabric_replacement_00025() -> None:
     response = _fabric_response(
         "vxlanIbgp",
         ntpAuthKey="encrypted-ntp-secret",
-        ospfKeys=[{"id": 1, "key": "encrypted-ospf-secret"}],
+        ospfKeys=[{"keyId": 1, "keyString": "encrypted-ospf-secret", "keyType": "7"}],
         responseStatus="READY",
     )
     existing = FabricIbgpModel.from_response(response)
     candidate = FabricIbgpModel.from_config(_fabric_config()).prepare_for_replacement(existing)
 
     management_payload = candidate.to_payload()["management"]
-    assert management_payload["ntpAuthKey"] == "encrypted-ntp-secret"
-    assert management_payload["ospfKeys"] == [{"id": 1, "key": "encrypted-ospf-secret"}]
+    assert "ntpAuthKey" not in management_payload
+    assert "ospfKeys" not in management_payload
     assert "responseStatus" not in management_payload
-    assert "ntpAuthKey" not in candidate.to_config()["management"]
-    assert candidate.collect_replacement_secret_values() == {
+    assert "ntp_auth_key" not in candidate.to_config()["management"]
+    assert "ospf_keys" not in candidate.to_config()["management"]
+    existing_config = existing.to_config()["management"]
+    assert existing_config["ntp_auth_key"] == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+    assert existing_config["ospf_keys"][0]["key_string"] == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+    assert existing.collect_replacement_secret_values() == {
         "encrypted-ntp-secret",
         "encrypted-ospf-secret",
     }
@@ -277,9 +281,9 @@ def test_manage_fabric_replacement_00050(model_class, fabric_type) -> None:
     response = _fabric_response(fabric_type)
     response["telemetrySettings"] = {
         "flowCollection": {
-            "trafficAnalytics": "enabled",
+            "trafficAnalytics": "disabled",
             "trafficAnalyticsScope": "intraFabric",
-            "udpCategorization": "enabled",
+            "udpCategorization": "disabled",
             "operatingMode": "flowTelemetry",
             "trafficAnalyticsCompatibilityProtocol": "netflow",
             "flowCollectionCapabilities": {"trafficAnalyticsMode": "full"},
@@ -370,7 +374,7 @@ def test_manage_fabric_replacement_00060() -> None:
     response = _fabric_response("vxlanIbgp")
     response["telemetrySettings"] = {
         "flowCollection": {
-            "trafficAnalytics": "disabled",
+            "trafficAnalytics": "enabled",
             "flowCollectionModes": {"netFlow": True},
         }
     }
@@ -378,7 +382,7 @@ def test_manage_fabric_replacement_00060() -> None:
     candidate = FabricIbgpModel.from_config(_fabric_config()).prepare_for_replacement(existing)
     flow_payload = candidate.to_payload()["telemetrySettings"]["flowCollection"]
 
-    assert flow_payload["trafficAnalytics"] == "enabled"
+    assert flow_payload["trafficAnalytics"] == "disabled"
     assert flow_payload["flowCollectionModes"] == {"netFlow": True}
     assert existing.get_diff(candidate, exclude_unset=False) is False
 

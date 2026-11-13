@@ -406,13 +406,11 @@ docs/*
 !docs/fabric_module_config_params.md
 !docs/fabric_parameter_release_availability.md
 
-# Local AI agent configuration. Keep the release-audit skill as the one
-# version-controlled canonical skill; all other local agent state stays ignored.
+# Local AI agent configuration state stays ignored for now.
+AGENTS.md
+CLAUDE.md
 .agents/*
-!.agents/skills/
-.agents/skills/*
-!.agents/skills/nd-fabric-release-audit/
-.codex/
+.codex/*
 .github/agents/
 .github/copilot-instructions.md
 .github/instructions/

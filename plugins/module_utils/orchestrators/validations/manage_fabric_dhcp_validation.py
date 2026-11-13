@@ -15,7 +15,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
     DhcpProtocolVersionEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_release_validation import (
-    ND_4_3_1,
     parse_controller_product_version,
 )
 
@@ -29,14 +28,16 @@ class ManageFabricDhcpValidationMixin:
     rest_send: Any
 
     def preflight(self, model_instances: Sequence[NDBaseModel]) -> None:
-        """Require a compatible release and explicit DHCPv6 for IPv6 scopes.
+        """Apply each fabric model's address policy and DHCPv6 scope requirement.
 
-        ND 4.3.1 relaxed the three scalar address schemas.  IPv6 local DHCP
-        additionally requires a V6 controller installation.  No documented
-        read-only capability flag exists, so the API remains authoritative
-        for that installation-specific condition.
+        A model may declare baseline dual-stack support where its native
+        templates expose both families. Other models retain their recorded
+        release restriction. IPv6 local DHCP additionally requires a V6
+        controller installation; no documented read-only capability flag is
+        available for that installation-specific condition.
         """
         ipv6_fields_by_fabric: dict[str, list[str]] = {}
+        minimum_versions: dict[str, str] = {}
         local_dhcp_without_dhcpv6: list[str] = []
 
         for item in model_instances:
@@ -50,7 +51,10 @@ class ManageFabricDhcpValidationMixin:
                 value = getattr(management, field, None)
                 if value is None or ipaddress.ip_address(value).version != 6:
                     continue
-                ipv6_fields_by_fabric.setdefault(name, []).append(field)
+                minimum_text = getattr(management, "ipv6_management_minimum_nd_version", "4.3.1")
+                if minimum_text is not None:
+                    ipv6_fields_by_fabric.setdefault(name, []).append(field)
+                    minimum_versions[name] = minimum_text
                 uses_local_dhcp = field in DHCP_SCOPE_FIELDS or (field == "management_gateway" and management.local_dhcp_server)
                 if uses_local_dhcp and management.dhcp_protocol_version != DhcpProtocolVersionEnum.DHCPV6:
                     local_dhcp_without_dhcpv6.append(f"{name} ({field})")
@@ -58,11 +62,16 @@ class ManageFabricDhcpValidationMixin:
         if ipv6_fields_by_fabric:
             raw_version = self.rest_send.controller_product_version
             version = parse_controller_product_version(raw_version)
-            if version is None or version < ND_4_3_1:
+            unsupported = {
+                name: fields for name, fields in ipv6_fields_by_fabric.items()
+                if version is None or version < parse_controller_product_version(minimum_versions[name])
+            }
+            if unsupported:
                 reported = raw_version or "unknown"
-                affected = ", ".join(f"{name} ({', '.join(fields)})" for name, fields in ipv6_fields_by_fabric.items())
+                affected = ", ".join(f"{name} ({', '.join(fields)})" for name, fields in unsupported.items())
+                minimum_text = "/".join(sorted({minimum_versions[name] for name in unsupported}))
                 raise RuntimeError(
-                    "IPv6 management DHCP/gateway addresses require ND 4.3.1 or later; "
+                    f"IPv6 management DHCP/gateway addresses require ND {minimum_text} or later; "
                     "IPv6 local DHCP also requires a V6 controller installation. "
                     f"Controller product version is {reported!r} for fabric(s): {affected}"
                 )

@@ -28,6 +28,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
 )
 
 MASK = "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+MACSEC_KEY = "0123456789abcdef0123456789abcdef"
+VRF_LITE_MACSEC_KEY = "fedcba9876543210fedcba9876543210"
 
 # eBGP secret fields retrofitted in Change E.
 EBGP_SECRET_FIELDS = [
@@ -73,13 +75,13 @@ def test_manage_fabric_secret_masking_00100() -> None:
             "management": {
                 "bgp_asn": "65001",
                 "bgp_authentication_key": "SECRET_BGP",
-                "macsec_key_string": "SECRET_MACSEC",
+                "macsec_key_string": MACSEC_KEY,
             },
         }
     )
     mgmt = model.to_payload()["management"]
     assert mgmt["bgpAuthenticationKey"] == "SECRET_BGP"
-    assert mgmt["macsecKeyString"] == "SECRET_MACSEC"
+    assert mgmt["macsecKeyString"] == MACSEC_KEY
 
 
 def test_manage_fabric_secret_masking_00110() -> None:
@@ -99,7 +101,7 @@ def test_manage_fabric_secret_masking_00110() -> None:
             "management": {
                 "bgp_asn": "65001",
                 "bgp_authentication_key": "SECRET_BGP",
-                "macsec_key_string": "SECRET_MACSEC",
+                "macsec_key_string": MACSEC_KEY,
             },
         }
     )
@@ -148,13 +150,13 @@ def test_manage_fabric_secret_masking_00200() -> None:
             "management": {
                 "bgp_asn": "65001",
                 "ospf_authentication_key": "SECRET_OSPF",
-                "vrf_lite_macsec_key_string": "SECRET_VRFLITE",
+                "vrf_lite_macsec_key_string": VRF_LITE_MACSEC_KEY,
             },
         }
     )
     mgmt = model.to_payload()["management"]
     assert mgmt["ospfAuthenticationKey"] == "SECRET_OSPF"
-    assert mgmt["vrfLiteMacsecKeyString"] == "SECRET_VRFLITE"
+    assert mgmt["vrfLiteMacsecKeyString"] == VRF_LITE_MACSEC_KEY
 
 
 def test_manage_fabric_secret_masking_00210() -> None:
@@ -174,7 +176,7 @@ def test_manage_fabric_secret_masking_00210() -> None:
             "management": {
                 "bgp_asn": "65001",
                 "ospf_authentication_key": "SECRET_OSPF",
-                "vrf_lite_macsec_key_string": "SECRET_VRFLITE",
+                "vrf_lite_macsec_key_string": VRF_LITE_MACSEC_KEY,
             },
         }
     )

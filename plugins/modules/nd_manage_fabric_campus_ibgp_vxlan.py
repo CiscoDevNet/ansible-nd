@@ -701,7 +701,7 @@ options:
                 - compatibility
                 - disabled
                 - enabled
-                default: enabled
+                default: disabled
               traffic_analytics_scope:
                 description:
                 - Traffic analytics scope.
@@ -720,7 +720,7 @@ options:
                 choices:
                 - disabled
                 - enabled
-                default: enabled
+                default: disabled
           microburst:
             description:
             - Microburst detection settings.
@@ -758,7 +758,7 @@ options:
             suboptions:
               server:
                 description:
-                - NAS server address.
+                - Name of the configured NAS server for flow collection.
                 type: str
                 default: ""
               export_settings:
@@ -793,7 +793,7 @@ options:
                 description:
                 - Energy cost per unit.
                 type: float
-                default: 1.2
+                default: 0.1
       external_streaming_settings:
         description:
         - External streaming settings for the fabric.

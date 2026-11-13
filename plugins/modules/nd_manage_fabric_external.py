@@ -416,7 +416,8 @@ options:
                     required: true
                   record_template:
                     description:
-                    - Template type for the record.
+                    - In ND 4.2.1, one of `netflowIpv4Record` or `netflowLayer2Record`.
+                    - In ND 4.3.1 or later, a string value is accepted.
                     type: str
                     required: true
                   layer2_record:
@@ -645,7 +646,7 @@ options:
                 - compatibility
                 - disabled
                 - enabled
-                default: enabled
+                default: disabled
               traffic_analytics_scope:
                 description:
                 - Traffic analytics scope.
@@ -664,7 +665,7 @@ options:
                 choices:
                 - disabled
                 - enabled
-                default: enabled
+                default: disabled
           microburst:
             description:
             - Microburst detection settings.
@@ -702,7 +703,7 @@ options:
             suboptions:
               server:
                 description:
-                - NAS server address.
+                - Name of the configured NAS server for flow collection.
                 type: str
                 default: ""
               export_settings:
@@ -737,7 +738,7 @@ options:
                 description:
                 - Energy cost per unit.
                 type: float
-                default: 1.2
+                default: 0.1
       external_streaming_settings:
         description:
         - External streaming settings for the fabric.

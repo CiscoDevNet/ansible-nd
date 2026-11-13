@@ -132,6 +132,8 @@ def _rest_send() -> RestSend:
     rest_send.response_handler = ResponseHandler()
     rest_send.unit_test = True
     rest_send.timeout = 1
+    # The controller-response fixtures include ND 4.3.1 authentication fields.
+    rest_send.controller_product_version = "4.3.1"
     return rest_send
 
 
@@ -156,6 +158,83 @@ def _module(
 
 
 @pytest.mark.parametrize("state", ("merged", "replaced", "overridden"))
+@pytest.mark.parametrize("version", ("4.2.1", "4.2(1)", "4.3.1"))
+@pytest.mark.parametrize(("orchestrator", "fabric_type"), (
+    (ManageIbgpFabricOrchestrator, "vxlanIbgp"),
+    (ManageAiIbgpVxlanFabricOrchestrator, "aimlVxlanIbgp"),
+))
+def test_ibgp_absent_newer_release_defaults_remain_idempotent(state, version, orchestrator, fabric_type) -> None:
+    response = {
+        "name": "fabric1", "category": "fabric", "licenseTier": "essentials",
+        "management": {"type": fabric_type, "bgpAsn": "65001"},
+    }
+    rest = _rest_send()
+    rest.controller_product_version = version
+    spy = _replacement_spy(orchestrator, response)(rest_send=rest)
+    instance = NDStateMachine(module=_module(state), model_orchestrator=spy)
+    instance.manage_state()
+    assert spy._updated == []
+    assert instance.output.format()["changed"] is False
+
+
+@pytest.mark.parametrize("state", ("merged", "replaced", "overridden"))
+def test_ibgp_explicit_newer_default_changes_a_nondefault_setting(state) -> None:
+    response = {
+        "name": "fabric1", "category": "fabric", "licenseTier": "essentials",
+        "management": {"type": "vxlanIbgp", "bgpAsn": "65001", "bfdMinRxInterval": 60},
+    }
+    rest = _rest_send()
+    rest.controller_product_version = "4.3.1"
+    spy = _replacement_spy(ManageIbgpFabricOrchestrator, response)(rest_send=rest)
+    module = _module(state)
+    module.params["config"][0]["management"]["bfd_min_rx_interval"] = 50
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
+    instance.manage_state()
+    assert len(spy._updated) == 1
+    assert spy._updated[0].to_payload()["management"]["bfdMinRxInterval"] == 50
+
+
+@pytest.mark.parametrize("state", ("merged", "replaced", "overridden"))
+def test_ibgp_omitted_newer_default_keeps_existing_merge_and_resets_exact_states(state) -> None:
+    response = {
+        "name": "fabric1", "category": "fabric", "licenseTier": "essentials",
+        "management": {"type": "vxlanIbgp", "bgpAsn": "65001", "bfdMinRxInterval": 60},
+    }
+    rest = _rest_send()
+    rest.controller_product_version = "4.3.1"
+    spy = _replacement_spy(ManageIbgpFabricOrchestrator, response)(rest_send=rest)
+    instance = NDStateMachine(module=_module(state), model_orchestrator=spy)
+    instance.manage_state()
+    assert len(spy._updated) == (0 if state == "merged" else 1)
+    if spy._updated:
+        assert spy._updated[0].to_payload()["management"]["bfdMinRxInterval"] == 50
+
+
+@pytest.mark.parametrize("version", (None, "4.2.1", "4.2(1)", "4.3.1"))
+@pytest.mark.parametrize(("orchestrator", "fabric_type"), (
+    (ManageIbgpFabricOrchestrator, "vxlanIbgp"),
+    (ManageAiIbgpVxlanFabricOrchestrator, "aimlVxlanIbgp"),
+))
+def test_ibgp_real_merged_update_does_not_replay_unreported_release_defaults(version, orchestrator, fabric_type) -> None:
+    response = {
+        "name": "fabric1", "category": "fabric", "licenseTier": "essentials",
+        "management": {"type": fabric_type, "bgpAsn": "65001"},
+    }
+    rest = _rest_send()
+    rest.controller_product_version = version
+    spy = _replacement_spy(orchestrator, response)(rest_send=rest)
+    instance = NDStateMachine(module=_module("merged", license_tier="premier"), model_orchestrator=spy)
+    instance.manage_state()
+    assert len(spy._updated) == 1
+    payload = spy._updated[0].to_payload()
+    assert payload["licenseTier"] == "premier"
+    assert "bfdMinRxInterval" not in payload["management"]
+    assert "ospfMaxMetricStartupWait" not in payload["management"]
+    assert "ntpAuthEnable" not in payload["management"]
+    assert "hypershieldHASourceSubnet" not in payload["management"]
+
+
+@pytest.mark.parametrize("state", ("merged", "replaced", "overridden"))
 @pytest.mark.parametrize(
     "case_name,orchestrator_class,fabric_type,opaque_key,opaque_value",
     FABRIC_CASES,
@@ -174,7 +253,7 @@ def test_nd_state_machine_fabric_replacement_00010(
 
     Verify all three write states remain idempotent for every fabric family when
     the controller returns location defaults, dynamic allocation, and hidden
-    writable state.
+    writable state. Public iBGP secrets are explicitly retained in the proposal.
 
     ## Classes and Methods
 
@@ -184,7 +263,10 @@ def test_nd_state_machine_fabric_replacement_00010(
     del case_name
     response = _existing_response(fabric_type, opaque_key, opaque_value)
     spy = _replacement_spy(orchestrator_class, response)(rest_send=_rest_send())
-    instance = NDStateMachine(module=_module(state), model_orchestrator=spy)
+    module = _module(state)
+    if fabric_type.endswith("Ibgp"):
+        module.params["config"][0]["management"]["ntp_auth_key"] = "encrypted-controller-secret"
+    instance = NDStateMachine(module=module, model_orchestrator=spy)
 
     instance.manage_state()
 
@@ -211,9 +293,9 @@ def test_nd_state_machine_fabric_replacement_00020(
     """
     # Summary
 
-    Verify a real update in every write state and fabric family applies explicit
-    user intent while hidden existing values survive the outgoing payload and
-    stay out of normalized output.
+    Verify updates retain opaque fields and apply public-secret omission
+    semantics: merged updates preserve and mask existing secrets, while exact
+    replacement resets omitted public secrets.
 
     ## Classes and Methods
 
@@ -239,8 +321,16 @@ def test_nd_state_machine_fabric_replacement_00020(
     if fabric_type.endswith("Ebgp"):
         assert updated.management.bgp_asn_range == "3001-4000"
     if fabric_type != "externalConnectivity":
-        assert management_payload["ntpAuthKey"] == "encrypted-controller-secret"
-        assert "ntpAuthKey" not in management_config
+        if fabric_type.endswith("Ibgp"):
+            if state == "merged":
+                assert management_payload["ntpAuthKey"] == "encrypted-controller-secret"
+                assert management_config["ntp_auth_key"] == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+            else:
+                assert "ntpAuthKey" not in management_payload
+                assert "ntp_auth_key" not in management_config
+        else:
+            assert management_payload["ntpAuthKey"] == "encrypted-controller-secret"
+            assert "ntpAuthKey" not in management_config
         assert "encrypted-controller-secret" in instance.module.no_log_values
     assert instance.output.format()["changed"] is True
 
