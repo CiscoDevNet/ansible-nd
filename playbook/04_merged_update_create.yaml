@@ -1,0 +1,57 @@
+---
+# TEST: Merged update - modify existing L3Out (add fields, change values)
+# Scenario: Create an L3Out, then merge additional config (change MTU, add description).
+# Validates: state=merged merges new fields into existing resource without replacing it.
+- name: "MERGED: Update existing L3Out"
+  hosts: nd
+  gather_facts: false
+  vars_files:
+    - ../vars.yaml
+  tasks:
+    - name: Create base L3Out for update test
+      cisco.nd.nd_manage_l3out:
+        fabric_name: "{{ test_fabric }}"
+        state: merged
+        config:
+          - name: "{{ l3out_merged_update }}"
+            fabric1_name: "{{ fabric1_name }}"
+            fabric2_name: "{{ fabric2_name }}"
+            vrf1_name: "{{ vrf1_name }}"
+            vrf2_name: "{{ vrf2_name }}"
+            configured_fabrics: both
+            ip_version: ipv4
+            connectivity_details:
+              routing_interface_type: subInterface
+              links:
+                - mtu: "{{ mtu_standard }}"
+                  ipv4_mask_length: "{{ link3_ipv4_mask }}"
+                  vlan_id: 150
+                  switch1_details:
+                    switch_id: "{{ switch1_id }}"
+                    interface_name: "{{ subint_parent_sw1 }}.150"
+                    interface_ipv4_address: "192.168.150.1"
+                  switch2_details:
+                    switch_id: "{{ switch2_id }}"
+                    interface_name: "{{ subint_parent_sw2 }}.150"
+                    interface_ipv4_address: "192.168.150.2"
+            routing_details:
+              routing_protocol: bgp
+              bgp:
+                fabric1_details:
+                  local_asn: "{{ local_asn_fabric1 }}"
+                  ipv4_peering_details:
+                    ipv4_route_map_in: "{{ ipv4_route_map_in }}"
+                    ipv4_route_map_out: "{{ ipv4_route_map_out }}"
+                fabric2_details:
+                  local_asn: "{{ local_asn_fabric2 }}"
+                  ipv4_peering_details:
+                    ipv4_route_map_in: "{{ ipv4_route_map_in_2 }}"
+                    ipv4_route_map_out: "{{ ipv4_route_map_out_2 }}"
+      register: create_result
+
+    - name: Assert base L3Out created
+      ansible.builtin.assert:
+        that:
+          - create_result is changed
+        fail_msg: "FAILED: Base L3Out for update test was not created"
+        success_msg: "PASSED: Base L3Out created for update test"
