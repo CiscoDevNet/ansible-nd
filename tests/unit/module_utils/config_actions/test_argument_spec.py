@@ -87,7 +87,7 @@ def test_config_actions_argument_spec_00030() -> None:
     options = config_actions_spec(RESOURCE_CONFIG_ACTIONS)["config_actions"]["options"]
     assert set(options) == {"deploy", "type"}
     assert options["deploy"] == {"type": "bool", "default": True}
-    assert options["type"] == {"type": "str", "default": "switch", "choices": ["resource", "switch"]}
+    assert options["type"] == {"type": "str", "default": "resource", "choices": ["resource", "switch"]}
 
 
 def test_config_actions_argument_spec_00040() -> None:

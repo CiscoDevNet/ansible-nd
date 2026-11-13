@@ -93,6 +93,8 @@ class ConfigActionsController:
 
         if normalized_context.check_mode:
             planned_steps = self._planned_steps(actions, normalized_context)
+            if planned_steps and all(step.status == "skipped" for step in planned_steps):
+                return self._result(actions, targets, list(planned_steps))
             return ConfigActionsResult(
                 requested=actions,
                 effective=actions,

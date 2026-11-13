@@ -70,7 +70,10 @@ options:
     description:
       - Controls optional deployment after Network changes.
       - When omitted, deployment is enabled and scoped by Network name.
-      - C(type=switch) deploys affected switches; no targets are reported as a skip.
+      - C(type=switch) deploys pending configuration on affected switches, including configuration from other resources.
+      - In V(merged), when the task lists attachment switches, optional switch deployment is limited to those switches.
+        Existing attachments omitted from the task remain attached.
+      - When the task lists no switches, affected current attachments supply the switch targets; no targets are reported as a skip.
       - C(type=resource) deploys by Network name, including Networks without attachments.
       - Per-item C(config[].deploy) overrides are supported only with C(type=resource).
       - C(state=staged) always skips deployment.

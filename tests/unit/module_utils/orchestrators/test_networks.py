@@ -6829,6 +6829,83 @@ def test_pending_attachment_delete_wait_retries_undeploy_by_resource_name(wait_f
     assert deploy_payloads == [(expected_payload, True)]
 
 
+@pytest.mark.parametrize("wait_for_definition", [False, True])
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
+@pytest.mark.parametrize("scope", ["switch", "resource"])
+@pytest.mark.parametrize("has_switch_id", [False, True])
+@pytest.mark.parametrize("config_includes_name", [False, True])
+def test_network_delete_readiness_retry_preserves_requested_scope(wait_for_definition, strategy_cls, scope, has_switch_id, config_includes_name):
+    """Both readiness loops keep the cleanup scope, including delete-all targets."""
+
+    class Module:
+        @staticmethod
+        def fail_json(**kwargs):
+            raise RuntimeError(kwargs["msg"])
+
+    class Coordinator:
+        module = Module()
+        config_actions = ConfigActions(save=False, deploy=False, type=scope, provided=True)
+
+        @staticmethod
+        def _query_current_networks_by_names(_module_args, _strategy, names):
+            assert names == ["BLUE_NET"]
+            return [{"networkName": "BLUE_NET", "networkStatus": "pending"}]
+
+    strategy = strategy_cls(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"})
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    manager.undeploy_retry_attempts = 1
+    row = {"networkName": "BLUE_NET", "attach": False, "status": "pending"}
+    if has_switch_id:
+        row["switchId"] = "SW1"
+    manager.current_attachment_details_ignore_missing = lambda *_args: [row]
+    deploy_calls = []
+    manager.deploy_network_attachments = lambda _args, _strategy, payload, undeploy=False: deploy_calls.append((payload, undeploy))
+    args = {"state": "deleted", "config": [{"network_name": "BLUE_NET"}] if config_includes_name else []}
+    wait = manager.wait_for_networks_delete_ready if wait_for_definition else manager.wait_for_attachments_delete_ready
+
+    with pytest.raises(RuntimeError, match="Timed out waiting for network"):
+        wait(args, strategy, ["BLUE_NET"], deadline=0, timeout_seconds=0)
+
+    if not has_switch_id and (scope == "switch" or strategy.is_multicluster):
+        assert deploy_calls == []
+    else:
+        expected = {"networkNames": ["BLUE_NET"]}
+        if has_switch_id and (scope == "switch" or strategy.is_multisite or strategy.is_multicluster):
+            expected["switchIds"] = ["SW1"]
+        assert deploy_calls == [(expected, True)]
+
+
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
+def test_pending_network_definition_without_switch_ids_does_not_widen_switch_retry(strategy_cls):
+    """A pending definition alone cannot authorize a name-only switch retry."""
+
+    class Module:
+        @staticmethod
+        def fail_json(**kwargs):
+            raise RuntimeError(kwargs["msg"])
+
+    class Coordinator:
+        module = Module()
+        config_actions = ConfigActions(save=False, deploy=False, type="switch", provided=True)
+
+        @staticmethod
+        def _query_current_networks_by_names(_module_args, _strategy, names):
+            assert names == ["BLUE_NET"]
+            return [{"networkName": "BLUE_NET", "networkStatus": "pending"}]
+
+    strategy = strategy_cls(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"})
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    manager.undeploy_retry_attempts = 1
+    manager.current_attachment_details_ignore_missing = lambda *_args: []
+    deploy_calls = []
+    manager.deploy_network_attachments = lambda _args, _strategy, payload, undeploy=False: deploy_calls.append((payload, undeploy))
+
+    with pytest.raises(RuntimeError, match="Timed out waiting for networks"):
+        manager.wait_for_networks_delete_ready({"state": "deleted", "config": []}, strategy, ["BLUE_NET"], deadline=0, timeout_seconds=0)
+
+    assert deploy_calls == []
+
+
 def test_pending_network_delete_wait_retries_undeploy():
     class Module:
         params = {}

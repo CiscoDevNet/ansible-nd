@@ -27,6 +27,7 @@ from __future__ import annotations
 from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActions
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.attachment_deploy_targets import RequestedSwitchTargets
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_vrf import (
     BaseVrfStrategy,
 )
@@ -137,6 +138,7 @@ class VrfStateMachine:
         try:
             prepare_crud_state(sm, state)
             desired_attachments = self.coordinator._desired_attachment_map(module_args, strategy)
+            requested_attachments = dict(desired_attachments)
             current_vrf_names = self._vrf_names_from_models(sm.existing)
             current_vrf_name_set = set(current_vrf_names)
             desired_vrf_name_set = set(desired_vrf_names)
@@ -247,6 +249,7 @@ class VrfStateMachine:
                 post_attach,
                 defer_deploy,
                 existing_names=current_vrf_name_set if self._check_mode() else None,
+                requested_attachments=requested_attachments,
             )
         finally:
             self.coordinator._restore_state_machine_params(original_config, original_state)
@@ -275,29 +278,51 @@ class VrfStateMachine:
         post_attach: dict[str, Any],
         defer_deploy: bool,
         existing_names: set[str] | None = None,
+        requested_attachments: dict[tuple[str, str], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Deploy or defer pending work produced by attachment phases."""
-        deploy_payloads = self.coordinator._build_deploy_payloads(
-            config,
-            pre_attach.get("deploy_targets", {}),
-            post_attach.get("deploy_targets", {}),
-        )
+        pre_targets = pre_attach.get("deploy_targets", {})
+        post_targets = post_attach.get("deploy_targets", {})
+        actions = getattr(self.coordinator, "config_actions", None)
+        switch_scope = bool(actions and actions.type == "switch")
+        detach_payloads = self.coordinator._build_detach_deploy_payloads(pre_targets) if switch_scope and pre_targets else []
+        if requested_attachments and switch_scope:
+            selection = RequestedSwitchTargets(requested_attachments)
+
+            def pending_targets() -> dict[str, set[str]]:
+                return self.coordinator._build_pending_vrf_deploy_targets(result, config, module_args, strategy, existing_names)
+
+            selected_targets = selection.select(post_targets, pending_targets if actions.deploy_requested() else None)
+            deploy_payloads = self.coordinator._build_deploy_payloads(config, selected_targets)
+        else:
+            deploy_payloads = self.coordinator._build_deploy_payloads(config, {} if switch_scope else pre_targets, post_targets)
+            if not deploy_payloads and not detach_payloads:
+                deploy_payloads = self.coordinator._build_pending_vrf_deploy_payloads(
+                    result,
+                    config,
+                    module_args,
+                    strategy,
+                    existing_names,
+                )
+                self._trace("deploy_payloads_from_result", payload_count=len(deploy_payloads), payloads=deploy_payloads)
         self._trace("deploy_payloads_from_attachments", payload_count=len(deploy_payloads), payloads=deploy_payloads)
-        if not deploy_payloads:
-            deploy_payloads = self.coordinator._build_pending_vrf_deploy_payloads(
-                result,
-                config,
-                module_args,
-                strategy,
-                existing_names,
-            )
-            self._trace("deploy_payloads_from_result", payload_count=len(deploy_payloads), payloads=deploy_payloads)
-        if not deploy_payloads:
+        if not deploy_payloads and not detach_payloads:
             return result
 
         if defer_deploy:
-            result["_deferred_deploy_payloads"] = deploy_payloads
+            result["_deferred_deploy_payloads"] = [{"_vrf_detach_cleanup": True, **payload} for payload in detach_payloads] + deploy_payloads
             return result
+
+        if self._check_mode() and detach_payloads:
+            self.coordinator._merge_api_trace(result, {"changed": True, "failed": False, "check_mode_deploy_payloads": detach_payloads})
+        elif not self._check_mode():
+            for detach_payload in detach_payloads:
+                self._trace("detach_cleanup_deploy_start", deploy_payload=detach_payload)
+                detach_trace = self.coordinator._deploy_vrf_attachments(module_args, strategy, detach_payload)
+                self.coordinator._merge_api_trace(result, detach_trace)
+                self._trace("detach_cleanup_deploy_end", deploy_payload=detach_payload)
+                if result.get("failed", False):
+                    return result
 
         for deploy_payload in deploy_payloads:
             self._trace("deploy_start", deploy_payload=deploy_payload)
@@ -471,10 +496,12 @@ class VrfStateMachine:
     ) -> list[dict[str, Any]]:
         """Return detach trace plus deploy traces, waiting when deploy occurs."""
         traces = [detach_trace] if detach_trace else []
-        deploy_payloads = self.coordinator._build_deploy_payloads(
-            config,
-            detach_trace.get("deploy_targets", {}) if detach_trace else {},
-        )
+        detach_targets = detach_trace.get("deploy_targets", {}) if detach_trace else {}
+        actions = getattr(self.coordinator, "config_actions", None)
+        if actions and actions.type == "switch":
+            deploy_payloads = self.coordinator._build_detach_deploy_payloads(detach_targets)
+        else:
+            deploy_payloads = self.coordinator._build_deploy_payloads(config, detach_targets)
         self._trace("delete_deploy_payloads_built", payload_count=len(deploy_payloads), payloads=deploy_payloads)
         if self._check_mode():
             if deploy_payloads:

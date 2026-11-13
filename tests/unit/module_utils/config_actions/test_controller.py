@@ -496,6 +496,22 @@ def test_config_actions_controller_00050() -> None:
     assert result.actions[1].error == "no_targets"
 
 
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_resource_switch_deploy_without_targets_is_skipped(check_mode: bool) -> None:
+    """An empty switch target skips deployment in both normal and check mode."""
+    params = {"config_actions": {"deploy": True, "type": "switch"}}
+    actions = parse_config_actions(params=params, raw_args=params, policy=RESOURCE_CONFIG_ACTIONS)
+    backend = RecordingBackend()
+
+    result = ConfigActionsController(RESOURCE_CONFIG_ACTIONS, backend).execute(actions, ConfigActionsContext(fabric_names=("FAB1",), check_mode=check_mode))
+
+    assert not backend.calls
+    assert result.status == "skipped"
+    assert result.reason == "no_targets"
+    assert result.actions[0].status == "skipped"
+    assert result.actions[0].error == "no_targets"
+
+
 def test_config_actions_controller_00060() -> None:
     """
     # Summary
