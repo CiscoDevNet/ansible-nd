@@ -1,0 +1,390 @@
+---
+- name: Initialize ND 4.x fabric group members harness settings
+  ansible.builtin.set_fact:
+    nd4x_fgm_info:
+      output_level: "{{ api_key_output_level | default('debug') }}"
+    nd4x_fgm_resource_names: "{{ [nd4x_fgm_fabric_group] + (nd4x_fgm_member_fabrics | map(attribute='name') | list) }}"
+    nd4x_fgm_unknown_group_name: ansible_nd4x_fgm_no_such_group
+  tags:
+    - always
+
+- name: Query Nexus Dashboard version for the fabric group members harness
+  cisco.nd.nd_version:
+    output_level: "{{ nd4x_fgm_info.output_level }}"
+  register: nd4x_fgm_version
+  tags:
+    - always
+
+- name: Record whether the controller supports the ND 4.x harness
+  ansible.builtin.set_fact:
+    nd4x_fgm_supported: "{{ nd4x_fgm_version.current.platformVersion is version('4.0.0', '>=') }}"
+  tags:
+    - always
+
+- name: Explain why the fabric group members harness is skipped
+  ansible.builtin.debug:
+    msg: >-
+      Skipping the ND 4.x fabric group members harness because controller
+      version {{ nd4x_fgm_version.current.platformVersion }} is older than 4.0.0.
+  when: not nd4x_fgm_supported | bool
+  tags:
+    - always
+
+- name: Run the ND 4.x single-cluster fabric group members scenarios
+  when: nd4x_fgm_supported | bool
+  block:
+    - name: Verify harness-owned resource names are not already in use
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ item }}"
+        method: get
+      loop: "{{ nd4x_fgm_resource_names }}"
+      loop_control:
+        label: "{{ item }}"
+      register: nd4x_fgm_existing_resources
+      ignore_errors: true
+
+    - name: Refuse to use names that exist or could not be checked
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_fgm_existing_resources.results
+            | selectattr('failed', 'defined')
+            | selectattr('failed', 'equalto', true)
+            | selectattr('msg', 'search', '404')
+            | list
+            | length == nd4x_fgm_resource_names | length
+        fail_msg: >-
+          Every harness resource name must be unused and confirmed missing by
+          the ND Manage API. Check for existing resources or connection errors;
+          the harness will not take ownership of existing fabrics.
+
+    - name: Check the negative-test fabric group name is unused
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ nd4x_fgm_unknown_group_name }}"
+        method: get
+      register: nd4x_fgm_unknown_group_lookup
+      ignore_errors: true
+
+    - name: Require the negative-test name to be confirmed missing
+      ansible.builtin.assert:
+        that:
+          - nd4x_fgm_unknown_group_lookup is failed
+          - "'404' in nd4x_fgm_unknown_group_lookup.msg"
+        fail_msg: >-
+          The negative-test name {{ nd4x_fgm_unknown_group_name }} already
+          exists or could not be confirmed missing. Refusing to run a test that
+          might change membership on an existing fabric group.
+
+    - name: Create and test harness-owned resources
+      block:
+        - name: Create the harness member fabrics
+          cisco.nd.nd_manage_fabric_ibgp_vxlan:
+            output_level: "{{ nd4x_fgm_info.output_level }}"
+            state: merged
+            config:
+              - fabric_name: "{{ item.name }}"
+                management:
+                  bgp_asn: "{{ item.bgp_asn }}"
+                  anycast_gateway_mac: "{{ nd4x_fgm_group_config.management.anycast_gateway_mac }}"
+          loop: "{{ nd4x_fgm_member_fabrics }}"
+          loop_control:
+            label: "{{ item.name }}"
+
+        - name: Create the harness fabric group
+          cisco.nd.nd_manage_fabric_group_vxlan:
+            output_level: "{{ nd4x_fgm_info.output_level }}"
+            state: merged
+            config:
+              - "{{ {'fabric_name': nd4x_fgm_fabric_group} | combine(nd4x_fgm_group_config) }}"
+
+        - name: Gather the newly created empty harness fabric group
+          cisco.nd.nd_manage_fabric_group_members:
+            fabric_name: "{{ nd4x_fgm_fabric_group }}"
+            config: []
+            state: gathered
+            output_level: "{{ nd4x_fgm_info.output_level }}"
+          register: nd4x_fgm_gathered_empty
+
+        - name: Verify gathering an empty group returns no members and makes no changes
+          ansible.builtin.assert:
+            that:
+              - nd4x_fgm_gathered_empty is not changed
+              - nd4x_fgm_gathered_empty.gathered is defined
+              - nd4x_fgm_gathered_empty.gathered | length == 0
+
+        - name: Run merged membership through the shared harness
+          cisco.nd.nd4x_module_test:
+            module: cisco.nd.nd_manage_fabric_group_members
+            state: merged
+            common_args:
+              fabric_name: "{{ nd4x_fgm_fabric_group }}"
+              output_level: "{{ nd4x_fgm_info.output_level }}"
+            config:
+              - member_name: "{{ nd4x_fgm_member_fabrics[0].name }}"
+              - member_name: "{{ nd4x_fgm_member_fabrics[1].name }}"
+            expected:
+              check_mode:
+                changed: true
+                failed: false
+              apply:
+                changed: true
+                failed: false
+              idempotency:
+                changed: false
+                failed: false
+            check_mode_queries:
+              - name: Snapshot all members of the harness fabric group
+                path: "/api/v1/manage/fabrics/{{ nd4x_fgm_fabric_group }}/members"
+                expected_status: 200
+                unordered_paths:
+                  - /fabrics
+            nd_queries:
+              - name: Verify the two merged harness members
+                path: "/api/v1/manage/fabrics/{{ nd4x_fgm_fabric_group }}/members"
+                method: get
+                expected_status: 200
+                expect:
+                  - jsonpath: "$.current.fabrics[?(@.name == '{{ nd4x_fgm_member_fabrics[0].name }}')]"
+                    exists: true
+                  - jsonpath: "$.current.fabrics[?(@.name == '{{ nd4x_fgm_member_fabrics[1].name }}')]"
+                    exists: true
+          register: nd4x_fgm_merged
+
+        - name: Verify shared harness merge phase results
+          ansible.builtin.assert:
+            that:
+              - nd4x_fgm_merged.first_run_result.changed | bool
+              - not nd4x_fgm_merged.second_run_result.changed | bool
+
+        - name: Add the third member through the shared harness
+          cisco.nd.nd4x_module_test:
+            module: cisco.nd.nd_manage_fabric_group_members
+            state: merged
+            common_args:
+              fabric_name: "{{ nd4x_fgm_fabric_group }}"
+              output_level: "{{ nd4x_fgm_info.output_level }}"
+            config:
+              - member_name: "{{ nd4x_fgm_member_fabrics[2].name }}"
+            expected:
+              check_mode:
+                changed: true
+                failed: false
+              apply:
+                changed: true
+                failed: false
+              idempotency:
+                changed: false
+                failed: false
+            check_mode_queries:
+              - name: Snapshot all members before the third-member merge
+                path: "/api/v1/manage/fabrics/{{ nd4x_fgm_fabric_group }}/members"
+                expected_status: 200
+                unordered_paths:
+                  - /fabrics
+            nd_queries:
+              - name: Verify the third member was added
+                path: "/api/v1/manage/fabrics/{{ nd4x_fgm_fabric_group }}/members"
+                method: get
+                expected_status: 200
+                expect:
+                  - jsonpath: "$.current.fabrics[?(@.name == '{{ nd4x_fgm_member_fabrics[2].name }}')]"
+                    exists: true
+
+        - name: Gather all harness fabric group members
+          cisco.nd.nd_manage_fabric_group_members:
+            fabric_name: "{{ nd4x_fgm_fabric_group }}"
+            config: []
+            state: gathered
+            output_level: "{{ nd4x_fgm_info.output_level }}"
+          register: nd4x_fgm_gathered
+
+        - name: Verify gathered membership contains exactly the harness members
+          ansible.builtin.assert:
+            that:
+              - nd4x_fgm_gathered is not changed
+              - >-
+                nd4x_fgm_gathered.gathered
+                | map(attribute='member_name')
+                | sort
+                | list == (nd4x_fgm_member_fabrics | map(attribute='name') | sort | list)
+
+        - name: Remove the third harness member through the shared harness
+          cisco.nd.nd4x_module_test:
+            module: cisco.nd.nd_manage_fabric_group_members
+            state: deleted
+            common_args:
+              fabric_name: "{{ nd4x_fgm_fabric_group }}"
+              output_level: "{{ nd4x_fgm_info.output_level }}"
+            config:
+              - member_name: "{{ nd4x_fgm_member_fabrics[2].name }}"
+            expected:
+              check_mode:
+                changed: true
+                failed: false
+              apply:
+                changed: true
+                failed: false
+              idempotency:
+                changed: false
+                failed: false
+            check_mode_queries:
+              - name: Snapshot all members before deleting the third member
+                path: "/api/v1/manage/fabrics/{{ nd4x_fgm_fabric_group }}/members"
+                expected_status: 200
+                unordered_paths:
+                  - /fabrics
+            nd_queries:
+              - name: Verify the third member is absent
+                path: "/api/v1/manage/fabrics/{{ nd4x_fgm_fabric_group }}/members"
+                method: get
+                expected_status: 200
+                expect:
+                  - jsonpath: "$.current.fabrics[?(@.name == '{{ nd4x_fgm_member_fabrics[2].name }}')]"
+                    exists: false
+
+        - name: Remove the first two harness members through the shared harness
+          cisco.nd.nd4x_module_test:
+            module: cisco.nd.nd_manage_fabric_group_members
+            state: deleted
+            common_args:
+              fabric_name: "{{ nd4x_fgm_fabric_group }}"
+              output_level: "{{ nd4x_fgm_info.output_level }}"
+            config:
+              - member_name: "{{ nd4x_fgm_member_fabrics[0].name }}"
+              - member_name: "{{ nd4x_fgm_member_fabrics[1].name }}"
+            expected:
+              check_mode:
+                changed: true
+                failed: false
+              apply:
+                changed: true
+                failed: false
+              idempotency:
+                changed: false
+                failed: false
+            check_mode_queries:
+              - name: Snapshot all members before deleting the remaining members
+                path: "/api/v1/manage/fabrics/{{ nd4x_fgm_fabric_group }}/members"
+                expected_status: 200
+                unordered_paths:
+                  - /fabrics
+            nd_queries:
+              - name: Verify the harness group has no members
+                path: "/api/v1/manage/fabrics/{{ nd4x_fgm_fabric_group }}/members"
+                method: get
+                expected_status: 200
+                expect:
+                  - jsonpath: "$.current.fabrics"
+                    equals: []
+
+        - name: Reject cluster_name for a single-cluster fabric group
+          cisco.nd.nd_manage_fabric_group_members:
+            fabric_name: "{{ nd4x_fgm_fabric_group }}"
+            config:
+              - member_name: "{{ nd4x_fgm_member_fabrics[0].name }}"
+                cluster_name: "not-valid-for-single-cluster"
+            state: merged
+            output_level: "{{ nd4x_fgm_info.output_level }}"
+          register: nd4x_fgm_cluster_name_error
+          ignore_errors: true
+
+        - name: Verify invalid single-cluster input is rejected without mutation
+          ansible.builtin.assert:
+            that:
+              - nd4x_fgm_cluster_name_error is failed
+              - "'cluster_name' in nd4x_fgm_cluster_name_error.msg"
+              - not nd4x_fgm_cluster_name_error.changed | default(false) | bool
+
+        - name: Reject a fabric name that does not identify a fabric group
+          cisco.nd.nd_manage_fabric_group_members:
+            fabric_name: "{{ nd4x_fgm_unknown_group_name }}"
+            config:
+              - member_name: "{{ nd4x_fgm_member_fabrics[0].name }}"
+            state: merged
+            output_level: "{{ nd4x_fgm_info.output_level }}"
+          register: nd4x_fgm_unknown_group_error
+          ignore_errors: true
+
+        - name: Reject a member fabric used as the parent group
+          cisco.nd.nd_manage_fabric_group_members:
+            fabric_name: "{{ nd4x_fgm_member_fabrics[0].name }}"
+            config:
+              - member_name: "{{ nd4x_fgm_member_fabrics[1].name }}"
+            state: merged
+            output_level: "{{ nd4x_fgm_info.output_level }}"
+          register: nd4x_fgm_not_a_group_error
+          ignore_errors: true
+
+        - name: Verify invalid parent names are rejected without mutation
+          ansible.builtin.assert:
+            that:
+              - nd4x_fgm_unknown_group_error is failed
+              - "'was not found through the ND Manage API' in nd4x_fgm_unknown_group_error.msg"
+              - not nd4x_fgm_unknown_group_error.changed | default(false) | bool
+              - nd4x_fgm_not_a_group_error is failed
+              - "'is a fabric, not a fabric group' in nd4x_fgm_not_a_group_error.msg"
+              - not nd4x_fgm_not_a_group_error.changed | default(false) | bool
+
+      always:
+        - name: Remove harness membership before deleting its resources
+          cisco.nd.nd_manage_fabric_group_members:
+            fabric_name: "{{ nd4x_fgm_fabric_group }}"
+            config:
+              - member_name: "{{ nd4x_fgm_member_fabrics[0].name }}"
+              - member_name: "{{ nd4x_fgm_member_fabrics[1].name }}"
+              - member_name: "{{ nd4x_fgm_member_fabrics[2].name }}"
+            state: deleted
+            output_level: "{{ nd4x_fgm_info.output_level }}"
+          register: nd4x_fgm_members_cleanup
+          ignore_errors: true
+
+        - name: Delete the harness fabric group
+          cisco.nd.nd_manage_fabric_group_vxlan:
+            output_level: "{{ nd4x_fgm_info.output_level }}"
+            state: deleted
+            config:
+              - fabric_name: "{{ nd4x_fgm_fabric_group }}"
+          register: nd4x_fgm_group_cleanup
+          ignore_errors: true
+
+        - name: Delete harness member fabrics
+          cisco.nd.nd_manage_fabric_ibgp_vxlan:
+            output_level: "{{ nd4x_fgm_info.output_level }}"
+            state: deleted
+            config:
+              - fabric_name: "{{ item.name }}"
+          loop: "{{ nd4x_fgm_member_fabrics }}"
+          loop_control:
+            label: "{{ item.name }}"
+          register: nd4x_fgm_member_fabrics_cleanup
+          ignore_errors: true
+
+        - name: Verify all harness-owned fabric resources are absent
+          cisco.nd.nd_rest:
+            path: "/api/v1/manage/fabrics/{{ item }}"
+            method: get
+          loop: "{{ nd4x_fgm_resource_names }}"
+          loop_control:
+            label: "{{ item }}"
+          register: nd4x_fgm_cleanup_resource_checks
+          ignore_errors: true
+
+        - name: Fail if any harness-owned fabric resource remains or could not be checked
+          ansible.builtin.assert:
+            that:
+              - >-
+                nd4x_fgm_cleanup_resource_checks.results
+                | selectattr('failed', 'defined')
+                | selectattr('failed', 'equalto', true)
+                | selectattr('msg', 'search', '404')
+                | list
+                | length == nd4x_fgm_resource_names | length
+            fail_msg: >-
+              The ND 4.x fabric group members harness could not confirm that
+              all of its resources were removed. Group={{ nd4x_fgm_fabric_group }};
+              members={{ nd4x_fgm_member_fabrics | map(attribute='name') | list }}.
+              Cleanup results: members={{ nd4x_fgm_members_cleanup | default({}) }};
+              group={{ nd4x_fgm_group_cleanup | default({}) }};
+              member_fabrics={{ nd4x_fgm_member_fabrics_cleanup | default({}) }}.
+  tags:
+    - nd4x_demo

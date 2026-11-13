@@ -393,3 +393,21 @@
       - fabric_name: "{{ test_member_2 }}"
       - fabric_name: "{{ test_member_3 }}"
   ignore_errors: true
+
+#############################################################################
+# OPT-IN ND 4.x HARNESS
+#
+# The legacy suite above remains the default. Select the harness explicitly
+# with --tags nd4x_demo.
+#############################################################################
+- name: Run the opt-in ND 4.x fabric group members harness
+  ansible.builtin.include_tasks: nd4x_demo.yaml
+  tags:
+    - nd4x_demo
+
+- name: Run the opt-in ND 4.x multi-cluster fabric group members harness
+  ansible.builtin.include_tasks: nd4x_demo_mcfg.yaml
+  vars:
+    ansible_httpapi_login_domain: mcfg
+  tags:
+    - nd4x_demo_mcfg
