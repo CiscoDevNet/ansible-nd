@@ -115,7 +115,7 @@ options:
           # Anycast Gateway
           anycast_gateway_mac:
             description:
-            - Shared anycast gateway MAC address for all VTEPs in xxxx.xxxx.xxxx format.
+            - Shared anycast gateway MAC address for all VTEPs. Accepts dotted, colon-separated, hyphen-separated, or unseparated 48-bit hexadecimal notation and normalizes to lowercase dotted notation.
             - Must match the corresponding value in a fabric before that fabric can join the group.
             type: str
             default: 2020.0000.00aa

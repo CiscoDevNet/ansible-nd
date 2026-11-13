@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 import re
+from enum import Enum
+from typing import Annotated, ClassVar, Literal
 
-from typing import ClassVar, Literal
+from ansible_collections.cisco.nd.plugins.module_utils.models.release_metadata import NDMinimumVersion
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -20,7 +22,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
     DhcpProtocolVersionEnum,
     FabricTypeEnum,
     GreenfieldDebugFlagEnum,
-    ReplicationModeEnum,
     RendezvousPointCountEnum,
     RouteReflectorCountEnum,
     UnderlayMulticastGroupAddressLimitEnum,
@@ -28,6 +29,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
     VrfLiteAutoConfigEnum,
     VlanTrunkingProtocolModeEnum,
 )
+
+
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
     BootstrapSubnetModel,
     FabricDhcpGatewayAddress,
@@ -35,13 +38,26 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     FabricIPv4CIDR,
     FabricInterfaceName,
     MulticastGroupSubnet,
-    NetflowSettingsModel,
     ScheduledBackupTime,
     default_site_id_from_bgp_asn,
+    normalize_anycast_gateway_mac,
     validate_bgp_asn_value,
     validate_site_id_value,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import FabricBaseModel
+
+
+class CampusReplicationModeEnum(str, Enum):
+    """Only replication mode offered by the Campus native template."""
+
+    MULTICAST = "multicast"
+
+
+class CampusRoutingProtocolEnum(str, Enum):
+    """Only link-state protocol offered by the Campus native template."""
+
+    OSPF = "ospf"
+
 
 """
 # Comprehensive Pydantic models for VXLAN Campus fabric management via Nexus Dashboard
@@ -76,7 +92,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     Comprehensive VXLAN Campus fabric management configuration.
 
     This model contains all settings specific to VXLAN Campus fabric types including
-    VXLAN properties (shared), campus-specific properties, and netflow settings.
+    VXLAN properties (shared) and campus-specific properties.
 
     ## Raises
 
@@ -139,10 +155,10 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     )
 
     # Multicast / Replication
-    replication_mode: ReplicationModeEnum = Field(
+    replication_mode: CampusReplicationModeEnum = Field(
         alias="replicationMode",
-        description="Replication Mode for BUM Traffic",
-        default=ReplicationModeEnum.MULTICAST,
+        description="Campus replication mode for BUM traffic; the native template fixes this to multicast.",
+        default=CampusReplicationModeEnum.MULTICAST,
     )
     multicast_group_subnet: MulticastGroupSubnet = Field(
         alias="multicastGroupSubnet",
@@ -521,10 +537,10 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     # --- campusProperties (campus-specific fields) ---
 
     # Routing Protocol
-    link_state_routing_protocol: str = Field(
+    link_state_routing_protocol: CampusRoutingProtocolEnum = Field(
         alias="linkStateRoutingProtocol",
-        description="Link-State Routing Protocol. Supported: OSPF",
-        default="ospf",
+        description="Campus link-state routing protocol; the native template fixes this to OSPF.",
+        default=CampusRoutingProtocolEnum.OSPF,
     )
     route_reflector_count: RouteReflectorCountEnum = Field(
         alias="routeReflectorCount",
@@ -536,7 +552,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         description="Enable BGP IPv4 unicast session between RR and RR client",
         default=False,
     )
-    bgp_fast_convergence: bool | None = Field(
+    bgp_fast_convergence: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="bgpFastConvergence",
         description="Enable immediate BGP failure detection and undampened next-hop updates (ND 4.3.1+)",
         default=None,
@@ -677,14 +693,6 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         default="",
     )
 
-    # --- netflowProperties ---
-
-    netflow_settings: NetflowSettingsModel | None = Field(
-        alias="netflowSettings",
-        description="Settings associated with netflow",
-        default=None,
-    )
-
     @field_validator("bgp_asn")
     @classmethod
     def validate_bgp_asn(cls, value: str | None) -> str | None:
@@ -709,9 +717,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     @classmethod
     def validate_mac_address(cls, value: str) -> str:
         """Validate and normalize the anycast gateway MAC address."""
-        if not re.fullmatch(r"([0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}", value):
-            raise ValueError(f"Invalid MAC address format, expected xxxx.xxxx.xxxx, got: {value}")
-        return value.lower()
+        return normalize_anycast_gateway_mac(value)
 
 
 class FabricCampusIbgpVxlanModel(FabricBaseModel):

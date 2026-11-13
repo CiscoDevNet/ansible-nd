@@ -126,11 +126,11 @@ options:
           replication_mode:
             description:
             - Replication Mode for BUM Traffic.
+            - The ND 4.2.1 and 4.3.1 Campus native templates make this field read-only and fix it to C(multicast).
             - Multicast pool and rendezvous-point settings below apply when C(multicast) is selected.
-            - Although the OpenAPI schema also declares C(ingress), ND 4.2.1 rejects that value for Campus fabrics.
             type: str
             default: multicast
-            choices: [ multicast, ingress ]
+            choices: [ multicast ]
           multicast_group_subnet:
             description:
             - IPv4 multicast pool in CIDR notation with a prefix length from C(8) through C(30).
@@ -539,9 +539,10 @@ options:
             type: str
           link_state_routing_protocol:
             description:
-            - "Link-State Routing Protocol. Supported: OSPF."
+            - The ND 4.2.1 and 4.3.1 Campus native templates make this field read-only and fix it to C(ospf).
             type: str
             default: ospf
+            choices: [ ospf ]
           route_reflector_count:
             description:
             - Number of spines acting as Route-Reflectors.
@@ -682,101 +683,6 @@ options:
             - Additional CLIs for all NX-OS intra-fabric links.
             type: str
             default: ""
-          netflow_settings:
-            description:
-            - Settings associated with netflow.
-            type: dict
-            suboptions:
-              netflow:
-                description:
-                - Enable netflow collection.
-                - Enables use of the exporter, record, and monitor collections in O(config.management.netflow_settings).
-                type: bool
-                default: false
-              netflow_exporter_collection:
-                description:
-                - List of netflow exporters.
-                - Used when O(config.management.netflow_settings.netflow=true); monitors reference exporters by name.
-                type: list
-                elements: dict
-                suboptions:
-                  exporter_name:
-                    description:
-                    - Name of the netflow exporter.
-                    type: str
-                    required: true
-                  exporter_ip:
-                    description:
-                    - IP address of the netflow collector.
-                    type: str
-                    required: true
-                  vrf:
-                    description:
-                    - VRF name for the exporter.
-                    type: str
-                    default: management
-                  source_interface_name:
-                    description:
-                    - Source interface name.
-                    type: str
-                    required: true
-                  udp_port:
-                    description:
-                    - UDP port for netflow export (1-65535).
-                    type: int
-              netflow_record_collection:
-                description:
-                - List of netflow records.
-                - Used when O(config.management.netflow_settings.netflow=true); monitors reference records by name.
-                type: list
-                elements: dict
-                suboptions:
-                  record_name:
-                    description:
-                    - Name of the netflow record.
-                    type: str
-                    required: true
-                  record_template:
-                    description:
-                    - Template type for the record.
-                    type: str
-                    required: true
-                  layer2_record:
-                    description:
-                    - Enable layer 2 record fields.
-                    - Applies when O(config.management.netflow_settings.netflow_record_collection.record_template=netflowLayer2Record).
-                    type: bool
-                    default: false
-              netflow_monitor_collection:
-                description:
-                - List of netflow monitors.
-                - Used when O(config.management.netflow_settings.netflow=true); each monitor names a record and at least one exporter.
-                type: list
-                elements: dict
-                suboptions:
-                  monitor_name:
-                    description:
-                    - Name of the netflow monitor.
-                    type: str
-                    required: true
-                  record_name:
-                    description:
-                    - Associated record name.
-                    - Matches an entry in O(config.management.netflow_settings.netflow_record_collection).
-                    type: str
-                    required: true
-                  exporter1_name:
-                    description:
-                    - Primary exporter name.
-                    - Matches an entry in O(config.management.netflow_settings.netflow_exporter_collection).
-                    type: str
-                    required: true
-                  exporter2_name:
-                    description:
-                    - Secondary exporter name.
-                    - When set, matches another entry in O(config.management.netflow_settings.netflow_exporter_collection).
-                    type: str
-                    default: ""
       telemetry_settings:
         description:
         - Telemetry configuration for the fabric.

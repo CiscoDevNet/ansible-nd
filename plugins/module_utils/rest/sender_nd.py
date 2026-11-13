@@ -164,12 +164,25 @@ class Sender:
             self.log.error(msg)
             raise ValueError(msg) from error
 
-    def get_version(self) -> Optional[str]:
+    def get_build_version(self) -> Optional[str]:
         """Return the ND controller build version (e.g. ``"4.2.1.10"``) via the HttpApi plugin."""
         if self._connection is None:
             self._connection = Connection(self.ansible_module._socket_path)  # pylint: disable=protected-access
             self._connection.set_params(self.ansible_module.params)
-        return self._connection.get_version("nd")
+        getter = getattr(self._connection, "get_build_version", None)
+        if not callable(getter):
+            return self._connection.get_version("nd")
+        return getter("nd")
+
+    def get_product_version(self) -> Optional[str]:
+        """Return the ND product release (e.g. ``"4.3.1a"``) via the HttpApi plugin."""
+        if self._connection is None:
+            self._connection = Connection(self.ansible_module._socket_path)  # pylint: disable=protected-access
+            self._connection.set_params(self.ansible_module.params)
+        getter = getattr(self._connection, "get_product_version", None)
+        if not callable(getter):
+            return None
+        return getter("nd")
 
     def _normalize_response(self, response: dict) -> dict:
         """

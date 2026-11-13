@@ -69,6 +69,7 @@ def test_nd_manage_fabric_campus_ibgp_vxlan_00010() -> None:
     assert set(documented) == set(spec)
     assert set(documented["config"]["suboptions"]) == set(spec["config"]["options"])
     assert set(documented["config"]["suboptions"]["management"]["suboptions"]) == set(spec["config"]["options"]["management"]["options"])
+    assert "netflow_settings" not in spec["config"]["options"]["management"]["options"]
     assert set(documented["config_actions"]["suboptions"]) == set(spec["config_actions"]["options"])
     assert documented["state"]["choices"] == spec["state"]["choices"]
 

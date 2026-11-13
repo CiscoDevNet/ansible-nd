@@ -14,8 +14,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
     DhcpProtocolVersionEnum,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_bgp_validation import (
-    parse_controller_version,
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_release_validation import (
+    ND_4_3_1,
+    parse_controller_product_version,
 )
 
 DHCP_GATEWAY_FIELDS = ("dhcp_start_address", "dhcp_end_address", "management_gateway")
@@ -55,15 +56,15 @@ class ManageFabricDhcpValidationMixin:
                     local_dhcp_without_dhcpv6.append(f"{name} ({field})")
 
         if ipv6_fields_by_fabric:
-            raw_version = self.rest_send.controller_version
-            version = parse_controller_version(raw_version)
-            if version is None or version < (4, 3, 1):
+            raw_version = self.rest_send.controller_product_version
+            version = parse_controller_product_version(raw_version)
+            if version is None or version < ND_4_3_1:
                 reported = raw_version or "unknown"
                 affected = ", ".join(f"{name} ({', '.join(fields)})" for name, fields in ipv6_fields_by_fabric.items())
                 raise RuntimeError(
                     "IPv6 management DHCP/gateway addresses require ND 4.3.1 or later; "
                     "IPv6 local DHCP also requires a V6 controller installation. "
-                    f"Controller version is {reported!r} for fabric(s): {affected}"
+                    f"Controller product version is {reported!r} for fabric(s): {affected}"
                 )
 
         if local_dhcp_without_dhcpv6:

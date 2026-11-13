@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import re
-from typing import ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal
+
+from ansible_collections.cisco.nd.plugins.module_utils.models.release_metadata import NDMinimumVersion
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -18,6 +20,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     ValidationInfo,
     field_serializer,
     field_validator,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
     AimlQosPolicyEnum,
@@ -48,13 +51,16 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     BootstrapSubnetModel,
     FabricDhcpGatewayAddress,
     FabricIPv4CIDR,
+    KeychainKeyEntryModel,
     MulticastGroupSubnet,
     NetflowSettingsModel,
     ScheduledBackupTime,
     default_site_id_from_bgp_asn,
+    normalize_anycast_gateway_mac,
     validate_bgp_asn_value,
     validate_site_id_value,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import IPv6CIDR
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import FabricBaseModel, serialize_secret_value
 
 """
@@ -104,58 +110,44 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
 
-    # Settings returned by supported ND releases but intentionally not exposed
-    # as Ansible parameters. Preserve them across full replacement and hide them
-    # from normalized module output. The VRF Lite IPv6 pair is preserved here
-    # because only the iBGP family currently exposes it.
+    # Opaque settings preserve writable response state when a field has no
+    # public VXLAN input, belongs to routed fabrics, or is hidden in a release.
     _opaque_replacement_fields: ClassVar[set[str]] = {
-        "aiLoadSharingOpcode",
-        "aiLoadSharingPacketSequenceNumber",
-        "aiLoadSharingQueuepair",
-        "allowSmartSwitchHA",
-        "autoSmartSwitchVpcPairHA",
-        "bfdMinRxInterval",
-        "bfdMultiplier",
         "bfdPim",
-        "bfdTxInterval",
-        "bgpAllowAsIn",
         "borderCount",
         "breakoutSpineInterfaces",
         "designerUseRobotPassword",
-        "dlbAllInterfaces",
         "dlbModeInQosPolicy",
-        "enableSecureDefaultVrf",
         "fabricDesignSettings",
         "fabricDesigner",
-        "hypershieldHAPeerLinkSubnet",
-        "hypershieldHAPeerLinkSubnetGranularity",
-        "hypershieldHASourceIntf",
-        "hypershieldHASourceSubnet",
-        "hypershieldHAVlan",
+        "hypershieldConnectivityProxyServer",
+        "hypershieldConnectivityProxyServerPort",
         "leafCount",
-        "ntpAuthAlgorithm",
-        "ntpAuthEnable",
-        "ntpAuthKey",
-        "ntpAuthKeyId",
-        "ntpAuthKeyType",
-        "perVrfUniqueLoopbackAutoProvision",
-        "perVrfUniqueLoopbackAutoProvisionV6",
-        "perVrfUniqueLoopbackIpRange",
-        "perVrfUniqueLoopbackIpv6Range",
-        "pimAuthKeychainName",
-        "pimAuthUseKeychain",
-        "pimKeys",
         "spineCount",
         "systemQosClassification",
-        "useHypershieldSourceLoopbackForHA",
         "vrfLiteIpv6SubnetRange",
         "vrfLiteIpv6SubnetTargetMask",
     }
     replacement_preserve_fields: ClassVar[set[str]] = _opaque_replacement_fields | {"bgpAsnRange"}
-    replacement_preserve_secret_fields: ClassVar[set[str]] = {"ntpAuthKey", "pimKeys"}
+    replacement_preserve_secret_fields: ClassVar[set[str]] = set()
     config_exclude_fields: ClassVar[set[str]] = _opaque_replacement_fields
 
     empty_string_means_unset: ClassVar[bool] = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def omit_bgp_asn_auto_allocation_for_same_tier_as(cls, data: Any) -> Any:
+        """ND omits this Multi-AS-only setting from Same-Tier-AS reads and writes."""
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        mode = normalized.get("bgpAsMode", normalized.get("bgp_as_mode", BgpAsModeEnum.MULTI_AS))
+        if mode in (BgpAsModeEnum.SAME_TIER_AS, BgpAsModeEnum.SAME_TIER_AS.value):
+            if "bgpAsnAutoAllocation" in normalized:
+                normalized["bgpAsnAutoAllocation"] = None
+            else:
+                normalized["bgp_asn_auto_allocation"] = None
+        return normalized
 
     # Fabric Type (required for discriminated union)
     type: Literal[FabricTypeEnum.VXLAN_EBGP] = Field(description="Type of the fabric", default=FabricTypeEnum.VXLAN_EBGP)
@@ -175,16 +167,16 @@ class VxlanEbgpManagementModel(NDNestedModel):
         ),
         default=BgpAsModeEnum.MULTI_AS,
     )
-    bgp_asn_auto_allocation: bool = Field(
+    bgp_asn_auto_allocation: bool | None = Field(
         alias="bgpAsnAutoAllocation",
-        description=("Automatically allocate and track BGP ASN for leafs, borders and border gateways in Multi-AS mode"),
+        description=("Automatically allocate and track BGP ASN for leafs, borders and border gateways. Applies only in Multi-AS mode."),
         default=True,
     )
     bgp_asn_range: str | None = Field(
         alias="bgpAsnRange", description=("BGP ASN range for auto-allocation (minimum: 1 or 1.0, maximum: 4294967295 or 65535.65535)"), default=None
     )
-    bgp_allow_as_in_num: int = Field(alias="bgpAllowAsInNum", description="Number of occurrences of ASN allowed in the BGP AS-path", default=1)
-    bgp_max_path: int = Field(alias="bgpMaxPath", description="BGP Maximum Paths", default=4)
+    bgp_allow_as_in_num: int = Field(alias="bgpAllowAsInNum", description="Number of occurrences of ASN allowed in the BGP AS-path", ge=1, le=10, default=1)
+    bgp_max_path: int = Field(alias="bgpMaxPath", description="BGP Maximum Paths", ge=1, le=64, default=4)
     bgp_underlay_failure_protect: bool = Field(alias="bgpUnderlayFailureProtect", description="Enable BGP underlay failure protection", default=False)
     auto_configure_ebgp_evpn_peering: bool = Field(
         alias="autoConfigureEbgpEvpnPeering", description=("Automatically configure eBGP EVPN overlay peering between leaf and spine switches"), default=True
@@ -198,7 +190,13 @@ class VxlanEbgpManagementModel(NDNestedModel):
         default=True,
     )
     evpn: Literal[True] = Field(description="Enable BGP EVPN as the control plane and VXLAN as the data plane for this fabric", default=True, frozen=True)
-    route_map_tag: int = Field(alias="routeMapTag", description="Tag for Route Map FABRIC-RMAP-REDIST-SUBNET. (Min:0, Max:4294967295)", default=12345)
+    route_map_tag: int = Field(
+        alias="routeMapTag",
+        description="Tag for Route Map FABRIC-RMAP-REDIST-SUBNET. (Min:0, Max:4294967295)",
+        ge=0,
+        le=4294967295,
+        default=12345,
+    )
     disable_route_map_tag: bool = Field(alias="disableRouteMapTag", description="No match tag for Route Map FABRIC-RMAP-REDIST-SUBNET", default=False)
     leaf_bgp_as: str | None = Field(alias="leafBgpAs", description="BGP Autonomous System Number for Leafs 1-4294967295 | 1-65535[.0-65535]", default=None)
     border_bgp_as: str | None = Field(
@@ -447,7 +445,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
     bfd: bool = Field(description="Enable BFD.  Valid for IPv4 Underlay only", default=False)
     bfd_ibgp: bool = Field(alias="bfdIbgp", description="Enable BFD For iBGP", default=False)
     bfd_authentication: bool = Field(alias="bfdAuthentication", description="Enable BFD Authentication.  Valid for P2P Interfaces only", default=False)
-    bfd_authentication_key_id: int = Field(alias="bfdAuthenticationKeyId", description="BFD Authentication Key ID", default=100)
+    bfd_authentication_key_id: int = Field(alias="bfdAuthenticationKeyId", description="BFD Authentication Key ID", ge=1, le=255, default=100)
     bfd_authentication_key: SecretStr | None = Field(
         alias="bfdAuthenticationKey", description="Encrypted SHA1 secret value", default=None, json_schema_extra={"secret": True}
     )
@@ -478,7 +476,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
     management_gateway: FabricDhcpGatewayAddress = Field(
         alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default=None
     )
-    management_ipv4_prefix: int = Field(alias="managementIpv4Prefix", description="Switch Mgmt IP Subnet Prefix if ipv4", default=24)
+    management_ipv4_prefix: int = Field(alias="managementIpv4Prefix", description="Switch Mgmt IP Subnet Prefix if ipv4", ge=8, le=30, default=24)
     management_ipv6_prefix: int = Field(alias="managementIpv6Prefix", description="Switch Management IP Subnet Prefix if ipv6", default=64)
 
     # Netflow Settings
@@ -623,7 +621,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
         default=GreenfieldDebugFlagEnum.DISABLE,
     )
     interface_statistics_load_interval: int = Field(
-        alias="interfaceStatisticsLoadInterval", description="Interface Statistics Load Interval. Time in seconds", default=10
+        alias="interfaceStatisticsLoadInterval", description="Interface Statistics Load Interval. Time in seconds", ge=5, le=300, default=10
     )
     nve_hold_down_timer: int = Field(alias="nveHoldDownTimer", description="NVE Source Inteface HoldDown Time in seconds", default=180)
     next_generation_oam: bool = Field(
@@ -718,7 +716,13 @@ class VxlanEbgpManagementModel(NDNestedModel):
     wred_max: int = Field(alias="wredMax", description="WRED maximum threshold (in kbytes)", default=3000)
     wred_drop_probability: int = Field(alias="wredDropProbability", description="Drop probability %", default=7)
     wred_weight: int = Field(alias="wredWeight", description="Influences how quickly WRED reacts to queue depth changes", default=0)
-    bandwidth_remaining: int = Field(alias="bandwidthRemaining", description="Percentage of remaining bandwidth allocated to AI traffic queues", default=50)
+    bandwidth_remaining: int = Field(
+        alias="bandwidthRemaining",
+        description="Percentage of remaining bandwidth allocated to AI traffic queues",
+        ge=0,
+        le=100,
+        default=50,
+    )
     dlb: bool = Field(
         description=("Enables fabric-level Dynamic Load Balancing (DLB) configuration. Note: Inter-Switch-Links (ISL) will be configured as DLB Interfaces"),
         default=False,
@@ -771,8 +775,8 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     # PTP
     ptp: bool = Field(description="Enable Precision Time Protocol (PTP)", default=False)
-    ptp_loopback_id: int = Field(alias="ptpLoopbackId", description="Precision Time Protocol Source Loopback Id", default=0)
-    ptp_domain_id: int = Field(alias="ptpDomainId", description="Multiple Independent PTP Clocking Subdomains on a Single Network", default=0)
+    ptp_loopback_id: int = Field(alias="ptpLoopbackId", description="Precision Time Protocol Source Loopback Id", ge=0, le=1023, default=0)
+    ptp_domain_id: int = Field(alias="ptpDomainId", description="Multiple Independent PTP Clocking Subdomains on a Single Network", ge=0, le=127, default=0)
 
     # Private VLAN
     private_vlan: bool = Field(alias="privateVlan", description="Enable PVLAN on switches except spines and super spines", default=False)
@@ -820,16 +824,102 @@ class VxlanEbgpManagementModel(NDNestedModel):
         alias="enableDpuPinning", description="Enable pinning of VRFs and networks to specific DPUs on smart switches", default=False
     )
     connectivity_domain_name: str | None = Field(alias="connectivityDomainName", description="Domain name to connect to Hypershield", default=None)
-    hypershield_connectivity_proxy_server: str | None = Field(
-        alias="hypershieldConnectivityProxyServer",
-        description="IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication",
-        default=None,
-    )
-    hypershield_connectivity_proxy_server_port: int | None = Field(
-        alias="hypershieldConnectivityProxyServerPort", description="Proxy port number for communication with Hypershield", default=None
-    )
     hypershield_connectivity_source_intf: str | None = Field(
         alias="hypershieldConnectivitySourceIntf", description="Loopback interface on smart switch for communication with Hypershield", default=None
+    )
+
+    # Controls supported by the ND 4.3.1 eBGP VXLAN template.
+    ai_load_sharing_opcode: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="aiLoadSharingOpcode", description="Use the RoCEv2 opcode for AI load-sharing hashing.", default=None
+    )
+    ai_load_sharing_packet_sequence_number: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="aiLoadSharingPacketSequenceNumber", description="Use the RoCEv2 packet sequence number for hashing.", default=None
+    )
+    ai_load_sharing_queuepair: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="aiLoadSharingQueuepair", description="Use the RoCEv2 queue pair for AI load-sharing hashing.", default=None
+    )
+    allow_smart_switch_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="allowSmartSwitchHA", description="Enable smart-switch high availability.", default=None
+    )
+    auto_smart_switch_vpc_pair_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="autoSmartSwitchVpcPairHA", description="Automatically configure HA for smart-switch vPC pairs.", default=None
+    )
+    bfd_min_rx_interval: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="bfdMinRxInterval", description="BFD minimum receive interval in milliseconds.", ge=10, le=999, default=None
+    )
+    bfd_multiplier: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="bfdMultiplier", description="BFD detection multiplier.", ge=1, le=50, default=None
+    )
+    bfd_pim: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(alias="bfdPim", description="Enable BFD for PIM.", default=None)
+    bfd_tx_interval: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="bfdTxInterval", description="BFD transmit interval in milliseconds.", ge=10, le=999, default=None
+    )
+    bgp_allow_as_in: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="bgpAllowAsIn", description="Accept an AS path containing this border switch ASN.", default=None
+    )
+    dlb_all_interfaces: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="dlbAllInterfaces", description="Apply DLB to all supported interfaces.", default=None
+    )
+    enable_secure_default_vrf: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="enableSecureDefaultVrf", description="Redirect default VRF traffic to a DPU for inspection.", default=None
+    )
+    hypershield_ha_peer_link_subnet: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="hypershieldHAPeerLinkSubnet", description="IPv4 subnet pool for HA peer-link connectivity.", default=None
+    )
+    hypershield_ha_peer_link_subnet_granularity: Annotated[Literal["/30", "/31"] | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="hypershieldHAPeerLinkSubnetGranularity", description="Subnet prefix size for HA peer-link allocations.", default=None
+    )
+    hypershield_ha_source_intf: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="hypershieldHASourceIntf", description="Loopback interface used as the HA source.", min_length=3, max_length=40, default=None
+    )
+    hypershield_ha_source_subnet: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="hypershieldHASourceSubnet", description="IPv4 subnet pool for the HA source loopback.", default=None
+    )
+    hypershield_ha_vlan: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="hypershieldHAVlan", description="VLAN used for smart-switch HA communication.", ge=2, le=4094, default=None
+    )
+    use_hypershield_source_loopback_for_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="useHypershieldSourceLoopbackForHA", description="Reuse the Hypershield source loopback for HA.", default=None
+    )
+    ntp_auth_algorithm: Annotated[Literal["aes128cmac", "md5"] | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="ntpAuthAlgorithm", description="NTP authentication algorithm.", default=None
+    )
+    ntp_auth_enable: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(alias="ntpAuthEnable", description="Enable NTP authentication.", default=None)
+    ntp_auth_key: Annotated[SecretStr | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="ntpAuthKey",
+        description="NTP authentication key.",
+        min_length=1,
+        max_length=128,
+        pattern=r"^\S+$",
+        default=None,
+        json_schema_extra={"secret": True},
+    )
+    ntp_auth_key_id: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="ntpAuthKeyId", description="NTP authentication key identifier.", ge=1, le=65535, default=None
+    )
+    ntp_auth_key_type: Annotated[Literal["6", "7"] | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="ntpAuthKeyType", description="NTP authentication key type.", default=None
+    )
+    per_vrf_unique_loopback_auto_provision: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="perVrfUniqueLoopbackAutoProvision", description="Auto-provision a unique IPv4 loopback per VRF.", default=None
+    )
+    per_vrf_unique_loopback_auto_provision_v6: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="perVrfUniqueLoopbackAutoProvisionV6", description="Auto-provision a unique IPv6 loopback per VRF.", default=None
+    )
+    per_vrf_unique_loopback_ip_range: Annotated[FabricIPv4CIDR, NDMinimumVersion("4.3.1")] = Field(
+        alias="perVrfUniqueLoopbackIpRange", description="IPv4 prefix pool for per-VRF unique loopbacks.", default=None
+    )
+    per_vrf_unique_loopback_ipv6_range: Annotated[IPv6CIDR, NDMinimumVersion("4.3.1")] = Field(
+        alias="perVrfUniqueLoopbackIpv6Range", description="IPv6 prefix pool for per-VRF unique loopbacks.", default=None
+    )
+    pim_auth_keychain_name: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="pimAuthKeychainName", description="PIM authentication keychain name.", min_length=1, max_length=63, pattern=r"^\S+$", default=None
+    )
+    pim_auth_use_keychain: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="pimAuthUseKeychain", description="Use a PIM authentication keychain.", default=None
+    )
+    pim_keys: Annotated[list[KeychainKeyEntryModel] | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="pimKeys", description="PIM keychain entries.", default=None
     )
 
     @field_validator("overlay_mode", mode="before")
@@ -888,10 +978,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
         - `ValueError` - If MAC address format is invalid
         """
-        mac_pattern = re.compile(r"^([0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}$")
-        if not mac_pattern.match(value):
-            raise ValueError(f"Invalid MAC address format, expected xxxx.xxxx.xxxx, got: {value}")
-        return value.lower()
+        return normalize_anycast_gateway_mac(value)
 
     @field_serializer(
         "bgp_authentication_key",
@@ -899,6 +986,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
         "pim_hello_authentication_key",
         "macsec_key_string",
         "macsec_fallback_key_string",
+        "ntp_auth_key",
     )
     def _serialize_secret_keys(self, value: SecretStr | None, info: FieldSerializationInfo) -> str | None:
         """Real value only for the API payload; masked in config/diff/gathered/error output."""

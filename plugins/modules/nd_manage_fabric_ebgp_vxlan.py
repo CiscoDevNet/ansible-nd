@@ -161,6 +161,13 @@ options:
               exposed by this module.
             type: int
             default: 1
+
+          # Protocols
+          bgp_allow_as_in:
+            description:
+            - Accept an AS path containing this border switch ASN.
+            - Available in ND 4.3.1 or later.
+            type: bool
           bgp_max_path:
             description:
             - The maximum number of BGP equal-cost paths.
@@ -637,6 +644,48 @@ options:
             - Used when O(config.management.per_vrf_loopback_auto_provision_ipv6) is enabled.
             type: str
             default: "fd00::a05:0/112"
+
+          # Advanced
+          ai_load_sharing_opcode:
+            description:
+            - Use the RoCEv2 opcode for AI load-sharing hashing.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          ai_load_sharing_packet_sequence_number:
+            description:
+            - Use the RoCEv2 packet sequence number for AI load-sharing hashing.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          ai_load_sharing_queuepair:
+            description:
+            - Use the RoCEv2 queue pair for AI load-sharing hashing.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          dlb_all_interfaces:
+            description:
+            - Apply DLB to all supported interfaces.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          per_vrf_unique_loopback_auto_provision:
+            description:
+            - Auto-provision a unique IPv4 loopback per VRF.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          per_vrf_unique_loopback_auto_provision_v6:
+            description:
+            - Auto-provision a unique IPv6 loopback per VRF.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          per_vrf_unique_loopback_ip_range:
+            description:
+            - IPv4 prefix pool for per-VRF unique loopbacks.
+            - Available in ND 4.3.1 or later.
+            type: str
+          per_vrf_unique_loopback_ipv6_range:
+            description:
+            - IPv6 prefix pool for per-VRF unique loopbacks.
+            - Available in ND 4.3.1 or later.
+            type: str
           vrf_template:
             description:
             - Default overlay VRF template for leafs.
@@ -727,6 +776,33 @@ options:
             - Encrypted SHA1 secret value.
             - Applies when O(config.management.bfd_authentication) is enabled.
             type: str
+
+          bfd_min_rx_interval:
+            description:
+            - BFD minimum receive interval in milliseconds (10 to 999).
+            - Available in ND 4.3.1 or later.
+            type: int
+            min: 10
+            max: 999
+          bfd_multiplier:
+            description:
+            - BFD detection multiplier (1 to 50).
+            - Available in ND 4.3.1 or later.
+            type: int
+            min: 1
+            max: 50
+          bfd_pim:
+            description:
+            - Enable BFD for PIM.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          bfd_tx_interval:
+            description:
+            - BFD transmit interval in milliseconds (10 to 999).
+            - Available in ND 4.3.1 or later.
+            type: int
+            min: 10
+            max: 999
           pim_hello_authentication:
             description:
             - Enable PIM hello authentication. Valid for IPv4 underlay only.
@@ -737,6 +813,161 @@ options:
             - PIM hello authentication key. 3DES encrypted.
             - Applies when O(config.management.pim_hello_authentication) is enabled.
             type: str
+
+          # Authentication
+          ntp_auth_algorithm:
+            description:
+            - "NTP authentication algorithm: aes128cmac or md5."
+            - Available in ND 4.3.1 or later.
+            type: str
+            choices: [ aes128cmac, md5 ]
+          ntp_auth_enable:
+            description:
+            - Enable NTP authentication.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          ntp_auth_key:
+            description:
+            - NTP authentication key.
+            - Available in ND 4.3.1 or later.
+            - Must be 1 to 128 non-whitespace characters.
+            type: str
+            no_log: true
+          ntp_auth_key_id:
+            description:
+            - NTP authentication key identifier (1 to 65535).
+            - Available in ND 4.3.1 or later.
+            type: int
+            min: 1
+            max: 65535
+          ntp_auth_key_type:
+            description:
+            - "NTP authentication key type: 6 or 7."
+            - Available in ND 4.3.1 or later.
+            type: str
+            choices: [ "6", "7" ]
+          pim_auth_keychain_name:
+            description:
+            - PIM authentication keychain name.
+            - Available in ND 4.3.1 or later.
+            type: str
+          pim_auth_use_keychain:
+            description:
+            - Use a PIM authentication keychain.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          pim_keys:
+            description:
+            - PIM keychain entries.
+            - Available in ND 4.3.1 or later.
+            type: list
+            elements: dict
+            options:
+              key_id:
+                description:
+                - Key identifier (0 to 65535).
+                - Available in ND 4.3.1 or later.
+                type: int
+                required: true
+                min: 0
+                max: 65535
+              key_type:
+                description:
+                - "Key type: 6 or 7."
+                - Available in ND 4.3.1 or later.
+                type: str
+                required: true
+                choices: [ "6", "7" ]
+              key_string:
+                description:
+                - Key material.
+                - Available in ND 4.3.1 or later.
+                - Must be 1 to 255 non-whitespace characters.
+                type: str
+                required: true
+                no_log: true
+              crypto_algorithm:
+                description:
+                - Cryptographic algorithm.
+                - Available in ND 4.3.1 or later.
+                type: str
+                choices: [ 3des, aes, hmac-sha-1, hmac-sha-256, hmac-sha-384, hmac-sha-512, md5 ]
+              accept_lifetime_start:
+                description:
+                - Accept lifetime start time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_start_date:
+                description:
+                - Accept lifetime start date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_end_mode:
+                description:
+                - Accept lifetime end mode.
+                - Available in ND 4.3.1 or later.
+                type: str
+                choices: [ duration, infinite, endTime ]
+              accept_lifetime_duration:
+                description:
+                - Accept lifetime duration in seconds.
+                - Available in ND 4.3.1 or later.
+                type: int
+                min: 1
+                max: 2147483646
+              accept_lifetime_end:
+                description:
+                - Accept lifetime end time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_end_date:
+                description:
+                - Accept lifetime end date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_local:
+                description:
+                - Interpret accept lifetime in local time.
+                - Available in ND 4.3.1 or later.
+                type: bool
+              send_lifetime_start:
+                description:
+                - Send lifetime start time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_start_date:
+                description:
+                - Send lifetime start date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_end_mode:
+                description:
+                - Send lifetime end mode.
+                - Available in ND 4.3.1 or later.
+                type: str
+                choices: [ duration, infinite, endTime ]
+              send_lifetime_duration:
+                description:
+                - Send lifetime duration in seconds.
+                - Available in ND 4.3.1 or later.
+                type: int
+                min: 1
+                max: 2147483646
+              send_lifetime_end:
+                description:
+                - Send lifetime end time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_end_date:
+                description:
+                - Send lifetime end date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_local:
+                description:
+                - Interpret send lifetime in local time.
+                - Available in ND 4.3.1 or later.
+                type: bool
           nxapi:
             description:
             - Enable NX-API over HTTPS.
@@ -1414,26 +1645,66 @@ options:
             - Domain name to connect to Hypershield.
             - Relevant when O(config.management.allow_smart_switch_onboarding) is enabled.
             type: str
-          hypershield_connectivity_proxy_server:
-            description:
-            - IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication.
-            - Relevant when O(config.management.allow_smart_switch_onboarding) is enabled.
-            type: str
-          hypershield_connectivity_proxy_server_port:
-            description:
-            - Proxy port number for communication with Hypershield.
-            - Applies when O(config.management.hypershield_connectivity_proxy_server) is configured.
-            type: int
           hypershield_connectivity_source_intf:
             description:
             - Loopback interface on smart switch for communication with Hypershield.
             - Relevant when O(config.management.allow_smart_switch_onboarding) is enabled.
             type: str
+          # Hypershield
+          allow_smart_switch_ha:
+            description:
+            - Enable smart-switch high availability.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          auto_smart_switch_vpc_pair_ha:
+            description:
+            - Automatically configure HA for smart-switch vPC pairs.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          enable_secure_default_vrf:
+            description:
+            - Redirect default VRF traffic to a DPU for inspection.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          hypershield_ha_peer_link_subnet:
+            description:
+            - IPv4 subnet pool for HA peer-link connectivity.
+            - Available in ND 4.3.1 or later.
+            type: str
+          hypershield_ha_peer_link_subnet_granularity:
+            description:
+            - Subnet prefix size for HA peer-link allocations.
+            - Available in ND 4.3.1 or later.
+            type: str
+            choices: [ "/30", "/31" ]
+          hypershield_ha_source_intf:
+            description:
+            - Loopback interface used as the HA source (3 to 40 characters).
+            - Available in ND 4.3.1 or later.
+            type: str
+          hypershield_ha_source_subnet:
+            description:
+            - IPv4 subnet pool for the HA source loopback.
+            - Available in ND 4.3.1 or later.
+            type: str
+          hypershield_ha_vlan:
+            description:
+            - VLAN used for smart-switch HA communication (2 to 4094).
+            - Available in ND 4.3.1 or later.
+            type: int
+            min: 2
+            max: 4094
+          use_hypershield_source_loopback_for_ha:
+            description:
+            - Reuse the Hypershield source loopback for HA.
+            - Available in ND 4.3.1 or later.
+            type: bool
       telemetry_settings:
         description:
         - Telemetry configuration settings.
         type: dict
         suboptions:
+
           flow_collection:
             description:
             - Flow collection settings.

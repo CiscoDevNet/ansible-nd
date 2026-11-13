@@ -60,11 +60,11 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sen
 # =============================================================================
 
 
-def _build_rest_send(response_dicts: list[dict], params: dict[str, Any], controller_version: str = "4.3.1") -> RestSend:
+def _build_rest_send(response_dicts: list[dict], params: dict[str, Any], controller_build_version: str = "4.3.1") -> RestSend:
     """Build a real ``RestSend`` wired to a file-based ``Sender`` yielding
     ``response_dicts`` in order, with ``params`` exposed via ``rest_send.params``.
 
-    ``controller_version`` defaults to a 4.3+ build so the associate path does
+    ``controller_build_version`` defaults to a 4.3+ build so the associate path does
     not pre-reserve resources; reservation tests pass a 4.2.x version explicitly.
     """
 
@@ -85,7 +85,7 @@ def _build_rest_send(response_dicts: list[dict], params: dict[str, Any], control
     rest_send.response_handler = response_handler
     rest_send.unit_test = True
     rest_send.timeout = 1
-    rest_send.controller_version = controller_version
+    rest_send.controller_build_version = controller_build_version
     return rest_send
 
 
@@ -666,7 +666,7 @@ def test_manage_tor_orchestrator_parse_major_minor(version, expected):
 def test_manage_tor_orchestrator_requires_manual_resource_reservation(version, expected):
     """The capability flag is driven by the controller (major, minor) version."""
     params = {"check_mode": False, "fabric_name": "fab1", "config": []}
-    rest_send = _build_rest_send([], params, controller_version=version)
+    rest_send = _build_rest_send([], params, controller_build_version=version)
     orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
     assert orchestrator._requires_manual_resource_reservation() is expected
 
@@ -683,7 +683,7 @@ def test_manage_tor_orchestrator_create_bulk_reserves_on_4_2_when_resources_omit
         _resp({"status": "success"}, return_code=207, method="POST"),  # associate
     ]
     params = {"check_mode": False, "fabric_name": "fab1", "config": []}
-    rest_send = _build_rest_send(responses, params, controller_version="4.2.1.10")
+    rest_send = _build_rest_send(responses, params, controller_build_version="4.2.1.10")
     orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
 
     with does_not_raise():
@@ -707,7 +707,7 @@ def test_manage_tor_orchestrator_create_bulk_skips_reserve_on_4_3():
     rest_send = _build_rest_send(
         [_resp({"status": "success"}, return_code=207, method="POST")],
         params,
-        controller_version="4.3.1",
+        controller_build_version="4.3.1",
     )
     orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
 
@@ -727,7 +727,7 @@ def test_manage_tor_orchestrator_create_bulk_skips_reserve_when_user_supplies_re
     rest_send = _build_rest_send(
         [_resp({"status": "success"}, return_code=207, method="POST")],
         params,
-        controller_version="4.2.1.10",
+        controller_build_version="4.2.1.10",
     )
     orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
 
@@ -755,7 +755,7 @@ def test_manage_tor_orchestrator_create_bulk_skips_reserve_in_check_mode():
     """Check mode never mutates the controller: reserveResources is skipped even
     on ND 4.2.x with the resource IDs omitted."""
     params = {"check_mode": True, "fabric_name": "fab1", "config": []}
-    rest_send = _build_rest_send([], params, controller_version="4.2.1.10")
+    rest_send = _build_rest_send([], params, controller_build_version="4.2.1.10")
     orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=_make_results())
 
     with does_not_raise():

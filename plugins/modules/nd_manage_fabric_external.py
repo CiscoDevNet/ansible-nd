@@ -124,11 +124,28 @@ options:
             - Required when creating a fabric and when using O(state=replaced) or O(state=overridden).
             - May be omitted from a partial O(state=merged) update to an existing fabric.
             type: str
+          # General
+          ai_monitoring:
+            description:
+            - Enable AI monitoring features.
+            - Available in ND 4.3.1 or later.
+            type: bool
           aaa:
             description:
             - Include AAA configs from Advanced tab during device bootup.
             type: bool
             default: false
+          # Advanced
+          strict_config_compliance_mode:
+            description:
+            - Enable bidirectional configuration compliance checks.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          software_update_in_monitored_mode:
+            description:
+            - Allow image management while the fabric is in monitored mode.
+            - Available in ND 4.3.1 or later.
+            type: bool
           advanced_ssh_option:
             description:
             - Enable only, when IP Authorization is enabled in the AAA Server.
@@ -328,6 +345,15 @@ options:
             - Switch Management IP Subnet Prefix if ipv6.
             type: int
             default: 64
+
+          # Bootstrap
+          ios_xe_tor_bootstrap_vlan:
+            description:
+            - Catalyst ToR bootstrap VLAN for inband PnP.
+            - Available in ND 4.3.1 or later.
+            type: int
+            min: 1
+            max: 4094
           monitored_mode:
             description:
             - If enabled, fabric is only monitored.
@@ -446,6 +472,33 @@ options:
                     - When set, matches another entry in O(config.management.netflow_settings.netflow_exporter_collection).
                     type: str
                     default: ""
+              # Flow Monitor
+              netflow_sampler_collection:
+                description:
+                - List of NetFlow samplers.
+                - Available in ND 4.2.1 and 4.3.1 native templates.
+                type: list
+                elements: dict
+                suboptions:
+                  sampler_name:
+                    description:
+                    - Name of the sampler.
+                    - Available in ND 4.2.1 and 4.3.1 native templates.
+                    type: str
+                  num_samples:
+                    description:
+                    - Samples per sampling operation (1 to 63).
+                    - Available in ND 4.2.1 and 4.3.1 native templates.
+                    type: int
+                    min: 1
+                    max: 63
+                  sampling_rate:
+                    description:
+                    - Packets per sampling operation (1 to 131071).
+                    - Available in ND 4.2.1 and 4.3.1 native templates.
+                    type: int
+                    min: 1
+                    max: 131071
           nxapi:
             description:
             - Enable NX-API over HTTPS.
@@ -516,6 +569,17 @@ options:
             - Time (UTC) in 24-hour C(HH:MM) format to take a daily backup if enabled (C(00:00) to C(23:59)).
             - Applies when O(config.management.scheduled_backup=true).
             type: str
+          # Configuration Backup
+          enable_remote_switch_backup:
+            description:
+            - Enable switch backup to remote storage.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          remote_storage_server:
+            description:
+            - Name of remote storage configured in Nexus Dashboard (maximum 63 characters).
+            - Available in ND 4.3.1 or later.
+            type: str
           snmp_trap:
             description:
             - Configure Nexus Dashboard as a receiver for SNMP traps.
@@ -531,21 +595,55 @@ options:
             - Domain name to connect to Hypershield.
             - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
             type: str
-          hypershield_connectivity_proxy_server:
-            description:
-            - IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication.
-            - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
-            type: str
-          hypershield_connectivity_proxy_server_port:
-            description:
-            - Proxy port number for communication with Hypershield.
-            - Applies when O(config.management.hypershield_connectivity_proxy_server) is set.
-            type: int
           hypershield_connectivity_source_intf:
             description:
             - Loopback interface on smart switch for communication with Hypershield.
             - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
             type: str
+          # Hypershield
+          allow_smart_switch_ha:
+            description:
+            - Enable high availability configuration for smart switches.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          auto_smart_switch_vpc_pair_ha:
+            description:
+            - Enable automatic HA configuration for smart-switch vPC pairs.
+            - Available in ND 4.3.1 or later.
+            type: bool
+          hypershield_ha_peer_link_subnet:
+            description:
+            - IPv4 subnet pool for HA peer-link connectivity.
+            - Available in ND 4.3.1 or later.
+            type: str
+          hypershield_ha_peer_link_subnet_granularity:
+            description:
+            - Subnet prefix size for HA peer-link allocations.
+            - Available in ND 4.3.1 or later.
+            type: str
+            choices: [ "/30", "/31" ]
+          hypershield_ha_source_intf:
+            description:
+            - Loopback interface used as the HA source (3 to 40 characters).
+            - Available in ND 4.3.1 or later.
+            type: str
+          hypershield_ha_source_subnet:
+            description:
+            - IPv4 subnet pool for the HA source loopback.
+            - Available in ND 4.3.1 or later.
+            type: str
+          hypershield_ha_vlan:
+            description:
+            - VLAN used for smart-switch HA communication (2 to 4094).
+            - Available in ND 4.3.1 or later.
+            type: int
+            min: 2
+            max: 4094
+          use_hypershield_source_loopback_for_ha:
+            description:
+            - Reuse the Hypershield source loopback for HA.
+            - Available in ND 4.3.1 or later.
+            type: bool
       telemetry_settings:
         description:
         - Telemetry configuration for the fabric.
