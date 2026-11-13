@@ -234,6 +234,13 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_tor:
     fabric_name: my-fabric
     state: gathered
+  register: tor_associations
+
+- name: Replay the gathered ToR associations
+  cisco.nd.nd_manage_tor:
+    fabric_name: my-fabric
+    config: "{{ tor_associations.gathered }}"
+    state: overridden
 """
 
 RETURN = r"""
@@ -247,6 +254,20 @@ output_level:
   returned: always
   type: str
   sample: normal
+gathered:
+  description:
+  - The current ToR associations when O(state=gathered).
+  - The returned list uses the module's O(config) field names and can be passed
+    directly back to O(config).
+  - Switch identifiers are reported as serial numbers, regardless of whether a serial or management IP was originally supplied.
+  returned: when O(state=gathered)
+  type: list
+  elements: dict
+  sample:
+  - access_or_tor_switch: 9WU9XPHL9SW
+    aggregation_or_leaf_switch: 98AFDSD8V0
+    access_or_tor_port_channel_id: 501
+    aggregation_or_leaf_port_channel_id: 502
 before:
   description:
   - The existing ToR association configuration before the module ran.
@@ -313,8 +334,6 @@ msg:
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
-from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
@@ -324,7 +343,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_tor.manage_
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_tor import ManageTorOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
-from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory_helpers import inventory_for_fabric, resolve
 
@@ -394,31 +412,6 @@ def _verbosity_of(module):
     return module._verbosity if hasattr(module, "_verbosity") else 0
 
 
-def _run_gathered(module, fabric_name):
-    """Query current ToR associations without mutating ND.
-
-    ``NDStateMachine`` cannot be used for ``gathered`` because it always builds
-    the proposed collection from ``config`` (which for gathered may be absent)
-    and its ``manage_state`` rejects the state. So the REST stack is built here
-    the same way the state machine does, then ``query_all`` -- a single
-    fabric-wide GET returning every association -- is run directly and returned
-    as both ``before`` and ``after``.
-    """
-    rest_send = _build_rest_send(module)
-
-    results = Results()
-    results.state = module.params.get("state", "")
-    results.check_mode = module.check_mode
-
-    orchestrator = ManageTorOrchestrator(rest_send=rest_send, results=results)
-    response_data = orchestrator.query_all()
-    gathered = NDConfigCollection.from_api_response(response_data=response_data, model_class=ManageTorModel)
-
-    output = NDOutput(output_level=module.params.get("output_level", "normal"))
-    output.assign(before=gathered, after=gathered)
-    module.exit_json(**output.format_with_verbosity(_verbosity_of(module), results))
-
-
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(ManageTorModel.get_argument_spec())
@@ -465,23 +458,18 @@ def main():
             except Exception as e:
                 module.fail_json(msg="Switch resolution failed: {0}".format(str(e)))
 
-    # Inject fabric_name into each config item for model construction (it is a
-    # path parameter, not a config suboption).
-    for item in config:
-        item["fabric_name"] = fabric_name
-
-    if state == "gathered":
-        try:
-            _run_gathered(module, fabric_name)
-        except Exception as e:
-            module.fail_json(msg="Module execution failed: {0}".format(str(e)))
-        return
+        # Inject fabric_name into each config item for model construction (it is
+        # a path parameter, not a config suboption).  Gathered config is ignored
+        # and must not be normalized into proposed state.
+        for item in config:
+            item["fabric_name"] = fabric_name
 
     nd_state_machine = None
     try:
         nd_state_machine = NDStateMachine(
             module=module,
             model_orchestrator=ManageTorOrchestrator,
+            config=[] if state == "gathered" else None,
         )
         nd_state_machine.manage_state()
 

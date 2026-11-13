@@ -122,6 +122,45 @@ def test_flatten_resources_from_response():
     assert model.aggregation_or_leaf_port_channel_id == 502
 
 
+def test_to_gathered_config_is_replay_safe():
+    """Gathered output uses only config[] option names and preserves resources."""
+    model = ManageTorModel.from_response(
+        {
+            "fabricName": "fab1",
+            "accessOrTorSwitchId": "T1",
+            "aggregationOrLeafSwitchId": "L1",
+            "accessOrTorPeerSwitchId": "T2",
+            "aggregationOrLeafPeerSwitchId": "L2",
+            "accessOrTorSwitchName": "tor-1",
+            "accessOrTorPeerSwitchName": "tor-2",
+            "resources": {
+                "accessOrTorPortChannelId": 501,
+                "aggregationOrLeafPortChannelId": 502,
+                "accessOrTorPeerPortChannelId": 503,
+                "aggregationOrLeafPeerPortChannelId": 504,
+                "accessOrTorVpcId": 1,
+                "aggregationOrLeafVpcId": 2,
+            },
+        }
+    )
+
+    gathered = model.to_gathered_config()
+
+    assert gathered == {
+        "access_or_tor_switch": "T1",
+        "aggregation_or_leaf_switch": "L1",
+        "access_or_tor_peer_switch": "T2",
+        "aggregation_or_leaf_peer_switch": "L2",
+        "access_or_tor_port_channel_id": 501,
+        "aggregation_or_leaf_port_channel_id": 502,
+        "access_or_tor_peer_port_channel_id": 503,
+        "access_or_tor_vpc_id": 1,
+        "aggregation_or_leaf_peer_port_channel_id": 504,
+        "aggregation_or_leaf_vpc_id": 2,
+    }
+    assert set(gathered).issubset(ManageTorModel.get_argument_spec()["config"]["options"])
+
+
 def test_identity_is_order_independent_for_vpc_pairs():
     """The identity is invariant to which vPC pair member is primary vs peer, so
     a user config matches the same association ND stores with the pair normalized

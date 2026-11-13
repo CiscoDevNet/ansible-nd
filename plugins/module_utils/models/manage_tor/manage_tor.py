@@ -124,6 +124,36 @@ class ManageTorModel(NDBaseModel):
 
         return data
 
+    def to_gathered_config(self, **kwargs) -> Dict[str, Any]:
+        """Return a replay-safe ``config[]`` entry for gathered state.
+
+        Controller responses use the internal ``*_switch_id`` field names,
+        while the module argument specification exposes ``*_switch`` options
+        that accept either serial numbers or management addresses.  Gathered
+        output must use the latter names so it can be passed directly back to
+        the module as ``config``.
+        """
+        data = super().to_gathered_config(**kwargs)
+
+        switch_fields = {
+            "access_or_tor_switch_id": "access_or_tor_switch",
+            "aggregation_or_leaf_switch_id": "aggregation_or_leaf_switch",
+            "access_or_tor_peer_switch_id": "access_or_tor_peer_switch",
+            "aggregation_or_leaf_peer_switch_id": "aggregation_or_leaf_peer_switch",
+        }
+        for internal_name, config_name in switch_fields.items():
+            value = data.pop(internal_name, None)
+            if value is not None:
+                data[config_name] = value
+
+        # fabric_name is supplied once at module scope.  Switch names are
+        # controller-populated display fields and are not accepted by config[].
+        data.pop("fabric_name", None)
+        data.pop("access_or_tor_switch_name", None)
+        data.pop("access_or_tor_peer_switch_name", None)
+
+        return data
+
     # --- Identity ---
 
     def get_identifier_value(self) -> Tuple[Any, ...]:
