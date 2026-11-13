@@ -222,3 +222,39 @@ def test_routed_residue_correction_stages_only_under_proven_child_delete(monkeyp
     assert len(writes) == len(calls) == 1
     assert CHILD.casefold() in planner.snapshot._interfaces_by_switch[SWITCH]
     assert ethernet._has_blocking_child_subinterfaces(PARENT, SWITCH)
+
+
+@pytest.mark.parametrize(
+    "residue",
+    [
+        {"ip": "10.99.31.5", "prefix": 30, "routingTag": 54321, "ipRedirects": False, "pimSparse": True, "pimDrPriority": 100},
+        {"ip": "10.99.31.1", "prefix": "30", "ipRedirects": "false", "pimSparse": "true", "pimDrPriority": "100"},
+        {"ipRedirects": False, "pimSparse": False, "pimDrPriority": 1},
+    ],
+)
+def test_routed_residue_correction_accepts_retained_pim_dr_priority(monkeypatch, residue):
+    """Issue #692: ND 4.2.1 and 4.3.1 keep pimDrPriority on the normalized trunk policy; the correction must still run."""
+    planner, plan, executor, ethernet, _previews, _calls = _setup(monkeypatch)
+    defaults = InterfaceDefaultConfig.to_reset_payload(PARENT, SWITCH)
+    current = deepcopy(defaults)
+    current["configData"]["networkOS"]["policy"].update(residue)
+    planner.snapshot._interfaces_by_switch[SWITCH][PARENT.casefold()] = current
+    monkeypatch.setattr(planner.snapshot, "refresh", lambda _ids: _advance_snapshot(planner.snapshot))
+    monkeypatch.setattr(ethernet, "_check_port_channel_delete_restriction", lambda *_a, **_k: None)
+    monkeypatch.setattr(ethernet, "_check_fabric_ownership", lambda *_a, **_k: None)
+    monkeypatch.setattr(ethernet, "_fabric_link_endpoints", set)
+    monkeypatch.setattr(ethernet, "_retain_reset_auto_negotiation", lambda *_a, **_k: False)
+    writes = []
+
+    def put(**kwargs):
+        assert kwargs["verb"] == HttpVerbEnum.PUT
+        assert kwargs["data"] == defaults
+        writes.append(kwargs)
+        planner.snapshot._interfaces_by_switch[SWITCH][PARENT.casefold()] = deepcopy(defaults)
+        return {"status": "success"}
+
+    monkeypatch.setattr(ethernet, "_request", put)
+    with ethernet.staged_child_deletion_context(executor._staged_child_delete_resolver(plan)):
+        result = ethernet._correct_normalized_routed_residue([(PARENT, SWITCH)])
+    assert result == [{"status": "success"}]
+    assert len(writes) == 1

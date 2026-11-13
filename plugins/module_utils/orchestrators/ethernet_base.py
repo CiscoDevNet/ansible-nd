@@ -2677,7 +2677,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             self._verify_reset_auto_negotiation(group)
         return results
 
-    # TODO(4.3.1) TBD
+    # TODO(4.2.1) normalize-retains-routed-fields
     # ND can retain routed sibling fields after normalize. This correction uses
     # the qualified field set checked by has_typed_routed_sibling_residue.
     def _correct_normalized_routed_residue(self, pairs: Sequence[tuple[str, str]]) -> list[ResponseType]:
