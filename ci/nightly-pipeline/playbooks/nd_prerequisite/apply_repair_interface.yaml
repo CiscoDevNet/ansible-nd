@@ -1,0 +1,178 @@
+---
+- name: Validate the declared interface repair operation
+  ansible.builtin.assert:
+    that:
+      - _ndp_repair_operation.operation == 'repair_interface'
+      - _ndp_repair_operation.action in ['delete', 'routed', 'admin_up']
+      - _ndp_repair_operation.interface is match('^(Ethernet[0-9]+/[0-9]+|Port-channel[0-9]+)([.][0-9]+)?$')
+      - _ndp_repair_operation.serial == _ndp_registry.lab.switches[_ndp_repair_operation.switch_ref].serial
+      - >-
+        _ndp_repair_operation.action != 'delete' or
+        _ndp_repair_operation.interface is match('^(Ethernet[0-9]+/[0-9]+[.][0-9]+|Port-channel[0-9]+([.][0-9]+)?)$')
+    fail_msg: "Invalid baseline interface repair."
+  run_once: true
+
+- name: Recapture switch identity before interface repair
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_repair_operation.fabric_name }}/switches"
+    method: get
+  register: _ndp_repair_identity
+  no_log: true
+  run_once: true
+
+- name: Require an exact identity match before interface repair
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_ndp_repair_identity.current.switches | default([])
+         | selectattr('switchId', 'equalto', _ndp_repair_operation.serial)
+         | selectattr('fabricManagementIp', 'equalto', _ndp_repair_operation.switch_ip) | list | length) == 1
+    fail_msg: "Switch identity changed after planning; refusing interface repair."
+  run_once: true
+
+- name: Recapture legacy intent to detect changes since planning
+  cisco.nd.nd_rest:
+    path: "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/interface?serialNumber={{ _ndp_repair_operation.serial }}&ifName={{ _ndp_repair_operation.interface | replace('/', '%2F') }}"
+    method: get
+  register: _ndp_repair_current_intent
+  no_log: true
+  run_once: true
+  when: _ndp_repair_operation.action != 'admin_up'
+
+- name: Refuse a changed policy snapshot before destructive repair
+  ansible.builtin.assert:
+    that:
+      - _ndp_repair_objects | length == 1
+      - _ndp_repair_objects[0].policy == _ndp_repair_operation.expected_policy
+      - _ndp_repair_objects[0].interfaces | length == 1
+      - _ndp_repair_objects[0].interfaces[0].nvPairs == _ndp_repair_operation.expected_nv_pairs
+    fail_msg: "Interface changed since planning; refusing destructive repair."
+  vars:
+    _ndp_repair_objects: >-
+      {{ _ndp_repair_current_intent.current if _ndp_repair_current_intent.current is not mapping
+         else _ndp_repair_current_intent.current.DATA | default(_ndp_repair_current_intent.current.response | default([])) }}
+  run_once: true
+  when: _ndp_repair_operation.action != 'admin_up'
+
+- name: Capture complete interface intent before baseline repair
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_repair_operation.fabric_name }}/switches/{{ _ndp_repair_operation.serial }}/interfaces/{{ _ndp_repair_operation.interface | replace('/', '%2F') }}"
+    method: get
+  register: _ndp_repair_before
+  no_log: true
+  run_once: true
+
+- name: Require a captured managed interface before changing it
+  ansible.builtin.assert:
+    that:
+      - _ndp_repair_before.current.interfaceName | lower == _ndp_repair_operation.interface | lower
+      - _ndp_repair_before.current.configData is mapping
+      - _ndp_repair_before.current.configData.networkOS.policy is mapping
+      - _ndp_repair_before.current.interfaceType is defined
+    fail_msg: "Interface intent is incomplete; refusing baseline repair."
+  run_once: true
+
+- name: Capture each declared member before removing its port-channel
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_repair_operation.fabric_name }}/switches/{{ _ndp_repair_operation.serial }}/interfaces/{{ _ndp_repair_member | replace('/', '%2F') }}"
+    method: get
+  loop: "{{ _ndp_repair_operation.member_interfaces | default([]) }}"
+  loop_control:
+    loop_var: _ndp_repair_member
+  register: _ndp_repair_member_snapshots
+  no_log: true
+  run_once: true
+
+- name: Apply a required interface repair
+  when: >-
+    _ndp_repair_operation.action != 'admin_up' or
+    not (_ndp_repair_before.current.configData.networkOS.policy.adminState | default(false) | bool)
+  block:
+    - name: Journal the complete before-image before mutation
+      no_log: true
+      ansible.builtin.set_fact:
+        _ndp_baseline_repair_journal: >-
+          {{ _ndp_baseline_repair_journal + [_ndp_repair_operation | combine({
+            'before': _ndp_repair_before.current,
+            'member_before': _ndp_repair_member_snapshots.results | default([]) | map(attribute='current') | list})] }}
+      run_once: true
+
+    - name: Persist the private baseline repair before-image
+      ansible.builtin.copy:
+        dest: "{{ _ndp_state_dir }}/baseline-repair-journal.yaml"
+        content: "{{ {'run_id': _ndp_run_id, 'execution_id': _ndp_execution_id, 'operations': _ndp_baseline_repair_journal} | to_nice_yaml }}"
+        mode: "0600"
+      delegate_to: localhost
+      run_once: true
+      no_log: true
+
+    - name: Delete only the declared stale logical interface
+      cisco.nd.nd_rest:
+        path: /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/interface/markdelete
+        method: delete
+        content:
+          - serialNumber: "{{ _ndp_repair_operation.serial }}"
+            ifName: "{{ _ndp_repair_operation.interface }}"
+      when: _ndp_repair_operation.action == 'delete'
+      run_once: true
+
+    - name: Restore the declared routed policy or enable the declared endpoint
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ _ndp_repair_operation.fabric_name }}/switches/{{ _ndp_repair_operation.serial }}/interfaces/{{ _ndp_repair_operation.interface | replace('/', '%2F') }}"
+        method: put
+        content:
+          switchId: "{{ _ndp_repair_operation.serial }}"
+          interfaceName: "{{ _ndp_repair_operation.interface }}"
+          interfaceType: "{{ _ndp_repair_before.current.interfaceType }}"
+          configData: >-
+            {{ {'mode': 'routed', 'networkOS': {'networkOSType': 'nx-os',
+                 'policy': {'policyType': 'routedHost', 'adminState': true, 'mtu': 9216}}}
+               if _ndp_repair_operation.action == 'routed'
+               else _ndp_repair_before.current.configData | combine({'networkOS': {'policy': {'adminState': true}}}, recursive=True) }}
+      when: _ndp_repair_operation.action != 'delete'
+      no_log: true
+      run_once: true
+
+    - name: Deploy only the repaired interface
+      cisco.nd.nd_rest:
+        path: /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/globalInterface/deploy
+        method: post
+        content:
+          - serialNumber: "{{ _ndp_repair_operation.serial }}"
+            ifName: "{{ _ndp_repair_operation.interface }}"
+            fabricName: "{{ _ndp_repair_operation.fabric_name }}"
+      register: _ndp_repair_deploy
+      failed_when: false
+      no_log: true
+      run_once: true
+
+- name: Verify removal of the declared stale logical interface
+  cisco.nd.nd_rest:
+    path: "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/interface?serialNumber={{ _ndp_repair_operation.serial }}&ifName={{ _ndp_repair_operation.interface | replace('/', '%2F') }}"
+    method: get
+  register: _ndp_repair_deleted
+  retries: 12
+  delay: 5
+  until: >-
+    (_ndp_repair_deleted.current if _ndp_repair_deleted.current is not mapping
+     else _ndp_repair_deleted.current.DATA | default(_ndp_repair_deleted.current.response | default(['unverified']))) | length == 0
+  when: _ndp_repair_operation.action == 'delete'
+  no_log: true
+  run_once: true
+
+- name: Verify repaired interface intent and discovered routed mode
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_repair_operation.fabric_name }}/switches/{{ _ndp_repair_operation.serial }}/interfaces/{{ _ndp_repair_operation.interface | replace('/', '%2F') }}"
+    method: get
+  register: _ndp_repair_verified
+  retries: 20
+  delay: 15
+  until:
+    - _ndp_repair_verified.current.configData.networkOS.policy.adminState | default(false) | bool
+    - >-
+      _ndp_repair_operation.action != 'routed' or
+      (_ndp_repair_verified.current.configData.networkOS.policy.policyType | default('') == 'routedHost'
+       and _ndp_repair_verified.current.operData.mode | default('') | lower == 'routed')
+  when: _ndp_repair_operation.action != 'delete'
+  no_log: true
+  run_once: true

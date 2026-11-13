@@ -1,0 +1,382 @@
+{
+  "template": "Jenkinsfile_nd_jenkins_script_comm_list",
+  "template_sha256": "bac6ba6d3219be8523e313608d46f752ccd868425c65028bb3eb69672b02528a",
+  "target_count": 34,
+  "status": "generated_offline_not_deployed_or_live_validated",
+  "targets": [
+    {
+      "number": 1,
+      "target": "nd_manage_policy",
+      "file": "Jenkinsfile_nd_manage_policy",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "b2083969a63c60fd5f88a6338dd9d2270ada2dabad9442a04e92d334effb2429"
+    },
+    {
+      "number": 2,
+      "target": "nd_manage_policy_group",
+      "file": "Jenkinsfile_nd_manage_policy_group",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "2454b4490b02dd093ed06105c36171563b26e88f019db566101a4c2adc255d4c"
+    },
+    {
+      "number": 3,
+      "target": "nd_vpc_pair.advanced",
+      "file": "Jenkinsfile_nd_vpc_pair_advanced",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "9a86333c09e421135c1bbf37ae0fcf4a4d3cb50c814627cbe88791892ee2d7ae"
+    },
+    {
+      "number": 4,
+      "target": "nd_vpc_pair.external",
+      "file": "Jenkinsfile_nd_vpc_pair_external",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "c7e0328e7ee6dc9c77442a8ca543ec8feca56e937b6ee79acb04e62e753cd9d0"
+    },
+    {
+      "number": 5,
+      "target": "nd_manage_route_map",
+      "file": "Jenkinsfile_nd_manage_route_map",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "579f854305890341b4330470a3fd622796451163fde0e558593b36547edc79f9"
+    },
+    {
+      "number": 6,
+      "target": "nd_manage_prefix_list",
+      "file": "Jenkinsfile_nd_manage_prefix_list",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "9917f8e8586c74426b25b2d042a4ed3a7ea64a06adcd3973bd5c1e137f2f97dc"
+    },
+    {
+      "number": 7,
+      "target": "nd_manage_acl",
+      "file": "Jenkinsfile_nd_manage_acl",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "eea6ed1471cef2bc7eb3b19262a7c93a36c457609481111abc34dd9f665641aa"
+    },
+    {
+      "number": 8,
+      "target": "nd_manage_community_list",
+      "file": "Jenkinsfile_nd_manage_community_list",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "a5f2ce845852ba32ee6450418c73cae49183af9d1bb2e86f9288b987020ad835"
+    },
+    {
+      "number": 9,
+      "target": "nd_manage_extended_community_list",
+      "file": "Jenkinsfile_nd_manage_extended_community_list",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "72b61bdff2541f2eb0084eb45e864b312ddc8c2cb794694ad285cb4a30d8db84"
+    },
+    {
+      "number": 10,
+      "target": "nd_manage_l3out",
+      "file": "Jenkinsfile_nd_manage_l3out",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "a7638488d1caf04a965bad793a5d7882ac52fa34d7ff7ba695b16a211e3b1c74"
+    },
+    {
+      "number": 11,
+      "target": "nd_manage_vrfs",
+      "file": "Jenkinsfile_nd_manage_vrfs",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "16d909125b2603d9a08c1f91b0e0cbe51fdce79067f9055edce30076d2397362"
+    },
+    {
+      "number": 12,
+      "target": "nd_manage_networks",
+      "file": "Jenkinsfile_nd_manage_networks",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "e0b990850b109047987804c1f680e6923d48eb881db180b6344a1c6761a62575"
+    },
+    {
+      "number": 13,
+      "target": "nd_manage_fabric_group_vxlan",
+      "file": "Jenkinsfile_nd_manage_fabric_group_vxlan",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "9a57842dedc52b399e3f9378b2342d848a286b593ea314099d3172255bfcc816"
+    },
+    {
+      "number": 14,
+      "target": "nd_manage_fabric_group_members",
+      "file": "Jenkinsfile_nd_manage_fabric_group_members",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "56ce9e31b96fce21dc9953091f8b72e1e65c7e8792c4526bac4b20a83777107f"
+    },
+    {
+      "number": 15,
+      "target": "nd_local_user",
+      "file": "Jenkinsfile_nd_local_user",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "af7a98bfe51870beceffc4b73db2954153a3c58767cbad2ec410c5861c91f785"
+    },
+    {
+      "number": 16,
+      "target": "nd_manage_tor",
+      "file": "Jenkinsfile_nd_manage_tor",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "717030f8edfb4a05ca4a97cc7aaecff0db7cc75b06c961a748a17d8d3152468c"
+    },
+    {
+      "number": 17,
+      "target": "nd_maintenance_mode",
+      "file": "Jenkinsfile_nd_maintenance_mode",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "469bb53de868ea162ee43ad61ffd7d38bbfaa67d228599736cdd650e167e63fe"
+    },
+    {
+      "number": 18,
+      "target": "nd_fabric_update_group",
+      "file": "Jenkinsfile_nd_fabric_update_group",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "51adb5da0a6bf58f5b650b6f13f5d67f5e85ab7eac390ded82e3e4e0493b243a"
+    },
+    {
+      "number": 19,
+      "target": "nd_interface_loopback",
+      "file": "Jenkinsfile_nd_interface_loopback",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "36d71f1b4990cce1a836d336af71aebe938a44efb380af911d1f1a1a62f86ac1"
+    },
+    {
+      "number": 20,
+      "target": "nd_interface_svi",
+      "file": "Jenkinsfile_nd_interface_svi",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "113781dd324c3ac1475332d577f1958321e8ee083f56b359db859c0585ebf639"
+    },
+    {
+      "number": 21,
+      "target": "nd_interface_ethernet_access",
+      "file": "Jenkinsfile_nd_interface_ethernet_access",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "9dbd1857e1919d90b72799c9910e229eddadde13d3b3b007ad733719d6d23416"
+    },
+    {
+      "number": 22,
+      "target": "nd_interface_ethernet_trunk_host",
+      "file": "Jenkinsfile_nd_interface_ethernet_trunk_host",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "ada397f9eaae99a19bd987e2a5effba376637ff4c86904bc881fac9cd223162c"
+    },
+    {
+      "number": 23,
+      "target": "nd_interface_ethernet_routed",
+      "file": "Jenkinsfile_nd_interface_ethernet_routed",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "9486af1db50f3eabdf5e1afea3fe6a5e0c9bd05311a0fd880898dbb88558090b"
+    },
+    {
+      "number": 24,
+      "target": "nd_interface_port_channel_access",
+      "file": "Jenkinsfile_nd_interface_port_channel_access",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "44a632b36d4c6e374d4e4d82ddc3afa996f3c8a8d72e1d6cc7a865a3ef31cdad"
+    },
+    {
+      "number": 25,
+      "target": "nd_interface_port_channel_trunk_host",
+      "file": "Jenkinsfile_nd_interface_port_channel_trunk_host",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "8723fdfafe3d3cac3e1636f12ff57112102964ab99fef9b5d1132db3d80090de"
+    },
+    {
+      "number": 26,
+      "target": "nd_interface_port_channel_routed",
+      "file": "Jenkinsfile_nd_interface_port_channel_routed",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "fe4facca4cc836c82e1f3cd546c32778fae920635c6e32f2f5c4702da9a333c0"
+    },
+    {
+      "number": 27,
+      "target": "nd_interface_subinterface_managed",
+      "file": "Jenkinsfile_nd_interface_subinterface_managed",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "87e3b52bc9ce0bc3c992b154ee6f7a815b18696b8581e5a1aecd6bb4fbf2b4fc"
+    },
+    {
+      "number": 28,
+      "target": "nd_interface_subinterface_unmanaged",
+      "file": "Jenkinsfile_nd_interface_subinterface_unmanaged",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "d309970d38e8b1b464083663f328cca766e61015ca5c42e300b1eb5c383402b7"
+    },
+    {
+      "number": 29,
+      "target": "nd_interface_vpc_access",
+      "file": "Jenkinsfile_nd_interface_vpc_access",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "298fa090551a79b27e091ea6669a3ed090a5147cfa362231b871e128fb687752"
+    },
+    {
+      "number": 30,
+      "target": "nd_interface_vpc_trunk_host",
+      "file": "Jenkinsfile_nd_interface_vpc_trunk_host",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "c17b67b434a21adc5d7f9a086eb9dab3dd1a3b4806c472719bd43b6f7053f8a1"
+    },
+    {
+      "number": 31,
+      "target": "nd_resource_manager",
+      "file": "Jenkinsfile_nd_resource_manager",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "4bbb0670446f701a0dc7642a24072369fb203454be829708bbcbfa656287b6bb"
+    },
+    {
+      "number": 32,
+      "target": "nd_manage_fabric",
+      "file": "Jenkinsfile_nd_manage_fabric",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "3cc77ed0268b53d2d908ba3c7f3a71824226f7d9bec9f9fda307408ee31cf426"
+    },
+    {
+      "number": 33,
+      "target": "nd_manage_links",
+      "file": "Jenkinsfile_nd_manage_links",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "3753f67b2c28a281259cc22612b823ae784b0774c8a6f8d6d7b914ad37f0a536"
+    },
+    {
+      "number": 34,
+      "target": "nd_manage_switches",
+      "file": "Jenkinsfile_nd_manage_switches",
+      "webex": "private",
+      "rounds": [
+        "iBGP",
+        "eBGP"
+      ],
+      "sha256": "4069de4fb42b133d0a1be1f3c71788b3652e9b13a30464acad775d24f0e6edc5"
+    }
+  ]
+}

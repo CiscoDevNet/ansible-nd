@@ -1,0 +1,22 @@
+---
+- name: vPC pair pre-clean
+  hosts: nd_controller
+  gather_facts: false
+  tasks:
+    - name: Remove any existing vPC pair for this fixed lab pair
+      cisco.nd.nd_manage_vpc_pair:
+        output_level: debug
+        fabric_name: "{{ preclean_fabric }}"
+        state: deleted
+        config_actions:
+          save: false
+          deploy: false
+          type: switch
+        config:
+          - peer1_switch_id: "{{ preclean_s1 }}"
+            peer2_switch_id: "{{ preclean_s2 }}"
+      register: _vpc_preclean
+      failed_when: false
+    - name: Report pre-clean outcome
+      ansible.builtin.debug:
+        msg: "NDP_VPC_PRECLEAN_{{ 'CHANGED' if (_vpc_preclean.changed | default(false)) else 'NOOP' }} fabric={{ preclean_fabric }} peers={{ preclean_s1 }}/{{ preclean_s2 }} failed={{ _vpc_preclean.failed | default(false) }}"

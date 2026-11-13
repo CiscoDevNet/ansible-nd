@@ -1,0 +1,134 @@
+---
+- name: Require live execution for baseline repair
+  ansible.builtin.assert:
+    that:
+      - nd_prerequisite_mode | default('fixture') == 'live'
+      - nd_prerequisite_apply | default(false) | bool
+      - not (nd_prerequisite_only | default(false) | bool)
+      - not ansible_check_mode
+      - nd_prerequisite_repair_baseline | default(false) | bool
+      - _ndp_baseline_repair_lock_acquired | default(false) | bool
+    fail_msg: "Baseline repair requires explicitly enabled live/apply execution."
+  run_once: true
+
+- name: Create private baseline repair state directory
+  ansible.builtin.file:
+    path: "{{ _ndp_state_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+
+- name: Capture live fabric types before any baseline mutation
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_repair_fabric.value.name }}"
+    method: get
+  loop: "{{ _ndp_registry.lab.fabrics | dict2items | selectattr('value.lifecycle', 'in', ['retained', 'preserved']) | list }}"
+  loop_control:
+    loop_var: _ndp_repair_fabric
+  register: _ndp_repair_fabric_results
+  no_log: true
+  run_once: true
+
+- name: Require the declared fabric types before baseline repair
+  ansible.builtin.assert:
+    that:
+      - _ndp_repair_fabric_result.current.management.type == _ndp_repair_fabric_result._ndp_repair_fabric.value.type
+    fail_msg: "Fabric type mismatch; refusing baseline mutation."
+  loop: "{{ _ndp_repair_fabric_results.results }}"
+  loop_control:
+    loop_var: _ndp_repair_fabric_result
+  no_log: true
+  run_once: true
+
+- name: Capture switch identities across declared retained fabrics
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_repair_fabric.value.name }}/switches"
+    method: get
+  loop: "{{ _ndp_registry.lab.fabrics | dict2items | selectattr('value.lifecycle', 'in', ['retained', 'preserved']) | list }}"
+  loop_control:
+    loop_var: _ndp_repair_fabric
+    label: "{{ _ndp_repair_fabric.key }}"
+  register: _ndp_repair_inventory_results
+  no_log: true
+  run_once: true
+
+- name: Initialize captured repair inventory
+  ansible.builtin.set_fact:
+    _ndp_repair_inventory: []
+  run_once: true
+
+- name: Require complete repair inventory responses
+  ansible.builtin.assert:
+    that:
+      - _ndp_repair_inventory_result.current.switches is defined
+      - _ndp_repair_inventory_result.current.switches is sequence
+      - _ndp_repair_inventory_result.current.switches is not string
+      - _ndp_repair_inventory_result.current.switches is not mapping
+    fail_msg: "Incomplete switch inventory; refusing baseline repair."
+  loop: "{{ _ndp_repair_inventory_results.results }}"
+  loop_control:
+    loop_var: _ndp_repair_inventory_result
+  no_log: true
+  run_once: true
+
+- name: Assemble the identity inventory for offline repair planning
+  ansible.builtin.set_fact:
+    _ndp_repair_inventory: >-
+      {{ _ndp_repair_inventory + [{'fabric_ref': _ndp_repair_inventory_result._ndp_repair_fabric.key,
+                                  'switches': _ndp_repair_inventory_result.current.switches}] }}
+  loop: "{{ _ndp_repair_inventory_results.results }}"
+  loop_control:
+    loop_var: _ndp_repair_inventory_result
+  no_log: true
+  run_once: true
+
+- name: Persist private switch repair inventory
+  ansible.builtin.copy:
+    dest: "{{ _ndp_state_dir }}/repair-inventory.yaml"
+    content: "{{ {'inventory': _ndp_repair_inventory} | to_nice_yaml }}"
+    mode: "0600"
+  delegate_to: localhost
+  run_once: true
+
+- name: Initialize state before switch recovery and full capture
+  ansible.builtin.copy:
+    dest: "{{ _ndp_state_file }}"
+    content: "{{ {'switches': {}} | to_nice_yaml }}"
+    mode: "0600"
+  delegate_to: localhost
+  run_once: true
+  when: _ndp_repair_stage == 'switches'
+
+- name: Plan declared baseline repairs offline
+  ansible.builtin.command:
+    argv: "{{ _ndp_argv + ['--repair-stage', _ndp_repair_stage, '--switch-inventory', _ndp_state_dir ~ '/repair-inventory.yaml'] }}"
+  delegate_to: localhost
+  changed_when: false
+  register: _ndp_repair_plan
+  run_once: true
+
+- name: Report the scoped baseline repair plan
+  ansible.builtin.debug:
+    msg: "NDP_BASELINE_REPAIR {{ _ndp_repair_stage }}: {{ (_ndp_repair_plan.stdout | from_json).operations | length }} operation(s)"
+  run_once: true
+
+- name: Apply and verify each declared baseline repair
+  ansible.builtin.include_tasks: "apply_{{ _ndp_repair_operation.operation }}.yaml"
+  loop: "{{ (_ndp_repair_plan.stdout | from_json).operations }}"
+  loop_control:
+    loop_var: _ndp_repair_operation
+    label: "{{ _ndp_repair_operation.action }} {{ _ndp_repair_operation.switch_ref }}/{{ _ndp_repair_operation.interface | default('switch') }}"
+
+- name: Recapture actual controller state after interface repairs
+  ansible.builtin.include_tasks: nd_prerequisite_capture.yaml
+  when:
+    - _ndp_repair_stage == 'interfaces'
+    - (_ndp_repair_plan.stdout | from_json).operations | length > 0
+
+- name: Stop repair passes when no destructive interface repairs remain
+  ansible.builtin.set_fact:
+    _ndp_baseline_repair_interfaces_done: >-
+      {{ (_ndp_repair_plan.stdout | from_json).operations | rejectattr('action', 'equalto', 'admin_up') | list | length == 0 }}
+  when: _ndp_repair_stage == 'interfaces'
+  run_once: true
