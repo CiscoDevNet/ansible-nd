@@ -8,7 +8,12 @@ from typing import Any, ClassVar, Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field, PrivateAttr, ValidationError, model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.links.templates.base import LinkTemplateBase
-from ansible_collections.cisco.nd.plugins.module_utils.models.links.templates.discriminated_union import LinkTemplateInputs, all_secret_template_input_keys
+from ansible_collections.cisco.nd.plugins.module_utils.models.links.templates.discriminated_union import (
+    ADDITIONAL_POLICY_TYPES,
+    SUPPORTED_POLICY_TYPES,
+    LinkTemplateInputs,
+    all_secret_template_input_keys,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.links.templates.unsupported import UnsupportedTemplateInputs
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.utils import NO_LOG_PLACEHOLDER
@@ -107,6 +112,11 @@ class LinkConfigDataModel(NDNestedModel):
         if not policy_type:
             return data
         key = "template_inputs" if "template_inputs" in data else "templateInputs" if "templateInputs" in data else None
+        # New policies must also validate required inputs and select their model
+        # when template_inputs is omitted. serviceVpcTrunk has no input object
+        # on the wire, but still needs its empty discriminator model locally.
+        if policy_type in ADDITIONAL_POLICY_TYPES and (key is None or data.get(key) is None):
+            return {**data, key or "template_inputs": {"policy_type_marker": policy_type}}
         if key is None:
             return data
         template_inputs = data.get(key)
@@ -240,6 +250,7 @@ class NDLinkModel(NDBaseModel):
     ]
     _ASYMMETRIC_MASKED_ADDRESS_PAIRS: ClassVar[list] = [
         ("srcIpAddressMask", "dstIpAddress"),
+        ("srcIpAddressMask", "dstIp"),
         ("srcIpv6AddressMask", "dstIpv6Address"),
     ]
 
@@ -580,11 +591,17 @@ class NDLinkModel(NDBaseModel):
 
     def to_payload(self, **kwargs: Any) -> dict[str, Any]:
         """Serialize for POST/PUT, sending ND's documented defaults for unset template fields."""
+        controller_version = kwargs.pop("controller_version", None)
+        template = getattr(self.config_data, "template_inputs", None)
+        if isinstance(template, LinkTemplateBase):
+            template.validate_controller_version(controller_version)
         data = super().to_payload(**kwargs)
-        self._fill_template_inputs_defaults(data)
+        self._fill_template_inputs_defaults(data, controller_version=controller_version)
+        if self.config_data is not None and self.config_data.policy_type == "serviceVpcTrunk":
+            data.get("configData", {}).pop("templateInputs", None)
         return data
 
-    def _fill_template_inputs_defaults(self, data: dict[str, Any]) -> None:
+    def _fill_template_inputs_defaults(self, data: dict[str, Any], controller_version: str | None = None) -> None:
         """Fill every unset template field so the payload carries all keys.
 
         ND's Jython template engine references every declared field by key, so a
@@ -605,7 +622,7 @@ class NDLinkModel(NDBaseModel):
         if not isinstance(template_inputs, dict):
             return
         tmpl_cls = type(self.config_data.template_inputs)
-        LinkTemplateBase.apply_payload_defaults(template_inputs, tmpl_cls)
+        LinkTemplateBase.apply_payload_defaults(template_inputs, tmpl_cls, controller_version=controller_version)
 
     @classmethod
     def get_argument_spec(cls) -> dict:
@@ -641,22 +658,7 @@ class NDLinkModel(NDBaseModel):
                         options=dict(
                             policy_type=dict(
                                 type="str",
-                                choices=[
-                                    "numbered",
-                                    "unnumbered",
-                                    "ipv6LinkLocal",
-                                    "ebgpVrfLite",
-                                    "iosXeNumbered",
-                                    "layer2Dci",
-                                    "layer3DciVrfLite",
-                                    "multisiteOverlay",
-                                    "multisiteUnderlay",
-                                    "mplsOverlay",
-                                    "mplsUnderlay",
-                                    "preprovision",
-                                    "userDefined",
-                                    "vpcPeerKeepalive",
-                                ],
+                                choices=list(SUPPORTED_POLICY_TYPES),
                             ),
                             template_name=dict(type="str"),
                             template_inputs=dict(type="dict"),

@@ -18,7 +18,8 @@ sent as ``""`` never triggers an update; re-supply it on update or it is blanked
 
 from __future__ import annotations
 
-from typing import Any
+import re
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict, Field, model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
@@ -153,6 +154,47 @@ class LinkTemplateBase(NDNestedModel):
     """
 
     model_config = ConfigDict(extra="forbid")
+    minimum_nd_version: ClassVar[tuple[int, int] | None] = None
+
+    @staticmethod
+    def controller_release(controller_version: str | None) -> tuple[int, int] | None:
+        """Read the major/minor release from an ND build such as 4.3.1.10."""
+        if not isinstance(controller_version, str):
+            return None
+        match = re.search(r"\b(\d+)\.(\d+)(?:\.|\b)", controller_version)
+        return (int(match.group(1)), int(match.group(2))) if match else None
+
+    @staticmethod
+    def _field_available(extra: dict[str, Any], release: tuple[int, int] | None) -> bool:
+        minimum = extra.get("min_nd_version")
+        maximum = extra.get("max_nd_version")
+        if minimum is None and maximum is None:
+            return True
+        if release is None:
+            return False
+        return (minimum is None or release >= tuple(minimum)) and (maximum is None or release <= tuple(maximum))
+
+    def validate_controller_version(self, controller_version: str | None) -> None:
+        """Reject release-specific intent before normal or check-mode execution.
+
+        An unknown version permits only the common field surface. This avoids
+        guessing a release or silently discarding an explicitly requested field.
+        """
+        release = self.controller_release(controller_version)
+        policy = getattr(self, "policy_type_marker", type(self).__name__)
+        minimum = self.minimum_nd_version
+        if minimum is not None and (release is None or release < minimum):
+            raise ValueError("Policy '{0}' requires Nexus Dashboard {1}.{2} or later and a known controller version.".format(policy, *minimum))
+        for name, field in type(self).model_fields.items():
+            extra = field.json_schema_extra
+            if not isinstance(extra, dict) or getattr(self, name, None) is None:
+                continue
+            if not self._field_available(extra, release):
+                raise ValueError(
+                    "Field '{0}' on policy '{1}' is unavailable for controller version '{2}'.".format(
+                        field.alias or name, policy, controller_version or "unknown"
+                    )
+                )
 
     @model_validator(mode="before")
     @classmethod
@@ -220,6 +262,12 @@ class LinkTemplateBase(NDNestedModel):
             max_length = extra.get("max_length")
             if max_length is not None and isinstance(value, str) and len(value) > max_length:
                 raise ValueError("'{0}' exceeds the maximum length of {1} characters for policy_type '{2}'.".format(alias, max_length, policy))
+            min_length = extra.get("min_length")
+            if min_length is not None and isinstance(value, str) and len(value) < min_length:
+                raise ValueError("'{0}' is shorter than {1} characters for policy_type '{2}'.".format(alias, min_length, policy))
+            pattern = extra.get("pattern")
+            if pattern is not None and isinstance(value, str) and re.search(pattern, value) is None:
+                raise ValueError("'{0}' does not match the required pattern for policy_type '{1}'.".format(alias, policy))
         return self
 
     def write_contract_invalid_field_keys(self, by_alias: bool = False) -> set[str]:
@@ -243,11 +291,15 @@ class LinkTemplateBase(NDNestedModel):
             minimum = extra.get("minimum")
             maximum = extra.get("maximum")
             max_length = extra.get("max_length")
+            min_length = extra.get("min_length")
+            pattern = extra.get("pattern")
             violates_contract = (
                 (choices is not None and value is not None and value not in choices)
                 or (minimum is not None and isinstance(value, int) and not isinstance(value, bool) and value < minimum)
                 or (maximum is not None and isinstance(value, int) and not isinstance(value, bool) and value > maximum)
                 or (max_length is not None and isinstance(value, str) and len(value) > max_length)
+                or (min_length is not None and isinstance(value, str) and len(value) < min_length)
+                or (pattern is not None and isinstance(value, str) and re.search(pattern, value) is None)
             )
             if violates_contract:
                 invalid.add((field_info.alias or field_name) if by_alias else field_name)
@@ -277,7 +329,7 @@ class LinkTemplateBase(NDNestedModel):
         return _NO_DEFAULT
 
     @classmethod
-    def apply_payload_defaults(cls, template_inputs: dict[str, Any], tmpl_cls: type) -> None:
+    def apply_payload_defaults(cls, template_inputs: dict[str, Any], tmpl_cls: type, controller_version: str | None = None) -> None:
         """Fill an aliased ``templateInputs`` dict for a create/update request.
 
         ND's Jython template engine references every known field by key, so a
@@ -292,13 +344,24 @@ class LinkTemplateBase(NDNestedModel):
           key is present. Secrets are still excluded from the diff, so a
           secret-only change never triggers an update; re-supply a secret when
           updating a link, otherwise it is written empty.
+
+        Release-specific fields are included only for the selected release.
+        ``omit_if_unset`` fields have no safe synthesized value and remain absent.
         """
+        release = cls.controller_release(controller_version)
         for field_name, field_info in tmpl_cls.model_fields.items():
             if field_info.exclude:
                 continue
             alias = field_info.alias or field_name
+            extra = field_info.json_schema_extra or {}
+            if not cls._field_available(extra, release):
+                template_inputs.pop(alias, None)
+                continue
             if template_inputs.get(alias) is not None:
                 continue  # user-provided value; keep as-is
+            if extra.get("omit_if_unset"):
+                template_inputs.pop(alias, None)
+                continue
             default = cls._documented_default(field_info)
             if default is not _NO_DEFAULT:
                 template_inputs[alias] = default
@@ -342,6 +405,8 @@ class LinkTemplateBase(NDNestedModel):
             if field_info.exclude:
                 continue
             alias = field_info.alias or field_name
+            if (field_info.json_schema_extra or {}).get("omit_if_unset"):
+                continue
             effective_default = self._documented_default(field_info)
             if effective_default is _NO_DEFAULT:
                 effective_default = self._empty_for_annotation(field_info.annotation)
@@ -350,6 +415,8 @@ class LinkTemplateBase(NDNestedModel):
 
     def to_payload(self, **kwargs: Any) -> dict[str, Any]:
         """Serialize for POST/PUT, sending ND's documented defaults for unset fields."""
+        controller_version = kwargs.pop("controller_version", None)
+        self.validate_controller_version(controller_version)
         data = self.model_dump(
             by_alias=True,
             exclude_none=True,
@@ -357,5 +424,5 @@ class LinkTemplateBase(NDNestedModel):
             context={"mode": "payload"},
             exclude=self.payload_exclude_fields or None,
         )
-        self.apply_payload_defaults(data, self.__class__)
+        self.apply_payload_defaults(data, self.__class__, controller_version=controller_version)
         return data
