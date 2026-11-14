@@ -288,7 +288,7 @@ def test_manage_fabric_group_vxlan_00310():
     assert secret not in str(exc.value)
 
 
-@pytest.mark.parametrize("length", [1, 80, 160])
+@pytest.mark.parametrize("length", [1, 80, 160, 161, 164])
 def test_manage_fabric_group_vxlan_00320(length):
     """
     # Summary
@@ -297,13 +297,13 @@ def test_manage_fabric_group_vxlan_00320(length):
 
     ## Test
 
-    - Keys of 1..160 characters are accepted
+    - Keys of 1..164 characters are accepted, matching the native templates
     """
     model = _model({"multisite_inter_connect_bgp_key": "a" * length})
     assert len(model.management.multisite_inter_connect_bgp_key.get_secret_value()) == length
 
 
-@pytest.mark.parametrize("length", [161, 164, 256])
+@pytest.mark.parametrize("length", [165, 256, 257])
 def test_manage_fabric_group_vxlan_00330(length):
     """
     # Summary
@@ -312,9 +312,8 @@ def test_manage_fabric_group_vxlan_00330(length):
 
     ## Test
 
-    - Keys longer than 160 characters raise ValidationError. ND itself rejects
-      anything over 164 with an opaque HTTP 500 on both 4.2.1 and 4.3.1, so this
-      is enforced client-side to fail fast with a clear message.
+    - Keys longer than the native templates' limit of 164 characters raise
+      ValidationError before they reach the controller.
     """
     with pytest.raises(ValidationError):
         _model({"multisite_inter_connect_bgp_key": "a" * length})
