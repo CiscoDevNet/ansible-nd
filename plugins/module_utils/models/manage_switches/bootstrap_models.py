@@ -45,6 +45,7 @@ class BootstrapBaseData(NDNestedModel):
     identifiers: ClassVar[list[str]] = []
     gateway_ip_mask: str | None = Field(default=None, alias="gatewayIpMask", description="Gateway IP address with mask")
     models: list[str] | None = Field(default=None, description="Supported models for switch")
+    breakout: str | None = Field(default=None, description="NX-OS breakout commands used during bootstrap")
 
     @field_validator("gateway_ip_mask", mode="before")
     @classmethod

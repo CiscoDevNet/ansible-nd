@@ -13,7 +13,8 @@ operations, and coordinates POAP and RMA workflows.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -331,6 +332,44 @@ class BootstrapCache:
         self._switches = None
         self._index = None
 
+    def wait_for_serials(self, serial_numbers: list[str]) -> dict[str, dict[str, Any]]:
+        """Wait once for a batch of physical switches to enter the POAP list.
+
+        This wait precedes bootstrap and serial-swap writes. Synthetic
+        pre-provisioned serials are not candidates and must not be passed here.
+        A zero timeout performs the initial lookup without polling.
+        """
+        required = set(serial_numbers)
+        if not required:
+            return {}
+        options = self._nd.module.params.get("bootstrap_wait") or {}
+        timeout = options.get("timeout", 300)
+        interval = options.get("interval", 5)
+        deadline = time.monotonic() + timeout
+        index = self.get_index(refresh=True)
+        while True:
+            missing = sorted(required.difference(index))
+            if not missing:
+                return index
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self._nd.module.fail_json(
+                    msg=(
+                        f"Timed out after {timeout} seconds waiting for POAP candidates "
+                        f"in fabric '{self._fabric}'. Missing serials: {', '.join(missing)}. "
+                        "Ensure the switches are powered on, POAP/DHCP is enabled, "
+                        "and the management network can reach the bootstrap service."
+                    )
+                )
+            self._log.info(
+                "Waiting for POAP serials %s in fabric %s (%.1f seconds remaining)",
+                missing,
+                self._fabric,
+                remaining,
+            )
+            time.sleep(min(interval, remaining))
+            index = self.get_index(refresh=True)
+
 
 # =========================================================================
 # Validation & Diff
@@ -384,6 +423,7 @@ class SwitchPlan:
 
     # Cross-cutting helpers
     to_delete_existing: list["SwitchDataModel"]
+    role_updates: list["SwitchConfigModel"] = field(default_factory=list)
 
 
 class SwitchDiffEngine:
@@ -510,8 +550,9 @@ class SwitchDiffEngine:
           - Preprovision mismatch, ``discovery_status == UNREACHABLE`` → ``to_preprovision``
           - Preprovision mismatch, anything else → ``normal_readd``
 
-        * **swap** — always active (no idempotency check; the caller validates
-          preconditions).
+        * **swap** — an existing physical serial at the desired IP is preserved;
+          role drift is updated in place. Active bootstrap records distinguish
+          interrupted imports from switches that are merely offline.
         * **rma** — always active (no idempotency check; caller validates).
 
         ## Parameters
@@ -533,6 +574,7 @@ class SwitchDiffEngine:
 
         _idx = FabricSwitchInventory(existing)
         existing_by_ip: dict[str, SwitchDataModel] = _idx.by_ip()
+        existing_serials = {serial for sw in existing for serial in (sw.switch_id, sw.serial_number) if serial}
 
         # Output buckets
         to_add: list[SwitchConfigModel] = []
@@ -545,6 +587,7 @@ class SwitchDiffEngine:
         to_preprovision: list[SwitchConfigModel] = []
         to_swap: list[SwitchConfigModel] = []
         to_rma: list[SwitchConfigModel] = []
+        role_updates: list[SwitchConfigModel] = []
         poap_ips: set = set()
 
         # Track which existing switch IDs are accounted for by a config
@@ -569,6 +612,23 @@ class SwitchDiffEngine:
             # ------------------------------------------------------------------
             if op == "swap":
                 poap_ips.add(cfg.seed_ip)
+                serial = cfg.poap.serial_number
+                placeholder_serial = cfg.preprovision.serial_number
+                if serial in existing_serials and placeholder_serial in existing_serials:
+                    raise ValueError(
+                        f"Both placeholder serial '{placeholder_serial}' and physical serial '{serial}' "
+                        "already exist in fabric inventory; refusing an ambiguous serial swap."
+                    )
+                serial_match = existing_sw and serial in (existing_sw.serial_number, existing_sw.switch_id)
+                role_match = existing_sw and (cfg.role is None or cfg.role == existing_sw.switch_role)
+                if serial_match:
+                    if role_match:
+                        log.info("Swap %s physical serial=%s already in inventory — preserving", cfg.seed_ip, serial)
+                        idempotent.append(cfg)
+                    else:
+                        log.info("Swap %s physical serial=%s needs only an in-place role update", cfg.seed_ip, serial)
+                        role_updates.append(cfg)
+                    continue
                 to_swap.append(cfg)
                 continue
 
@@ -586,14 +646,13 @@ class SwitchDiffEngine:
 
                 serial_match = serial and serial in (existing_sw.serial_number, existing_sw.switch_id)
                 role_match = cfg.role is None or cfg.role == existing_sw.switch_role
-                if serial_match and role_match:
-                    log.info(
-                        "Bootstrap %s serial=%s role=%s — idempotent, skipping",
-                        cfg.seed_ip,
-                        serial,
-                        cfg.role,
-                    )
-                    idempotent.append(cfg)
+                if serial_match:
+                    if role_match:
+                        log.info("Bootstrap %s serial=%s role=%s — idempotent, skipping", cfg.seed_ip, serial, cfg.role)
+                        idempotent.append(cfg)
+                    else:
+                        log.info("Bootstrap %s serial=%s needs only an in-place role update", cfg.seed_ip, serial)
+                        role_updates.append(cfg)
                     continue
 
                 status = existing_sw.additional_data.discovery_status if existing_sw.additional_data else None
@@ -728,6 +787,7 @@ class SwitchDiffEngine:
             to_swap=to_swap,
             to_rma=to_rma,
             to_delete_existing=to_delete_existing,
+            role_updates=role_updates,
         )
         log.info(
             "compute_changes: to_add=%s, to_update=%s, to_delete=%s, migration=%s, "
@@ -1660,40 +1720,8 @@ class POAPHandler:
             has_preprov = bool(switch_cfg.preprovision)
 
             if has_poap and has_preprov:
-                # Swap: only serial_number is meaningful on each side; warn about extras
-                poap_extra = [
-                    f
-                    for f in [
-                        "hostname",
-                        "discovery_username",
-                        "discovery_password",
-                    ]
-                    if getattr(switch_cfg.poap, f, None)
-                ]
-                preprov_extra = [
-                    f
-                    for f in [
-                        "model",
-                        "version",
-                        "hostname",
-                        "config_data",
-                        "discovery_username",
-                        "discovery_password",
-                    ]
-                    if getattr(switch_cfg.preprovision, f, None)
-                ]
-                if poap_extra:
-                    log.warning(
-                        "Swap (%s): extra fields in 'poap' will be ignored during swap: %s",
-                        switch_cfg.seed_ip,
-                        poap_extra,
-                    )
-                if preprov_extra:
-                    log.warning(
-                        "Swap (%s): extra fields in 'preprovision' will be ignored during swap: %s",
-                        switch_cfg.seed_ip,
-                        preprov_extra,
-                    )
+                # The placeholder serial identifies the existing switch. The
+                # POAP block supplies the physical identity and import intent.
                 swap_entries.append((switch_cfg, switch_cfg.poap, switch_cfg.preprovision))
             elif has_preprov:
                 preprov_entries.append((switch_cfg, switch_cfg.preprovision))
@@ -1735,6 +1763,13 @@ class POAPHandler:
         # Idempotency is handled entirely by compute_changes before entries
         # reach this handler.  Everything in bootstrap_entries / preprov_entries
         # has already been classified as needing action — no re-checking here.
+
+        # Wait for the whole physical batch before changing any placeholder
+        # serial or importing a switch. Do not spend one timeout per switch.
+        physical_serials = [poap.serial_number for _cfg, poap in bootstrap_entries]
+        physical_serials.extend(poap.serial_number for _cfg, poap, _preprov in swap_entries)
+        if physical_serials:
+            self.bootstrap_cache.wait_for_serials(physical_serials)
 
         # Handle swap entries (change serial number on pre-provisioned switches)
         if swap_entries:
@@ -1847,6 +1882,7 @@ class POAPHandler:
                 wait_utils=self.wait_utils,
                 context="bootstrap",
                 skip_greenfield_check=True,
+                update_roles=True,
             )
         )
 
@@ -1894,46 +1930,31 @@ class POAPHandler:
         gateway_ip_mask = bs.get("gatewayIpMask") or bs_data.get("gatewayIpMask")
         data_models = bs_data.get("models", [])
 
-        # Hostname: user-provided via poap.hostname is the default; if the
-        # bootstrap API returns a different value, the API wins and we warn.
-        user_hostname = poap_cfg.hostname
-        api_hostname = bs.get("hostname", "")
-        if api_hostname and api_hostname != user_hostname:
-            log.warning(
-                "Bootstrap (%s): API hostname '%s' overrides user-provided hostname '%s'. Using API value.",
-                serial_number,
-                api_hostname,
-                user_hostname,
-            )
-            hostname = api_hostname
-        else:
-            hostname = user_hostname
-
-        # Role: switch_cfg.role is user-provided; if the bootstrap API carries a
-        # role and it differs, the API value wins and we warn.
+        # Preserve authored identity. A device may call home with an old name
+        # or role, which must not replace the requested configuration.
+        hostname = poap_cfg.hostname
         api_role_raw = bs.get("switchRole") or bs_data.get("switchRole")
-        if api_role_raw:
+        if switch_role is None and api_role_raw:
             try:
-                api_role = SwitchRole.normalize(api_role_raw)
-                if api_role and api_role != switch_role:
-                    log.warning(
-                        "Bootstrap (%s): API role '%s' overrides user-provided role '%s'. Using API value.",
-                        serial_number,
-                        api_role_raw,
-                        switch_role,
-                    )
-                    switch_role = api_role
+                switch_role = SwitchRole.normalize(api_role_raw)
             except ValueError:
                 pass
 
         # Build the data block from resolved values (replaces build_poap_data_block)
+        # Retain a placeholder's bootstrap breakouts when a physical switch
+        # fulfills it. Hardware and gateway values still come from ND.
+        preprovision = switch_cfg.preprovision
+        breakout = preprovision.config_data.breakout if preprovision else None
+        breakout = breakout or bs_data.get("breakout")
         data_block: dict[str, Any] | None = None
-        if gateway_ip_mask or data_models:
+        if gateway_ip_mask or data_models or breakout:
             data_block = {}
             if gateway_ip_mask:
                 data_block["gatewayIpMask"] = gateway_ip_mask
             if data_models:
                 data_block["models"] = data_models
+            if breakout:
+                data_block["breakout"] = breakout
 
         # Bootstrap API response fields
         fingerprint = bs.get("fingerPrint") or bs.get("fingerprint", "")
@@ -2155,14 +2176,26 @@ class POAPHandler:
         for switch_cfg, poap_cfg, preprov_cfg in swap_entries:
             old_serial = preprov_cfg.serial_number
             new_serial = poap_cfg.serial_number
-            if old_serial not in fabric_index:
+            if old_serial in fabric_index and new_serial in fabric_index:
+                nd.module.fail_json(
+                    msg=f"Both placeholder serial '{old_serial}' and physical serial '{new_serial}' "
+                    f"already exist in fabric '{fabric}'; refusing an ambiguous serial swap."
+                )
+            if old_serial not in fabric_index and new_serial not in fabric_index:
                 msg = (
                     f"Pre-provisioned serial '{old_serial}' not found in "
-                    f"fabric '{fabric}' inventory. The switch must be "
-                    f"pre-provisioned before a swap can be performed."
+                    f"fabric '{fabric}' inventory, and physical serial '{new_serial}' "
+                    "is not present to resume an interrupted swap. The switch "
+                    "must be pre-provisioned before a swap can be performed."
                 )
                 log.error(msg)
                 nd.module.fail_json(msg=msg)
+            if new_serial in fabric_index:
+                recorded_ip = fabric_index[new_serial].get("fabricManagementIp")
+                if recorded_ip != switch_cfg.seed_ip:
+                    nd.module.fail_json(
+                        msg=f"Physical serial '{new_serial}' already belongs to management IP " f"'{recorded_ip}', not requested IP '{switch_cfg.seed_ip}'."
+                    )
             if new_serial not in bootstrap_index:
                 msg = (
                     f"New serial '{new_serial}' not found in the bootstrap "
@@ -2184,6 +2217,10 @@ class POAPHandler:
         for switch_cfg, poap_cfg, preprov_cfg in swap_entries:
             old_serial = preprov_cfg.serial_number
             new_serial = poap_cfg.serial_number
+
+            if old_serial not in fabric_index and new_serial in fabric_index:
+                log.info("Resuming bootstrap import after completed serial replacement %s → %s", old_serial, new_serial)
+                continue
 
             log.info(
                 "Swapping serial for pre-provisioned switch: %s → %s",
@@ -2270,6 +2307,7 @@ class POAPHandler:
                 wait_utils=self.wait_utils,
                 context="swap",
                 skip_greenfield_check=True,
+                update_roles=True,
             )
         )
 
@@ -2860,7 +2898,7 @@ class NDSwitchResourceModule:
         New add and re-add configs intentionally keep platform_type omitted so
         the add-operation default remains localized to capability validation.
         """
-        for cfg in plan.idempotent + plan.to_update + plan.migration_mode:
+        for cfg in plan.idempotent + plan.to_update + plan.migration_mode + plan.role_updates:
             if cfg.platform_type is not None:
                 continue
             platform_type = self._inventory_platform_type(existing_by_ip.get(cfg.seed_ip))
@@ -2905,6 +2943,47 @@ class NDSwitchResourceModule:
             self.log.error(msg)
             self.nd.module.fail_json(msg=msg)
 
+    def _refine_onboarding_plan(self, plan: "SwitchPlan", existing_by_ip: dict[str, "SwitchDataModel"]) -> None:
+        """Use bootstrap candidates to resume interrupted physical onboarding.
+
+        Existing matching preprovision placeholders remain inventory-idempotent.
+        Their creation-only gateway, module, and breakout data cannot be read
+        back from the list of physical devices in the bootstrap loop.
+        Check mode keeps its inventory-only plan.
+        """
+        if self.nd.module.check_mode:
+            return
+        candidates = []
+        for cfg in list(plan.idempotent) + list(plan.role_updates):
+            sw = existing_by_ip.get(cfg.seed_ip)
+            status = sw.additional_data.discovery_status if sw and sw.additional_data else None
+            if cfg.operation_type in ("poap", "swap") and status != DiscoveryStatus.OK:
+                candidates.append(cfg)
+        if not candidates:
+            return
+        bootstrap_index = self.bootstrap_cache.get_index(refresh=True)
+
+        for cfg in candidates:
+            if cfg.poap.serial_number not in bootstrap_index:
+                # An existing physical switch may simply be offline. Its
+                # absence from POAP is not a reason to restart day zero.
+                continue
+            for bucket in (plan.idempotent, plan.role_updates):
+                if cfg in bucket:
+                    bucket.remove(cfg)
+            bucket = plan.to_swap if cfg.operation_type == "swap" else plan.to_bootstrap
+            bucket.append(cfg)
+            self.log.info("Resuming %s import for physical switch %s present in the POAP list", cfg.operation_type, cfg.seed_ip)
+
+    def _apply_onboarding_role_updates(self, plan: "SwitchPlan") -> None:
+        """Apply role drift to existing physical switches without re-onboarding."""
+        if not plan.role_updates:
+            return
+        inventory = self.inventory.by_ip()
+        actions = [(inventory[cfg.seed_ip].switch_id, cfg) for cfg in plan.role_updates]
+        self.fabric_ops.bulk_update_roles(actions)
+        self.fabric_ops.finalize(serial_numbers=[serial for serial, _cfg in actions])
+
     @staticmethod
     def _capability_validation_configs(plan: "SwitchPlan") -> list["SwitchConfigModel"]:
         """
@@ -2922,6 +3001,7 @@ class NDSwitchResourceModule:
             + list(plan.to_preprovision)
             + list(plan.to_swap)
             + list(plan.to_rma)
+            + list(plan.role_updates)
         )
 
     def _build_check_mode_output(self) -> dict[str, Any]:
@@ -2984,7 +3064,7 @@ class NDSwitchResourceModule:
                     self.log.warning("check_mode diff: could not convert %s: %s", cfg.seed_ip, exc)
 
             # Switches whose role would be updated (overridden/replaced)
-            for cfg in plan.to_update:
+            for cfg in list(plan.to_update) + list(plan.role_updates):
                 try:
                     entry = cfg.to_config()
                     entry.pop("operation_type", None)
@@ -3018,7 +3098,7 @@ class NDSwitchResourceModule:
                     entry["preserve_config"] = preserve_config
                 after_list.append(entry)
             # Apply role updates in-place
-            update_role_map = {cfg.seed_ip: cfg for cfg in plan.to_update}
+            update_role_map = {cfg.seed_ip: cfg for cfg in list(plan.to_update) + list(plan.role_updates)}
             for entry in after_list:
                 ip = entry.get("seed_ip")
                 if ip in update_role_map:
@@ -3196,9 +3276,13 @@ class NDSwitchResourceModule:
         self.proposed_cfgs = list(proposed_config)
 
         # Classify all configs in one pass — idempotency included
-        plan = SwitchDiffEngine.compute_changes(proposed_config, list(self.existing), self.log)
+        try:
+            plan = SwitchDiffEngine.compute_changes(proposed_config, list(self.existing), self.log)
+        except ValueError as exc:
+            self.nd.module.fail_json(msg=str(exc))
         self._plan = plan
         existing_by_ip = self.inventory.by_ip()
+        self._refine_onboarding_plan(plan, existing_by_ip)
         self._apply_existing_platform_types(plan, existing_by_ip)
         capability_configs = self._capability_validation_configs(plan)
         self._validate_actionable_existing_platforms(capability_configs, existing_by_ip)
@@ -3459,6 +3543,7 @@ class NDSwitchResourceModule:
             or plan.to_preprovision
             or plan.to_swap
             or plan.to_rma
+            or plan.role_updates
             or idempotent_save_req
         )
         if not has_work:
@@ -3489,10 +3574,13 @@ class NDSwitchResourceModule:
                     "preprovision": [c.seed_ip for c in plan.to_preprovision],
                     "swap": [c.seed_ip for c in plan.to_swap],
                     "rma": [c.seed_ip for c in plan.to_rma],
+                    "role_updates": [c.seed_ip for c in plan.role_updates],
                     "save_deploy_required": idempotent_save_req,
                 },
             )
             return
+
+        self._apply_onboarding_role_updates(plan)
 
         # --- Normal + normal_readd bulk_add (one combined pass) -----------------
         add_configs = plan.to_add + plan.normal_readd
@@ -3563,6 +3651,7 @@ class NDSwitchResourceModule:
             or plan.normal_readd
             or plan.to_preprovision
             or plan.to_swap
+            or plan.role_updates
             or idempotent_save_req
         )
         if not has_work:
@@ -3595,10 +3684,13 @@ class NDSwitchResourceModule:
                     "normal_readd": len(plan.normal_readd),
                     "preprovision": len(plan.to_preprovision),
                     "swap": len(plan.to_swap),
+                    "role_updates": len(plan.role_updates),
                     "save_deploy_required": idempotent_save_req,
                 },
             )
             return
+
+        self._apply_onboarding_role_updates(plan)
 
         # --- Phase 1: Combined delete -------------------------------------------
         # Merge three sources of deletions into one bulk_delete call:
@@ -3709,6 +3801,7 @@ class NDSwitchResourceModule:
             or plan.normal_readd
             or plan.to_preprovision
             or plan.to_swap
+            or plan.role_updates
             or idempotent_save_req
         )
         if not has_work:
@@ -3741,10 +3834,13 @@ class NDSwitchResourceModule:
                     "normal_readd": len(plan.normal_readd),
                     "preprovision": len(plan.to_preprovision),
                     "swap": len(plan.to_swap),
+                    "role_updates": len(plan.role_updates),
                     "save_deploy_required": idempotent_save_req,
                 },
             )
             return
+
+        self._apply_onboarding_role_updates(plan)
 
         # --- Phase 1: Combined delete -------------------------------------------
         # Two sources of deletions (orphans intentionally excluded):
