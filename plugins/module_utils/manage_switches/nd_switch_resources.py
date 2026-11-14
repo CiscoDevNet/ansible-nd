@@ -2194,8 +2194,7 @@ class POAPHandler:
                 recorded_ip = fabric_index[new_serial].get("fabricManagementIp")
                 if recorded_ip != switch_cfg.seed_ip:
                     nd.module.fail_json(
-                        msg=f"Physical serial '{new_serial}' already belongs to management IP "
-                        f"'{recorded_ip}', not requested IP '{switch_cfg.seed_ip}'."
+                        msg=f"Physical serial '{new_serial}' already belongs to management IP " f"'{recorded_ip}', not requested IP '{switch_cfg.seed_ip}'."
                     )
             if new_serial not in bootstrap_index:
                 msg = (
