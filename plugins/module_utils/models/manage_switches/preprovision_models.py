@@ -89,7 +89,7 @@ class PreProvisionSwitchModel(NDBaseModel):
     )
     data: dict[str, Any] | None = Field(
         default=None,
-        description="Pre-provision configuration data block (gatewayIpMask, models)",
+        description="Pre-provision configuration data block (gatewayIpMask, models, optional breakout)",
     )
 
     # --- bootstrapCredential fields (required) ---
