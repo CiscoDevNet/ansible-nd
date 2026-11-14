@@ -83,7 +83,7 @@ options:
       telemetry_source_interface:
         description:
         - Applies when O(config.telemetry_collection=true) and O(config.telemetry_collection_type=inBand).
-        - Telemetry Source Interface Loopback ID, only valid if Telemetry Collection is set to inBand.
+        - The telemetry source interface.
         - With O(config.telemetry_collection_type=outOfBand), ND controls this value, and differences in this parameter do not trigger an update.
         type: str
         default: loopback0

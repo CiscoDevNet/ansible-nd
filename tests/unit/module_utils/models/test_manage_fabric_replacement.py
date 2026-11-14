@@ -423,12 +423,12 @@ def test_manage_fabric_replacement_00080(model_class, fabric_type) -> None:
 
 @pytest.mark.parametrize("model_class,fabric_type", EBGP_CASES)
 def test_manage_fabric_replacement_00090(model_class, fabric_type) -> None:
-    """Verify the controller-forced nxapiHttp value is normalized for both eBGP families."""
+    """Retain the native NX-API HTTP default in both payload and ordinary comparison state."""
     existing = model_class.from_response(_fabric_response(fabric_type, nxapiHttp=True))
     proposed = model_class.from_config(_fabric_config())
     candidate = proposed.prepare_for_replacement(existing)
 
-    assert "nxapiHttp" not in existing.to_diff_dict()["management"]
-    assert "nxapiHttp" not in candidate.to_diff_dict()["management"]
-    assert candidate.to_payload()["management"]["nxapiHttp"] is False
+    assert existing.to_diff_dict()["management"]["nxapiHttp"] is True
+    assert candidate.to_diff_dict()["management"]["nxapiHttp"] is True
+    assert candidate.to_payload()["management"]["nxapiHttp"] is True
     assert existing.get_diff(candidate, exclude_unset=False) is True

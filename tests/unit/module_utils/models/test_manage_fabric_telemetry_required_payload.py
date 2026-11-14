@@ -41,6 +41,7 @@ FABRIC_MODELS = (
     pytest.param(FabricExternalConnectivityModel, id="external"),
     pytest.param(FabricCampusIbgpVxlanModel, id="campus"),
 )
+ENERGY_MANAGED_MODELS = (FabricExternalConnectivityModel, FabricCampusIbgpVxlanModel)
 
 
 def _config(**patch) -> dict:
@@ -217,7 +218,7 @@ def test_explicit_nas_object_retains_existing_child_defaults():
     assert model.to_payload()["telemetrySettings"]["nas"]["server"] == ""
 
 
-@pytest.mark.parametrize("model_class", (FabricEbgpModel, FabricAiEbgpVxlanModel, FabricExternalConnectivityModel, FabricCampusIbgpVxlanModel))
+@pytest.mark.parametrize("model_class", ENERGY_MANAGED_MODELS)
 @pytest.mark.parametrize(
     "patch",
     (
@@ -236,7 +237,7 @@ def test_omitted_energy_cost_uses_formal_default_instead_of_api_example(model_cl
     assert model.to_gathered_config()["telemetry_settings"]["energy_management"]["cost"] == 0.1
 
 
-@pytest.mark.parametrize("model_class", (FabricEbgpModel, FabricAiEbgpVxlanModel, FabricExternalConnectivityModel, FabricCampusIbgpVxlanModel))
+@pytest.mark.parametrize("model_class", ENERGY_MANAGED_MODELS)
 @pytest.mark.parametrize("cost", (0.0, 1.2, 1.3))
 def test_explicit_energy_cost_serialization_is_preserved(model_class, cost):
     """Default correction must not replace explicit values; live write acceptance is separate."""
@@ -246,7 +247,7 @@ def test_explicit_energy_cost_serialization_is_preserved(model_class, cost):
     assert model.to_gathered_config()["telemetry_settings"]["energy_management"]["cost"] == cost
 
 
-@pytest.mark.parametrize("model_class", (FabricEbgpModel, FabricAiEbgpVxlanModel, FabricExternalConnectivityModel, FabricCampusIbgpVxlanModel))
+@pytest.mark.parametrize("model_class", ENERGY_MANAGED_MODELS)
 def test_energy_default_echo_and_gathered_argument_spec_round_trip(model_class):
     """A 0.1 controller echo compares unchanged and omitted Ansible input stays unforced."""
     proposed = model_class.from_config(_config(telemetry_settings={}))

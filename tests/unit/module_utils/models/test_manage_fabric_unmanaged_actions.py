@@ -1,7 +1,7 @@
 # Copyright: (c) 2026, Cisco and/or its affiliates.
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-"""iBGP fabric CRUD excludes settings owned by separate controller actions."""
+"""BGP fabric CRUD excludes settings owned by separate controller actions."""
 
 from __future__ import annotations
 
@@ -15,11 +15,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_ibgp_vxlan import FabricAiIbgpVxlanModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_campus_ibgp_vxlan import FabricCampusIbgpVxlanModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import TelemetryEnergyManagementModel, TelemetrySettingsModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import FabricEbgpModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import EbgpTelemetrySettingsModel, FabricEbgpModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_external import FabricExternalConnectivityModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import FabricIbgpModel, IbgpTelemetrySettingsModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ibgp_vxlan import ManageAiIbgpVxlanFabricOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ebgp_vxlan import ManageAiEbgpVxlanFabricOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ebgp_vxlan import ManageEbgpFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ibgp_vxlan import ManageIbgpFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -30,8 +32,14 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sen
 FAMILIES = (
     pytest.param(FabricIbgpModel, ManageIbgpFabricOrchestrator, id="ibgp"),
     pytest.param(FabricAiIbgpVxlanModel, ManageAiIbgpVxlanFabricOrchestrator, id="ai-ibgp"),
+    pytest.param(FabricEbgpModel, ManageEbgpFabricOrchestrator, id="ebgp"),
+    pytest.param(FabricAiEbgpVxlanModel, ManageAiEbgpVxlanFabricOrchestrator, id="ai-ebgp"),
 )
-OTHER_FAMILIES = (FabricEbgpModel, FabricAiEbgpVxlanModel, FabricExternalConnectivityModel, FabricCampusIbgpVxlanModel)
+OTHER_FAMILIES = (FabricExternalConnectivityModel, FabricCampusIbgpVxlanModel)
+
+
+def _telemetry_class(model):
+    return EbgpTelemetrySettingsModel if issubclass(model, FabricEbgpModel) else IbgpTelemetrySettingsModel
 
 
 def _config(**root):
@@ -57,15 +65,15 @@ def test_removed_action_fields_have_no_public_options_defaults_or_serialized_sta
     assert "energy_management" not in options["telemetry_settings"]["options"]
     assert "alert_suspend" not in model.model_fields
     assert "alert_suspend" not in model.model_json_schema(by_alias=False)["properties"]
-    assert "energy_management" not in IbgpTelemetrySettingsModel.model_fields
-    assert "energy_management" not in IbgpTelemetrySettingsModel.model_json_schema(by_alias=False)["properties"]
+    assert "energy_management" not in _telemetry_class(model).model_fields
+    assert "energy_management" not in _telemetry_class(model).model_json_schema(by_alias=False)["properties"]
     checked = _validate_argspec(model, _config(**patch))
     assert checked.error_messages == []
     configured = model.from_config(checked.validated_parameters["config"][0])
     assert configured.alert_suspend is None
     assert "alert_suspend" not in configured.model_fields_set
     if configured.telemetry_settings is not None:
-        assert isinstance(configured.telemetry_settings, IbgpTelemetrySettingsModel)
+        assert isinstance(configured.telemetry_settings, _telemetry_class(model))
         assert configured.telemetry_settings.energy_management is None
         assert "energy_management" not in configured.telemetry_settings.model_fields_set
     for data in (configured.to_payload(), configured.to_diff_dict(), configured.to_reverse_diff_dict()):
@@ -89,7 +97,7 @@ def test_argspec_and_direct_config_reject_removed_options(model, orchestrator, p
     """Neither generated Ansible input nor direct model input exposes writable action fields."""
     checked = _validate_argspec(model, _config(**patch))
     assert checked.unsupported_parameters
-    with pytest.raises(ValidationError, match="not managed by the iBGP fabric module"):
+    with pytest.raises(ValidationError, match="not managed by the [ie]BGP fabric module"):
         model.from_config(_config(**patch))
 
 
@@ -97,7 +105,7 @@ def test_argspec_and_direct_config_reject_removed_options(model, orchestrator, p
 @pytest.mark.parametrize("patch", ({"alertSuspend": "enabled"}, {"telemetrySettings": {"energyManagement": {"cost": 1.3}}}))
 def test_wire_spelling_does_not_bypass_writable_input_rejection(model, orchestrator, patch):
     """Response aliases cannot reintroduce either removed writable path."""
-    with pytest.raises(ValidationError, match="not managed by the iBGP fabric module"):
+    with pytest.raises(ValidationError, match="not managed by the [ie]BGP fabric module"):
         model.from_config(_config(**patch))
 
 
@@ -153,7 +161,7 @@ def test_auto_created_shared_telemetry_and_opaque_replacement_keep_existing_fiel
     raw["telemetrySettings"] = {"energyManagement": {"cost": 1.3}, "flowCollection": {"flowCollectionModes": modes}}
     existing = model.from_response(raw)
     candidate = empty.prepare_for_replacement(existing)
-    assert isinstance(candidate.telemetry_settings, IbgpTelemetrySettingsModel)
+    assert isinstance(candidate.telemetry_settings, _telemetry_class(model))
     assert candidate.to_payload()["telemetrySettings"]["flowCollection"]["flowCollectionModes"] == modes
     _assert_unmanaged_absent(candidate.to_payload(), wire=True)
     assert existing.get_diff(candidate, exclude_unset=False) is True
@@ -163,7 +171,7 @@ def test_auto_created_shared_telemetry_and_opaque_replacement_keep_existing_fiel
 def test_explicit_shared_telemetry_object_cannot_bypass_energy_input_rejection(model, orchestrator):
     """Shared model instances with explicit action state remain unsupported input."""
     settings = TelemetrySettingsModel(energy_management=TelemetryEnergyManagementModel(cost=1.3))
-    with pytest.raises(ValidationError, match="not managed by the iBGP fabric module"):
+    with pytest.raises(ValidationError, match="not managed by the [ie]BGP fabric module"):
         model.from_config(_config(telemetry_settings=settings))
 
 
@@ -244,7 +252,7 @@ def test_real_state_machine_ignores_action_values_and_preserves_them_during_unre
 
 @pytest.mark.parametrize("model", OTHER_FAMILIES)
 def test_other_fabric_families_keep_existing_alert_and_energy_defaults_and_input(model):
-    """The iBGP-only exclusions do not change shared-base public contracts."""
+    """The BGP-only exclusions do not change shared-base public contracts."""
     options = model.get_argument_spec()["config"]["options"]
     assert "alert_suspend" in options
     assert "energy_management" in options["telemetry_settings"]["options"]

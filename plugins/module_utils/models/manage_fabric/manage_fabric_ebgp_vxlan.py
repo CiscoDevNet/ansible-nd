@@ -18,6 +18,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     Field,
     FieldSerializationInfo,
     SecretStr,
+    StringConstraints,
     ValidationInfo,
     field_serializer,
     field_validator,
@@ -42,6 +43,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
     RendezvousPointCountEnum,
     RendezvousPointModeEnum,
     ReplicationModeEnum,
+    TelemetryCollectionTypeEnum,
     UnderlayMulticastGroupAddressLimitEnum,
     VpcPeerKeepAliveOptionEnum,
     VrfLiteAutoConfigEnum,
@@ -53,11 +55,17 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     FabricDhcpGatewayAddress,
     FabricIPv4CIDR,
     FabricManagementModel,
-    FabricIPv4CIDR,
     KeychainKeyEntryModel,
     MulticastGroupSubnet,
     NetflowSettingsModel,
+    RequiredFabricBareIPv4Address,
+    RequiredFabricIPAddress,
+    RequiredFabricIPv4CIDR,
+    RequiredFabricIPv6Address,
+    RequiredFabricIPv6CIDR,
+    RequiredFabricIPv6MulticastGroupSubnet,
     ScheduledBackupTime,
+    TelemetrySettingsModel,
     default_site_id_from_bgp_asn,
     normalize_anycast_gateway_mac,
     validate_bgp_asn_value,
@@ -70,6 +78,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     FabricBaseModel,
     serialize_secret_value,
 )
+
+FabricCliText = Annotated[str, StringConstraints(strip_whitespace=False)]
 
 """
 # Comprehensive Pydantic models for eBGP VXLAN fabric management via Nexus Dashboard
@@ -123,6 +133,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     )
 
     _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
+    ipv6_management_minimum_nd_version: ClassVar[str | None] = None
 
     # Opaque settings preserve writable response state when a field has no
     # public VXLAN input, belongs to routed fabrics, or is hidden in a release.
@@ -215,7 +226,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         default=1,
     )
     bgp_max_path: int = Field(
-        alias="bgpMaxPath", description="BGP Maximum Paths", ge=1, le=64, default=4
+        alias="bgpMaxPath", description="BGP Maximum Paths", ge=1, le=64, default=64
     )
     bgp_underlay_failure_protect: bool = Field(
         alias="bgpUnderlayFailureProtect",
@@ -293,12 +304,12 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         le=1023,
         default=0,
     )
-    bgp_loopback_ip_range: str = Field(
+    bgp_loopback_ip_range: RequiredFabricIPv4CIDR = Field(
         alias="bgpLoopbackIpRange",
         description="Typically Loopback0 IP Address Range",
         default="10.2.0.0/22",
     )
-    bgp_loopback_ipv6_range: str = Field(
+    bgp_loopback_ipv6_range: RequiredFabricIPv6CIDR = Field(
         alias="bgpLoopbackIpv6Range",
         description="Typically Loopback0 IPv6 Address Range",
         default="fd00::a02:0/119",
@@ -312,12 +323,12 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         le=1023,
         default=1,
     )
-    nve_loopback_ip_range: str = Field(
+    nve_loopback_ip_range: RequiredFabricIPv4CIDR = Field(
         alias="nveLoopbackIpRange",
         description="Typically Loopback1 IP Address Range",
         default="10.3.0.0/22",
     )
-    nve_loopback_ipv6_range: str = Field(
+    nve_loopback_ipv6_range: RequiredFabricIPv6CIDR = Field(
         alias="nveLoopbackIpv6Range",
         description="Typically Loopback1 and Anycast Loopback IPv6 Address Range",
         default="fd00::a03:0/118",
@@ -329,17 +340,17 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         ge=0,
         le=1023,
     )
-    anycast_rendezvous_point_ip_range: str = Field(
+    anycast_rendezvous_point_ip_range: RequiredFabricIPv4CIDR = Field(
         alias="anycastRendezvousPointIpRange",
         description="Anycast or Phantom RP IP Address Range",
         default="10.254.254.0/24",
     )
-    ipv6_anycast_rendezvous_point_ip_range: str = Field(
+    ipv6_anycast_rendezvous_point_ip_range: RequiredFabricIPv6CIDR = Field(
         alias="ipv6AnycastRendezvousPointIpRange",
         description="Anycast RP IPv6 Address Range",
         default="fd00::254:254:0/118",
     )
-    intra_fabric_subnet_range: str = Field(
+    intra_fabric_subnet_range: RequiredFabricIPv4CIDR = Field(
         alias="intraFabricSubnetRange",
         description="Address range to assign numbered and peer link SVI IPs",
         default="10.4.0.0/16",
@@ -473,17 +484,17 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         ge=0,
         le=1023,
     )
-    l3vni_multicast_group: str = Field(
+    l3vni_multicast_group: RequiredFabricBareIPv4Address = Field(
         alias="l3vniMulticastGroup",
         description="Default Underlay Multicast group IPv4 address assigned for every overlay VRF",
         default="239.1.1.0",
     )
-    l3_vni_ipv6_multicast_group: str = Field(
+    l3_vni_ipv6_multicast_group: RequiredFabricIPv6Address = Field(
         alias="l3VniIpv6MulticastGroup",
         description="Default Underlay Multicast group IP6 address assigned for every overlay VRF",
         default="ff1e::",
     )
-    ipv6_multicast_group_subnet: str = Field(
+    ipv6_multicast_group_subnet: RequiredFabricIPv6MulticastGroupSubnet = Field(
         alias="ipv6MulticastGroupSubnet",
         description="IPv6 Multicast address with prefix 112 to 128",
         default="ff1e::/121",
@@ -660,7 +671,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         ),
         default=False,
     )
-    per_vrf_loopback_ip_range: str = Field(
+    per_vrf_loopback_ip_range: RequiredFabricIPv4CIDR = Field(
         alias="perVrfLoopbackIpRange",
         description="Prefix pool to assign IPv4 addresses to loopbacks on VTEPs on a per VRF basis",
         default="10.5.0.0/22",
@@ -670,7 +681,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         description="Auto provision an IPv6 loopback on a VTEP on VRF attachment.",
         default=False,
     )
-    per_vrf_loopback_ipv6_range: str = Field(
+    per_vrf_loopback_ipv6_range: RequiredFabricIPv6CIDR = Field(
         alias="perVrfLoopbackIpv6Range",
         description="Prefix pool to assign IPv6 addresses to loopbacks on VTEPs on a per VRF basis",
         default="fd00::a05:0/112",
@@ -799,9 +810,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
 
     # Management Settings
     nxapi: bool = Field(description="Enable NX-API over HTTPS", default=True)
-    nxapi_http: bool = Field(
-        alias="nxapiHttp", description="Enable NX-API over HTTP", default=False
-    )
+    nxapi_http: bool = Field(alias="nxapiHttp", description="Enable NX-API over HTTP", default=True)
     nxapi_https_port: int = Field(
         alias="nxapiHttpsPort",
         description="HTTPS port for NX-API",
@@ -951,7 +960,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     )
 
     # DNS / NTP / Syslog Collections
-    ntp_server_collection: list[str] = Field(
+    ntp_server_collection: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(
         default_factory=list,
         alias="ntpServerCollection",
         description="List of NTP server IPv4/IPv6 addresses and/or hostnames",
@@ -963,19 +972,17 @@ class VxlanEbgpManagementModel(FabricManagementModel):
             "NTP Server VRFs. One VRF for all NTP servers or a list of VRFs, one per NTP server"
         ),
     )
-    dns_collection: list[str] = Field(
+    dns_collection: list[Annotated[RequiredFabricIPAddress, Field(min_length=3, max_length=40)]] = Field(
         default_factory=list,
         alias="dnsCollection",
         description="List of IPv4 and IPv6 DNS addresses",
     )
-    dns_vrf_collection: list[str] = Field(
+    dns_vrf_collection: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(
         default_factory=list,
         alias="dnsVrfCollection",
-        description=(
-            "DNS Server VRFs. One VRF for all DNS servers or a list of VRFs, one per DNS server"
-        ),
+        description=("DNS Server VRFs. One VRF for all DNS servers or a list of VRFs, one per DNS server"),
     )
-    syslog_server_collection: list[str] = Field(
+    syslog_server_collection: list[Annotated[str, Field(min_length=1, max_length=199)]] = Field(
         default_factory=list,
         alias="syslogServerCollection",
         description="List of Syslog server IPv4/IPv6 addresses and/or hostnames",
@@ -987,20 +994,18 @@ class VxlanEbgpManagementModel(FabricManagementModel):
             "Syslog Server VRFs. One VRF for all Syslog servers or a list of VRFs, one per Syslog server"
         ),
     )
-    syslog_severity_collection: list[int] = Field(
+    syslog_severity_collection: list[Annotated[int, Field(ge=0, le=7)]] = Field(
         default_factory=list,
         alias="syslogSeverityCollection",
         description="List of Syslog severity values, one per Syslog server",
     )
 
     # Extra Config / Pre-Interface Config / AAA / Banner
-    banner: str = Field(
-        description=(
-            "Message of the Day (motd) banner. Delimiter char (very first char is delimiter char) followed by message ending with delimiter"
-        ),
+    banner: FabricCliText = Field(
+        description=("Message of the Day (motd) banner. Delimiter char (very first char is delimiter char) followed by message ending with delimiter"),
         default="",
     )
-    extra_config_leaf: str = Field(
+    extra_config_leaf: FabricCliText = Field(
         alias="extraConfigLeaf",
         description=(
             "Additional CLIs as captured from the show running configuration, added after interface "
@@ -1008,29 +1013,25 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         ),
         default="",
     )
-    extra_config_spine: str = Field(
+    extra_config_spine: FabricCliText = Field(
         alias="extraConfigSpine",
         description=(
             "Additional CLIs as captured from the show running configuration, added after interface configurations for all switches with some spine role"
         ),
         default="",
     )
-    extra_config_tor: str = Field(
+    extra_config_tor: FabricCliText = Field(
         alias="extraConfigTor",
-        description=(
-            "Additional CLIs as captured from the show running configuration, added after interface configurations for all ToRs"
-        ),
+        description=("Additional CLIs as captured from the show running configuration, added after interface configurations for all ToRs"),
         default="",
     )
-    extra_config_intra_fabric_links: str = Field(
+    extra_config_intra_fabric_links: FabricCliText = Field(
         alias="extraConfigIntraFabricLinks",
         description="Additional CLIs for all Intra-Fabric links",
         default="",
     )
-    extra_config_aaa: str = Field(
-        alias="extraConfigAaa", description="AAA Configurations", default=""
-    )
-    extra_config_nxos_bootstrap: str = Field(
+    extra_config_aaa: FabricCliText = Field(alias="extraConfigAaa", description="AAA Configurations", default="")
+    extra_config_nxos_bootstrap: FabricCliText = Field(
         alias="extraConfigNxosBootstrap",
         description="Additional CLIs required during device bootup/login e.g. AAA/Radius",
         default="",
@@ -1039,7 +1040,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         description="Include AAA configs from Manageability tab during device bootup",
         default=False,
     )
-    pre_interface_config_leaf: str = Field(
+    pre_interface_config_leaf: FabricCliText = Field(
         alias="preInterfaceConfigLeaf",
         description=(
             "Additional CLIs as captured from the show running configuration, added before interface "
@@ -1047,18 +1048,16 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         ),
         default="",
     )
-    pre_interface_config_spine: str = Field(
+    pre_interface_config_spine: FabricCliText = Field(
         alias="preInterfaceConfigSpine",
         description=(
             "Additional CLIs as captured from the show running configuration, added before interface configurations for all switches with some spine role"
         ),
         default="",
     )
-    pre_interface_config_tor: str = Field(
+    pre_interface_config_tor: FabricCliText = Field(
         alias="preInterfaceConfigTor",
-        description=(
-            "Additional CLIs as captured from the show running configuration, added before interface configurations for all ToRs"
-        ),
+        description=("Additional CLIs as captured from the show running configuration, added before interface configurations for all ToRs"),
         default="",
     )
 
@@ -1424,177 +1423,173 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     ai_load_sharing_opcode: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="aiLoadSharingOpcode",
         description="Use the RoCEv2 opcode for AI load-sharing hashing.",
-        default=None,
+        default=False,
     )
-    ai_load_sharing_packet_sequence_number: Annotated[
-        bool | None, NDMinimumVersion("4.3.1")
-    ] = Field(
+    ai_load_sharing_packet_sequence_number: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="aiLoadSharingPacketSequenceNumber",
         description="Use the RoCEv2 packet sequence number for hashing.",
-        default=None,
+        default=False,
     )
-    ai_load_sharing_queuepair: Annotated[bool | None, NDMinimumVersion("4.3.1")] = (
-        Field(
-            alias="aiLoadSharingQueuepair",
-            description="Use the RoCEv2 queue pair for AI load-sharing hashing.",
-            default=None,
-        )
+    ai_load_sharing_queuepair: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="aiLoadSharingQueuepair",
+        description="Use the RoCEv2 queue pair for AI load-sharing hashing.",
+        default=False,
     )
     allow_smart_switch_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="allowSmartSwitchHA",
         description="Enable smart-switch high availability.",
-        default=None,
+        default=False,
     )
-    auto_smart_switch_vpc_pair_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = (
-        Field(
-            alias="autoSmartSwitchVpcPairHA",
-            description="Automatically configure HA for smart-switch vPC pairs.",
-            default=None,
-        )
+    auto_smart_switch_vpc_pair_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="autoSmartSwitchVpcPairHA",
+        description="Automatically configure HA for smart-switch vPC pairs.",
+        default=False,
     )
     bfd_min_rx_interval: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
         alias="bfdMinRxInterval",
         description="BFD minimum receive interval in milliseconds.",
         ge=10,
         le=999,
-        default=None,
+        default=50,
     )
     bfd_multiplier: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
         alias="bfdMultiplier",
         description="BFD detection multiplier.",
         ge=1,
         le=50,
-        default=None,
+        default=3,
     )
-    bfd_pim: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
-        alias="bfdPim", description="Enable BFD for PIM.", default=None
-    )
+    bfd_pim: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(alias="bfdPim", description="Enable BFD for PIM.", default=False)
     bfd_tx_interval: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
         alias="bfdTxInterval",
         description="BFD transmit interval in milliseconds.",
         ge=10,
         le=999,
-        default=None,
+        default=50,
     )
     bgp_allow_as_in: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="bgpAllowAsIn",
         description="Accept an AS path containing this border switch ASN.",
-        default=None,
+        default=True,
     )
     dlb_all_interfaces: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="dlbAllInterfaces",
         description="Apply DLB to all supported interfaces.",
-        default=None,
+        default=True,
     )
-    enable_secure_default_vrf: Annotated[bool | None, NDMinimumVersion("4.3.1")] = (
-        Field(
-            alias="enableSecureDefaultVrf",
-            description="Redirect default VRF traffic to a DPU for inspection.",
-            default=None,
-        )
+    enable_secure_default_vrf: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="enableSecureDefaultVrf",
+        description="Redirect default VRF traffic to a DPU for inspection.",
+        default=False,
     )
-    hypershield_ha_peer_link_subnet: Annotated[
-        FabricIPv4CIDR, NDMinimumVersion("4.3.1")
-    ] = Field(
+    hypershield_ha_peer_link_subnet: Annotated[FabricIPv4CIDR, NDMinimumVersion("4.3.1")] = Field(
         alias="hypershieldHAPeerLinkSubnet",
         description="IPv4 subnet pool for HA peer-link connectivity.",
-        default=None,
+        default="10.12.0.0/22",
     )
-    hypershield_ha_peer_link_subnet_granularity: Annotated[
-        Literal["/30", "/31"] | None, NDMinimumVersion("4.3.1")
-    ] = Field(
+    hypershield_ha_peer_link_subnet_granularity: Annotated[Literal["/30", "/31"] | None, NDMinimumVersion("4.3.1")] = Field(
         alias="hypershieldHAPeerLinkSubnetGranularity",
         description="Subnet prefix size for HA peer-link allocations.",
-        default=None,
+        default="/30",
     )
-    hypershield_ha_source_intf: Annotated[str | None, NDMinimumVersion("4.3.1")] = (
-        Field(
-            alias="hypershieldHASourceIntf",
-            description="Loopback interface used as the HA source.",
-            min_length=3,
-            max_length=40,
-            default=None,
-        )
+    hypershield_ha_source_intf: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="hypershieldHASourceIntf",
+        description="Loopback interface used as the HA source.",
+        min_length=3,
+        max_length=40,
+        default="loopback1023",
     )
-    hypershield_ha_source_subnet: Annotated[FabricIPv4CIDR, NDMinimumVersion("4.3.1")] = (
-        Field(
-            alias="hypershieldHASourceSubnet",
-            description="IPv4 subnet pool for the HA source loopback.",
-            default=None,
-        )
+    hypershield_ha_source_subnet: Annotated[FabricIPv4CIDR, NDMinimumVersion("4.3.1")] = Field(
+        alias="hypershieldHASourceSubnet",
+        description="IPv4 subnet pool for the HA source loopback.",
+        default="10.11.0.0/23",
     )
     hypershield_ha_vlan: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
         alias="hypershieldHAVlan",
         description="VLAN used for smart-switch HA communication.",
         ge=2,
         le=4094,
-        default=None,
+        default=3601,
     )
-    use_hypershield_source_loopback_for_ha: Annotated[
-        bool | None, NDMinimumVersion("4.3.1")
-    ] = Field(
+    use_hypershield_source_loopback_for_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="useHypershieldSourceLoopbackForHA",
         description="Reuse the Hypershield source loopback for HA.",
-        default=None,
+        default=False,
     )
-    ntp_auth_algorithm: Annotated[
-        Literal["aes128cmac", "md5"] | None, NDMinimumVersion("4.3.1")
-    ] = Field(
+    ntp_auth_algorithm: Annotated[Literal["aes128cmac", "md5"] | None, NDMinimumVersion("4.3.1")] = Field(
         alias="ntpAuthAlgorithm",
         description="NTP authentication algorithm.",
-        default=None,
+        default="aes128cmac",
     )
-    ntp_auth_enable: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
-        alias="ntpAuthEnable", description="Enable NTP authentication.", default=None
-    )
+    ntp_auth_enable: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(alias="ntpAuthEnable", description="Enable NTP authentication.", default=False)
     ntp_auth_key: Annotated[SecretStr | None, NDMinimumVersion("4.3.1")] = Field(
         alias="ntpAuthKey",
         description="NTP authentication key.",
-        min_length=1,
-        max_length=128,
-        pattern=r"^\S+$",
         default=None,
-        json_schema_extra={"secret": True},
+        json_schema_extra={
+            "secret": True,
+            "nd_string_constraints": {
+                "min_length": 1,
+                "max_length": 128,
+                "pattern": r"^\S+$",
+            },
+        },
     )
     ntp_auth_key_id: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
         alias="ntpAuthKeyId",
         description="NTP authentication key identifier.",
         ge=1,
         le=65535,
-        default=None,
+        default=1,
     )
-    ntp_auth_key_type: Annotated[
-        Literal["6", "7"] | None, NDMinimumVersion("4.3.1")
-    ] = Field(
-        alias="ntpAuthKeyType", description="NTP authentication key type.", default=None
+    ntp_auth_key_type: Annotated[Literal["6", "7"] | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="ntpAuthKeyType", description="NTP authentication key type.", default="7"
     )
-    per_vrf_unique_loopback_auto_provision: Annotated[
-        bool | None, NDMinimumVersion("4.3.1")
-    ] = Field(
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_ntp_auth_key_input_length(cls, data: Any, info: ValidationInfo):
+        """Validate input key/type pairs without treating response ciphertext as plaintext."""
+        if not isinstance(data, dict):
+            return data
+        context = info.context or {}
+        if context.get("mode") == "response" or context.get("source") == "response":
+            return data
+        # Generic merge assignment sees transient key/type pairs. Check only
+        # the original raw proposal; omitted merged types come from existing state.
+        if info.field_name in cls.model_fields:
+            return data
+        key = data.get("ntp_auth_key", data.get("ntpAuthKey"))
+        if isinstance(key, SecretStr):
+            key = key.get_secret_value()
+        if not isinstance(key, str):
+            return data
+        key_type = data.get("ntp_auth_key_type", data.get("ntpAuthKeyType"))
+        if key_type is None and context.get("state") == "merged":
+            return data
+        if (key_type or "7") == "7" and len(key) > 32:
+            raise ValueError("ntp_auth_key must contain at most 32 characters when ntp_auth_key_type is '7'")
+        return data
+
+    per_vrf_unique_loopback_auto_provision: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="perVrfUniqueLoopbackAutoProvision",
         description="Auto-provision a unique IPv4 loopback per VRF.",
-        default=None,
+        default=False,
     )
-    per_vrf_unique_loopback_auto_provision_v6: Annotated[
-        bool | None, NDMinimumVersion("4.3.1")
-    ] = Field(
+    per_vrf_unique_loopback_auto_provision_v6: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="perVrfUniqueLoopbackAutoProvisionV6",
         description="Auto-provision a unique IPv6 loopback per VRF.",
-        default=None,
+        default=False,
     )
-    per_vrf_unique_loopback_ip_range: Annotated[
-        FabricIPv4CIDR, NDMinimumVersion("4.3.1")
-    ] = Field(
+    per_vrf_unique_loopback_ip_range: Annotated[FabricIPv4CIDR, NDMinimumVersion("4.3.1")] = Field(
         alias="perVrfUniqueLoopbackIpRange",
         description="IPv4 prefix pool for per-VRF unique loopbacks.",
-        default=None,
+        default="10.6.0.0/22",
     )
-    per_vrf_unique_loopback_ipv6_range: Annotated[
-        IPv6CIDR, NDMinimumVersion("4.3.1")
-    ] = Field(
+    per_vrf_unique_loopback_ipv6_range: Annotated[IPv6CIDR, NDMinimumVersion("4.3.1")] = Field(
         alias="perVrfUniqueLoopbackIpv6Range",
         description="IPv6 prefix pool for per-VRF unique loopbacks.",
-        default=None,
+        default="fd00::a06:0/112",
     )
     pim_auth_keychain_name: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
         alias="pimAuthKeychainName",
@@ -1607,7 +1602,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     pim_auth_use_keychain: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="pimAuthUseKeychain",
         description="Use a PIM authentication keychain.",
-        default=None,
+        default=False,
     )
     pim_keys: Annotated[
         list[KeychainKeyEntryModel] | None, NDMinimumVersion("4.3.1")
@@ -1702,6 +1697,29 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         return serialize_secret_value(value, info)
 
 
+class EbgpTelemetrySettingsModel(TelemetrySettingsModel):
+    """eBGP telemetry settings managed through the fabric CRUD endpoint."""
+
+    _argspec_exclude_fields: ClassVar[set[str]] = {"energy_management"}
+
+    energy_management: ClassVar[None] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def exclude_unmanaged_energy_settings(cls, data: Any, info: ValidationInfo) -> Any:
+        """Discard response-only energy settings and reject them as writable input."""
+        if not isinstance(data, dict):
+            return data
+        keys = {"energy_management", "energyManagement"}.intersection(data)
+        if not keys:
+            return data
+        if (info.context or {}).get("mode") != "response":
+            if any(data[key] is not None for key in keys):
+                raise ValueError("energy_management is not managed by the eBGP fabric module")
+            return data
+        return {key: value for key, value in data.items() if key not in keys}
+
+
 class FabricEbgpModel(FabricBaseModel):
     """
     # Summary
@@ -1715,18 +1733,47 @@ class FabricEbgpModel(FabricBaseModel):
     """
 
     _fabric_type: ClassVar[FabricTypeEnum] = FabricTypeEnum.VXLAN_EBGP
+    _argspec_exclude_fields: ClassVar[set[str]] = {"alert_suspend"}
+
+    alert_suspend: ClassVar[None] = None
+    telemetry_settings: EbgpTelemetrySettingsModel | None = Field(alias="telemetrySettings", description="Telemetry configuration", default=None)
+    telemetry_collection_type: TelemetryCollectionTypeEnum = Field(
+        alias="telemetryCollectionType",
+        description="Telemetry collection method.",
+        default=TelemetryCollectionTypeEnum.OUT_OF_BAND,
+    )
 
     # Core Management Configuration
     management: VxlanEbgpManagementModel | None = Field(
         description="eBGP VXLAN management configuration", default=None
     )
 
-    def to_diff_dict(self, **kwargs) -> dict:
-        """Ignore the controller-forced NX-API HTTP value for every eBGP family."""
-        data = super().to_diff_dict(**kwargs)
-        if "management" in data:
-            data["management"].pop("nxapiHttp", None)
-        return data
+    @model_validator(mode="before")
+    @classmethod
+    def exclude_unmanaged_alert_state(cls, data: Any, info: ValidationInfo) -> Any:
+        """Discard response-only alert state and reject it as writable input."""
+        if not isinstance(data, dict):
+            return data
+        keys = {"alert_suspend", "alertSuspend"}.intersection(data)
+        if not keys:
+            return data
+        if (info.context or {}).get("mode") != "response":
+            if any(data[key] is not None for key in keys):
+                raise ValueError("alert_suspend is not managed by the eBGP fabric module")
+            return data
+        return {key: value for key, value in data.items() if key not in keys}
+
+    @field_validator("telemetry_settings", mode="before")
+    @classmethod
+    def use_ebgp_telemetry_settings(cls, value: Any, info: ValidationInfo) -> Any:
+        """Narrow internally created shared settings without materializing energy defaults."""
+        if isinstance(value, dict) and value and set(value) <= {"energy_management", "energyManagement"} and (info.context or {}).get("mode") == "response":
+            return None
+        if isinstance(value, TelemetrySettingsModel) and not isinstance(value, EbgpTelemetrySettingsModel):
+            if "energy_management" in value.model_fields_set and (info.context or {}).get("mode") != "response":
+                raise ValueError("energy_management is not managed by the eBGP fabric module")
+            return value.model_dump(exclude={"energy_management"}, exclude_unset=True)
+        return value
 
     def _post_validate_consistency(self) -> None:
         """Propagate BGP ASN to site_id if site_id is empty."""

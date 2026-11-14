@@ -57,12 +57,6 @@ options:
         type: str
         default: essentials
         choices: [ essentials, advantage, premier ]
-      alert_suspend:
-        description:
-        - The alert suspension state for the fabric.
-        type: str
-        default: disabled
-        choices: [ enabled, disabled ]
       telemetry_collection:
         description:
         - Enable telemetry collection for the fabric.
@@ -75,7 +69,7 @@ options:
         - The telemetry collection type.
         - Applies when O(config.telemetry_collection) is enabled; in-band collection uses the telemetry source settings.
         type: str
-        default: inBand
+        default: outOfBand
         choices: [ inBand, outOfBand ]
       telemetry_streaming_protocol:
         description:
@@ -151,11 +145,12 @@ options:
             - Accept an AS path containing this border switch ASN.
             - Available in ND 4.3.1 or later.
             type: bool
+            default: true
           bgp_max_path:
             description:
             - The maximum number of BGP equal-cost paths.
             type: int
-            default: 4
+            default: 64
           bgp_underlay_failure_protect:
             description:
             - Enable BGP underlay failure protection.
@@ -634,41 +629,49 @@ options:
             - Use the RoCEv2 opcode for AI load-sharing hashing.
             - Available in ND 4.3.1 or later.
             type: bool
+            default: false
           ai_load_sharing_packet_sequence_number:
             description:
             - Use the RoCEv2 packet sequence number for AI load-sharing hashing.
             - Available in ND 4.3.1 or later.
             type: bool
+            default: false
           ai_load_sharing_queuepair:
             description:
             - Use the RoCEv2 queue pair for AI load-sharing hashing.
             - Available in ND 4.3.1 or later.
             type: bool
+            default: false
           dlb_all_interfaces:
             description:
             - Apply DLB to all supported interfaces.
             - Available in ND 4.3.1 or later.
             type: bool
+            default: true
           per_vrf_unique_loopback_auto_provision:
             description:
             - Auto-provision a unique IPv4 loopback per VRF.
             - Available in ND 4.3.1 or later.
             type: bool
+            default: false
           per_vrf_unique_loopback_auto_provision_v6:
             description:
             - Auto-provision a unique IPv6 loopback per VRF.
             - Available in ND 4.3.1 or later.
             type: bool
+            default: false
           per_vrf_unique_loopback_ip_range:
             description:
             - IPv4 prefix pool for per-VRF unique loopbacks.
             - Available in ND 4.3.1 or later.
             type: str
+            default: '10.6.0.0/22'
           per_vrf_unique_loopback_ipv6_range:
             description:
             - IPv6 prefix pool for per-VRF unique loopbacks.
             - Available in ND 4.3.1 or later.
             type: str
+            default: 'fd00::a06:0/112'
           vrf_template:
             description:
             - Default overlay VRF template for leafs.
@@ -765,27 +768,25 @@ options:
             - BFD minimum receive interval in milliseconds (10 to 999).
             - Available in ND 4.3.1 or later.
             type: int
-            min: 10
-            max: 999
+            default: 50
           bfd_multiplier:
             description:
             - BFD detection multiplier (1 to 50).
             - Available in ND 4.3.1 or later.
             type: int
-            min: 1
-            max: 50
+            default: 3
           bfd_pim:
             description:
             - Enable BFD for PIM.
             - Available in ND 4.3.1 or later.
             type: bool
+            default: false
           bfd_tx_interval:
             description:
             - BFD transmit interval in milliseconds (10 to 999).
             - Available in ND 4.3.1 or later.
             type: int
-            min: 10
-            max: 999
+            default: 50
           pim_hello_authentication:
             description:
             - Enable PIM hello authentication. Valid for IPv4 underlay only.
@@ -803,31 +804,33 @@ options:
             - "NTP authentication algorithm: aes128cmac or md5."
             - Available in ND 4.3.1 or later.
             type: str
+            default: 'aes128cmac'
             choices: [ aes128cmac, md5 ]
           ntp_auth_enable:
             description:
             - Enable NTP authentication.
             - Available in ND 4.3.1 or later.
             type: bool
+            default: false
           ntp_auth_key:
             description:
-            - NTP authentication key.
+            - Secret NTP authentication key.
+            - The input must contain 1 to 32 characters for O(config.management.ntp_auth_key_type=7),
+              or 1 to 128 characters for O(config.management.ntp_auth_key_type=6), with no whitespace.
             - Available in ND 4.3.1 or later.
-            - Must be 1 to 128 non-whitespace characters.
             type: str
-            no_log: true
           ntp_auth_key_id:
             description:
             - NTP authentication key identifier (1 to 65535).
             - Available in ND 4.3.1 or later.
             type: int
-            min: 1
-            max: 65535
+            default: 1
           ntp_auth_key_type:
             description:
             - "NTP authentication key type: 6 or 7."
             - Available in ND 4.3.1 or later.
             type: str
+            default: '7'
             choices: [ "6", "7" ]
           pim_auth_keychain_name:
             description:
@@ -839,6 +842,7 @@ options:
             - Use a PIM authentication keychain.
             - Available in ND 4.3.1 or later.
             type: bool
+            default: false
           pim_keys:
             description:
             - PIM keychain entries.
@@ -852,8 +856,6 @@ options:
                 - Available in ND 4.3.1 or later.
                 type: int
                 required: true
-                min: 0
-                max: 65535
               key_type:
                 description:
                 - "Key type: 6 or 7."
@@ -863,12 +865,11 @@ options:
                 choices: [ "6", "7" ]
               key_string:
                 description:
-                - Key material.
+                - Secret key material.
                 - Available in ND 4.3.1 or later.
                 - Must be 1 to 255 non-whitespace characters.
                 type: str
                 required: true
-                no_log: true
               crypto_algorithm:
                 description:
                 - Cryptographic algorithm.
@@ -893,11 +894,9 @@ options:
                 choices: [ duration, infinite, endTime ]
               accept_lifetime_duration:
                 description:
-                - Accept lifetime duration in seconds.
+                - Accept lifetime duration in seconds (1 to 2147483646).
                 - Available in ND 4.3.1 or later.
                 type: int
-                min: 1
-                max: 2147483646
               accept_lifetime_end:
                 description:
                 - Accept lifetime end time in HH:MM:SS format.
@@ -932,11 +931,9 @@ options:
                 choices: [ duration, infinite, endTime ]
               send_lifetime_duration:
                 description:
-                - Send lifetime duration in seconds.
+                - Send lifetime duration in seconds (1 to 2147483646).
                 - Available in ND 4.3.1 or later.
                 type: int
-                min: 1
-                max: 2147483646
               send_lifetime_end:
                 description:
                 - Send lifetime end time in HH:MM:SS format.
@@ -962,7 +959,7 @@ options:
             description:
             - Enable NX-API over HTTP.
             type: bool
-            default: false
+            default: true
           nxapi_https_port:
             description:
             - HTTPS port for NX-API (1-65535).
@@ -994,6 +991,7 @@ options:
             - When O(state=replaced), omitting this option resets the collection to its default empty value.
             type: list
             elements: dict
+            default: []
             suboptions:
               start_ip:
                 description:
@@ -1034,10 +1032,9 @@ options:
             - DHCP scope start address for switch POAP.
             - Applies to a local DHCP scope when O(config.management.day0_bootstrap) and
               O(config.management.local_dhcp_server) are enabled.
-            - Use an IPv4 address without a prefix length with O(config.management.dhcp_protocol_version=dhcpv4) on ND 4.2 or later.
-            - An IPv6 address without a prefix length requires ND 4.3.1 or later,
-              O(config.management.dhcp_protocol_version=dhcpv6), and a V6 controller installation.
-            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject DHCPv6.
+            - The module accepts IPv4 and IPv6 addresses without a prefix length on ND 4.2.1 or later.
+            - Use O(config.management.dhcp_protocol_version=dhcpv4) for IPv4 or O(config.management.dhcp_protocol_version=dhcpv6) for IPv6.
+            - Local DHCPv6 requires a V6 controller installation.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           dhcp_end_address:
@@ -1045,10 +1042,9 @@ options:
             - DHCP scope end address for switch POAP.
             - Applies to a local DHCP scope when O(config.management.day0_bootstrap) and
               O(config.management.local_dhcp_server) are enabled.
-            - Use an IPv4 address without a prefix length with O(config.management.dhcp_protocol_version=dhcpv4) on ND 4.2 or later.
-            - An IPv6 address without a prefix length requires ND 4.3.1 or later,
-              O(config.management.dhcp_protocol_version=dhcpv6), and a V6 controller installation.
-            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject DHCPv6.
+            - The module accepts IPv4 and IPv6 addresses without a prefix length on ND 4.2.1 or later.
+            - Use O(config.management.dhcp_protocol_version=dhcpv4) for IPv4 or O(config.management.dhcp_protocol_version=dhcpv6) for IPv6.
+            - Local DHCPv6 requires a V6 controller installation.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_gateway:
@@ -1056,11 +1052,9 @@ options:
             - Default gateway for management VRF on the switch.
             - Applies when O(config.management.day0_bootstrap) is enabled with a local or external DHCP server;
               keep the gateway and DHCP scope in the same subnet.
-            - Use an IPv4 address without a prefix length on ND 4.2 or later.
-            - An IPv6 address without a prefix length is accepted as module config on ND 4.3.1 or later.
-            - With local DHCP, O(config.management.dhcp_protocol_version=dhcpv6) requires a V6 controller installation.
-            - With external DHCP, controller acceptance of an IPv6 gateway alone has not been verified.
-            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject local DHCPv6.
+            - The module accepts IPv4 and IPv6 addresses without a prefix length on ND 4.2.1 or later.
+            - With local DHCP and an IPv6 gateway, select O(config.management.dhcp_protocol_version=dhcpv6).
+            - Local DHCPv6 requires a V6 controller installation.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_ipv4_prefix:
@@ -1096,6 +1090,7 @@ options:
                 - Effective when O(config.management.netflow_settings.netflow) is enabled; monitors refer to exporter names.
                 type: list
                 elements: dict
+                default: []
                 suboptions:
                   exporter_name:
                     description:
@@ -1127,6 +1122,7 @@ options:
                 - Effective when O(config.management.netflow_settings.netflow) is enabled; monitors refer to record names.
                 type: list
                 elements: dict
+                default: []
                 suboptions:
                   record_name:
                     description:
@@ -1152,6 +1148,7 @@ options:
                   O(config.management.netflow_settings.netflow_exporter_collection).
                 type: list
                 elements: dict
+                default: []
                 suboptions:
                   monitor_name:
                     description:
@@ -1642,49 +1639,56 @@ options:
             - Enable smart-switch high availability.
             - Available in ND 4.3.1 or later.
             type: bool
+            default: false
           auto_smart_switch_vpc_pair_ha:
             description:
             - Automatically configure HA for smart-switch vPC pairs.
             - Available in ND 4.3.1 or later.
             type: bool
+            default: false
           enable_secure_default_vrf:
             description:
             - Redirect default VRF traffic to a DPU for inspection.
             - Available in ND 4.3.1 or later.
             type: bool
+            default: false
           hypershield_ha_peer_link_subnet:
             description:
             - IPv4 subnet pool for HA peer-link connectivity.
             - Available in ND 4.3.1 or later.
             type: str
+            default: '10.12.0.0/22'
           hypershield_ha_peer_link_subnet_granularity:
             description:
             - Subnet prefix size for HA peer-link allocations.
             - Available in ND 4.3.1 or later.
             type: str
+            default: '/30'
             choices: [ "/30", "/31" ]
           hypershield_ha_source_intf:
             description:
             - Loopback interface used as the HA source (3 to 40 characters).
             - Available in ND 4.3.1 or later.
             type: str
+            default: 'loopback1023'
           hypershield_ha_source_subnet:
             description:
             - IPv4 subnet pool for the HA source loopback.
             - Available in ND 4.3.1 or later.
             type: str
+            default: '10.11.0.0/23'
           hypershield_ha_vlan:
             description:
             - VLAN used for smart-switch HA communication (2 to 4094).
             - Available in ND 4.3.1 or later.
             type: int
-            min: 2
-            max: 4094
+            default: 3601
           use_hypershield_source_loopback_for_ha:
             description:
             - Reuse the Hypershield source loopback for HA.
             - Available in ND 4.3.1 or later.
             type: bool
+            default: false
       telemetry_settings:
         description:
         - Telemetry configuration settings.
@@ -1788,16 +1792,6 @@ options:
                     choices:
                     - json
                     default: json
-          energy_management:
-            description:
-            - Energy management settings.
-            type: dict
-            suboptions:
-              cost:
-                description:
-                - Energy cost per unit.
-                type: float
-                default: 0.1
       external_streaming_settings:
         description:
         - External streaming settings.
@@ -1892,7 +1886,6 @@ EXAMPLES = r"""
           latitude: 37.7749
           longitude: -122.4194
         license_tier: premier
-        alert_suspend: disabled
         security_domain: all
         telemetry_collection: false
         management:
@@ -2004,7 +1997,6 @@ EXAMPLES = r"""
           latitude: 37.7749
           longitude: -122.4194
         license_tier: premier
-        alert_suspend: disabled
         security_domain: all
         telemetry_collection: false
         management:
@@ -2067,7 +2059,6 @@ EXAMPLES = r"""
           latitude: 40.7128
           longitude: -74.0060
         license_tier: premier
-        alert_suspend: disabled
         security_domain: all
         telemetry_collection: false
         management:
@@ -2092,7 +2083,6 @@ EXAMPLES = r"""
           latitude: 34.0522
           longitude: -118.2437
         license_tier: premier
-        alert_suspend: disabled
         security_domain: all
         telemetry_collection: false
         management:

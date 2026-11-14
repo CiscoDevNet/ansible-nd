@@ -253,7 +253,7 @@ def test_nd_state_machine_fabric_replacement_00010(
 
     Verify all three write states remain idempotent for every fabric family when
     the controller returns location defaults, dynamic allocation, and hidden
-    writable state. Public iBGP secrets are explicitly retained in the proposal.
+    writable state. Public BGP secrets are explicitly retained in the proposal.
 
     ## Classes and Methods
 
@@ -264,7 +264,7 @@ def test_nd_state_machine_fabric_replacement_00010(
     response = _existing_response(fabric_type, opaque_key, opaque_value)
     spy = _replacement_spy(orchestrator_class, response)(rest_send=_rest_send())
     module = _module(state)
-    if fabric_type.endswith("Ibgp"):
+    if fabric_type.endswith(("Ibgp", "Ebgp")):
         module.params["config"][0]["management"]["ntp_auth_key"] = "encrypted-controller-secret"
     instance = NDStateMachine(module=module, model_orchestrator=spy)
 
@@ -321,16 +321,12 @@ def test_nd_state_machine_fabric_replacement_00020(
     if fabric_type.endswith("Ebgp"):
         assert updated.management.bgp_asn_range == "3001-4000"
     if fabric_type != "externalConnectivity":
-        if fabric_type.endswith("Ibgp"):
-            if state == "merged":
-                assert management_payload["ntpAuthKey"] == "encrypted-controller-secret"
-                assert management_config["ntp_auth_key"] == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
-            else:
-                assert "ntpAuthKey" not in management_payload
-                assert "ntp_auth_key" not in management_config
-        else:
+        if state == "merged":
             assert management_payload["ntpAuthKey"] == "encrypted-controller-secret"
-            assert "ntpAuthKey" not in management_config
+            assert management_config["ntp_auth_key"] == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+        else:
+            assert "ntpAuthKey" not in management_payload
+            assert "ntp_auth_key" not in management_config
         assert "encrypted-controller-secret" in instance.module.no_log_values
     assert instance.output.format()["changed"] is True
 
