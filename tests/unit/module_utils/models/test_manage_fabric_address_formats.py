@@ -199,7 +199,7 @@ def test_ibgp_telemetry_collection_type_uses_api_default_and_respects_explicit_i
     assert replay.to_payload()["telemetryCollectionType"] == expected
 
 
-@pytest.mark.parametrize(("model_class", "expected"), ((FabricEbgpModel, "outOfBand"), (FabricExternalConnectivityModel, "inBand")))
+@pytest.mark.parametrize(("model_class", "expected"), ((FabricEbgpModel, "outOfBand"), (FabricExternalConnectivityModel, "outOfBand")))
 def test_telemetry_default_changes_keep_each_fabric_familys_policy(model_class, expected):
     """Each family's explicit default policy remains independent of the shared base."""
     assert model_class.model_fields["telemetry_collection_type"].default == expected

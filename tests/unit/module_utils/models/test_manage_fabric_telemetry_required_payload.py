@@ -41,7 +41,7 @@ FABRIC_MODELS = (
     pytest.param(FabricExternalConnectivityModel, id="external"),
     pytest.param(FabricCampusIbgpVxlanModel, id="campus"),
 )
-ENERGY_MANAGED_MODELS = (FabricExternalConnectivityModel, FabricCampusIbgpVxlanModel)
+ENERGY_MANAGED_MODELS = (FabricCampusIbgpVxlanModel,)
 
 
 def _config(**patch) -> dict:

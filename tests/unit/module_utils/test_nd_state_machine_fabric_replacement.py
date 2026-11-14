@@ -18,6 +18,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_vxlan import (
     FabricGroupVxlanModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_external import (
+    FabricExternalConnectivityModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ebgp_vxlan import (
     ManageAiEbgpVxlanFabricOrchestrator,
 )
@@ -56,8 +59,8 @@ FABRIC_CASES = (
         "external",
         ManageExternalFabricOrchestrator,
         "externalConnectivity",
-        "aiMonitoring",
-        True,
+        "hypershieldConnectivityProxyServer",
+        "proxy.example.test",
     ),
     ("ibgp", ManageIbgpFabricOrchestrator, "vxlanIbgp", "borderCount", 0),
     ("ebgp", ManageEbgpFabricOrchestrator, "vxlanEbgp", "borderCount", 0),
@@ -329,6 +332,91 @@ def test_nd_state_machine_fabric_replacement_00020(
             assert "ntp_auth_key" not in management_config
         assert "encrypted-controller-secret" in instance.module.no_log_values
     assert instance.output.format()["changed"] is True
+
+
+@pytest.mark.parametrize("version", ("4.2.1", "4.3.1"))
+@pytest.mark.parametrize("state", ("merged", "replaced", "overridden"))
+def test_external_public_sampler_omission_preserves_merge_and_resets_exact_states(version, state):
+    """Public sampler omission follows normal state semantics on both API releases."""
+    response = FabricExternalConnectivityModel.from_config(_module(state).params["config"][0]).to_payload()
+    response["management"]["netflowSettings"]["netflowSamplerCollection"] = [
+        {"samplerName": "sampler-1", "numSamples": 10, "samplingRate": 1000}
+    ]
+    rest = _rest_send()
+    rest.controller_product_version = version
+    spy = _replacement_spy(ManageExternalFabricOrchestrator, response)(rest_send=rest)
+    instance = NDStateMachine(module=_module(state), model_orchestrator=spy)
+
+    instance.manage_state()
+
+    assert len(spy._updated) == (0 if state == "merged" else 1)
+    if spy._updated:
+        assert "netflowSamplerCollection" not in spy._updated[0].to_payload()["management"]["netflowSettings"]
+
+
+@pytest.mark.parametrize("state", ("merged", "replaced", "overridden"))
+def test_external_public_ai_monitoring_omission_preserves_merge_and_resets_exact_states(state):
+    """AI monitoring uses ordinary public management semantics on ND 4.3.1."""
+    response = FabricExternalConnectivityModel.from_config(_module(state).params["config"][0]).to_payload()
+    response["management"]["aiMonitoring"] = True
+    spy = _replacement_spy(ManageExternalFabricOrchestrator, response)(rest_send=_rest_send())
+    instance = NDStateMachine(module=_module(state), model_orchestrator=spy)
+
+    instance.manage_state()
+
+    assert len(spy._updated) == (0 if state == "merged" else 1)
+    if spy._updated:
+        expected = type(spy._updated[0].management).model_fields["ai_monitoring"].default
+        assert spy._updated[0].to_payload()["management"].get("aiMonitoring") is expected
+
+
+@pytest.mark.parametrize("version", ("4.2.1", "4.3.1"))
+@pytest.mark.parametrize("state", ("merged", "replaced", "overridden"))
+def test_external_unreported_newer_defaults_do_not_create_a_replacement_diff(version, state):
+    """Missing newer API fields cannot manufacture writes in either supported release."""
+    response = {
+        "name": "fabric1",
+        "category": "fabric",
+        "licenseTier": "essentials",
+        "management": {"type": "externalConnectivity", "bgpAsn": "65001"},
+    }
+    rest = _rest_send()
+    rest.controller_product_version = version
+    spy = _replacement_spy(ManageExternalFabricOrchestrator, response)(rest_send=rest)
+    instance = NDStateMachine(module=_module(state), model_orchestrator=spy)
+
+    instance.manage_state()
+
+    assert spy._updated == []
+    assert instance.output.format()["changed"] is False
+
+
+@pytest.mark.parametrize("version", ("4.2.1", "4.3.1"))
+def test_external_real_merge_does_not_replay_unreported_newer_defaults(version):
+    """An unrelated update preserves omission for every newer default, including on ND 4.3."""
+    response = {
+        "name": "fabric1",
+        "category": "fabric",
+        "licenseTier": "essentials",
+        "management": {"type": "externalConnectivity", "bgpAsn": "65001"},
+    }
+    rest = _rest_send()
+    rest.controller_product_version = version
+    spy = _replacement_spy(ManageExternalFabricOrchestrator, response)(rest_send=rest)
+    instance = NDStateMachine(module=_module("merged", license_tier="premier"), model_orchestrator=spy)
+
+    instance.manage_state()
+
+    assert len(spy._updated) == 1
+    payload = spy._updated[0].to_payload()
+    assert payload["licenseTier"] == "premier"
+    for alias in (
+        "aiMonitoring", "allowSmartSwitchHA", "autoSmartSwitchVpcPairHA", "enableRemoteSwitchBackup",
+        "hypershieldHAPeerLinkSubnet", "hypershieldHAPeerLinkSubnetGranularity", "hypershieldHASourceIntf",
+        "hypershieldHASourceSubnet", "hypershieldHAVlan", "iosXeTorBootstrapVlan",
+        "softwareUpdateInMonitoredMode", "strictConfigComplianceMode", "useHypershieldSourceLoopbackForHA",
+    ):
+        assert alias not in payload["management"]
 
 
 def test_nd_state_machine_fabric_replacement_00030() -> None:

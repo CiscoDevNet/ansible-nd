@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.release_metadata import (
     NDMinimumVersion,
@@ -15,13 +15,17 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.release_metadata i
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
+    StringConstraints,
+    ValidationInfo,
     field_validator,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
     CoppPolicyEnum,
     DhcpProtocolVersionEnum,
     FabricTypeEnum,
     PowerRedundancyModeEnum,
+    TelemetryCollectionTypeEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
     BootstrapSubnetModel,
@@ -30,12 +34,16 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     FabricManagementModel,
     NetflowSamplerModel,
     NetflowSettingsModel,
+    RequiredFabricIPAddress,
     ScheduledBackupTime,
-    validate_bgp_asn_value,
+    TelemetrySettingsModel,
+    validate_bgp_asn_template_value,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import (
     FabricBaseModel,
 )
+
+FabricCliText = Annotated[str, StringConstraints(strip_whitespace=False)]
 
 """
 # Comprehensive Pydantic models for External Connectivity fabric management via Nexus Dashboard
@@ -98,6 +106,7 @@ class ExternalConnectivityManagementModel(FabricManagementModel):
     )
 
     _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
+    ipv6_management_minimum_nd_version: ClassVar[str | None] = None
 
     # Hidden Hypershield proxy response values are not public parameters. Keep
     # their writable state across full replacement while gathered output omits it.
@@ -120,13 +129,13 @@ class ExternalConnectivityManagementModel(FabricManagementModel):
     bgp_asn: str | None = Field(
         alias="bgpAsn",
         description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]",
+        min_length=1,
+        max_length=11,
         default=None,
     )
 
     # Name under management section is optional — propagated from FabricExternalConnectivityModel.fabric_name during validation
-    name: str | None = Field(
-        description="Fabric name", min_length=1, max_length=64, default=None
-    )
+    name: str | None = Field(description="Fabric name", min_length=1, max_length=64, default=None)
 
     # AAA
     aaa: bool = Field(
@@ -209,12 +218,12 @@ class ExternalConnectivityManagementModel(FabricManagementModel):
     )
 
     # DNS
-    dns_collection: list[str] = Field(
+    dns_collection: list[Annotated[RequiredFabricIPAddress, Field(min_length=3, max_length=40)]] = Field(
         alias="dnsCollection",
         description="List of IPv4 and IPv6 DNS addresses",
         default_factory=list,
     )
-    dns_vrf_collection: list[str] = Field(
+    dns_vrf_collection: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(
         alias="dnsVrfCollection",
         description="DNS Server VRFs. One VRF for all DNS servers or a list of VRFs, one per DNS server",
         default_factory=list,
@@ -228,7 +237,7 @@ class ExternalConnectivityManagementModel(FabricManagementModel):
         json_schema_extra={
             "nd_string_constraints": {
                 "allow_empty": True,
-                "pattern": r"^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,6}$"
+                "pattern": r"^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,6}$",
             }
         },
     )
@@ -241,22 +250,22 @@ class ExternalConnectivityManagementModel(FabricManagementModel):
     )
 
     # Extra Config
-    extra_config_aaa: str = Field(
+    extra_config_aaa: FabricCliText = Field(
         alias="extraConfigAaa",
         description="Additional CLIs for AAA Configuration",
         default="",
     )
-    extra_config_fabric: str = Field(
+    extra_config_fabric: FabricCliText = Field(
         alias="extraConfigFabric",
         description="Additional CLIs for all switches",
         default="",
     )
-    extra_config_nxos_bootstrap: str = Field(
+    extra_config_nxos_bootstrap: FabricCliText = Field(
         alias="extraConfigNxosBootstrap",
         description="Additional CLIs required during device bootup/login e.g. AAA/Radius (NX-OS)",
         default="",
     )
-    extra_config_xe_bootstrap: str = Field(
+    extra_config_xe_bootstrap: FabricCliText = Field(
         alias="extraConfigXeBootstrap",
         description="Additional CLIs required during device bootup/login e.g. AAA/Radius (IOS-XE)",
         default="",
@@ -315,13 +324,11 @@ class ExternalConnectivityManagementModel(FabricManagementModel):
     monitored_mode: bool = Field(
         alias="monitoredMode",
         description="If enabled, fabric is only monitored. No configuration will be deployed",
-        default=False,
+        default=True,
     )
 
     # MPLS Handoff
-    mpls_handoff: bool = Field(
-        alias="mplsHandoff", description="Enable MPLS Handoff", default=False
-    )
+    mpls_handoff: bool = Field(alias="mplsHandoff", description="Enable MPLS Handoff", default=False)
     mpls_loopback_identifier: int = Field(
         alias="mplsLoopbackIdentifier",
         description="Underlay MPLS Loopback Identifier",
@@ -344,9 +351,7 @@ class ExternalConnectivityManagementModel(FabricManagementModel):
 
     # NX-API Settings
     nxapi: bool = Field(description="Enable NX-API over HTTPS", default=False)
-    nxapi_http: bool = Field(
-        alias="nxapiHttp", description="Enable NX-API over HTTP", default=False
-    )
+    nxapi_http: bool = Field(alias="nxapiHttp", description="Enable NX-API over HTTP", default=False)
     nxapi_http_port: int = Field(
         alias="nxapiHttpPort",
         description="HTTP port for NX-API",
@@ -441,11 +446,7 @@ class ExternalConnectivityManagementModel(FabricManagementModel):
         default=None,
         min_length=1,
         max_length=63,
-        json_schema_extra={
-            "nd_string_constraints": {
-                "pattern": r"^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,6}$"
-            }
-        },
+        json_schema_extra={"nd_string_constraints": {"pattern": r"^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,6}$"}},
     )
     hypershield_connectivity_source_intf: str | None = Field(
         alias="hypershieldConnectivitySourceIntf",
@@ -457,77 +458,65 @@ class ExternalConnectivityManagementModel(FabricManagementModel):
 
     # Additional controls present in the ND 4.3.1 External_Fabric template.
     ai_monitoring: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
-        alias="aiMonitoring", description="Enable AI monitoring features.", default=None
+        alias="aiMonitoring",
+        description="Enable AI monitoring features.",
+        default=False,
     )
     allow_smart_switch_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="allowSmartSwitchHA",
         description="Enable high availability configuration for smart switches.",
-        default=None,
+        default=False,
     )
-    auto_smart_switch_vpc_pair_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = (
-        Field(
-            alias="autoSmartSwitchVpcPairHA",
-            description="Enable automatic high availability configuration for smart-switch vPC pairs.",
-            default=None,
-        )
+    auto_smart_switch_vpc_pair_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="autoSmartSwitchVpcPairHA",
+        description="Enable automatic high availability configuration for smart-switch vPC pairs.",
+        default=False,
     )
-    enable_remote_switch_backup: Annotated[bool | None, NDMinimumVersion("4.3.1")] = (
-        Field(
-            alias="enableRemoteSwitchBackup",
-            description="Enable remote switch backup.",
-            default=None,
-        )
+    enable_remote_switch_backup: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="enableRemoteSwitchBackup",
+        description="Enable remote switch backup.",
+        default=False,
     )
-    hypershield_ha_peer_link_subnet: Annotated[
-        FabricIPv4CIDR, NDMinimumVersion("4.3.1")
-    ] = Field(
+    hypershield_ha_peer_link_subnet: Annotated[FabricIPv4CIDR, NDMinimumVersion("4.3.1")] = Field(
         alias="hypershieldHAPeerLinkSubnet",
         description="IPv4 subnet pool for HA peer-link connectivity.",
-        default=None,
+        default="10.12.0.0/22",
     )
-    hypershield_ha_peer_link_subnet_granularity: Annotated[
-        Literal["/30", "/31"] | None, NDMinimumVersion("4.3.1")
-    ] = Field(
+    hypershield_ha_peer_link_subnet_granularity: Annotated[Literal["/30", "/31"] | None, NDMinimumVersion("4.3.1")] = Field(
         alias="hypershieldHAPeerLinkSubnetGranularity",
         description="Subnet prefix size for HA peer-link allocations.",
-        default=None,
+        default="/30",
     )
-    hypershield_ha_source_intf: Annotated[str | None, NDMinimumVersion("4.3.1")] = (
-        Field(
-            alias="hypershieldHASourceIntf",
-            description="Loopback interface used as the HA source.",
-            min_length=3,
-            max_length=40,
-            default=None,
-        )
+    hypershield_ha_source_intf: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="hypershieldHASourceIntf",
+        description="Loopback interface used as the HA source.",
+        min_length=3,
+        max_length=40,
+        default="loopback1023",
     )
-    hypershield_ha_source_subnet: Annotated[FabricIPv4CIDR, NDMinimumVersion("4.3.1")] = (
-        Field(
-            alias="hypershieldHASourceSubnet",
-            description="IPv4 subnet pool for the HA source loopback.",
-            default=None,
-        )
+    hypershield_ha_source_subnet: Annotated[FabricIPv4CIDR, NDMinimumVersion("4.3.1")] = Field(
+        alias="hypershieldHASourceSubnet",
+        description="IPv4 subnet pool for the HA source loopback.",
+        default="10.11.0.0/23",
     )
     hypershield_ha_vlan: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
         alias="hypershieldHAVlan",
         description="VLAN used for smart-switch HA communication.",
         ge=2,
         le=4094,
-        default=None,
+        default=3601,
     )
-    use_hypershield_source_loopback_for_ha: Annotated[
-        bool | None, NDMinimumVersion("4.3.1")
-    ] = Field(
+    use_hypershield_source_loopback_for_ha: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="useHypershieldSourceLoopbackForHA",
         description="Reuse the Hypershield source loopback for HA.",
-        default=None,
+        default=False,
     )
     ios_xe_tor_bootstrap_vlan: Annotated[int | None, NDMinimumVersion("4.3.1")] = Field(
         alias="iosXeTorBootstrapVlan",
         description="Catalyst ToR bootstrap VLAN for inband PnP.",
         ge=1,
         le=4094,
-        default=None,
+        default=1,
     )
     remote_storage_server: Annotated[str | None, NDMinimumVersion("4.3.1")] = Field(
         alias="remoteStorageServer",
@@ -536,19 +525,15 @@ class ExternalConnectivityManagementModel(FabricManagementModel):
         pattern=r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$",
         default=None,
     )
-    software_update_in_monitored_mode: Annotated[
-        bool | None, NDMinimumVersion("4.3.1")
-    ] = Field(
+    software_update_in_monitored_mode: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="softwareUpdateInMonitoredMode",
         description="Allow image management while the fabric is in monitored mode.",
-        default=None,
+        default=False,
     )
-    strict_config_compliance_mode: Annotated[bool | None, NDMinimumVersion("4.3.1")] = (
-        Field(
-            alias="strictConfigComplianceMode",
-            description="Enable bidirectional configuration compliance checks.",
-            default=None,
-        )
+    strict_config_compliance_mode: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="strictConfigComplianceMode",
+        description="Enable bidirectional configuration compliance checks.",
+        default=False,
     )
 
     @field_validator("bgp_asn")
@@ -561,15 +546,42 @@ class ExternalConnectivityManagementModel(FabricManagementModel):
 
         ## Description
 
-        Accepts either a plain integer ASN (1-4294967295) or dotted four-byte
-        ASN notation in the form ``MMMM.NNNN`` where both parts are in the
-        range 1-65535 / 0-65535 respectively.
+        Accepts a decimal ASN (1-4294967295), including the native template's
+        optional leading plus sign, or unsigned dotted four-byte ASN notation.
+        Normalize a leading plus sign so API payload and response state use
+        the same unsigned decimal spelling.
 
         ## Raises
 
         - `ValueError` - If the value does not match the expected ASN format
         """
-        return validate_bgp_asn_value(value)
+        if value is not None and value.startswith("+") and not value[1:].isdigit():
+            raise ValueError("A leading plus sign is only supported for decimal BGP ASNs")
+        validate_bgp_asn_template_value(value)
+        return value[1:] if value is not None and value.startswith("+") else value
+
+
+class ExternalTelemetrySettingsModel(TelemetrySettingsModel):
+    """External telemetry settings managed through the fabric CRUD endpoint."""
+
+    _argspec_exclude_fields: ClassVar[set[str]] = {"energy_management"}
+
+    energy_management: ClassVar[None] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def exclude_unmanaged_energy_settings(cls, data: Any, info: ValidationInfo) -> Any:
+        """Discard response-only energy settings and reject them as writable input."""
+        if not isinstance(data, dict):
+            return data
+        keys = {"energy_management", "energyManagement"}.intersection(data)
+        if not keys:
+            return data
+        if (info.context or {}).get("mode") != "response":
+            if any(data[key] is not None for key in keys):
+                raise ValueError("energy_management is not managed by the External fabric module")
+            return data
+        return {key: value for key, value in data.items() if key not in keys}
 
 
 class FabricExternalConnectivityModel(FabricBaseModel):
@@ -588,8 +600,42 @@ class FabricExternalConnectivityModel(FabricBaseModel):
     """
 
     _fabric_type: ClassVar[FabricTypeEnum] = FabricTypeEnum.EXTERNAL_CONNECTIVITY
+    _argspec_exclude_fields: ClassVar[set[str]] = {"alert_suspend"}
+
+    alert_suspend: ClassVar[None] = None
+    telemetry_settings: ExternalTelemetrySettingsModel | None = Field(alias="telemetrySettings", description="Telemetry configuration", default=None)
+    telemetry_collection_type: TelemetryCollectionTypeEnum = Field(
+        alias="telemetryCollectionType",
+        description="Telemetry collection method.",
+        default=TelemetryCollectionTypeEnum.OUT_OF_BAND,
+    )
 
     # Core Management Configuration
-    management: ExternalConnectivityManagementModel | None = Field(
-        description="External Connectivity management configuration", default=None
-    )
+    management: ExternalConnectivityManagementModel | None = Field(description="External Connectivity management configuration", default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def exclude_unmanaged_alert_state(cls, data: Any, info: ValidationInfo) -> Any:
+        """Discard response-only alert state and reject it as writable input."""
+        if not isinstance(data, dict):
+            return data
+        keys = {"alert_suspend", "alertSuspend"}.intersection(data)
+        if not keys:
+            return data
+        if (info.context or {}).get("mode") != "response":
+            if any(data[key] is not None for key in keys):
+                raise ValueError("alert_suspend is not managed by the External fabric module")
+            return data
+        return {key: value for key, value in data.items() if key not in keys}
+
+    @field_validator("telemetry_settings", mode="before")
+    @classmethod
+    def use_external_telemetry_settings(cls, value: Any, info: ValidationInfo) -> Any:
+        """Narrow shared settings without materializing separately managed energy defaults."""
+        if isinstance(value, dict) and value and set(value) <= {"energy_management", "energyManagement"} and (info.context or {}).get("mode") == "response":
+            return None
+        if isinstance(value, TelemetrySettingsModel) and not isinstance(value, ExternalTelemetrySettingsModel):
+            if "energy_management" in value.model_fields_set and (info.context or {}).get("mode") != "response":
+                raise ValueError("energy_management is not managed by the External fabric module")
+            return value.model_dump(exclude={"energy_management"}, exclude_unset=True)
+        return value

@@ -69,13 +69,14 @@ SITE_ID_FAMILIES = tuple(
     for family in FABRIC_FAMILIES
     if family[0] is not FabricExternalConnectivityModel
 )
-BGP_IPV6_FAMILIES = (
+BASELINE_IPV6_FAMILIES = (
     (FabricIbgpModel, ManageIbgpFabricOrchestrator),
     (FabricAiIbgpVxlanModel, ManageAiIbgpVxlanFabricOrchestrator),
     (FabricEbgpModel, ManageEbgpFabricOrchestrator),
     (FabricAiEbgpVxlanModel, ManageAiEbgpVxlanFabricOrchestrator),
+    (FabricExternalConnectivityModel, ManageExternalFabricOrchestrator),
 )
-DHCP_VERSION_GATED_FAMILIES = tuple(family for family in FABRIC_FAMILIES if family not in BGP_IPV6_FAMILIES)
+DHCP_VERSION_GATED_FAMILIES = tuple(family for family in FABRIC_FAMILIES if family not in BASELINE_IPV6_FAMILIES)
 
 DHCP_IPV6_FIELDS = (
     ("dhcp_start_address", "2001:db8::10"),
@@ -583,10 +584,10 @@ def test_explicit_ipv6_dhcp_and_gateway_fields_fail_closed_before_4_3_1(
         _orchestrator(orchestrator_class, "merged", version).preflight([model])
 
 
-@pytest.mark.parametrize(("model_class", "orchestrator_class"), BGP_IPV6_FAMILIES)
+@pytest.mark.parametrize(("model_class", "orchestrator_class"), BASELINE_IPV6_FAMILIES)
 @pytest.mark.parametrize(("field", "value"), DHCP_IPV6_FIELDS)
 @pytest.mark.parametrize("version", (None, "4.2.1", "4.2(1)"))
-def test_bgp_ipv6_management_addresses_follow_baseline_native_template(model_class, orchestrator_class, field, value, version) -> None:
+def test_ipv6_management_addresses_follow_baseline_native_template(model_class, orchestrator_class, field, value, version) -> None:
     management = {"bgp_asn": "65001", field: value, "dhcp_protocol_version": "dhcpv6"}
     model = model_class.from_config({"fabric_name": "fabric1", "management": management})
     _orchestrator(orchestrator_class, "merged", version).preflight([model])
@@ -718,7 +719,7 @@ def test_response_origin_ipv6_config_replay_obeys_each_family_release_policy(
     replayed = model_class.from_config(result.validated_parameters["config"][0])
 
     _orchestrator(orchestrator_class, "merged", "4.3.1a").preflight([replayed])
-    if (model_class, orchestrator_class) in BGP_IPV6_FAMILIES:
+    if (model_class, orchestrator_class) in BASELINE_IPV6_FAMILIES:
         _orchestrator(orchestrator_class, "merged", "4.2.1").preflight([replayed])
     else:
         with pytest.raises(RuntimeError, match="require ND 4.3.1 or later"):

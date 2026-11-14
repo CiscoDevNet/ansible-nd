@@ -33,7 +33,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
 )
 
 FABRIC_CASES = (
-    (FabricExternalConnectivityModel, "externalConnectivity", "aiMonitoring", True),
+    (FabricExternalConnectivityModel, "externalConnectivity", "hypershieldConnectivityProxyServer", "proxy.example.test"),
     (FabricIbgpModel, "vxlanIbgp", "borderCount", 0),
     (FabricEbgpModel, "vxlanEbgp", "borderCount", 0),
     (FabricAiIbgpVxlanModel, "aimlVxlanIbgp", "borderCount", 0),
@@ -388,7 +388,7 @@ def test_manage_fabric_replacement_00060() -> None:
 
 
 def test_manage_fabric_replacement_00070() -> None:
-    """Verify External-only netflow sampler state is preserved but remains private."""
+    """Verify omitted public External NetFlow samplers reset during exact replacement."""
     existing = FabricExternalConnectivityModel.from_response(
         _fabric_response(
             "externalConnectivity",
@@ -400,13 +400,13 @@ def test_manage_fabric_replacement_00070() -> None:
     )
     candidate = FabricExternalConnectivityModel.from_config(_fabric_config()).prepare_for_replacement(existing)
 
-    sampler = [{"samplerName": "sampler-1", "numSamples": 10, "samplingRate": 1000}]
-    assert candidate.to_payload()["management"]["netflowSettings"]["netflowSamplerCollection"] == sampler
-    assert "netflowSamplerCollection" not in candidate.to_config()["management"]["netflow_settings"]
-    assert "netflowSamplerCollection" not in candidate.to_gathered_config()["management"]["netflow_settings"]
+    assert "netflowSamplerCollection" not in candidate.to_payload()["management"]["netflowSettings"]
+    assert existing.to_gathered_config()["management"]["netflow_settings"]["netflow_sampler_collection"] == [
+        {"sampler_name": "sampler-1", "num_samples": 10, "sampling_rate": 1000}
+    ]
     netflow_spec = FabricExternalConnectivityModel.get_argument_spec()["config"]["options"]["management"]["options"]["netflow_settings"]["options"]
-    assert "netflow_sampler_collection" not in netflow_spec
-    assert existing.get_diff(candidate, exclude_unset=False) is True
+    assert "netflow_sampler_collection" in netflow_spec
+    assert existing.get_diff(candidate, exclude_unset=False) is False
 
 
 @pytest.mark.parametrize("model_class,fabric_type", IBGP_CASES)
