@@ -3027,7 +3027,10 @@ class NDSwitchResourceModule:
             plan = self._plan
 
             # Switches that would be deleted
-            deleted_sws: list[SwitchDataModel] = list(plan.to_delete) + list(plan.to_delete_existing)
+            deleted_sws: list[SwitchDataModel] = list(plan.to_delete_existing)
+            if self.state in ("overridden", "deleted"):
+                # Orphans are not deletion targets for merged/replaced calls.
+                deleted_sws = list(plan.to_delete) + deleted_sws
             if self.state == "deleted":
                 # _handle_deleted_state fills plan.to_delete only for
                 # overridden; for state=deleted the deletions come from the
