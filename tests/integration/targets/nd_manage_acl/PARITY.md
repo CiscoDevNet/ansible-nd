@@ -61,7 +61,7 @@ Safe harness scenarios:
 ```bash
 ansible-test network-integration nd_manage_acl \
   --inventory inventory.LOCAL.networking \
-  --tags never,nd4x_demo_merged,nd4x_demo_replaced,nd4x_demo_deleted -vv
+  --tags nd4x_demo_merged,nd4x_demo_replaced,nd4x_demo_deleted -vv
 ```
 
 The overridden replacement requires a dedicated test fabric, the inventory
@@ -74,7 +74,7 @@ nd_acl_destructive_tests_enabled=true
 ```bash
 ansible-test network-integration nd_manage_acl \
   --inventory inventory.LOCAL.networking \
-  --tags never,nd4x_demo_overridden,nd4x_demo_preflight \
+  --tags nd4x_demo_overridden,nd4x_demo_preflight \
   --allow-destructive -vv
 ```
 
