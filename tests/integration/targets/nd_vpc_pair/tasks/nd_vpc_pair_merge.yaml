@@ -1030,6 +1030,43 @@
   loop: "{{ tc10_fabric_peering_support.results | default([]) }}"
   tags: merge
 
+- name: MERGE - TC10 - PREP - Wait for vPC overview to recognize the deployed pair
+  cisco.nd.nd_rest:
+    <<: *nd_info
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPairOverview?componentType=full"
+    method: get
+  register: tc10_overview_ready
+  failed_when: false
+  vars:
+    tc10_sync_wait_timeout: "{{ nd_vpc_pair_sync_wait_timeout | default(120) | int }}"
+    tc10_sync_poll_interval: "{{ [1, (nd_vpc_pair_sync_poll_interval | default(10) | int)] | max }}"
+    tc10_overview_current: "{{ tc10_overview_ready.current | default({}) }}"
+    tc10_inventory_sync: "{{ tc10_overview_current.inventory.syncStatus | default({}) }}"
+    tc10_overlay_network_sync: "{{ tc10_overview_current.overlay.networkCount | default({}) }}"
+    tc10_overlay_vrf_sync: "{{ tc10_overview_current.overlay.vrfCount | default({}) }}"
+  until:
+    - (tc10_overview_ready.status | default(0) | int) == 200
+    - (tc10_inventory_sync.pending | default(0) | int) == 0
+    - (tc10_inventory_sync.outOfSync | default(0) | int) == 0
+    - (tc10_overlay_network_sync.pending | default(0) | int) == 0
+    - (tc10_overlay_network_sync.outOfSync | default(0) | int) == 0
+    - (tc10_overlay_network_sync.inProgress | default(0) | int) == 0
+    - (tc10_overlay_vrf_sync.pending | default(0) | int) == 0
+    - (tc10_overlay_vrf_sync.outOfSync | default(0) | int) == 0
+    - (tc10_overlay_vrf_sync.inProgress | default(0) | int) == 0
+  retries: >-
+    {{
+      [
+        1,
+        (
+          ((tc10_sync_wait_timeout | int) + (tc10_sync_poll_interval | int) - 1)
+          // (tc10_sync_poll_interval | int)
+        ),
+      ] | max
+    }}
+  delay: "{{ tc10_sync_poll_interval | int }}"
+  tags: merge
+
 - name: MERGE - TC10 - API - Query vpcPairOverview with componentType=full
   cisco.nd.nd_rest:
     path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPairOverview?componentType=full"
@@ -1148,41 +1185,6 @@
   ansible.builtin.pause:
     seconds: "{{ nd_vpc_pair_tc11_pre_delay | default(20) | int }}"
   when: (nd_vpc_pair_tc11_pre_delay | default(20) | int) > 0
-  tags: merge
-
-- name: MERGE - TC11 - PREP - Wait for vPC overview sync convergence
-  cisco.nd.nd_rest:
-    <<: *nd_info
-    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPairOverview?componentType=full"
-    method: get
-  register: tc11_overview
-  vars:
-    tc11_sync_wait_timeout: "{{ nd_vpc_pair_sync_wait_timeout | default(120) | int }}"
-    tc11_sync_poll_interval: "{{ [1, (nd_vpc_pair_sync_poll_interval | default(10) | int)] | max }}"
-    tc11_inventory_sync: "{{ tc11_overview.current.inventory.syncStatus | default({}) }}"
-    tc11_overlay_network_sync: "{{ tc11_overview.current.overlay.networkCount | default({}) }}"
-    tc11_overlay_vrf_sync: "{{ tc11_overview.current.overlay.vrfCount | default({}) }}"
-  until:
-    - tc11_overview.failed == false
-    - (tc11_inventory_sync.pending | default(0) | int) == 0
-    - (tc11_inventory_sync.outOfSync | default(0) | int) == 0
-    - (tc11_overlay_network_sync.pending | default(0) | int) == 0
-    - (tc11_overlay_network_sync.outOfSync | default(0) | int) == 0
-    - (tc11_overlay_network_sync.inProgress | default(0) | int) == 0
-    - (tc11_overlay_vrf_sync.pending | default(0) | int) == 0
-    - (tc11_overlay_vrf_sync.outOfSync | default(0) | int) == 0
-    - (tc11_overlay_vrf_sync.inProgress | default(0) | int) == 0
-  retries: >-
-    {{
-      [
-        1,
-        (
-          ((tc11_sync_wait_timeout | int) + (tc11_sync_poll_interval | int) - 1)
-          // (tc11_sync_poll_interval | int)
-        ),
-      ] | max
-    }}
-  delay: "{{ tc11_sync_poll_interval | int }}"
   tags: merge
 
 - name: MERGE - TC11 - MERGE - Re-run same config with deploy true
