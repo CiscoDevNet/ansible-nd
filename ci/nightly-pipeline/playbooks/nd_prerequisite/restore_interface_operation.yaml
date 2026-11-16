@@ -230,14 +230,46 @@
   run_once: true
   when: _ndp_restore_operation.action in ['reset_routed_ethernet', 'restore_ethernet']
 
-- name: "Reset Ethernet parent {{ _ndp_restore_operation.interface }} to its pre-test default"
+# A failed authored delete can leave this port's former parent as a staged,
+# undeployed interface_delete with members still bundled on the switch. Restoring
+# one member's intent cannot clear that, so deploy the staged unbundle first.
+- name: "Converge staged port-channel drift before restoring {{ _ndp_restore_operation.interface }}"
+  ansible.builtin.include_tasks: converge_port_channel_member_drift.yaml
+  vars:
+    _ndp_cv:
+      fabric: "{{ _ndp_restore_operation.fabric_name }}"
+      serial: "{{ _ndp_restore_operation.serial }}"
+      label: "{{ _ndp_restore_operation.switch_ref | default(_ndp_restore_operation.serial) }}"
+      members: >-
+        {{ ((_ndp_registry | default({})).lab | default({})).interface_allowlist[_ndp_restore_operation.switch_ref]
+           if _ndp_restore_operation.switch_ref is defined
+              and _ndp_restore_operation.switch_ref in (((_ndp_registry | default({})).lab | default({})).interface_allowlist | default({}))
+           else [_ndp_restore_operation.interface] }}
+      port_channels: []
+      strict: true
+  when: _ndp_restore_operation.action == 'restore_ethernet'
+
+- name: "Reconcile Ethernet parent {{ _ndp_restore_operation.interface }} to its captured state"
   when:
     - _ndp_restore_operation.action in ['reset_routed_ethernet', 'restore_ethernet']
     - >-
       ((_ndp_restore_ethernet_cur.current | default({})) is mapping)
-      and (_ndp_restore_ethernet_cur.current.configData | default({})) != _ndp_restore_operation.pre_change_config_data
+      and (
+        (_ndp_restore_ethernet_cur.current.configData | default({})) != _ndp_restore_operation.pre_change_config_data
+        or (_ndp_restore_ethernet_cur.current.operData.adminStatus | default('')) !=
+          ('up' if _ndp_restore_operation.pre_change_config_data.networkOS.policy.adminState else 'down')
+        or (_ndp_restore_ethernet_cur.current.operData.mode | default('')) != _ndp_restore_operation.pre_change_config_data.mode
+      )
   run_once: true
   block:
+    - name: Require observed state before deploying already-restored Ethernet intent
+      ansible.builtin.assert:
+        that:
+          - _ndp_restore_ethernet_cur.current.operData.adminStatus | default('') in ['up', 'down']
+          - _ndp_restore_ethernet_cur.current.operData.mode | default('') in ['trunk', 'access', 'routed']
+        fail_msg: "NDP_RESTORE_OBSERVED_STATE_UNVERIFIED: retaining the journal; no deploy was requested."
+      when: _ndp_restore_ethernet_cur.current.configData == _ndp_restore_operation.pre_change_config_data
+
     - name: "Restore {{ _ndp_restore_operation.interface }} to its captured pre-test intent"
       cisco.nd.nd_rest:
         path: >-
@@ -252,6 +284,7 @@
       register: _ndp_restore_ethernet_put
       no_log: true
       failed_when: false
+      when: _ndp_restore_ethernet_cur.current.configData != _ndp_restore_operation.pre_change_config_data
 
     - name: Verify the exact restored intent was accepted before deploying
       cisco.nd.nd_rest:

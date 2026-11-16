@@ -1,0 +1,185 @@
+---
+# Complete an unbundle that ND staged but never deployed. A failed port-channel
+# delete can leave owned members with free ND intent while the switch still
+# bundles them (operData.portChannelId > 0), and keep the parent as a
+# userDefined/interface_delete row. Intent-only checks then pass, the switch stays
+# outOfSync, and the next port-channel target cannot bundle the members. This only
+# deploys that already-staged intent; it never writes intent.
+#
+# Input _ndp_cv: fabric, serial, label, members (owned Ethernet names),
+# port_channels (reserved port-channel namespace), strict (fail instead of report).
+- name: "Read device membership of reserved ports on {{ _ndp_cv.label }}"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_cv.fabric }}/switches/{{ _ndp_cv.serial }}/interfaces"
+    method: get
+  register: _ndp_cv_before
+  failed_when: false
+  no_log: true
+  run_once: true
+
+- name: "Normalize the interface inventory of {{ _ndp_cv.label }}"
+  ansible.builtin.set_fact:
+    _ndp_cv_readable: >-
+      {{ (_ndp_cv_before.current.interfaces | default(none)) is sequence
+         and (_ndp_cv_before.current.interfaces | default(none)) is not string
+         and (_ndp_cv_before.current.interfaces | default(none)) is not mapping }}
+    _ndp_cv_rows: >-
+      {{ _ndp_cv_before.current.interfaces
+         if ((_ndp_cv_before.current.interfaces | default(none)) is sequence
+             and (_ndp_cv_before.current.interfaces | default(none)) is not string
+             and (_ndp_cv_before.current.interfaces | default(none)) is not mapping)
+         else [] }}
+  no_log: true
+  run_once: true
+
+- name: "Find reserved members the switch still bundles despite free intent on {{ _ndp_cv.label }}"
+  ansible.builtin.set_fact:
+    _ndp_cv_stale: >-
+      {{ _ndp_cv_rows
+         | selectattr('interfaceType', 'defined') | selectattr('interfaceType', 'equalto', 'ethernet')
+         | selectattr('interfaceName', 'defined') | selectattr('interfaceName', 'in', _ndp_cv.members)
+         | rejectattr('configData.networkOS.policy.portChannelId', 'defined')
+         | selectattr('operData.portChannelId', 'defined') | selectattr('operData.portChannelId', 'gt', 0)
+         | list }}
+    _ndp_cv_staged_pcs: >-
+      {{ _ndp_cv_rows
+         | selectattr('interfaceType', 'defined') | selectattr('interfaceType', 'equalto', 'portChannel')
+         | selectattr('configData.networkOS.policy.templateName', 'defined')
+         | selectattr('configData.networkOS.policy.templateName', 'equalto', 'interface_delete')
+         | selectattr('interfaceName', 'defined') | map(attribute='interfaceName') | list }}
+  no_log: true
+  run_once: true
+
+- name: "Resolve the parents of staged drift on {{ _ndp_cv.label }}"
+  ansible.builtin.set_fact:
+    _ndp_cv_stale_names: "{{ _ndp_cv_stale | map(attribute='interfaceName') | list }}"
+    _ndp_cv_parents: >-
+      {{ _ndp_cv_stale | map(attribute='operData.portChannelId') | map('string')
+         | map('regex_replace', '^', 'Port-channel') | unique | list }}
+  no_log: true
+  run_once: true
+
+- name: "Refuse parents that are not wholly owned or still claim a member on {{ _ndp_cv.label }}"
+  ansible.builtin.set_fact:
+    _ndp_cv_deploy_pcs: >-
+      {{ _ndp_cv_staged_pcs | select('in', (_ndp_cv.port_channels | default([])) + _ndp_cv_parents) | list }}
+    # Deploying a staged parent delete unbundles every switch-side member, so all must be owned.
+    _ndp_cv_unowned_members: >-
+      {{ _ndp_cv_rows
+         | selectattr('operData.portChannelId', 'defined')
+         | selectattr('operData.portChannelId', 'in',
+             _ndp_cv_staged_pcs | select('in', (_ndp_cv.port_channels | default([])) + _ndp_cv_parents)
+             | map('regex_replace', '(?i)^port-channel', '') | map('int') | list)
+         | selectattr('interfaceType', 'defined') | selectattr('interfaceType', 'equalto', 'ethernet')
+         | selectattr('interfaceName', 'defined')
+         | map(attribute='interfaceName') | reject('in', _ndp_cv.members) | list }}
+    # A live (not staged-delete) parent intent that still lists a member contradicts its free intent.
+    _ndp_cv_contradicting_members: >-
+      {{ _ndp_cv_rows
+         | selectattr('interfaceName', 'defined') | selectattr('interfaceName', 'in', _ndp_cv_parents)
+         | rejectattr('interfaceName', 'in', _ndp_cv_staged_pcs)
+         | selectattr('configData.networkOS.policy.ports', 'defined')
+         | map(attribute='configData.networkOS.policy.ports') | flatten
+         | select('in', _ndp_cv_stale_names) | list }}
+  no_log: true
+  run_once: true
+
+- name: "Deploy the staged unbundle of reserved members on {{ _ndp_cv.label }}"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_cv.fabric }}/interfaceActions/deploy"
+    method: post
+    content:
+      interfaces: >-
+        {{ (_ndp_cv_stale_names + _ndp_cv_deploy_pcs)
+           | map('regex_replace', '^', '{"interfaceName": "')
+           | map('regex_replace', '$', '", "switchId": "' ~ _ndp_cv.serial ~ '"}')
+           | map('from_json') | list }}
+  register: _ndp_cv_deploy
+  # ND answers 207 Multi-Status and nd_rest may raise after ND accepted the deploy;
+  # only the switch-side readback below is evidence of success.
+  failed_when: false
+  no_log: true
+  run_once: true
+  when:
+    - _ndp_cv_readable | bool
+    - _ndp_cv_unowned_members | length == 0
+    - _ndp_cv_contradicting_members | length == 0
+    - (_ndp_cv_stale_names + _ndp_cv_deploy_pcs) | length > 0
+
+# Running config is authoritative: with every reserved member's intent free (no
+# portChannelId), an inSync switch has no channel-group on them. A parent delete
+# tombstone may persist in ND, so it is not waited on.
+- name: "Wait for ND to report {{ _ndp_cv.label }} in sync after the staged unbundle"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_cv.fabric }}/switches"
+    method: get
+  register: _ndp_cv_sync
+  retries: "{{ _ndp_cv.sync_retries | default(18) }}"
+  delay: "{{ _ndp_cv.delay | default(10) }}"
+  until: >-
+    (_ndp_cv_sync.current.switches | default([])
+     | selectattr('switchId', 'defined') | selectattr('switchId', 'equalto', _ndp_cv.serial)
+     | map(attribute='additionalData.configSyncStatus', default='') | list) == ['inSync']
+  ignore_errors: true
+  no_log: true
+  run_once: true
+  when: _ndp_cv_deploy is not skipped
+
+# Unrelated drift can keep the switch outOfSync; then require the device-reported
+# membership of the reserved members themselves.
+- name: "Wait until the switch reports the reserved members outside every port-channel on {{ _ndp_cv.label }}"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_cv.fabric }}/switches/{{ _ndp_cv.serial }}/interfaces"
+    method: get
+  register: _ndp_cv_after
+  retries: "{{ _ndp_cv.retries | default(30) }}"
+  delay: "{{ _ndp_cv.delay | default(10) }}"
+  until: >-
+    (_ndp_cv_after.current.interfaces | default([])
+     | selectattr('interfaceName', 'defined') | selectattr('interfaceName', 'in', _ndp_cv_stale_names)
+     | rejectattr('configData.networkOS.policy.portChannelId', 'defined')
+     | selectattr('operData.portChannelId', 'defined') | rejectattr('operData.portChannelId', 'gt', 0)
+     | list | length) == (_ndp_cv_stale_names | length)
+  ignore_errors: true
+  no_log: true
+  run_once: true
+  when:
+    - _ndp_cv_deploy is not skipped
+    - _ndp_cv_sync is failed
+
+- name: "Decide the reserved-member outcome on {{ _ndp_cv.label }}"
+  ansible.builtin.set_fact:
+    _ndp_cv_outcome: >-
+      {{ 'UNVERIFIED' if not (_ndp_cv_readable | bool)
+         else 'REFUSED' if (_ndp_cv_unowned_members + _ndp_cv_contradicting_members) | length > 0
+         else 'FREE' if _ndp_cv_deploy is skipped
+         else 'UNBUNDLED' if (_ndp_cv_sync is not failed)
+                             or (_ndp_cv_after is not skipped and _ndp_cv_after is not failed)
+         else 'STILL_BUNDLED' }}
+  run_once: true
+
+- name: "Report reserved port-channel member state on {{ _ndp_cv.label }}"
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'NDP_RESERVED_MEMBERS_FREE' if _ndp_cv_outcome == 'FREE'
+         else 'NDP_RESERVED_MEMBERS_UNBUNDLED' if _ndp_cv_outcome == 'UNBUNDLED'
+         else 'NDP_RESERVED_MEMBERS_UNVERIFIED' if _ndp_cv_outcome == 'UNVERIFIED'
+         else 'NDP_RESERVED_MEMBERS_REFUSED' if _ndp_cv_outcome == 'REFUSED'
+         else 'NDP_RESERVED_MEMBERS_STILL_BUNDLED' }}
+      switch={{ _ndp_cv.label }} outcome={{ _ndp_cv_outcome }}
+      bundled_on_switch={{ _ndp_cv_stale_names }} staged_parent_deletes={{ _ndp_cv_deploy_pcs }}
+      unowned_members={{ _ndp_cv_unowned_members }} parent_intent_claims={{ _ndp_cv_contradicting_members }}
+      switch_in_sync={{ 'n/a' if _ndp_cv_sync is skipped else (_ndp_cv_sync is not failed) }}
+      device_members_free={{ 'n/a' if _ndp_cv_after is skipped else (_ndp_cv_after is not failed) }}
+  run_once: true
+
+- name: "Require the reserved members outside every port-channel on {{ _ndp_cv.label }}"
+  ansible.builtin.assert:
+    that:
+      - _ndp_cv_outcome in ['FREE', 'UNBUNDLED']
+    fail_msg: >-
+      NDP_RESERVED_MEMBERS_STILL_BUNDLED: {{ _ndp_cv.label }} outcome={{ _ndp_cv_outcome }};
+      the switch still bundles reserved members {{ _ndp_cv_stale_names }} or the evidence is
+      unavailable. The target has not started.
+  run_once: true
+  when: _ndp_cv.strict | default(true) | bool

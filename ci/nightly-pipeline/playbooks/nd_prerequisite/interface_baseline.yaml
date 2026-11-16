@@ -83,14 +83,48 @@
   register: _nd_interface_baseline_checkpoint
   check_mode: false
 
-- name: Plan or apply the bounded interface baseline
-  nd_interface_baseline:
-    registry: "{{ _nd_interface_baseline_registry }}"
-    fabrics: >-
+- name: Resolve the fabrics in this baseline scope
+  ansible.builtin.set_fact:
+    _nd_interface_baseline_fabrics: >-
       {{ (((nd_test_fabric_switches | default({})).keys() | list)
           + (nd_switch_rehome_fabrics | default([]))
           + [nd_fabric_name | default(''), nd_external_fabric_name | default('')])
          | reject('equalto', '') | unique | list }}
+
+# A failed authored port-channel delete leaves owned members bundled on the switch
+# behind free ND intent, and the switch outOfSync, which blocks the sync gate below
+# for the whole run. Deploy only that already-staged unbundle on owned ports.
+- name: Converge staged port-channel drift on owned ports before the baseline sync gate
+  ansible.builtin.include_tasks: converge_port_channel_member_drift.yaml
+  loop: "{{ _nd_interface_baseline_registry.lab.switches | dict2items }}"
+  loop_control:
+    loop_var: _nd_cv_switch
+    label: "{{ _nd_cv_switch.key }}"
+  vars:
+    _ndp_cv:
+      fabric: "{{ _nd_interface_baseline_registry.lab.fabrics[_nd_cv_switch.value.baseline_fabric_ref].name }}"
+      serial: "{{ _nd_cv_switch.value.serial }}"
+      label: "{{ _nd_cv_switch.key }}"
+      members: "{{ _nd_interface_baseline_registry.lab.interface_allowlist[_nd_cv_switch.key] }}"
+      port_channels: >-
+        {{ (_nd_interface_baseline_registry.profiles | default({})).values() | list
+           | map(attribute='resources', default=[]) | flatten
+           | selectattr('kind', 'defined') | selectattr('kind', 'equalto', 'verify_logical_interface_namespace')
+           | selectattr('interface_type', 'defined') | selectattr('interface_type', 'equalto', 'port_channel')
+           | selectattr('switch_ref', 'defined') | selectattr('switch_ref', 'equalto', _nd_cv_switch.key)
+           | map(attribute='interfaces') | flatten | unique | list }}
+      strict: false
+  when:
+    - nd_switch_apply | default(true) | bool
+    - not (nd_prerequisite_only | default(false) | bool)
+    - _nd_cv_switch.value.baseline_fabric_ref | default('') in (_nd_interface_baseline_registry.lab.fabrics | default({}))
+    - _nd_interface_baseline_registry.lab.fabrics[_nd_cv_switch.value.baseline_fabric_ref].name in _nd_interface_baseline_fabrics
+    - (_nd_interface_baseline_registry.lab.interface_allowlist[_nd_cv_switch.key] | default([])) | length > 0
+
+- name: Plan or apply the bounded interface baseline
+  nd_interface_baseline:
+    registry: "{{ _nd_interface_baseline_registry }}"
+    fabrics: "{{ _nd_interface_baseline_fabrics }}"
     switch_refs: "{{ _nd_interface_baseline_registry.lab.switches.keys() | list }}"
     journal_path: "{{ _nd_interface_baseline_checkpoint.path }}/mutations.jsonl"
     ensure_host_admin_down_default: true

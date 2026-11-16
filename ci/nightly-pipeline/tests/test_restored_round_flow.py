@@ -4,12 +4,14 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 import pytest
 from test_build124_switch_preflight import PRELUDE, PRODUCER
 
 ROOT = Path(__file__).resolve().parents[1]
-VARIANTS = ("Jenkinsfile_nd_jenkins_script",)
+VARIANTS = ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches",
+            "Jenkinsfile_nd_jenkins_script_comm_list")
 PRODUCER_WITH_REAL_VERSION = re.sub(
     r"script\.metaClass\.runNDFCVersionTests = \{.*?\n\}\n", "", PRODUCER, count=1, flags=re.S)
 
@@ -64,6 +66,12 @@ script.metaClass.withEnv = { List entries, Closure work ->
 }
 script.metaClass.usernamePassword = { Map options -> options }
 script.metaClass.withCredentials = { List options, Closure work -> work.call() }
+def reportReadyField = script.getClass().getDeclaredField('ND_CASE_REPORT_READY')
+reportReadyField.setAccessible(true)
+script.metaClass.foldStructuredResults = { ->
+    calls.add('fold')
+    reportReadyField.set(script, true)
+}
 script.metaClass.applyFabricRound = { Object round -> calls.add('apply:' + round.round_label) }
 script.metaClass.generateDynamicInventory = { Object round ->
     context.CURRENT_NDFC_INVENTORY = '/fixture/inventory.yaml'
@@ -140,3 +148,90 @@ def test_real_completed_batch_shell_writes_status_without_raising_test_failure(t
                             text=True, capture_output=True, timeout=10)
     assert result.returncode == 0, result.stdout + result.stderr
     assert receipt.read_text() == str(failure) + "\n"
+
+
+@pytest.mark.parametrize("variant", VARIANTS)
+def test_module_loops_continue_after_test_and_prerequisite_failures(tmp_path, variant):
+    source = (ROOT / variant).read_text()
+    helpers = "run_reported_playbook() {" + source.split("run_reported_playbook() {", 1)[1].split(
+        'PROFILE_VALIDATOR="${COLLECTIONS_DIRECTORY}', 1)[0]
+    loops = "run_standalone_integration() {" + source.split("run_standalone_integration() {", 1)[1].split(
+        "'''", 1)[0]
+    collection = tmp_path / "collection"
+    collection.mkdir()
+    (collection / "run_integration_module.yaml").write_text("fixture")
+    (collection / "good.yaml").write_text("fixture")
+    target = collection / "tests/integration/targets/nd_vpc_pair/tasks/main.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_text("fixture")
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    script = tmp_path / "continue.sh"
+    script.write_text("set -e\nRUN_FAILURE=0\n" + helpers.replace("\\\\", "\\") + r'''
+begin_reported_module() { echo "begin $1" >> "$EVENTS"; }
+close_reported_module() { echo "close $1 $ANSIBLE_STATUS" >> "$EVENTS"; }
+ensure_switches_ready() {
+    echo "guard $1" >> "$EVENTS"
+    case "$1" in *blocked*) return 1;; esac
+    return 0
+}
+ansible-playbook() {
+    local target= arg
+    for arg in "$@"; do
+        case "$arg" in
+            probe_fabric=*) echo NDP_VPC_PEERLINK_PRESENT; return 0;;
+            test_module=*) target="${arg#test_module=}";;
+            */tests/integration/targets/*/tasks/main.yaml) target=nd_vpc_pair.good;;
+            */good.yaml) target=good.yaml;;
+        esac
+    done
+    [ -n "$target" ] || return 99
+    echo "run $target" >> "$EVENTS"
+    echo 'PLAY RECAP'
+    if [ "$target" = nd_bad ]; then
+        echo 'fixture : ok=0 changed=0 unreachable=0 failed=1 skipped=0 rescued=0 ignored=0'
+        return 2
+    fi
+    echo 'fixture : ok=1 changed=0 unreachable=0 failed=0 skipped=0 rescued=0 ignored=0'
+}
+''' + loops.replace(r"\$", "$"))
+    events = tmp_path / "events"
+    receipt = tmp_path / "module_batch.status"
+    environment = dict(os.environ,
+        PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"],
+        COLLECTIONS_DIRECTORY=str(collection), ND_REPORTING_TOOLS=str(ROOT / "playbooks"),
+        ND_REPORT_LOG_DIR=str(log_dir), EVENTS=str(events), ND_MODULE_BATCH_STATUS=str(receipt),
+        FABRIC_NAME="fixture", VERSION_ID="ND43", TEST_RUN_MARKER="continuation-fixture",
+        INVENTORY_FILE="inventory.yaml", INVENTORY_VARS_FILE=str(collection / "inventory-vars.json"),
+        ND_REPORT_DEBUG_ENABLED="false", ND_REPORT_DEBUG_MODULES="",
+        ND_PREREQUISITE_ENABLE_EFFECTIVE="true", ND_PREREQUISITE_APPLY_EFFECTIVE="true",
+        ND_PREREQUISITE_ONLY_EFFECTIVE="false", SECONDARY_FABRIC_NAME="external",
+        ORDERED_INTEGRATION_LIST="nd_bad nd_blocked nd_after nd_vpc_pair.blocked nd_vpc_pair.missing nd_vpc_pair.good nd_interface_port_channel_routed",
+        PLAYBOOK_LIST="blocked.yaml missing.yaml good.yaml",
+        VPC_PAIR_RUNS="blocked|fixture|vxlanIbgp|A|B good|fixture|vxlanIbgp|C|D",
+        VPC_PEERLINK_TIMEOUT="10")
+    # The standalone probe uses the bounded external command, not a shell function.
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    timeout = binaries / "timeout"
+    timeout.write_text("#!/bin/bash\necho NDP_VPC_PEERLINK_PRESENT\n")
+    timeout.chmod(0o700)
+    environment["PATH"] = str(binaries) + os.pathsep + environment["PATH"]
+    result = subprocess.run(["bash", str(script)], cwd=tmp_path, env=environment,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert receipt.read_text() == "1\n"
+    recorded = events.read_text().splitlines()
+    assert [line for line in recorded if line.startswith("run ")] == [
+        "run nd_bad", "run nd_after", "run nd_vpc_pair.good",
+        "run nd_interface_port_channel_routed", "run good.yaml"]
+    blocked = ("nd_blocked", "nd_vpc_pair.blocked", "nd_vpc_pair.missing", "blocked.yaml", "missing.yaml")
+    for module in blocked:
+        assert recorded.count("begin " + module) == 1
+        assert recorded.count("close " + module + " 125") == 1
+        log = log_dir / f"test_output_fixture_ND43_{module}.txt"
+        assert "NDP_MODULE_BLOCKED" in log.read_text()
+        metadata = json.loads(Path(str(log) + ".execution.json").read_text())
+        assert metadata["module"] == module and metadata["exit_code"] == 125
+    assert "close nd_bad 2" in recorded
+    assert "close nd_after 0" in recorded

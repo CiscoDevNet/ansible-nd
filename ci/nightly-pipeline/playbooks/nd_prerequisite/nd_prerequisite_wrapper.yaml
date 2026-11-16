@@ -315,7 +315,10 @@
     _ndp_reconcile_requires_refresh: >-
       {{ _ndp_result.operations
          | rejectattr('operation', 'in', ['verify_resource', 'verify_free_interfaces', 'verify_logical_interface_namespace'])
-         | list | length > 0 }}
+         | list | length > 0
+         or (_ndp_result.operations | selectattr('operation', 'equalto', 'verify_free_interfaces')
+           | selectattr('port_channel_detachments', 'defined') | map(attribute='port_channel_detachments')
+           | select | list | length > 0) }}
   run_once: true
 
 - name: Reconcile the prepared topology on the controller (gated live mutation)
@@ -364,6 +367,11 @@
   ansible.builtin.assert:
     that:
       - (_ndp_reconciled_plan.stdout | from_json).operations | rejectattr('operation', 'in', ['verify_resource', 'verify_free_interfaces', 'verify_logical_interface_namespace']) | list | length == 0
+      - >-
+        (_ndp_reconciled_plan.stdout | from_json).operations
+        | selectattr('operation', 'equalto', 'verify_free_interfaces')
+        | selectattr('port_channel_detachments', 'defined') | map(attribute='port_channel_detachments')
+        | select | list | length == 0
     fail_msg: "ND prerequisite reconciliation completed with remaining topology operations; refusing to run {{ _ndp_execution_id }}."
   run_once: true
   when:

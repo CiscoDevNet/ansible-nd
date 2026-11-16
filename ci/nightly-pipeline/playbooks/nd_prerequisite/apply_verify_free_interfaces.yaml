@@ -178,6 +178,19 @@
   no_log: true
   run_once: true
 
+# ND intent can show a member free while the switch still bundles it (a staged
+# unbundle that was never deployed). Converge that before the target starts.
+- name: "Require the switch itself to report the reserved ports outside every port-channel"
+  ansible.builtin.include_tasks: converge_port_channel_member_drift.yaml
+  vars:
+    _ndp_cv:
+      fabric: "{{ _ndp_registry.lab.fabrics[_ndp_registry.lab.switches[_ndp_operation.switch_ref].baseline_fabric_ref].name }}"
+      serial: "{{ _ndp_operation.serial }}"
+      label: "{{ _ndp_operation.switch_ref }}"
+      members: "{{ _ndp_operation.interfaces }}"
+      port_channels: []
+      strict: true
+
 - name: Capture the exact configuration of only this target's physical ports
   cisco.nd.nd_rest:
     path: >-
@@ -188,6 +201,16 @@
   loop_control:
     loop_var: _ndp_free_port
   register: _ndp_free_before
+  retries: 12
+  delay: 5
+  until: >-
+    _ndp_free_before.current.switchId | default('') == _ndp_operation.serial and
+    _ndp_free_before.current.interfaceName | default('') == _ndp_free_port and
+    _ndp_free_before.current.interfaceType | default('') == 'ethernet' and
+    _ndp_free_before.current.configData.networkOS.policy.portChannelId is not defined and
+    _ndp_free_before.current.operData.portChannelId | default(none) is number and
+    _ndp_free_before.current.operData.portChannelId is not boolean and
+    _ndp_free_before.current.operData.portChannelId <= 0
   no_log: true
   run_once: true
 
@@ -201,6 +224,9 @@
       - _ndp_free_result.current.configData.networkOS.networkOSType == 'nx-os'
       - _ndp_free_result.current.configData.networkOS.policy.adminState is boolean
       - _ndp_free_result.current.configData.networkOS.policy.portChannelId is not defined
+      - _ndp_free_result.current.operData.portChannelId is number
+      - _ndp_free_result.current.operData.portChannelId is not boolean
+      - _ndp_free_result.current.operData.portChannelId <= 0
     fail_msg: "NDP_INTERFACE_SNAPSHOT_UNVERIFIED: the target has not started."
   loop: "{{ _ndp_free_before.results }}"
   loop_control:

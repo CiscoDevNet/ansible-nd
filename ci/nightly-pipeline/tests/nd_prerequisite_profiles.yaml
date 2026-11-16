@@ -131,7 +131,7 @@ topology_templates:
   l3out_smoke_links: &l3out_smoke_links [{switch_ref: vxlan_border_1, interfaces: [Ethernet1/1], admin_state: true, operational_state: when_reported_up}, {switch_ref: external_edge_1, interfaces: [Ethernet1/3], admin_state: true, operational_state: when_reported_up}]
   # The L2 DCI SVI case needs a real, ready physical path; a planned link object
   # was accepted by ND but did not satisfy the SVI create in build 163.
-  l3out_links: &l3out_links [{switch_ref: vxlan_border_1, interfaces: [Ethernet1/1, Ethernet1/4], admin_state: true, operational_state: when_reported_up}, {switch_ref: external_edge_1, interfaces: [Ethernet1/3, Ethernet1/4], admin_state: true, operational_state: when_reported_up}]
+  l3out_links: &l3out_links [{switch_ref: vxlan_border_1, interfaces: [Ethernet1/1, Ethernet1/2, Ethernet1/4], admin_state: true, operational_state: when_reported_up}, {switch_ref: external_edge_1, interfaces: [Ethernet1/2, Ethernet1/3, Ethernet1/4], admin_state: true, operational_state: when_reported_up}]
   dedicated_l3out_links: &dedicated_l3out_links [{switch_ref: vxlan_border_1, interfaces: [Ethernet1/1, Ethernet1/2], admin_state: true, operational_state: when_reported_up}, {switch_ref: external_edge_1, interfaces: [Ethernet1/2, Ethernet1/3], admin_state: true, operational_state: when_reported_up}]
   network_link: &network_link [{switch_ref: vxlan_leaf_1, interfaces: [Ethernet1/4], admin_state: true, operational_state: when_reported_up}]
   # Inter-fabric DCI links nd_manage_l3out needs but does NOT create itself (module docs: "the user must
