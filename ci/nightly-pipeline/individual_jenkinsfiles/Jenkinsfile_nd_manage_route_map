@@ -35,7 +35,7 @@ def PLAYBOOK_FILES = [
 // (run_integration_module.yaml with -e test_module=<name>), so every module gets
 // its own PLAY RECAP (passed/failed/skipped) and its own duration. This list holds
 // the normal-order targets; gated topology targets are appended below their
-// validation so link tests can run immediately before nd_manage_switches.
+// validation; standalone vPC pair tests run last, after links.
 @Field
 def INTEGRATION_MODULES = [
     'nd_manage_route_map',
@@ -3661,13 +3661,8 @@ def recordUnstartedRound(ndfcConfig, reason) {
         [id: run.id, fabric: run.id == 'advanced' ? ndfcConfig.fabric_name : run.fabric,
          type: run.id == 'advanced' ? ndfcConfig.vpc_pair_fabric_type : run.type]
     }
-    def targets = []
-    (INTEGRATION_MODULES + INTERFACE_INTEGRATION_MODULES + TRAILING_INTEGRATION_MODULES).each { module ->
-        targets.add(module)
-        if (module == 'nd_manage_policy_group') {
-            targets.addAll(pairRows.collect { "nd_vpc_pair.${it.id}".toString() })
-        }
-    }
+    def targets = INTEGRATION_MODULES + INTERFACE_INTEGRATION_MODULES + TRAILING_INTEGRATION_MODULES
+    targets.addAll(pairRows.collect { "nd_vpc_pair.${it.id}".toString() })
     targets.addAll(PLAYBOOK_FILES)
     targets.each { module ->
         def prefix = "${ndfcConfig.versionId}|${module}|".toString()
@@ -4085,18 +4080,14 @@ def runFabricTest(ndfcConfig) {
                 error("Unsafe topology identifier(s): ${unsafeRuntimeIdentifiers.collect { it.name }.join(', ')}")
             }
 
-            // The destructive switch lifecycle runs last and is followed by the canonical restore.
-            // Run numbered links after fabric/resource tests and immediately before
-            // nd_manage_switches, whose upstream setup removes all VXLAN members.
+            // Run standalone vPC pair tests last, after the trailing link tests.
             def effectiveIntegrationModules = INTEGRATION_MODULES + INTERFACE_INTEGRATION_MODULES + TRAILING_INTEGRATION_MODULES
             // One standalone run (and output file) per fixed vPC pair: nd_vpc_pair.<id>.
             def standaloneTargets = vpcPairRows.collect { row -> "nd_vpc_pair.${row.id}".toString() }
             def orderedIntegrationTargets = []
-            effectiveIntegrationModules.each { moduleName ->
-                orderedIntegrationTargets.add(moduleName)
-                if (moduleName == 'nd_manage_policy_group' && env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true') {
-                    orderedIntegrationTargets.addAll(standaloneTargets)
-                }
+            orderedIntegrationTargets.addAll(effectiveIntegrationModules)
+            if (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true') {
+                orderedIntegrationTargets.addAll(standaloneTargets)
             }
             def plannedResultTargets = orderedIntegrationTargets.collect { [it, 'integration'] }
             if (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true') {
@@ -4382,7 +4373,7 @@ def runFabricTest(ndfcConfig) {
                                 }
 
                                 # nd_vpc_pair runs once per fixed lab pair (VPC_PAIR_RUNS rows: id|fabric|type|switch1|switch2)
-                                # immediately after nd_manage_policy_group, before destructive fabric-inventory targets.
+                                # at the end of the integration sequence, after links.
                                 # It is a complete playbook rather than a role, so execute it directly instead of using
                                 # run_integration_module.yaml. A pair needs a cabled physical peer-link (virtual peering is
                                 # unsupported on the N9K-C9300v lab switches); the module always runs, and the probe below only

@@ -54,6 +54,36 @@ def groovy_runner(request, tmp_path_factory):
         assert 'CHECK_PASSED' in result.stdout
     return run
 
+@pytest.mark.parametrize('prerequisite_only', [False, True])
+def test_vpc_pairs_run_last_and_unstarted_reporting_matches(groovy_runner, prerequisite_only):
+    groovy_runner("context.ND_PREREQUISITE_ONLY_EFFECTIVE = " + json.dumps(str(prerequisite_only).lower()) + "\n" + r'''
+def modules = script.INTEGRATION_MODULES + script.INTERFACE_INTEGRATION_MODULES + script.TRAILING_INTEGRATION_MODULES
+def start = source.indexOf('def standaloneTargets = vpcPairRows.collect')
+def end = source.indexOf('def plannedResultTargets =', start)
+assert start >= 0 && end > start
+def ordering = source.substring(start, end) + '\nreturn orderedIntegrationTargets'
+for (pairs in [[], [[id:'advanced'], [id:'external']]]) {
+    def bindings = new Binding([effectiveIntegrationModules:modules, vpcPairRows:pairs, env:context])
+    def actual = new GroovyShell(bindings).evaluate(ordering)
+    def expectedPairs = context.ND_PREREQUISITE_ONLY_EFFECTIVE == 'true' ? [] :
+        pairs.collect { "nd_vpc_pair.${it.id}".toString() }
+    assert actual == modules + expectedPairs
+    if (expectedPairs) {
+        assert actual.indexOf('nd_manage_links') < actual.indexOf(expectedPairs[0])
+    }
+}
+assert source.contains('for m in ${ORDERED_INTEGRATION_LIST}; do')
+assert source.contains('"ORDERED_INTEGRATION_LIST=${orderedIntegrationTargets.join(\' \')}"')
+
+config.vpc_pair_fabric_type = 'vxlanEbgp'
+script.recordUnstartedRound(config, 'fixture round not reached')
+def reported = script.MODULE_ACTIVITY_RESULTS.values().collect { it.module }
+def configuredPairs = script.VPC_PAIR_EXECUTIONS.collect { "nd_vpc_pair.${it.id}".toString() }
+assert reported == modules + configuredPairs + script.PLAYBOOK_FILES
+assert script.INTEGRATION_MODULES + script.INTERFACE_INTEGRATION_MODULES + script.TRAILING_INTEGRATION_MODULES == modules
+''')
+
+
 @pytest.mark.parametrize('phase', ['pre', 'post', 'home'])
 @pytest.mark.parametrize('exit_code, classification', [(0, 'SUCCESS'), (2, 'ANSIBLE_FAILED'), (124, 'TIMEOUT'), (7, 'COMMAND_FAILED')])
 def test_actual_guard_classifies_status_and_preserves_phase_failure_semantics(groovy_runner, phase, exit_code, classification):

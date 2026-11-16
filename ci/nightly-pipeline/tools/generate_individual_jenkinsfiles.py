@@ -42,12 +42,6 @@ PAIR_ROWS = {
 }
 
 
-def replace_once(source, old, new):
-    if source.count(old) != 1:
-        raise ValueError('Template anchor is missing or ambiguous: ' + old[:80])
-    return source.replace(old, new, 1)
-
-
 def selector_pattern(name):
     return re.compile(r'^def ' + re.escape(name) + r' = \[\n.*?^\]', re.M | re.S)
 
@@ -76,15 +70,6 @@ def render(source, target):
         result, count = selector_pattern(name).subn(lambda match: replacement, result)
         if count != 1:
             raise ValueError('Expected exactly one selector: ' + name)
-    if target.startswith('nd_vpc_pair.'):
-        anchor = '            def plannedResultTargets = orderedIntegrationTargets.collect'
-        result = replace_once(result, anchor,
-            "            if (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true') {\n"
-            '                orderedIntegrationTargets.addAll(standaloneTargets)\n'
-            '            }\n' + anchor)
-        anchor = '    targets.addAll(PLAYBOOK_FILES)'
-        result = replace_once(result, anchor,
-            '    targets.addAll(pairRows.collect { "nd_vpc_pair.${it.id}".toString() })\n' + anchor)
     return '\n'.join(line.rstrip() for line in result.splitlines()) + '\n'
 
 

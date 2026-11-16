@@ -41,22 +41,19 @@ def test_each_script_selects_only_its_target_and_private_webex(source, target):
     assert 'for m in ${ORDERED_INTEGRATION_LIST}; do' in script
     assert all(line == line.rstrip() for line in script.splitlines())
     if target.startswith('nd_vpc_pair.'):
-        assert script.count('orderedIntegrationTargets.addAll(standaloneTargets)') == 2
+        assert script.count('orderedIntegrationTargets.addAll(standaloneTargets)') == 1
         assert '    targets.addAll(pairRows.collect { "nd_vpc_pair.${it.id}".toString() })' in script
+    assert (
+        "            orderedIntegrationTargets.addAll(effectiveIntegrationModules)\n"
+        "            if (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true') {\n"
+        "                orderedIntegrationTargets.addAll(standaloneTargets)\n"
+        "            }\n"
+    ) in script
 
 
 @pytest.mark.parametrize('target', generator.TARGETS)
-def test_template_is_preserved_outside_selection_and_vpc_routing(source, target):
+def test_template_is_preserved_outside_selection(source, target):
     rendered = generator.render(source, target)
-    if target.startswith('nd_vpc_pair.'):
-        rendered = rendered.replace(
-            "            if (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true') {\n"
-            '                orderedIntegrationTargets.addAll(standaloneTargets)\n'
-            '            }\n', '', 1)
-        rendered = rendered.replace(
-            '\n    targets.addAll(pairRows.collect { "nd_vpc_pair.${it.id}".toString() })\n'
-            '    targets.addAll(PLAYBOOK_FILES)',
-            '\n    targets.addAll(PLAYBOOK_FILES)', 1)
     for name in generator.SELECTORS:
         rendered = generator.selector_pattern(name).sub('SELECTION_' + name, rendered)
         source = generator.selector_pattern(name).sub('SELECTION_' + name, source)
