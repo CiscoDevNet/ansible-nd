@@ -681,9 +681,56 @@ def test_raw_inventory_filters_known_peer_vpc_operational_echo_after_all_pages()
 
 
 @pytest.mark.parametrize(
+    "network_os",
+    [
+        None,
+        {"networkOSType": None, "policy": {"peerSwitchId": "SERIAL1"}},
+        {"networkOSType": None, "policy": None},
+    ],
+)
+def test_raw_inventory_filters_peer_vpc_staged_removal_echo(network_os: dict | None) -> None:
+    """
+    # Summary
+
+    Verify the row ND lists on both peers for a vPC whose removal is staged is tolerated on the peer that does not own it.
+
+    ## Test
+
+    - ND 4.3.1 lists the row with `networkOS: null`; ND 4.2.1 lists it with a null `networkOSType` and a policy holding only `peerSwitchId`
+    - The row carries the other peer's `switchId`
+    - The inventory loads and the foreign row is not published as local state
+
+    ## Classes and Methods
+
+    - InterfaceStateSnapshot.load_switch()
+    - InterfaceStateSnapshot.is_intent_free_vpc_policy()
+    """
+    echo = {"interfaceName": "vPC213", "switchId": "SERIAL2", "interfaceType": "vpc", "configData": {"mode": "unknown", "networkOS": network_os}}
+    recorder = _RequestRecorder([{"interfaces": [_interface("Ethernet1/1", "ethernet", "accessHost"), echo]}])
+    snapshot = _snapshot(recorder)
+
+    loaded = snapshot.load_switch("SERIAL1")
+
+    assert set(loaded) == {"ethernet1/1"}
+    assert set(snapshot.interfaces_by_identity) == {("SERIAL1", "ethernet1/1")}
+
+
+@pytest.mark.parametrize(
     "foreign_row",
     [
         {"interfaceName": "Ethernet1/2", "switchId": "SERIAL2", "interfaceType": "ethernet", "configData": {"mode": "unknown"}},
+        {
+            "interfaceName": "vPC951",
+            "switchId": "SERIAL2",
+            "interfaceType": "vpc",
+            "configData": {"mode": "unknown", "networkOS": {"networkOSType": None, "policy": {"peerSwitchId": "SERIAL1", "policyType": "accessVpcHost"}}},
+        },
+        {
+            "interfaceName": "vPC951",
+            "switchId": "SERIAL2",
+            "interfaceType": "vpc",
+            "configData": {"mode": "unknown", "networkOS": {"networkOSType": "nx-os", "policy": {"peerSwitchId": "SERIAL1"}}},
+        },
         {
             "interfaceName": "vPC951",
             "switchId": "SERIAL2",

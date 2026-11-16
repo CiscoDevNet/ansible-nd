@@ -167,6 +167,42 @@ class InterfaceStateSnapshot:
         policy = network_os.get("policy") or {}
         return policy.get("policyType")
 
+    @staticmethod
+    def is_intent_free_vpc_policy(policy: Any) -> bool:
+        """
+        # Summary
+
+        Return whether the `networkOS.policy` of a `mode: unknown` vPC row carries no intent: it is absent, empty, or holds nothing but `peerSwitchId`.
+
+        ## Raises
+
+        None
+        """
+        # TODO(4.2.1) peer-vpc-operational-echo
+        # After an accepted, undeployed `interfaceActions/remove` of a vPC, ND lists one leftover `mode: unknown` row on both peers. ND 4.3.1
+        # sends it with `networkOS: null`; ND 4.2.1 sends `networkOS: {networkOSType: null, policy: {peerSwitchId: <peer>}}`. A policy
+        # holding only the peer pointer is the same row, not competing intent (lab-verified 2026-11-16 on 4.2.1.10 and 4.3.1.175).
+        if not policy:
+            return True
+        return isinstance(policy, dict) and all(value is None for key, value in policy.items() if key != "peerSwitchId")
+
+    @classmethod
+    def _is_intent_free_vpc_network_os(cls, network_os: Any) -> bool:
+        """
+        # Summary
+
+        Return whether the `configData.networkOS` of a `mode: unknown` vPC row is absent or names no network OS and no policy intent.
+
+        ## Raises
+
+        None
+        """
+        if not network_os:
+            return True
+        if not isinstance(network_os, dict) or any(value is not None for key, value in network_os.items() if key != "policy"):
+            return False
+        return cls.is_intent_free_vpc_policy(network_os.get("policy"))
+
     def _fetch_switch(self, switch_id: str) -> dict[str, dict]:
         """Fetch every page for ``switch_id`` and publish only a complete result."""
 
@@ -200,7 +236,7 @@ class InterfaceStateSnapshot:
                     str(interface.get("interfaceType") or "").lower() == "vpc"
                     and isinstance(config_data, dict)
                     and config_data.get("mode") == "unknown"
-                    and not config_data.get("networkOS")
+                    and self._is_intent_free_vpc_network_os(config_data.get("networkOS"))
                     and returned_switch_id in self.fabric_context.switch_map_by_id
                 )
                 if not is_peer_vpc_echo:
