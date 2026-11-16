@@ -80,6 +80,7 @@
 
 - name: Standalone Sanity TC1 - Merged
   cisco.nd.nd_manage_networks: &standalone_sanity_merge
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_standalone_sanity_merge_conf }}"
@@ -90,9 +91,10 @@
 
 - name: Standalone Sanity TC1 - Gather After Merged
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
-    config: "{{ nd_network_standalone_sanity_merge_conf }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': nd_network_standalone_sanity_merge_conf, 'name_only': true}) | from_yaml }}"
   register: standalone_sanity_gathered
   when: nd_network_run_standalone | bool
   tags: sanity
@@ -120,6 +122,7 @@
 
 - name: Standalone Sanity TC2 - Replaced
   cisco.nd.nd_manage_networks: &standalone_sanity_replace
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: replaced
     config: "{{ nd_network_standalone_sanity_replace_conf }}"
@@ -130,9 +133,10 @@
 
 - name: Standalone Sanity TC2 - Gather After Replaced
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
-    config: "{{ nd_network_standalone_sanity_replace_conf }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': nd_network_standalone_sanity_replace_conf, 'name_only': true}) | from_yaml }}"
   register: standalone_sanity_replaced_gathered
   when: nd_network_run_standalone | bool
   tags: sanity
@@ -160,6 +164,7 @@
 
 - name: Standalone Sanity TC3 - Deleted
   cisco.nd.nd_manage_networks: &standalone_sanity_delete
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: deleted
     config: "{{ nd_network_standalone_sanity_delete_conf }}"
@@ -170,9 +175,10 @@
 
 - name: Standalone Sanity TC3 - Gather After Deleted
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
-    config: "{{ nd_network_standalone_sanity_delete_conf }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': nd_network_standalone_sanity_delete_conf, 'name_only': true}) | from_yaml }}"
   register: standalone_sanity_deleted_gathered
   when: nd_network_run_standalone | bool
   tags: sanity

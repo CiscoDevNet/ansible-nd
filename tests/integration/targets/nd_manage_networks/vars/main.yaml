@@ -1,0 +1,204 @@
+---
+nd4x_network_topology: "{{ nd_network_test_topology | default('standalone', true) }}"
+nd4x_network_fabric: >-
+  {{ {'standalone': nd_network_standalone_fabric, 'msd': nd_network_msd_parent_fabric,
+      'mcfg': nd_network_mcfg_parent_fabric}[nd4x_network_topology] }}
+nd4x_network_child: >-
+  {{ {'standalone': '', 'msd': nd_network_msd_child_fabric,
+      'mcfg': nd_network_mcfg_child_fabric}[nd4x_network_topology] }}
+nd4x_network_api: >-
+  {{ '/api/v1/' ~ ('oneManage/manage' if nd4x_network_topology == 'mcfg' else 'manage')
+     ~ '/fabrics/' ~ (nd4x_network_fabric | urlencode) }}
+nd4x_network_common_args:
+  fabric_name: "{{ nd4x_network_fabric }}"
+  output_level: debug
+  config_actions: {type: resource, deploy: false}
+nd4x_network_prefix: "n4n_{{ nd4x_network_run_id }}"
+nd4x_network_definition_scope: >-
+  {{ (nd4x_network_scopes | selectattr('name', 'equalto', nd4x_network_child) | first)
+     if nd4x_network_topology == 'mcfg' else nd4x_network_scopes[0] }}
+nd4x_network_switch: >-
+  {{ {'standalone': nd_network_standalone_switch, 'msd': nd_network_msd_switch,
+      'mcfg': nd_network_mcfg_switch}[nd4x_network_topology] }}
+nd4x_network_destructive_enabled: "{{ nd_network_harness_destructive_tests_enabled | default(false) | bool }}"
+nd4x_network_attachments_enabled: "{{ nd_network_harness_attachment_tests_enabled | default(false) | bool }}"
+nd4x_network_properties_enabled: "{{ nd_network_harness_property_tests_enabled | default(false) | bool }}"
+nd4x_network_expected_change:
+  check_mode: {changed: true, failed: false}
+  apply: {changed: true, failed: false}
+  idempotency: {changed: false, failed: false}
+nd4x_network_expected_no_change:
+  check_mode: {changed: false, failed: false}
+  apply: {changed: false, failed: false}
+  idempotency: {changed: false, failed: false}
+nd4x_network_names:
+  - "{{ nd4x_network_prefix }}_l2"
+  - "{{ nd4x_network_prefix }}_l3"
+  - "{{ nd4x_network_prefix }}_extra"
+  - "{{ nd4x_network_prefix }}_primary"
+  - "{{ nd4x_network_prefix }}_community"
+  - "{{ nd4x_network_prefix }}_isolated"
+nd4x_network_cleanup:
+  - {network_name: "{{ nd4x_network_names[0] }}"}
+  - {network_name: "{{ nd4x_network_names[1] }}"}
+  - {network_name: "{{ nd4x_network_names[2] }}"}
+  - {network_name: "{{ nd4x_network_names[3] }}"}
+  - {network_name: "{{ nd4x_network_names[4] }}"}
+  - {network_name: "{{ nd4x_network_names[5] }}"}
+nd4x_network_seed:
+  network_name: "{{ nd4x_network_names[0] }}"
+  layer: layer2
+  network_id: "{{ nd_network_base_id | int + 80 }}"
+  vlan_id: "{{ nd_network_base_vlan | int + 80 }}"
+  vlan_name: ND4X_L2_SEED
+  deploy: false
+nd4x_network_l3:
+  network_name: "{{ nd4x_network_names[1] }}"
+  layer: layer3
+  vrf_name: "{{ nd4x_network_vrf_name }}"
+  network_id: "{{ nd_network_base_id | int + 81 }}"
+  vlan_id: "{{ nd_network_base_vlan | int + 81 }}"
+  vlan_name: ND4X_L3_SEED
+  gateway_ipv4_address: 192.0.2.1/24
+  gateway_ipv6_address: 2001:db8:4::1/64
+  secondary_gateway_ipv4_collection: [192.0.3.1/24]
+  secondary_gateway_ipv6_collection: ['2001:db8:5::1/64']
+  mtu: 9000
+  arp_suppression: true
+  routing_tag: 12345
+  deploy: false
+nd4x_network_extra:
+  network_name: "{{ nd4x_network_names[2] }}"
+  layer: layer2
+  network_id: "{{ nd_network_base_id | int + 82 }}"
+  vlan_id: "{{ nd_network_base_vlan | int + 82 }}"
+  deploy: false
+nd4x_network_vrf_name: "n4v_{{ nd4x_network_run_id }}"
+nd4x_network_vrf_id: "{{ nd_network_base_id | int + 100 }}"
+nd4x_network_vrf_config:
+  vrf_name: "{{ nd4x_network_vrf_name }}"
+  vrf_id: "{{ nd4x_network_vrf_id }}"
+  deploy: false
+nd4x_network_child_update: {gateway_on_border: true}
+nd4x_network_interface: >-
+  {{ {'standalone': nd_network_standalone_interface, 'msd': nd_network_msd_interface,
+      'mcfg': nd_network_mcfg_interface}[nd4x_network_topology] }}
+nd4x_network_pvlan_enabled: "{{ nd_network_harness_pvlan_tests_enabled | default(false) | bool }}"
+nd4x_network_pvlan_primary:
+  network_name: "{{ nd4x_network_names[3] }}"
+  network_id: "{{ nd_network_base_id | int + 83 }}"
+  vlan_id: "{{ nd_network_base_vlan | int + 83 }}"
+  layer: layer3
+  vrf_name: "{{ nd4x_network_vrf_name }}"
+  vlan_network_type: primary
+  gateway_ipv4_address: 198.51.100.1/24
+  deploy: false
+nd4x_network_pvlan_secondaries:
+  - network_name: "{{ nd4x_network_names[4] }}"
+    network_id: "{{ nd_network_base_id | int + 84 }}"
+    vlan_id: "{{ nd_network_base_vlan | int + 84 }}"
+    vlan_network_type: community
+    primary_network_id: "{{ nd_network_base_id | int + 83 }}"
+    layer: layer2
+    deploy: false
+  - network_name: "{{ nd4x_network_names[5] }}"
+    network_id: "{{ nd_network_base_id | int + 85 }}"
+    vlan_id: "{{ nd_network_base_vlan | int + 85 }}"
+    vlan_network_type: isolated
+    primary_network_id: "{{ nd_network_base_id | int + 83 }}"
+    layer: layer2
+    deploy: false
+nd4x_network_l2_query:
+  name: Verify the Layer 2 Network through the controller
+  path: "{{ nd4x_network_definition_scope.api }}/networks/{{ nd4x_network_names[0] }}{{ nd4x_network_definition_scope.suffix }}"
+  expected_status: 200
+  expect:
+    - {jsonpath: '$.current.networkName', equals: "{{ nd4x_network_names[0] }}"}
+    - {jsonpath: '$.current.networkMode', equals: layer2}
+    - {jsonpath: '$.current.networkId', exists: true}
+nd4x_network_l3_query:
+  name: Verify the Layer 3 Network through the controller
+  path: "{{ nd4x_network_definition_scope.api }}/networks/{{ nd4x_network_names[1] }}{{ nd4x_network_definition_scope.suffix }}"
+  expected_status: 200
+  expect:
+    - {jsonpath: '$.current.networkMode', equals: layer3}
+    - {jsonpath: '$.current.vrfName', equals: "{{ nd4x_network_vrf_name }}"}
+    - {jsonpath: '$.current.l3Data.gatewayIpv4Address', equals: 192.0.2.1/24}
+nd4x_network_negative_cases:
+  - label: Layer 2 rejects an explicitly supplied MTU
+    config: {network_name: "{{ nd4x_network_names[0] }}", layer: layer2, mtu: 9216}
+    message: layer2 networks do not support L3 properties
+  - label: Layer 3 requires a VRF
+    config: {network_name: "{{ nd4x_network_names[0] }}", layer: layer3}
+    message: vrf_name is required
+  - label: NetFlow monitor requires enablement
+    config: {network_name: "{{ nd4x_network_names[0] }}", layer: layer2, netflow_enable: false, vlan_netflow_monitor: BAD}
+    message: netflow_enable
+    standalone_only: true
+  - label: Secondary PVLAN requires a primary association
+    config: {network_name: "{{ nd4x_network_names[0] }}", vlan_network_type: community}
+    message: primary_network_id
+  - label: Config actions cannot be empty
+    config: {network_name: "{{ nd4x_network_names[0] }}"}
+    module_args: {config_actions: {}}
+    message: config_actions cannot be empty
+  - label: Switch scope rejects even a false per-item deployment override
+    config: {network_name: "{{ nd4x_network_names[0] }}", deploy: false}
+    module_args: {config_actions: {type: switch, deploy: false}}
+    message: "allowed only when config_actions.type='resource'"
+  - label: Resource modules do not support config save
+    config: {network_name: "{{ nd4x_network_names[0] }}"}
+    module_args: {config_actions: {type: resource, save: true}}
+    message: save
+  - label: Gathered selectors cannot carry deployment overrides
+    state: gathered
+    config: {network_name: "{{ nd4x_network_names[0] }}", deploy: false}
+    module_args: {config_actions: {type: resource, deploy: false}}
+    message: "not allowed for state='gathered'"
+nd4x_network_property_cases:
+  - label: dual-stack gateway MTU ARP and routing tag
+    scope: definition
+    settings: {gateway_ipv4_address: 192.0.2.9/24, gateway_ipv6_address: '2001:db8:4::9/64', mtu: 9100, arp_suppression: false, routing_tag: 23456}
+    native:
+      '$.current.l3Data.gatewayIpv4Address': 192.0.2.9/24
+      '$.current.l3Data.gatewayIpv6Address': '2001:db8:4::9/64'
+      '$.current.l3Data.mtu': 9100
+      '$.current.l3Data.arpSuppression': false
+      '$.current.l3Data.routingTag': 23456
+  - label: gateway-on-border and DHCP scope
+    scope: fabric
+    settings:
+      gateway_on_border: true
+      dhcp_servers: [{server_address: 192.0.2.253, server_vrf: "{{ nd4x_network_vrf_name }}"}]
+      loopback_id: 101
+    native:
+      '$.current.l3Data.fabricData.gatewayOnBorder': true
+      '$.current.l3Data.fabricData.loopbackId': 101
+      '$.current.l3Data.fabricData.dhcpServers[0].serverAddress': 192.0.2.253
+  - label: sparse IGMP with enabled TRM
+    scope: fabric
+    feature: trm
+    settings: {trm_enable: true, igmp_version: 3}
+    followup_settings: {igmp_version: 2}
+    followup_expect:
+      - {jsonpath: '$.current.l3Data.fabricData.ipv4Trm', equals: true}
+      - {jsonpath: '$.current.l3Data.fabricData.igmpVersion', equals: 2}
+    native:
+      '$.current.l3Data.fabricData.ipv4Trm': true
+      '$.current.l3Data.fabricData.igmpVersion': 3
+  - label: VLAN and interface NetFlow monitors
+    scope: fabric
+    feature: netflow
+    settings:
+      netflow_enable: true
+      vlan_netflow_monitor: "{{ nd_network_harness_vlan_monitor | default('') }}"
+      interface_netflow_monitor: "{{ nd_network_harness_interface_monitor | default('') }}"
+    followup_settings:
+      vlan_netflow_monitor: "{{ nd_network_harness_vlan_monitor | default('') }}"
+    followup_no_change: true
+    followup_expect:
+      - {jsonpath: '$.current.l3Data.fabricData.netflow', equals: true}
+    native:
+      '$.current.l3Data.fabricData.netflow': true
+      '$.current.l3Data.fabricData.l2NetflowMonitor': "{{ nd_network_harness_vlan_monitor | default('') }}"
+      '$.current.l3Data.fabricData.l3NetflowMonitor': "{{ nd_network_harness_interface_monitor | default('') }}"

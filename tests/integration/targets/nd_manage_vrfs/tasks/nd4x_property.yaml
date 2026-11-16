@@ -1,0 +1,83 @@
+---
+- name: Remove only previous fixtures owned by this run
+  ansible.builtin.include_tasks: nd4x_reset.yaml
+
+- name: Seed the property fixture through the standard harness
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: merged
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config: "{{ [nd4x_vrf_seed] }}"
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_change }}"
+
+- name: Resolve the definition or child-owned property scope
+  ansible.builtin.set_fact:
+    nd4x_vrf_property_config: >-
+      {{ [{'vrf_name': nd4x_vrf_names[0], 'deploy': false}
+          | combine(
+              {'child_fabric_config': [
+                 {'fabric_name': nd4x_vrf_child} | combine(nd4x_vrf_property_case.settings)
+              ]} if nd4x_vrf_topology != 'standalone' and nd4x_vrf_property_case.scope == 'fabric'
+              else nd4x_vrf_property_case.settings
+            )] }}
+    nd4x_vrf_property_scope: >-
+      {{ (nd4x_vrf_scopes | selectattr('name', 'equalto', nd4x_vrf_child) | first)
+         if nd4x_vrf_topology != 'standalone' and nd4x_vrf_property_case.scope == 'fabric'
+         else nd4x_vrf_definition_scope }}
+    nd4x_vrf_property_expectations: []
+
+- name: Build field-level native API expectations
+  ansible.builtin.set_fact:
+    nd4x_vrf_property_expectations: >-
+      {{ nd4x_vrf_property_expectations + [{'jsonpath': item.key, 'equals': item.value}] }}
+  loop: "{{ nd4x_vrf_property_case.native | dict2items }}"
+
+- name: "PROPERTIES: Apply and verify {{ nd4x_vrf_property_case.label }}"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: merged
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_vrf_conf.j2', template_vars={'vrf_conf': nd4x_vrf_property_config}) | from_yaml }}"
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_property_case.expected | default(nd4x_vrf_expected_change) }}"
+    nd_queries:
+      - name: Verify every managed field in its owning controller scope
+        path: >-
+          {{ nd4x_vrf_property_scope.api }}/vrfs/{{ nd4x_vrf_names[0] }}{{ nd4x_vrf_property_scope.suffix }}
+        expected_status: 200
+        expect: "{{ nd4x_vrf_property_expectations }}"
+  register: nd4x_vrf_property_result
+
+- name: Verify release-specific BGP key readback without coercing its type
+  ansible.builtin.assert:
+    that:
+      - >-
+        ((nd4x_vrf_version.current.platformVersion is version('4.3.1', '>=') and
+          nd4x_vrf_property_result.nd_query_results[0].result.current.fabricData.bgpPasswordKeyType is string and
+          nd4x_vrf_property_result.nd_query_results[0].result.current.fabricData.bgpPasswordKeyType == nd4x_vrf_property_case.wire_key) or
+         (nd4x_vrf_version.current.platformVersion is version('4.3.1', '<') and
+          nd4x_vrf_property_result.nd_query_results[0].result.current.fabricData.bgpPasswordKeyType is number and
+          nd4x_vrf_property_result.nd_query_results[0].result.current.fabricData.bgpPasswordKeyType == nd4x_vrf_property_case.wire_integer))
+  when: nd4x_vrf_property_case.wire_key is defined
+
+- name: Verify a sparse dependent update or an explicit feature disable
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: merged
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config: >-
+      {{ [{'vrf_name': nd4x_vrf_names[0], 'deploy': false}
+          | combine(
+              {'child_fabric_config': [
+                {'fabric_name': nd4x_vrf_child} | combine(nd4x_vrf_property_case.followup_settings)
+              ]} if nd4x_vrf_topology != 'standalone' and nd4x_vrf_property_case.scope == 'fabric'
+              else nd4x_vrf_property_case.followup_settings
+            )] }}
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_no_change if nd4x_vrf_property_case.followup_no_change | default(false) else nd4x_vrf_expected_change }}"
+    nd_queries:
+      - path: "{{ nd4x_vrf_property_scope.api }}/vrfs/{{ nd4x_vrf_names[0] }}{{ nd4x_vrf_property_scope.suffix }}"
+        expected_status: 200
+        expect: "{{ nd4x_vrf_property_case.followup_expect }}"
+  when: nd4x_vrf_property_case.followup_settings is defined

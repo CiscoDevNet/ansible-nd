@@ -36,3 +36,4 @@ nd_network_run_mcfg_attach: "{{ nd_network_mcfg_switch | length > 0 and nd_netwo
 
 nd_network_base_id: 901000
 nd_network_base_vlan: 3100
+nd_network_harness_page_size: 1000

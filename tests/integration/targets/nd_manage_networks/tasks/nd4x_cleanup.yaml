@@ -1,0 +1,30 @@
+---
+- name: Remove this run's definitions, with module-managed attachment cleanup
+  ansible.builtin.include_tasks: nd4x_reset.yaml
+
+- name: Remove the owned prerequisite VRF after all Networks
+  cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
+    fabric_name: "{{ nd4x_network_fabric }}"
+    state: deleted
+    config:
+      - vrf_name: "{{ nd4x_network_vrf_name }}"
+
+- name: Read final parent and member inventories
+  ansible.builtin.include_tasks: nd4x_inventory.yaml
+  loop: "{{ nd4x_network_scopes }}"
+  loop_control:
+    loop_var: nd4x_network_scope
+
+- name: Verify the prerequisite VRF is absent
+  cisco.nd.nd_rest:
+    path: "{{ nd4x_network_api }}/vrfs/{{ nd4x_network_vrf_name }}"
+    method: get
+  register: nd4x_network_vrf_absence
+  failed_when: nd4x_network_vrf_absence.status | default(0) | int != 404
+
+- name: Verify unrelated definitions were preserved and owned resources are absent
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_inventory_by_scope == nd4x_network_baseline
+    fail_msg: Cleanup did not restore the complete pre-test definition inventories.

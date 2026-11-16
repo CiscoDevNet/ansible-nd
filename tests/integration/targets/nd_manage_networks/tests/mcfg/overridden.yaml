@@ -85,6 +85,7 @@
 
 - name: MCFG Overridden TC1 - Seed Networks
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_mcfg_over_seed_conf }}"
@@ -98,6 +99,7 @@
 
 - name: MCFG Overridden TC2 - Override Networks
   cisco.nd.nd_manage_networks: &mcfg_over_conf
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: overridden
     config: "{{ nd_network_mcfg_over_conf }}"
@@ -125,6 +127,7 @@
 
 - name: MCFG Overridden TC2 - Gather Parent Networks
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
     config: []

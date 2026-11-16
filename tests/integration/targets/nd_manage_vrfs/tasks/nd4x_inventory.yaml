@@ -1,0 +1,16 @@
+---
+- name: Reset one complete vrf inventory read
+  ansible.builtin.set_fact:
+    nd4x_vrf_rows: []
+    nd4x_vrf_offset: 0
+    nd4x_vrf_page_count: 0
+
+- name: Collect the complete controller inventory
+  ansible.builtin.include_tasks: nd4x_inventory_page.yaml
+
+- name: Retain the independently read inventory for this scope
+  ansible.builtin.set_fact:
+    nd4x_vrf_inventory_by_scope: >-
+      {{ nd4x_vrf_inventory_by_scope | combine({
+           nd4x_vrf_scope.api ~ nd4x_vrf_scope.suffix: nd4x_vrf_rows
+         }) }}

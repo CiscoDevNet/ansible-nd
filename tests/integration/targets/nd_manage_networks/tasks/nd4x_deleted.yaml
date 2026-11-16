@@ -1,0 +1,26 @@
+---
+- name: Establish an empty owned-resource baseline for this case
+  ansible.builtin.include_tasks: nd4x_reset.yaml
+
+- name: "DELETED SEED: Create a known resource"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: merged
+    common_args: "{{ nd4x_network_common_args }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': [nd4x_network_seed]}) | from_yaml }}"
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+
+- name: "DELETED: Delete by name without unrelated definition properties"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: deleted
+    common_args: "{{ nd4x_network_common_args }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': [{'network_name': nd4x_network_names[0]}]}) | from_yaml }}"
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+    nd_queries:
+      - name: Verify the resource is absent
+        path: "{{ nd4x_network_api }}/networks/{{ nd4x_network_names[0] }}"
+        expected_status: 404
+        expected_failed: true

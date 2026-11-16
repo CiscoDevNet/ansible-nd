@@ -91,6 +91,7 @@
 
 - name: MCFG Replaced TC1 - Create Base VRF
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: merged
     config: "{{ nd_vrf_mcfg_replace_base_conf }}"
@@ -102,6 +103,7 @@
 
 - name: MCFG Replaced TC2 - Replace Parent and Child VRF
   cisco.nd.nd_manage_vrfs: &mcfg_replace_conf
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: replaced
     config: "{{ nd_vrf_mcfg_replace_conf }}"
@@ -124,6 +126,7 @@
 
 - name: MCFG Replaced TC2 - Gather Parent VRFs
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: gathered
     config: []
@@ -161,6 +164,7 @@
 
 - name: MCFG Replaced TC2 - Gather Child VRFs
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
     state: gathered
     config: []

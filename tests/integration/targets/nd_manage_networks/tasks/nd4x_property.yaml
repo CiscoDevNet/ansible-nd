@@ -1,0 +1,70 @@
+---
+- name: Remove only previous fixtures owned by this run
+  ansible.builtin.include_tasks: nd4x_reset.yaml
+
+- name: Seed the property fixture through the standard harness
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: merged
+    common_args: "{{ nd4x_network_common_args }}"
+    config: "{{ [nd4x_network_l3] }}"
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+
+- name: Resolve the definition or child-owned property scope
+  ansible.builtin.set_fact:
+    nd4x_network_property_config: >-
+      {{ [{'network_name': nd4x_network_names[1], 'deploy': false}
+          | combine(
+              {'child_fabric_config': [
+                 {'fabric_name': nd4x_network_child} | combine(nd4x_network_property_case.settings)
+              ]} if nd4x_network_topology != 'standalone' and nd4x_network_property_case.scope == 'fabric'
+              else nd4x_network_property_case.settings
+            )] }}
+    nd4x_network_property_scope: >-
+      {{ (nd4x_network_scopes | selectattr('name', 'equalto', nd4x_network_child) | first)
+         if nd4x_network_topology != 'standalone' and nd4x_network_property_case.scope == 'fabric'
+         else nd4x_network_definition_scope }}
+    nd4x_network_property_expectations: []
+
+- name: Build field-level native API expectations
+  ansible.builtin.set_fact:
+    nd4x_network_property_expectations: >-
+      {{ nd4x_network_property_expectations + [{'jsonpath': item.key, 'equals': item.value}] }}
+  loop: "{{ nd4x_network_property_case.native | dict2items }}"
+
+- name: "PROPERTIES: Apply and verify {{ nd4x_network_property_case.label }}"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: merged
+    common_args: "{{ nd4x_network_common_args }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': nd4x_network_property_config}) | from_yaml }}"
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+    nd_queries:
+      - name: Verify every managed field in its owning controller scope
+        path: >-
+          {{ nd4x_network_property_scope.api }}/networks/{{ nd4x_network_names[1] }}{{ nd4x_network_property_scope.suffix }}
+        expected_status: 200
+        expect: "{{ nd4x_network_property_expectations }}"
+
+- name: Verify a sparse dependent update or an explicit feature disable
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: merged
+    common_args: "{{ nd4x_network_common_args }}"
+    config: >-
+      {{ [{'network_name': nd4x_network_names[1], 'deploy': false}
+          | combine(
+              {'child_fabric_config': [
+                {'fabric_name': nd4x_network_child} | combine(nd4x_network_property_case.followup_settings)
+              ]} if nd4x_network_topology != 'standalone' and nd4x_network_property_case.scope == 'fabric'
+              else nd4x_network_property_case.followup_settings
+            )] }}
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_no_change if nd4x_network_property_case.followup_no_change | default(false) else nd4x_network_expected_change }}"
+    nd_queries:
+      - path: "{{ nd4x_network_property_scope.api }}/networks/{{ nd4x_network_names[1] }}{{ nd4x_network_property_scope.suffix }}"
+        expected_status: 200
+        expect: "{{ nd4x_network_property_case.followup_expect }}"
+  when: nd4x_network_property_case.followup_settings is defined

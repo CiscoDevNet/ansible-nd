@@ -57,6 +57,7 @@
 
 - name: MSD Deleted TC1 - Create VRF
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ nd_vrf_msd_parent_fabric }}"
     state: merged
     config: "{{ nd_vrf_msd_delete_conf }}"
@@ -68,6 +69,7 @@
 
 - name: MSD Deleted TC2 - Delete Parent VRF With Ignored Child Config
   cisco.nd.nd_manage_vrfs: &msd_delete_conf
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ nd_vrf_msd_parent_fabric }}"
     state: deleted
     config: "{{ nd_vrf_msd_delete_conf }}"
@@ -91,6 +93,7 @@
 
 - name: MSD Deleted TC2 - Gather Parent VRFs
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ nd_vrf_msd_parent_fabric }}"
     state: gathered
     config: []

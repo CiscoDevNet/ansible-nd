@@ -62,6 +62,7 @@
 
 - name: Deleted TC1 - Create Networks
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_standalone_delete_seed_conf }}"
@@ -71,6 +72,7 @@
 
 - name: Deleted TC2 - Delete Networks
   cisco.nd.nd_manage_networks: &delete_conf
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: deleted
     config: "{{ nd_network_standalone_delete_conf }}"
@@ -89,9 +91,10 @@
 
 - name: Deleted TC2 - Gather Networks
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
-    config: "{{ nd_network_standalone_delete_conf }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': nd_network_standalone_delete_conf, 'name_only': true}) | from_yaml }}"
   register: gathered_result
   when: nd_network_run_standalone | bool
   tags: deleted

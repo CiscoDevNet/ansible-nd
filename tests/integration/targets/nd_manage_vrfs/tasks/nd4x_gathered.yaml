@@ -1,0 +1,41 @@
+---
+- name: Establish an empty owned-resource baseline for this case
+  ansible.builtin.include_tasks: nd4x_reset.yaml
+
+- name: "GATHERED SEED: Create a known resource"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: merged
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_vrf_conf.j2', template_vars={'vrf_conf': [nd4x_vrf_seed]}) | from_yaml }}"
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_change }}"
+
+- name: "GATHERED: Read an explicit name without definition properties"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: gathered
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_vrf_conf.j2', template_vars={'vrf_conf': [{'vrf_name': nd4x_vrf_names[0]}]}) | from_yaml }}"
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_no_change }}"
+    nd_queries: "{{ [nd4x_vrf_base_query] }}"
+  register: nd4x_vrf_gathered
+
+- name: Select the owned fixture from the gathered inventory
+  ansible.builtin.set_fact:
+    nd4x_vrf_gathered_requested: >-
+      {{ (nd4x_vrf_gathered.first_run_result.parent_fabric | default(nd4x_vrf_gathered.first_run_result)).gathered
+         | selectattr('vrf_name', 'equalto', nd4x_vrf_names[0]) | list }}
+
+- name: Verify the module returned the requested resource
+  ansible.builtin.assert:
+    that:
+      - nd4x_vrf_gathered_requested | length == 1
+
+- name: Parent gathered output excludes child-owned options
+  ansible.builtin.assert:
+    that:
+      - "'adv_host_routes' not in nd4x_vrf_gathered_requested[0]"
+      - "'netflow_enable' not in nd4x_vrf_gathered_requested[0]"
+  when: nd4x_vrf_topology != 'standalone'

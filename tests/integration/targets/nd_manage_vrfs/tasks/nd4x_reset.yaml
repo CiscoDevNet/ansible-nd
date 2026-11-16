@@ -1,0 +1,7 @@
+---
+- name: Remove only this run's reserved vrfs
+  cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
+    fabric_name: "{{ nd4x_vrf_fabric }}"
+    state: deleted
+    config: "{{ nd4x_vrf_cleanup }}"

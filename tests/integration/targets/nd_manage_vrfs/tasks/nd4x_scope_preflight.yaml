@@ -1,0 +1,18 @@
+---
+- name: Refresh every potentially affected inventory before a fabric-wide state
+  ansible.builtin.include_tasks: nd4x_inventory.yaml
+  loop: "{{ nd4x_vrf_scopes }}"
+  loop_control:
+    loop_var: nd4x_vrf_scope
+
+- name: Require opt-in and prove that every resource is owned by this run
+  ansible.builtin.assert:
+    that:
+      - nd4x_vrf_destructive_enabled | bool
+      - >-
+        nd4x_vrf_inventory_by_scope.values() | flatten
+        | map(attribute='vrfName') | difference(nd4x_vrf_names) | length == 0
+    fail_msg: >-
+      Fabric-wide overridden/staged execution is blocked because the parent or a member
+      contains resources outside this run. Use an isolated test fabric; no keep-list
+      or unrelated-resource replay is used.

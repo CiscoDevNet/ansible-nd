@@ -1,0 +1,15 @@
+---
+- name: Remove this run's definitions, with module-managed attachment cleanup
+  ansible.builtin.include_tasks: nd4x_reset.yaml
+
+- name: Read final parent and member inventories
+  ansible.builtin.include_tasks: nd4x_inventory.yaml
+  loop: "{{ nd4x_vrf_scopes }}"
+  loop_control:
+    loop_var: nd4x_vrf_scope
+
+- name: Verify unrelated definitions were preserved and owned resources are absent
+  ansible.builtin.assert:
+    that:
+      - nd4x_vrf_inventory_by_scope == nd4x_vrf_baseline
+    fail_msg: Cleanup did not restore the complete pre-test definition inventories.

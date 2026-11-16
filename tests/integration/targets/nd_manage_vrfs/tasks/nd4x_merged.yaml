@@ -1,0 +1,90 @@
+---
+- name: Establish an empty owned-resource baseline for this case
+  ansible.builtin.include_tasks: nd4x_reset.yaml
+
+- name: "MERGED CREATE: Seed the primary fixture"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: merged
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_vrf_conf.j2', template_vars={'vrf_conf': [nd4x_vrf_seed]}) | from_yaml }}"
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_change }}"
+    nd_queries: "{{ [nd4x_vrf_base_query] }}"
+
+- name: "MERGED SPARSE: Change one field without restating identity or layer"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: merged
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_vrf_conf.j2', template_vars={'vrf_conf': [{'vrf_name': nd4x_vrf_names[0], 'max_bgp_paths': 6, 'deploy': false}]}) | from_yaml }}"
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_change }}"
+    nd_queries:
+      - path: "{{ nd4x_vrf_base_query.path }}"
+        expected_status: 200
+        expect:
+          - {jsonpath: '$.current.coreData.maxBgpPaths', equals: 6}
+
+- name: "MERGED IPV6: An explicit IPv6 route map overrides the IPv4 fallback"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: merged
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_vrf_conf.j2', template_vars={'vrf_conf': [{'vrf_name': nd4x_vrf_names[0], 'v6_redist_direct_rmap': 'ND4X_REDIST_V6', 'deploy': false}]}) | from_yaml }}"
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_change }}"
+    nd_queries:
+      - name: Verify the explicit IPv6 map
+        path: "{{ nd4x_vrf_base_query.path }}"
+        expected_status: 200
+        expect:
+          - {jsonpath: '$.current.coreData.vrfRouteMap', equals: ND4X_REDIST_V4}
+          - {jsonpath: '$.current.coreData.v6VrfRouteMap', equals: ND4X_REDIST_V6}
+
+- name: "MERGED CHILD: Apply only a child-owned override"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: merged
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config: >-
+      {{ [{'vrf_name': nd4x_vrf_names[0], 'deploy': false,
+           'child_fabric_config': [{'fabric_name': nd4x_vrf_child} | combine(nd4x_vrf_child_update)]}] }}
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_change }}"
+    nd_queries:
+      - path: >-
+          {{ (nd4x_vrf_scopes | selectattr('name', 'equalto', nd4x_vrf_child) | first).api }}/vrfs/{{ nd4x_vrf_names[0] }}{{ (nd4x_vrf_scopes | selectattr('name', 'equalto', nd4x_vrf_child) | first).suffix }}
+        expected_status: 200
+        expect:
+          - {jsonpath: '$.current.fabricData.advertiseHostRoute', equals: true}
+  when: nd4x_vrf_topology != 'standalone'
+
+- name: "MERGED NO TARGETS: Create an unattached resource with optional deployment enabled"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: merged
+    common_args: "{{ nd4x_vrf_common_args }}"
+    module_args:
+      config_actions: {type: resource, deploy: true}
+    config:
+      - vrf_name: "{{ nd4x_vrf_names[1] }}"
+        vrf_id: "{{ nd_vrf_base_id | int + 81 }}"
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_change }}"
+  register: nd4x_vrf_no_targets
+
+- name: An unattached resource reports a skip without sending a deploy request
+  ansible.builtin.assert:
+    that:
+      - (nd4x_vrf_no_targets.first_run_result.parent_fabric | default(nd4x_vrf_no_targets.first_run_result)).config_actions | selectattr('reason', 'equalto', 'no_targets') | list | length == 1
+      - (nd4x_vrf_no_targets.first_run_result.parent_fabric | default(nd4x_vrf_no_targets.first_run_result)).api_paths | select('search', '/deploy') | list | length == 0
+
+- name: "MERGED NOOP: Name-only requests preserve the existing definition"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: merged
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_vrf_conf.j2', template_vars={'vrf_conf': [{'vrf_name': nd4x_vrf_names[0], 'deploy': false}]}) | from_yaml }}"
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_no_change }}"

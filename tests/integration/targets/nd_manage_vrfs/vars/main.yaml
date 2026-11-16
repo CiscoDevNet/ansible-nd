@@ -1,0 +1,260 @@
+---
+nd4x_vrf_topology: "{{ nd_vrf_test_topology | default('standalone', true) }}"
+nd4x_vrf_fabric: >-
+  {{ {'standalone': nd_vrf_standalone_fabric, 'msd': nd_vrf_msd_parent_fabric,
+      'mcfg': nd_vrf_mcfg_parent_fabric}[nd4x_vrf_topology] }}
+nd4x_vrf_child: >-
+  {{ {'standalone': '', 'msd': nd_vrf_msd_child_fabric,
+      'mcfg': nd_vrf_mcfg_child_fabric}[nd4x_vrf_topology] }}
+nd4x_vrf_api: >-
+  {{ '/api/v1/' ~ ('oneManage/manage' if nd4x_vrf_topology == 'mcfg' else 'manage')
+     ~ '/fabrics/' ~ (nd4x_vrf_fabric | urlencode) }}
+nd4x_vrf_common_args:
+  fabric_name: "{{ nd4x_vrf_fabric }}"
+  output_level: debug
+  config_actions: {type: resource, deploy: false}
+nd4x_vrf_prefix: "n4r_{{ nd4x_vrf_run_id }}"
+nd4x_vrf_definition_scope: >-
+  {{ (nd4x_vrf_scopes | selectattr('name', 'equalto', nd4x_vrf_child) | first)
+     if nd4x_vrf_topology == 'mcfg' else nd4x_vrf_scopes[0] }}
+nd4x_vrf_switch: >-
+  {{ {'standalone': nd_vrf_standalone_switch, 'msd': nd_vrf_msd_switch,
+      'mcfg': nd_vrf_mcfg_switch}[nd4x_vrf_topology] }}
+nd4x_vrf_destructive_enabled: "{{ nd_vrf_harness_destructive_tests_enabled | default(false) | bool }}"
+nd4x_vrf_attachments_enabled: "{{ nd_vrf_harness_attachment_tests_enabled | default(false) | bool }}"
+nd4x_vrf_properties_enabled: "{{ nd_vrf_harness_property_tests_enabled | default(false) | bool }}"
+nd4x_vrf_expected_change:
+  check_mode: {changed: true, failed: false}
+  apply: {changed: true, failed: false}
+  idempotency: {changed: false, failed: false}
+nd4x_vrf_expected_no_change:
+  check_mode: {changed: false, failed: false}
+  apply: {changed: false, failed: false}
+  idempotency: {changed: false, failed: false}
+nd4x_vrf_names:
+  - "{{ nd4x_vrf_prefix }}_base"
+  - "{{ nd4x_vrf_prefix }}_extra"
+  - "{{ nd4x_vrf_prefix }}_novlan"
+nd4x_vrf_cleanup:
+  - {vrf_name: "{{ nd4x_vrf_names[0] }}"}
+  - {vrf_name: "{{ nd4x_vrf_names[1] }}"}
+  - {vrf_name: "{{ nd4x_vrf_names[2] }}"}
+nd4x_vrf_seed:
+  vrf_name: "{{ nd4x_vrf_names[0] }}"
+  vrf_id: "{{ nd_vrf_base_id | int + 80 }}"
+  vlan_id: "{{ nd_vrf_base_vlan | int + 80 }}"
+  vrf_vlan_name: ND4X_VRF_SEED
+  vrf_intf_desc: ND4X integration SVI
+  vrf_description: ND4X integration VRF
+  vrf_int_mtu: 9000
+  loopback_route_tag: 12345
+  redist_direct_rmap: ND4X_REDIST_V4
+  max_bgp_paths: 4
+  max_ibgp_paths: 8
+  ipv6_linklocal_enable: false
+  disable_rt_auto: true
+  import_vpn_rt: ['65000:50180']
+  export_vpn_rt: ['65000:50180']
+  import_evpn_rt: ['65000:50180']
+  export_evpn_rt: ['65000:50180']
+  deploy: false
+nd4x_vrf_extra:
+  vrf_name: "{{ nd4x_vrf_names[1] }}"
+  vrf_id: "{{ nd_vrf_base_id | int + 81 }}"
+  deploy: false
+nd4x_vrf_child_update:
+  adv_host_routes: true
+  adv_default_routes: false
+  static_default_route: false
+nd4x_vrf_base_query:
+  name: Verify VRF identity, core fields and IPv6 route-map fallback
+  path: "{{ nd4x_vrf_definition_scope.api }}/vrfs/{{ nd4x_vrf_names[0] }}{{ nd4x_vrf_definition_scope.suffix }}"
+  expected_status: 200
+  expect:
+    - {jsonpath: '$.current.vrfName', equals: "{{ nd4x_vrf_names[0] }}"}
+    - {jsonpath: '$.current.vrfId', exists: true}
+    - {jsonpath: '$.current.coreData.mtu', equals: 9000}
+    - {jsonpath: '$.current.coreData.v6VrfRouteMap', equals: ND4X_REDIST_V4}
+nd4x_vrf_negative_cases:
+  - label: No-VLAN mode rejects explicit VLAN identity
+    config: {vrf_name: "{{ nd4x_vrf_names[0] }}", l3vni_wo_vlan: true, vlan_id: 2001}
+    message: l3vni_wo_vlan
+    standalone_only: true
+  - label: BGP password rejects a nonhexadecimal value
+    config: {vrf_name: "{{ nd4x_vrf_names[0] }}", bgp_password: NOT_HEX, bgp_passwd_encrypt: 3des}
+    message: bgp_password
+    standalone_only: true
+  - label: NetFlow requires a monitor
+    config: {vrf_name: "{{ nd4x_vrf_names[0] }}", netflow_enable: true}
+    message: nf_monitor
+    standalone_only: true
+  - label: A parent rejects child-owned advertisement settings
+    config: {vrf_name: "{{ nd4x_vrf_names[0] }}", adv_host_routes: false}
+    message: child_fabric_config
+    parent_only: true
+  - label: Config actions cannot be empty
+    config: {vrf_name: "{{ nd4x_vrf_names[0] }}"}
+    module_args: {config_actions: {}}
+    message: config_actions cannot be empty
+  - label: Switch scope rejects even a false per-item deployment override
+    config: {vrf_name: "{{ nd4x_vrf_names[0] }}", deploy: false}
+    module_args: {config_actions: {type: switch, deploy: false}}
+    message: "allowed only when config_actions.type='resource'"
+  - label: Resource modules do not support config save
+    config: {vrf_name: "{{ nd4x_vrf_names[0] }}"}
+    module_args: {config_actions: {type: resource, save: true}}
+    message: save
+  - label: Gathered selectors cannot carry deployment overrides
+    state: gathered
+    config: {vrf_name: "{{ nd4x_vrf_names[0] }}", deploy: false}
+    module_args: {config_actions: {type: resource, deploy: false}}
+    message: "not allowed for state='gathered'"
+nd4x_vrf_property_cases:
+  - label: SVI MTU and routing parameters
+    scope: definition
+    settings: {vrf_int_mtu: 9100, loopback_route_tag: 23456, max_bgp_paths: 6, max_ibgp_paths: 10, ipv6_linklocal_enable: true}
+    native:
+      '$.current.coreData.mtu': 9100
+      '$.current.coreData.routingTag': 23456
+      '$.current.coreData.maxBgpPaths': 6
+      '$.current.coreData.maxIbgpPaths': 10
+      '$.current.coreData.ipv6LinkLocal': true
+  - label: advertisement and BGP policy
+    scope: fabric
+    settings:
+      adv_host_routes: true
+      adv_default_routes: false
+      static_default_route: false
+      bgp_allow_as_in: true
+      bgp_allow_as_in_num: 4
+      bgp_as_override: true
+      bgp_disable_peer_as_check: true
+      bgp_soft_reconfig_always: true
+      bgp_best_path_relax: true
+      bgp_log_neighbor_change: true
+    native:
+      '$.current.fabricData.advertiseHostRoute': true
+      '$.current.fabricData.advertiseDefaultRoute': false
+      '$.current.fabricData.configureStaticDefaultRoute': false
+      '$.current.fabricData.bgpAllowAsIn': true
+      '$.current.fabricData.bgpAllowAsInNum': 4
+      '$.current.fabricData.bgpAsOverride': true
+      '$.current.fabricData.bgpDisablePeerAsCheck': true
+      '$.current.fabricData.bgpSoftReconfigAlways': true
+      '$.current.fabricData.bgpBestPathRelax': true
+      '$.current.fabricData.bgpLogNeighborChange': true
+  - label: BGP 3des wire adaptation
+    scope: fabric
+    settings: {bgp_password: abcdef12, bgp_passwd_encrypt: 3des}
+    wire_key: 3des
+    wire_integer: 3
+    native: {}
+  - label: BGP type6 wire adaptation
+    scope: fabric
+    settings: {bgp_password: abcdef34, bgp_passwd_encrypt: type6}
+    wire_key: type6
+    wire_integer: 6
+    native: {}
+  - label: BGP type7 wire adaptation
+    scope: fabric
+    settings: {bgp_password: abcdef56, bgp_passwd_encrypt: type7}
+    wire_key: type7
+    wire_integer: 7
+    native: {}
+  - label: IPv4 external RP and MVPN targets
+    scope: fabric
+    feature: trm
+    settings:
+      trm_enable: true
+      rp_external: true
+      rp_address: 192.0.2.254
+      underlay_mcast_ip: 239.20.0.1
+      trm_bgw_msite: true
+      import_mvpn_rt: ['65000:50200']
+      export_mvpn_rt: ['65000:50200']
+    followup_settings: {rp_address: 192.0.2.253}
+    followup_expect:
+      - {jsonpath: '$.current.fabricData.trmData.v4RpAddress', equals: 192.0.2.253}
+      - {jsonpath: '$.current.fabricData.trmData.ipv4Trm', equals: true}
+    native:
+      '$.current.fabricData.trmData.ipv4Trm': true
+      '$.current.fabricData.trmData.v4RpExternal': true
+      '$.current.fabricData.trmData.v4RpAddress': 192.0.2.254
+      '$.current.fabricData.trmData.l3VniMulticastGroup': 239.20.0.1
+      '$.current.fabricData.trmData.trmOnBgw': true
+      '$.current.fabricData.trmData.mvpnRouteTargetImport': ['65000:50200']
+      '$.current.fabricData.trmData.mvpnRouteTargetExport': ['65000:50200']
+  - label: IPv4 internal RP loopback
+    scope: fabric
+    feature: trm
+    settings: {trm_enable: true, rp_external: false, rp_address: 192.0.2.254, rp_loopback_id: 101, underlay_mcast_ip: 239.20.0.1}
+    native:
+      '$.current.fabricData.trmData.loopbackNumber': 101
+      '$.current.fabricData.trmData.v4RpExternal': false
+  - label: IPv6 external RP
+    scope: fabric
+    feature: ipv6_trm
+    settings: {ipv6_trm: true, v6_rp_external: true, v6_rp_address: '2001:db8::fe', underlay_mcast_ip: 239.20.0.1}
+    native:
+      '$.current.fabricData.trmData.ipv6Trm': true
+      '$.current.fabricData.trmData.v6RpExternal': true
+      '$.current.fabricData.trmData.v6RpAddress': '2001:db8::fe'
+  - label: SSM needs no RP
+    scope: fabric
+    feature: trm
+    settings: {trm_enable: true, no_rp: true, underlay_mcast_ip: 239.20.0.1}
+    native:
+      '$.current.fabricData.trmData.v4RpAbsent': true
+  - label: IPv6 SSM needs no RP
+    scope: fabric
+    feature: ipv6_trm
+    settings: {ipv6_trm: true, v6_no_rp: true, underlay_mcast_ip: 239.20.0.1}
+    native:
+      '$.current.fabricData.trmData.v6RpAbsent': true
+  - label: NetFlow monitor
+    scope: fabric
+    feature: netflow
+    settings: {netflow_enable: true, nf_monitor: "{{ nd_vrf_harness_monitor | default('') }}"}
+    followup_settings: {nf_monitor: "{{ nd_vrf_harness_monitor | default('') }}"}
+    followup_no_change: true
+    followup_expect:
+      - {jsonpath: '$.current.fabricData.netflow', equals: true}
+    native:
+      '$.current.fabricData.netflow': true
+      '$.current.fabricData.netflowMonitor': "{{ nd_vrf_harness_monitor | default('') }}"
+  - label: ND 4.3 VRF-to-VPN leaking
+    scope: fabric
+    feature: routing43
+    minimum_version: 4.3.1
+    settings: {enable_vrf_vpn_route_leaking: true}
+    followup_settings: {enable_vrf_vpn_route_leaking: false}
+    followup_expect:
+      - {jsonpath: '$.current.fabricData.enableVrfVpnRouteLeaking', equals: false}
+    native:
+      '$.current.fabricData.enableVrfVpnRouteLeaking': true
+  - label: ND 4.3 explicit RD zero
+    scope: definition
+    feature: rd43
+    minimum_version: 4.3.1
+    settings: {route_distinguisher_id: 0}
+    expected:
+      check_mode: {failed: false}
+      apply: {failed: false}
+      idempotency: {changed: false, failed: false}
+    native:
+      '$.current.coreData.routeDistinguisherId': 0
+  - label: IOS-XE MVPN inter-AS
+    scope: fabric
+    feature: mvpn_inter_as
+    settings: {trm_enable: true, no_rp: true, underlay_mcast_ip: 239.20.0.1, mvpn_inter_as: true}
+    native:
+      '$.current.fabricData.trmData.mvpnInterAs': true
+  - label: L3VNI without VLAN transition
+    scope: fabric
+    feature: no_vlan
+    settings: {l3vni_wo_vlan: true}
+    followup_settings: {l3vni_wo_vlan: false}
+    followup_expect:
+      - {jsonpath: '$.current.fabricData.l3VniWithoutVlan', equals: false}
+    native:
+      '$.current.fabricData.l3VniWithoutVlan': true

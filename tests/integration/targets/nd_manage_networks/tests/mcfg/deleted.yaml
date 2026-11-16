@@ -58,6 +58,7 @@
 
 - name: MCFG Deleted TC1 - Create Network
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_mcfg_delete_seed_conf }}"
@@ -69,6 +70,7 @@
 
 - name: MCFG Deleted TC2 - Delete Parent Network
   cisco.nd.nd_manage_networks: &mcfg_delete_conf
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: deleted
     config: "{{ nd_network_mcfg_delete_conf }}"
@@ -92,9 +94,10 @@
 
 - name: MCFG Deleted TC2 - Gather Parent Networks
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
-    config: "{{ nd_network_mcfg_delete_conf }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': nd_network_mcfg_delete_conf, 'name_only': true}) | from_yaml }}"
   register: mcfg_delete_gathered
   when: nd_network_run_mcfg | bool
   tags:

@@ -85,6 +85,7 @@
 
 - name: Overridden TC1 - Seed VRFs
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_vrf_standalone_over_seed_conf }}"
@@ -96,6 +97,7 @@
 
 - name: Overridden TC2 - Override VRFs
   cisco.nd.nd_manage_vrfs: &override_conf
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: overridden
     config: "{{ nd_vrf_standalone_over_conf }}"
@@ -117,6 +119,7 @@
 
 - name: Overridden TC2 - Gather VRFs
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
     config: []

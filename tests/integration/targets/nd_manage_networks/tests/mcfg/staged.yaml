@@ -233,6 +233,7 @@
 
 - name: MCFG Staged TC1 - Create Network With Attachment
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: staged
     config: "{{ nd_network_mcfg_staged_create_conf }}"
@@ -314,6 +315,7 @@
 
 - name: MCFG Staged TC2 - Seed Existing Networks
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_mcfg_staged_seed_conf }}"
@@ -329,6 +331,7 @@
 
 - name: MCFG Staged TC3 - Reconcile Attachments Without Deploy Or Definition Delete
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: staged
     config: "{{ nd_network_mcfg_staged_conf }}"
@@ -357,6 +360,7 @@
 
 - name: MCFG Staged TC3 - Repeat Reconcile For Controller-State Idempotency
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: staged
     config: "{{ nd_network_mcfg_staged_conf }}"
@@ -402,9 +406,10 @@
 
 - name: MCFG Staged TC4 - Gather Parent Networks
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
-    config: "{{ target_network_delete_config }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': target_network_delete_config, 'name_only': true}) | from_yaml }}"
   register: mcfg_staged_gathered
   when:
     - nd_network_run_mcfg | bool

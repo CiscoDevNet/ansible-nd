@@ -1,1 +1,9 @@
+{% if name_only | default(false) %}
+{% set selectors = [] %}
+{% for entry in network_conf %}
+{% set result = selectors.append({'network_name': entry.network_name}) %}
+{% endfor %}
+{{ selectors | to_nice_yaml(indent=2, sort_keys=False) }}
+{% else %}
 {{ network_conf | to_nice_yaml(indent=2, sort_keys=False) }}
+{% endif %}
