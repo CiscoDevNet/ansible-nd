@@ -17,13 +17,25 @@
   cisco.nd.nd_rest:
     path: >-
       /api/v1/manage/fabrics/{{ test_fabric_name
-      }}/switches/{{ item.switchId }}/interfaces
+      }}/switches/{{ item.switchId }}/interfaces?max=500
     method: get
   loop: "{{ nd4x_switch_inventory.current.switches | default([]) }}"
   loop_control:
     label: "{{ item.fabricManagementIp | default(item.switchId) }}"
   register: nd4x_fabric_interface_inventory
   changed_when: false
+
+- name: "OVERRIDDEN PREFLIGHT: Require complete interface inventory on every switch"
+  ansible.builtin.assert:
+    that:
+      - item.current.meta.counts.remaining | default(-1) | int == 0
+    fail_msg: >-
+      Interface inventory for switch {{ item.item.fabricManagementIp
+      | default(item.item.switchId) }} is incomplete. Refusing to run the
+      fabric-wide overridden scenario.
+  loop: "{{ nd4x_fabric_interface_inventory.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.fabricManagementIp | default(item.item.switchId) }}"
 
 - name: "OVERRIDDEN PREFLIGHT: Initialize current unmanaged scope"
   ansible.builtin.set_fact:
@@ -38,7 +50,7 @@
             {
               'switch_ip': fabric_interface.0.item.fabricManagementIp
                               | default(fabric_interface.0.item.switchId),
-              'interface_name': fabric_interface.1.interfaceName
+              'interface_name': fabric_interface.1.interfaceName | lower
             }
           ]
       }}
@@ -65,12 +77,32 @@
       .get('policy', {})
       .get('policyType', '') == 'monitorSubinterface'
 
+- name: "OVERRIDDEN PREFLIGHT: Initialize normalized allowed resources"
+  ansible.builtin.set_fact:
+    nd4x_subif_overridden_allowed_resources_normalized: []
+
+- name: "OVERRIDDEN PREFLIGHT: Normalize reserved interface names"
+  ansible.builtin.set_fact:
+    nd4x_subif_overridden_allowed_resources_normalized: >-
+      {{
+        nd4x_subif_overridden_allowed_resources_normalized
+        + [
+            {
+              'switch_ip': item.switch_ip,
+              'interface_name': item.interface_name | lower
+            }
+          ]
+      }}
+  loop: "{{ nd4x_subif_overridden_allowed_resources }}"
+  loop_control:
+    label: "{{ item.switch_ip }} {{ item.interface_name }}"
+
 - name: "OVERRIDDEN PREFLIGHT: Reject unmanaged resources outside reserved scope"
   vars:
     unexpected_unmanaged_subinterfaces: >-
       {{
         nd4x_existing_unmanaged_subinterfaces
-        | difference(nd4x_subif_overridden_allowed_resources)
+        | difference(nd4x_subif_overridden_allowed_resources_normalized)
         | list
       }}
   ansible.builtin.assert:

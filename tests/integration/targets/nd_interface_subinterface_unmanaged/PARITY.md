@@ -24,9 +24,10 @@ intact and continue to run alongside the safe harness scenarios.
 
 The merged, replaced, deleted, and negative harness scenarios run during a
 normal target run on ND 4.0.0 or later. They can also be selected with the
-`nd4x_demo` tag. Select the fabric-wide harness scenario with its explicit
-`nd4x_demo_overridden` tag. Do not add `never` to `--tags`: selecting `never`
-can run every `never`-tagged task in the target. The original legacy
+`nd4x_demo` tag. The harness overridden include is registered with both
+`nd4x_demo` and `nd4x_demo_overridden`; its safety assertion requires explicit
+destructive-test opt-in. Use `--skip-tags nd4x_demo_overridden` for an aggregate
+run that excludes the fabric-wide overridden scenario. The original legacy
 `overridden.yaml` remains unchanged, but its include is explicit opt-in via
 the `legacy_overridden` tag. A wrapper requires the destructive-test
 opt-in, checks the complete fabric for unmanaged subinterfaces outside the
@@ -56,18 +57,18 @@ check the primary Ethernet parent; negative validation does not require a
 routed parent; and cross-switch overridden checks both parents on both test
 switches.
 
-Run safe harness scenarios with the full target suite (they run by default), or
-select only the harness scenarios with:
+Run safe harness scenarios with the aggregate tag, excluding the destructive
+overridden scenario, or select an individual safe state tag:
 
 ```bash
 ansible-test network-integration nd_interface_subinterface_unmanaged \
   --inventory /absolute/path/to/inventory.networking \
-  --tags nd4x_demo \
+  --tags nd4x_demo --skip-tags nd4x_demo_overridden \
   -vv
 ```
 
 Run the destructive override scenario separately on a dedicated two-switch
-test fabric after setting both inventory variables:
+test fabric with `nd4x_demo_overridden` after setting both inventory variables:
 
 ```ini
 nd_test_switch_ip_2=192.168.1.2
@@ -86,19 +87,29 @@ ansible-test network-integration nd_interface_subinterface_unmanaged \
 The harness scenarios cover the original state flows, including same-parent
 bulk creation, port-channel handling, the existing and missing `replaced`
 paths, fabric-wide cross-switch `overridden` retention/removal, and bulk
-cleanup.
+cleanup. Interface reads used for predictive snapshots and overridden safety
+checks are paginated and must report zero remaining records before validation
+or destructive operations continue.
 
 Live run status:
 
-- `nd4x_demo_merged` passed on 2026-10-31 using the local integration inventory:
-  `ok=23`, `changed=2`, `failed=0`, `skipped=9`. The scenario validates ND intent;
+Post-rebase live run status: merged, replaced, deleted, negative, and overridden
+passed on 2026-11-16. Historical overridden results below were produced on
+2026-10-31 using the branch's pre-#610 harness copy and do not count as
+verification of the rebased harness.
+
+- `nd4x_demo_merged` passed on 2026-11-16 using the local integration inventory:
+  `ok=23`, `changed=2`, `unreachable=0`, `failed=0`, `skipped=9`, `rescued=0`,
+  `ignored=0`. The scenario validates ND intent;
   its module calls use `config_actions.deploy: false` and do not deploy the
   subinterfaces to the switches.
-- `nd4x_demo_replaced` passed on 2026-10-31: `ok=22`, `changed=3`, `failed=0`,
-  `skipped=10`.
-- `nd4x_demo_deleted` passed on 2026-10-31: `ok=22`, `changed=3`, `failed=0`,
-  `skipped=10`.
-- `nd4x_demo_negative` passed on 2026-10-31: `ok=15`, `changed=0`, `failed=0`,
-  `skipped=13`.
-- `nd4x_demo_overridden` passed on 2026-10-31: `ok=33`, `changed=3`,
+- `nd4x_demo_replaced` passed on 2026-11-16: `ok=22`, `changed=3`,
+  `unreachable=0`, `failed=0`, `skipped=10`, `rescued=0`, `ignored=0`.
+- `nd4x_demo_deleted` passed on 2026-11-16: `ok=22`, `changed=3`,
+  `unreachable=0`, `failed=0`, `skipped=10`, `rescued=0`, `ignored=0`.
+- `nd4x_demo_negative` passed on 2026-11-16: `ok=15`, `changed=0`,
+  `unreachable=0`, `failed=0`, `skipped=13`, `rescued=0`, `ignored=0`.
+- `nd4x_demo_overridden` passed on 2026-11-16: `ok=36`, `changed=3`,
+  `unreachable=0`, `failed=0`, `skipped=3`, `rescued=0`, `ignored=0`.
+- Historical: `nd4x_demo_overridden` passed on 2026-10-31: `ok=33`, `changed=3`,
   `failed=0`, `skipped=3`.

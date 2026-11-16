@@ -8,11 +8,21 @@
 #
 # Run the test suite with ansible-test:
 #   ansible-test network-integration nd_interface_subinterface_unmanaged
+# Run a safe set of ND 4.x harness scenarios:
+#   --tags nd4x_demo --skip-tags nd4x_demo_overridden
+# Harness tags: nd4x_demo_merged, nd4x_demo_replaced, nd4x_demo_deleted,
+#   nd4x_demo_negative, nd4x_demo_overridden, nd4x_demo_preflight.
+# Run the fabric-wide legacy override explicitly with --tags legacy_overridden.
 #
 # --- Optional test variables ---
 #
 # Set the variables below in the [nd:vars] section of tests/integration/inventory.networking
 #
+# nd_test_switch_ip_2 (str, required for nd4x_demo_overridden)
+#   Management IP of the second test switch in the dedicated test fabric.
+# nd_subinterface_unmanaged_destructive_tests_enabled (bool, default: false)
+#   Explicit opt-in for fabric-wide overridden scenarios. Use only on a
+#   dedicated test fabric.
 # nd_logging_config (str, default: "")
 #   Path to a JSON file conforming to logging.config.dictConfig (see
 #   plugins/module_utils/common/log.py for an example). When set, the path is
@@ -74,7 +84,6 @@
             - nd4x_demo_replaced
             - nd4x_demo_deleted
             - nd4x_demo_negative
-            - nd4x_demo_merged_fanout
             - nd4x_demo_overridden
       tags:
         - nd4x_demo
@@ -83,7 +92,6 @@
         - nd4x_demo_replaced
         - nd4x_demo_deleted
         - nd4x_demo_negative
-        - nd4x_demo_merged_fanout
         - nd4x_demo_overridden
 
     - name: Run merged state tests using the ND 4.x harness
@@ -93,11 +101,9 @@
           tags:
             - nd4x_demo
             - nd4x_demo_merged
-            - nd4x_demo_merged_fanout
       tags:
         - nd4x_demo
         - nd4x_demo_merged
-        - nd4x_demo_merged_fanout
       when: nd4x_supported | default(false) | bool
 
     - name: Run replaced state tests using the ND 4.x harness
@@ -129,13 +135,17 @@
         file: nd4x_demo_overridden.yaml
         apply:
           tags:
-            - never
+            - nd4x_demo
             - nd4x_demo_overridden
       tags:
-        - never
+        - nd4x_demo
         - nd4x_demo_overridden
       when:
         - nd4x_supported | default(false) | bool
+        - >-
+          nd4x_subinterface_unmanaged_destructive_tests_enabled
+          | default(false) | bool
+          or 'nd4x_demo_overridden' in (ansible_run_tags | default(['all']))
 
     - name: Run negative validation tests using the ND 4.x harness
       ansible.builtin.include_tasks:

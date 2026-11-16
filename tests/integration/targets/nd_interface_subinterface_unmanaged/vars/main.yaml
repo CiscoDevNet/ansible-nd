@@ -10,8 +10,13 @@
 # and message "Sub-interface can be created only on routed physical or port-channel
 # interfaces". The unmanaged variant follows the same rule as the managed variant.
 #
-# Sub-id range .20-.29 avoids collision with the managed target's .2-.5 range so
-# both targets can run on the same testbed without interference.
+# Legacy sub-id range .20-.29 avoids collision with the managed target's .2-.5
+# range. ND 4.x harness IDs use .40-.49, separate from both legacy suites.
+#
+# For the cross-switch overridden harness scenario, configure
+# nd_test_switch_ip_2 and explicitly set
+# nd_subinterface_unmanaged_destructive_tests_enabled=true in inventory. Use
+# this destructive scenario only on a dedicated test fabric.
 
 test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
 test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"

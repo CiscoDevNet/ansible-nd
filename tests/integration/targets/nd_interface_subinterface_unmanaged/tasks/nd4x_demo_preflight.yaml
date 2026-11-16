@@ -6,7 +6,6 @@
         'all' in (ansible_run_tags | default(['all']))
         or 'nd4x_demo' in (ansible_run_tags | default(['all']))
         or 'nd4x_demo_merged' in (ansible_run_tags | default(['all']))
-        or 'nd4x_demo_merged_fanout' in (ansible_run_tags | default(['all']))
         or 'nd4x_demo_replaced' in (ansible_run_tags | default(['all']))
         or 'nd4x_demo_deleted' in (ansible_run_tags | default(['all']))
         or 'nd4x_demo_overridden' in (ansible_run_tags | default(['all']))
@@ -16,11 +15,20 @@
         'all' in (ansible_run_tags | default(['all']))
         or 'nd4x_demo' in (ansible_run_tags | default(['all']))
         or 'nd4x_demo_merged' in (ansible_run_tags | default(['all']))
-        or 'nd4x_demo_merged_fanout' in (ansible_run_tags | default(['all']))
         or 'nd4x_demo_overridden' in (ansible_run_tags | default(['all']))
       }}
     nd4x_check_second_switch_parents: >-
-      {{ 'nd4x_demo_overridden' in (ansible_run_tags | default(['all'])) }}
+      {{
+        'nd4x_demo_overridden' in (ansible_run_tags | default(['all']))
+        or (
+          nd4x_subinterface_unmanaged_destructive_tests_enabled
+          | default(false) | bool
+          and (
+            'all' in (ansible_run_tags | default(['all']))
+            or 'nd4x_demo' in (ansible_run_tags | default(['all']))
+          )
+        )
+      }}
 
 - name: "ND4X PREFLIGHT: Query Nexus Dashboard version"
   cisco.nd.nd_version:
@@ -64,6 +72,10 @@
                       ~ (item.fabricManagementIp | default(item.switchId)),
               'path': '/api/v1/manage/fabrics/' ~ test_fabric_name
                        ~ '/switches/' ~ item.switchId ~ '/interfaces',
+              'pagination': {
+                'page_size': 500,
+                'collection_key': 'interfaces'
+              },
               'expected_status': 200,
               'unordered_paths': ['/interfaces'],
               'ignore_keys': ['operData']
