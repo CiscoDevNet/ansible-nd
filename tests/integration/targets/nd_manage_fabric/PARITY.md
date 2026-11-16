@@ -59,8 +59,8 @@ fixture omits explicit `bgp_asn_auto_allocation: false` for `sameTierAS`,
 because ND omits `bgpAsnAutoAllocation` from GET responses for that mode and
 the module otherwise detects a change on every run. The option is covered in
 the eBGP multi-AS scenarios. REST queries verify each resource's name and type
-plus every applicable returned field: 66 checks per iBGP fabric, 70 per eBGP
-fabric, and 24 per External Connectivity fabric. ND omits empty
+plus every applicable returned field: 64 checks per iBGP fabric, 68 per eBGP
+fabric, and 22 per External Connectivity fabric. ND omits empty
 strings and some inactive defaults from GET responses (including DHCP protocol
 when local DHCP is disabled, interface-statistics interval when statistics are
 disabled, and management IPv4 prefix when no management gateway is configured).
