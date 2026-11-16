@@ -11,14 +11,20 @@ Live testing completed successfully using a temporary inventory derived from
 
 | Test run | ok | changed | failed | unreachable | skipped |
 |---|---:|---:|---:|---:|---:|
-| Harness `merged` | 43 | 12 | 0 | 0 | 2 |
-| Harness `replaced` | 43 | 12 | 0 | 0 | 2 |
-| Harness `deleted` | 43 | 12 | 0 | 0 | 2 |
-| Harness `overridden` + preflight | 43 | 12 | 0 | 0 | 2 |
+| Harness `merged` | 20 | 4 | 0 | 0 | 3 |
+| Harness `replaced` | 19 | 4 | 0 | 0 | 3 |
+| Harness `deleted` | 17 | 2 | 0 | 0 | 3 |
+| Harness `overridden` + preflight | 20 | 2 | 0 | 0 | 3 |
 | Unchanged legacy suite | 37 | 9 | 0 | 0 | 2 |
 
 All state-specific harness runs and the unchanged legacy suite completed
 without failures.
+
+The merged harness scenario was also rerun against the ND 4.3.x controller at
+`10.105.231.242` using the `nikhil-ibgp` fabric and passed with
+`ok=20 changed=4 failed=0 unreachable=0 skipped=3`. The direct single-object
+IPv6 REST response returned `type: ipv6`. The earlier ND 4.2.x run validated
+the corresponding `type: ipv4` response.
 
 ## Scenario mapping
 
@@ -32,7 +38,7 @@ without failures.
 | Validate persisted IPv4 ACL wire representation | `tasks/acl_ipv4.yaml` | IPv4 `nd_queries` in merged/replaced scenarios | Name, type, entry count, sequence, action, and protocol checks |
 | Delete IPv4 ACL in check mode, normal mode, and idempotently | `tasks/acl_ipv4.yaml` | `DELETED` in `nd4x_demo_deleted.yaml` | Identifier-only deletion, absence REST query, and returned-state checks |
 | Create IPv6 ACL with port range and re-apply idempotently | `tasks/acl_ipv6.yaml` | IPv6 `MERGED CREATE` in `nd4x_demo_merged.yaml` | Harness lifecycle, returned IPv6 state, and persisted port-range checks |
-| Validate persisted IPv6 ACL wire representation | `tasks/acl_ipv6.yaml` | IPv6 `nd_queries` in `nd4x_demo_merged.yaml` | Validates entries and string port bounds on all supported versions; checks the documented `type: ipv4` readback on ND 4.2.1+ |
+| Validate persisted IPv6 ACL wire representation | `tasks/acl_ipv6.yaml` | IPv6 `nd_queries` in `nd4x_demo_merged.yaml` | Validates entries and string port bounds on all supported versions; checks `type: ipv4` on ND 4.2.x and `type: ipv6` on ND 4.3+ |
 | Override with empty config to remove all ACLs and re-apply idempotently | `tasks/acl_ipv6.yaml` | `OVERRIDDEN` in `nd4x_demo_overridden.yaml` | Destructive opt-in, check-mode scope probe, reserved-scope guard, fabric-wide snapshot, REST absence, and returned-state checks |
 
 ## Harness behavior
@@ -53,8 +59,24 @@ without failures.
 
 ## Tags and execution
 
-Harness scenarios are opt-in and retain the `never` tag while parity is being
-validated. The original suite continues to run during this period.
+Harness scenarios run as part of the normal target execution when the
+controller passes the ND 4.1.1 support gate. Use `--skip-tags nd4x_demo` to
+run only the unchanged legacy suite.
+
+Default execution, including the harness scenarios:
+
+```bash
+ansible-test network-integration nd_manage_acl \
+  --inventory inventory.LOCAL.networking -vv
+```
+
+Legacy suite only:
+
+```bash
+ansible-test network-integration nd_manage_acl \
+  --inventory inventory.LOCAL.networking \
+  --skip-tags nd4x_demo -vv
+```
 
 Safe harness scenarios:
 
@@ -74,7 +96,7 @@ nd_acl_destructive_tests_enabled=true
 ```bash
 ansible-test network-integration nd_manage_acl \
   --inventory inventory.LOCAL.networking \
-  --tags nd4x_demo_overridden,nd4x_demo_preflight \
+  --tags nd4x_demo_overridden \
   --allow-destructive -vv
 ```
 

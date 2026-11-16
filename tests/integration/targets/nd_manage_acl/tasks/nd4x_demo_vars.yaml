@@ -67,7 +67,6 @@
           src: any
           dst: any
   tags:
-    - never
     - nd4x_demo
     - nd4x_demo_preflight
     - nd4x_demo_merged

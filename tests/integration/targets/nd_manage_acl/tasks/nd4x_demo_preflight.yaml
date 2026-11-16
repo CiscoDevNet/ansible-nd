@@ -34,7 +34,7 @@
   tags:
     - always
 
-- name: "ND4X PREFLIGHT: Add ND 4.2.1 IPv6 readback validation"
+- name: "ND4X PREFLIGHT: Add ND 4.2.x IPv6 readback validation"
   ansible.builtin.set_fact:
     nd4x_acl_ipv6_rest_expectations: >-
       {{
@@ -46,7 +46,25 @@
             }
           ]
       }}
-  when: nd4x_version.current.platformVersion is version('4.2.1', '>=')
+  when:
+    - nd4x_version.current.platformVersion is version('4.2.0', '>=')
+    - nd4x_version.current.platformVersion is version('4.3.0', '<')
+  tags:
+    - always
+
+- name: "ND4X PREFLIGHT: Add ND 4.3+ IPv6 readback validation"
+  ansible.builtin.set_fact:
+    nd4x_acl_ipv6_rest_expectations: >-
+      {{
+        nd4x_acl_ipv6_rest_expectations
+        + [
+            {
+              'jsonpath': '$.current.type',
+              'equals': 'ipv6'
+            }
+          ]
+      }}
+  when: nd4x_version.current.platformVersion is version('4.3.0', '>=')
   tags:
     - always
 
