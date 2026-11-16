@@ -661,7 +661,7 @@ nd4x_fabric_cases:
     field_expectation_key: ibgp
     module: cisco.nd.nd_manage_fabric_ibgp_vxlan
     fabric_type: vxlanIbgp
-    harness_tags: [never, nd4x_demo, nd4x_demo_ibgp]
+    harness_tags: [nd4x_demo, nd4x_demo_ibgp]
     config_actions_tasks: nd4x_demo_config_actions_ibgp.yaml
     fixture: "{{ fabric_config_ibgp }}"
     merged_seed_overrides:
@@ -727,7 +727,7 @@ nd4x_fabric_cases:
     field_expectation_key: ebgp
     module: cisco.nd.nd_manage_fabric_ebgp_vxlan
     fabric_type: vxlanEbgp
-    harness_tags: [never, nd4x_demo, nd4x_demo_ebgp]
+    harness_tags: [nd4x_demo, nd4x_demo_ebgp]
     config_actions_tasks: nd4x_demo_config_actions_ebgp.yaml
     fixture: "{{ fabric_config_ebgp }}"
     merged_name: "{{ ebgp_test_fabric_merged }}"
@@ -864,7 +864,7 @@ nd4x_fabric_cases:
     field_expectation_key: campus
     module: cisco.nd.nd_manage_fabric_campus_ibgp_vxlan
     fabric_type: vxlanCampus
-    harness_tags: [never, nd4x_demo, nd4x_demo_campus]
+    harness_tags: [nd4x_demo, nd4x_demo_campus]
     config_actions_tasks: nd4x_demo_config_actions_campus.yaml
     fixture: "{{ fabric_config_campus }}"
     merged_name: "{{ campus_test_fabric_merged }}"
@@ -923,7 +923,7 @@ nd4x_fabric_cases:
     field_expectation_key: external
     module: cisco.nd.nd_manage_fabric_external
     fabric_type: externalConnectivity
-    harness_tags: [never, nd4x_demo, nd4x_demo_external]
+    harness_tags: [nd4x_demo, nd4x_demo_external]
     config_actions_tasks: nd4x_demo_config_actions_external.yaml
     fixture: "{{ fabric_config_external }}"
     merged_name: "{{ ext_test_fabric_merged }}"
@@ -1017,7 +1017,7 @@ nd4x_fabric_cases:
     field_expectation_key: ai_ibgp
     module: cisco.nd.nd_manage_fabric_ai_ibgp_vxlan
     fabric_type: aimlVxlanIbgp
-    harness_tags: [never, nd4x_demo, nd4x_demo_ai_ibgp]
+    harness_tags: [nd4x_demo, nd4x_demo_ai_ibgp]
     config_actions_tasks: nd4x_demo_config_actions_ai_ibgp.yaml
     fixture: "{{ fabric_config_ai_ibgp }}"
     merged_seed_overrides:
@@ -1081,7 +1081,7 @@ nd4x_fabric_cases:
     field_expectation_key: ai_ebgp
     module: cisco.nd.nd_manage_fabric_ai_ebgp_vxlan
     fabric_type: aimlVxlanEbgp
-    harness_tags: [never, nd4x_demo, nd4x_demo_ai_ebgp]
+    harness_tags: [nd4x_demo, nd4x_demo_ai_ebgp]
     config_actions_tasks: nd4x_demo_config_actions_ai_ebgp.yaml
     fixture: "{{ fabric_config_ai_ebgp }}"
     merged_seed_overrides:

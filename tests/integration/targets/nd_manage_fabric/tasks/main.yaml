@@ -201,7 +201,6 @@
     file: nd4x_demo_preflight.yaml
     apply:
       tags:
-        - never
         - nd4x_demo
         - nd4x_demo_preflight
         - nd4x_demo_ibgp
@@ -211,7 +210,6 @@
         - nd4x_demo_ai_ibgp
         - nd4x_demo_ai_ebgp
   tags:
-    - never
     - nd4x_demo
     - nd4x_demo_preflight
     - nd4x_demo_ibgp
@@ -220,7 +218,6 @@
     - nd4x_demo_external
     - nd4x_demo_ai_ibgp
     - nd4x_demo_ai_ebgp
-  when: nd4x_fabric_harness_only | default(false) | bool
 
 - name: Run the ND 4.x iBGP fabric harness scenarios
   block:
@@ -243,9 +240,8 @@
   vars:
     nd4x_fabric_case: "{{ nd4x_fabric_cases.ibgp }}"
     ansible_command_timeout: 300
-  tags: [never, nd4x_demo, nd4x_demo_ibgp]
+  tags: [nd4x_demo, nd4x_demo_ibgp]
   when:
-    - nd4x_fabric_harness_only | default(false) | bool
     - nd4x_supported | default(false) | bool
 
 - name: Run the ND 4.x eBGP fabric harness scenarios
@@ -269,9 +265,8 @@
   vars:
     nd4x_fabric_case: "{{ nd4x_fabric_cases.ebgp }}"
     ansible_command_timeout: 300
-  tags: [never, nd4x_demo, nd4x_demo_ebgp]
+  tags: [nd4x_demo, nd4x_demo_ebgp]
   when:
-    - nd4x_fabric_harness_only | default(false) | bool
     - nd4x_supported | default(false) | bool
 
 - name: Run the ND 4.x Campus fabric harness scenarios
@@ -295,9 +290,8 @@
   vars:
     nd4x_fabric_case: "{{ nd4x_fabric_cases.campus }}"
     ansible_command_timeout: 300
-  tags: [never, nd4x_demo, nd4x_demo_campus]
+  tags: [nd4x_demo, nd4x_demo_campus]
   when:
-    - nd4x_fabric_harness_only | default(false) | bool
     - nd4x_supported | default(false) | bool
 
 - name: Run the ND 4.x External Connectivity fabric harness scenarios
@@ -321,9 +315,8 @@
   vars:
     nd4x_fabric_case: "{{ nd4x_fabric_cases.external }}"
     ansible_command_timeout: 300
-  tags: [never, nd4x_demo, nd4x_demo_external]
+  tags: [nd4x_demo, nd4x_demo_external]
   when:
-    - nd4x_fabric_harness_only | default(false) | bool
     - nd4x_supported | default(false) | bool
 
 - name: Run the ND 4.x AI iBGP fabric harness scenarios
@@ -347,9 +340,8 @@
   vars:
     nd4x_fabric_case: "{{ nd4x_fabric_cases.ai_ibgp }}"
     ansible_command_timeout: 300
-  tags: [never, nd4x_demo, nd4x_demo_ai_ibgp]
+  tags: [nd4x_demo, nd4x_demo_ai_ibgp]
   when:
-    - nd4x_fabric_harness_only | default(false) | bool
     - nd4x_supported | default(false) | bool
 
 - name: Run the ND 4.x AI eBGP fabric harness scenarios
@@ -373,7 +365,6 @@
   vars:
     nd4x_fabric_case: "{{ nd4x_fabric_cases.ai_ebgp }}"
     ansible_command_timeout: 300
-  tags: [never, nd4x_demo, nd4x_demo_ai_ebgp]
+  tags: [nd4x_demo, nd4x_demo_ai_ebgp]
   when:
-    - nd4x_fabric_harness_only | default(false) | bool
     - nd4x_supported | default(false) | bool

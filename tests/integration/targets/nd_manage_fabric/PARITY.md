@@ -83,10 +83,20 @@ outer harness cleanup list also includes the probe as a safety net.
 
 ## Tags and execution
 
-Harness scenarios are opt-in and tagged `never`, `nd4x_demo`, and one family
-tag. The selected harness tags automatically suppress the legacy task blocks,
-including their `always` cleanup. A normal run without harness tags continues
-to run the legacy suite as before.
+Harness scenarios run as part of the target's normal suite when the ND-version
+condition passes. To run only the original suite during migration, skip the
+aggregate harness tag:
+
+```text
+ansible-test network-integration nd_manage_fabric \
+  --inventory /absolute/path/to/inventory.networking \
+  --skip-tags nd4x_demo -vv
+```
+
+The harness scenarios use the aggregate `nd4x_demo` tag and one family tag.
+Selecting a family tag suppresses the legacy task blocks, including their
+`always` cleanup, and runs preflight before the selected scenario. A normal run
+includes both the legacy suite and supported harness scenarios.
 
 Run one group at a time with the existing private integration inventory, for
 example:
