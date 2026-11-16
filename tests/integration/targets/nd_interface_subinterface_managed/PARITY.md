@@ -78,9 +78,13 @@ flows.
 
 - **Live-run status:** All NX-OS harness scenarios are complete and passed:
   preflight, merged, replaced, deleted, negative, and overridden. The current
-  pagination-aware rerun recaps are recorded below. IOS-XE live testing is not
-  complete because the required lab setup is unavailable; neither IOS-XE tag
-  has a live result.
+  pagination-aware rerun recaps are recorded below. Reported
+  combined IOS-XE run passed the non-overridden scenario through teardown, but
+  the overridden scenario stopped at its parent preflight because ND's
+  discovered mode remained stale after the trunk-host reset. The preflight has
+  since been updated to check the configured intent and the parent's running
+  configuration. That update has not been live-tested because a suitable
+  IOS-XE lab setup is currently unavailable.
 - **2026-10-29 — ND 4.x harness preflight:** Passed using the local Python 3.11
   environment and `cisco/nd/tests/integration/inventory.LOCAL.networking`.
 - Recap: `ok=12 changed=0 unreachable=0 failed=0 skipped=1 rescued=0 ignored=0`.
@@ -144,6 +148,14 @@ flows.
 - **2026-11-04 — ND 4.x overridden scenario rerun:** Passed with the
   fabric-wide safety preflight enabled. Recap: `ok=56 changed=3
   unreachable=0 failed=0 skipped=4 rescued=0 ignored=0`.
+- **2026-11-16 — ND 4.x overridden scenario rerun:** Passed. Recap:
+  `ok=57 changed=3 unreachable=0 failed=0 skipped=4 rescued=0 ignored=0`.
+- **2026-11-16 — Explicit overridden-tag opt-in guard checks:** With the
+  destructive opt-in disabled, both `nd4x_demo_overridden` and
+  `nd4x_demo_override_scope` stopped at the top-level guard before setup.
+  The assertion failure was expected; neither run changed lab state. Each
+  recap: `ok=12 changed=0 unreachable=0 failed=1 skipped=1 rescued=0
+  ignored=0`.
 
 ## Running harness scenarios
 

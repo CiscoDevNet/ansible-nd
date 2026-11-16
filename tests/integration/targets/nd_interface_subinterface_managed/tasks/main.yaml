@@ -133,6 +133,22 @@
         - nd4x_demo_deleted
       when: nd4x_supported | default(false) | bool
 
+    - name: Require opt-in when an overridden harness tag is explicitly selected
+      ansible.builtin.assert:
+        that:
+          - nd4x_subinterface_managed_destructive_tests_enabled | bool
+        fail_msg: >-
+          The overridden harness can delete managed subinterfaces across the fabric.
+          Set nd_subinterface_managed_destructive_tests_enabled=true to run it.
+      when:
+        - nd4x_supported | default(false) | bool
+        - >-
+          'nd4x_demo_overridden' in (ansible_run_tags | default([])) or
+          'nd4x_demo_override_scope' in (ansible_run_tags | default([]))
+      tags:
+        - nd4x_demo_overridden
+        - nd4x_demo_override_scope
+
     - name: Run overridden state tests using the ND 4.x harness
       ansible.builtin.include_tasks:
         file: nd4x_demo_overridden.yaml

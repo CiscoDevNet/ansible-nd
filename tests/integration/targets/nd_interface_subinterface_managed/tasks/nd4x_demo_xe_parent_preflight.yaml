@@ -90,20 +90,31 @@
       bpduGuard: default
       mtu: 1500
       speed: auto
+    # ND can retain a stale operData.mode after reset; inspect the parent's actual stanza instead.
+    running_config: >-
+      {{ nd4x_xe_parent_diff_configs
+         | map(attribute='runningConfig')
+         | join('\n') }}
+    parent_running_config: >-
+      {{ running_config
+         | regex_search('(?ims)^interface[ \\t]+' ~ (xe_parent | regex_escape) ~ '[ \\t]*\\r?\\n.*?(?=^interface[ \\t]+|\\Z)')
+         | default('', true) }}
   ansible.builtin.assert:
     that:
       - matching_parents | length == 1
       - parent_record.interfaceType == 'ethernet'
-      - parent_record.operData.mode | default('') == 'trunk'
       - parent_record.operData.portChannelId is defined
       - parent_record.operData.portChannelId is number
       - parent_record.operData.portChannelId | int < 1
       - parent_policy_normalized == expected_default_policy
       - parent_policy.description | default('') == ''
+      - parent_running_config | length > 0
+      - parent_running_config is search('(?im)^[ \\t]+switchport mode trunk[ \\t]*$')
+      - parent_running_config is not search('(?im)^[ \\t]+no switchport(?:[ \\t]|$)')
     fail_msg: >-
       Refusing to change {{ xe_parent }} on {{ test_xe_switch_ip }}. It must be a plain Ethernet host port
-      in the documented fabric-default IOS-XE trunk-host state (admin up, default policy values), and ND
-      must confirm it is not a port-channel member. Found {{ matching_parents | length }} matching parent records.
+      in the documented fabric-default IOS-XE trunk-host state (default intent and running configuration),
+      and it must not be a port-channel member. Found {{ matching_parents | length }} matching parent records.
 
 - name: "XE PARENT PREFLIGHT: Require that the parent is not a fabric-link endpoint"
   vars:
