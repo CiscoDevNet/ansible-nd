@@ -344,6 +344,91 @@ def test_absent_port_channel_replay_proves_its_own_member_detach() -> None:
         orchestrator._validate_pending_absent_delete(preview, "port-channel982", "FDO11111AAA")
 
 
+def _absent_delete_preview(running: str, pending: str) -> dict:
+    """Build a one-row absent-delete preview for port-channel982 on FDO11111AAA."""
+    return {
+        "configurationDiffs": [
+            {
+                "interfaceName": "port-channel982",
+                "switchId": "FDO11111AAA",
+                "combinedConfigs": [
+                    {"configType": "running", "config": running},
+                    {"configType": "pending", "config": pending},
+                ],
+            }
+        ]
+    }
+
+
+def test_absent_port_channel_replay_accepts_configure_terminal_between_member_stanzas() -> None:
+    """ND can delimit member-reset stanzas with `configure terminal` (issue #652)."""
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    preview = _absent_delete_preview(
+        running=("interface port-channel982\ninterface Ethernet1/46\nchannel-group 982 mode active\ninterface Ethernet1/47\nchannel-group 982 mode active\n"),
+        pending=(
+            "no interface port-channel982\n"
+            "interface ethernet1/46\n  no channel-group 982 force mode active\n"
+            "configure terminal\n"
+            "interface ethernet1/47\n  no channel-group 982 force mode active\n"
+            "configure terminal\n"
+            "interface ethernet1/46\n  mtu 9216\n  no shutdown\n"
+        ),
+    )
+
+    orchestrator._validate_pending_absent_delete(preview, "port-channel982", "FDO11111AAA")
+
+
+def test_absent_port_channel_replay_requires_member_header_after_configure_terminal() -> None:
+    """`configure terminal` ends the member context, so a following command needs a new proven member header."""
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    preview = _absent_delete_preview(
+        running="interface port-channel982\ninterface Ethernet1/46\nchannel-group 982 mode active\n",
+        pending=("no interface port-channel982\ninterface ethernet1/46\n  no channel-group 982 force mode active\nconfigure terminal\n  no shutdown\n"),
+    )
+
+    with pytest.raises(RuntimeError, match="unproven command 'no shutdown'"):
+        orchestrator._validate_pending_absent_delete(preview, "port-channel982", "FDO11111AAA")
+
+
+# The pending CLI ND 4.3.1 generated for a staged trunk port-channel delete whose member returns to a routed port (issue #652 lab capture).
+_ROUTED_MEMBER_RETURN_PENDING = (
+    "no interface port-channel982\n"
+    "interface ethernet1/46\n"
+    "  no channel-group 982 force mode active\n"
+    "  no switchport trunk allowed vlan 300-400\n"
+    "  no switchport trunk native vlan 199\n"
+    "  no switchport mode trunk\n"
+    "interface ethernet1/46\n"
+    "  no switchport\n"
+    "  mtu 9216\n"
+    "  no shutdown\n"
+    "configure terminal\n"
+)
+
+
+def test_absent_port_channel_replay_accepts_a_member_returning_to_a_routed_port() -> None:
+    """ND returns the members of a removed port-channel to routed ports with `no switchport` (issue #697)."""
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    preview = _absent_delete_preview(
+        running="interface port-channel982\ninterface Ethernet1/46\nswitchport mode trunk\nchannel-group 982 mode active\n",
+        pending=_ROUTED_MEMBER_RETURN_PENDING,
+    )
+
+    orchestrator._validate_pending_absent_delete(preview, "port-channel982", "FDO11111AAA")
+
+
+def test_absent_port_channel_replay_refuses_no_switchport_on_an_unproven_member() -> None:
+    """`no switchport` is a member command, so it is refused on an interface the running port-channel does not own."""
+    orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
+    preview = _absent_delete_preview(
+        running="interface port-channel982\ninterface Ethernet1/46\nchannel-group 982 mode active\n",
+        pending="no interface port-channel982\ninterface ethernet1/46\n  no channel-group 982 force mode active\ninterface ethernet1/47\n  no switchport\n",
+    )
+
+    with pytest.raises(RuntimeError, match="unproven member 'ethernet1/47'"):
+        orchestrator._validate_pending_absent_delete(preview, "port-channel982", "FDO11111AAA")
+
+
 @pytest.mark.parametrize(
     ("running_group", "pending_detach", "accepted"),
     [
