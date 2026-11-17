@@ -117,6 +117,26 @@
         config: [{switch_id: "{{ test_switch_serial }}", interface_names: ["{{ breakout_control_parent }}"], breakout_map: "{{ breakout_map_a }}"}]
         verify: {enabled: not-a-boolean}
         error: enabled
+      - label: zero verification timeout
+        state: merged
+        config: [{switch_id: "{{ test_switch_serial }}", interface_names: ["{{ breakout_control_parent }}"], breakout_map: "{{ breakout_map_a }}"}]
+        verify: {wait_timeout: 0}
+        error: wait_timeout
+      - label: negative verification timeout
+        state: merged
+        config: [{switch_id: "{{ test_switch_serial }}", interface_names: ["{{ breakout_control_parent }}"], breakout_map: "{{ breakout_map_a }}"}]
+        verify: {wait_timeout: -1}
+        error: wait_timeout
+      - label: zero discovery timeout
+        state: merged
+        config: [{switch_id: "{{ test_switch_serial }}", interface_names: ["{{ breakout_control_parent }}"], breakout_map: "{{ breakout_map_a }}"}]
+        verify: {discovery_timeout: 0}
+        error: discovery_timeout
+      - label: negative discovery timeout
+        state: merged
+        config: [{switch_id: "{{ test_switch_serial }}", interface_names: ["{{ breakout_control_parent }}"], breakout_map: "{{ breakout_map_a }}"}]
+        verify: {discovery_timeout: -1}
+        error: discovery_timeout
       - label: unsupported config group option
         state: merged
         config: [{switch_id: "{{ test_switch_serial }}", interface_names: ["{{ breakout_control_parent }}"], breakout_map: "{{ breakout_map_a }}", unsupported_option: true}]

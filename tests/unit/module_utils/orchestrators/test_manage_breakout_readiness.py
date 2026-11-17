@@ -122,7 +122,7 @@ def test_coupled_intent_is_detected_before_discovery_and_inverse_waits_only_for_
     for call in reads[2:]:
         assert_targeted_read(call)
     assert calls[-1]["verb"] == HttpVerbEnum.POST
-    assert clock.sleeps and all(delay == 2 for delay in clock.sleeps)
+    assert clock.sleeps == [5, 5]
 
 
 def test_all_requested_intent_families_succeed_without_waiting_for_physical_discovery(clock):
@@ -231,7 +231,7 @@ def test_unready_or_unreadable_inverse_target_never_causes_a_mutation_replay(clo
         assert_targeted_read(call)
     if failure == "timeout":
         assert "90" in report["recovery"][0]["msg"]
-        assert 90 <= clock.now <= 92
+        assert clock.now == 90
     else:
         assert len(summary_calls(calls)) == 3
 

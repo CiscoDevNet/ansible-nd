@@ -82,7 +82,7 @@ class BreakoutInterfaceModel(NDBaseModel):
 
     @classmethod
     def get_argument_spec(cls) -> dict[str, Any]:
-        """Return the public grouped input specification without map enumeration."""
+        """Return grouped selectors and bounded verification wait settings."""
         return {
             "fabric_name": {"type": "str", "required": True},
             "state": {"type": "str", "choices": ["merged", "deleted", "overridden"], "default": "merged"},
@@ -96,7 +96,15 @@ class BreakoutInterfaceModel(NDBaseModel):
                     "breakout_map": {"type": "str"},
                 },
             },
-            "verify": {"type": "dict", "apply_defaults": True, "options": {"enabled": {"type": "bool", "default": True}}},
+            "verify": {
+                "type": "dict",
+                "apply_defaults": True,
+                "options": {
+                    "enabled": {"type": "bool", "default": True},
+                    "wait_timeout": {"type": "int", "default": 30},
+                    "discovery_timeout": {"type": "int", "default": 90},
+                },
+            },
         }
 
 
@@ -157,7 +165,7 @@ def expand_config(raw_config: Any, state: str) -> list[BreakoutInterfaceModel]:
 
 
 def validate_module_params(params: dict[str, Any], raw_args: dict[str, Any] | None = None) -> list[BreakoutInterfaceModel]:
-    """Validate the complete public input without opening a connection."""
+    """Validate selectors and verification controls without opening a connection."""
     fabric_name = params.get("fabric_name")
     if not isinstance(fabric_name, str) or not fabric_name.strip():
         raise ValueError("fabric_name must be a non-empty string")
@@ -168,8 +176,11 @@ def validate_module_params(params: dict[str, Any], raw_args: dict[str, Any] | No
         raise ValueError("config_actions is not supported; Nexus Dashboard applies breakout and unbreakout internally")
     verify = params.get("verify")
     if verify is not None:
-        if not isinstance(verify, dict) or set(verify) - {"enabled"}:
-            raise ValueError("verify accepts only a dictionary with the enabled option")
+        if not isinstance(verify, dict) or set(verify) - {"enabled", "wait_timeout", "discovery_timeout"}:
+            raise ValueError("verify accepts only a dictionary with enabled, wait_timeout and discovery_timeout options")
         if not isinstance(verify.get("enabled", True), bool):
             raise ValueError("verify.enabled must be a boolean")
+        for option in ("wait_timeout", "discovery_timeout"):
+            if option in verify and (not isinstance(verify[option], int) or isinstance(verify[option], bool) or verify[option] <= 0):
+                raise ValueError(f"verify.{option} must be a positive integer number of seconds")
     return expanded

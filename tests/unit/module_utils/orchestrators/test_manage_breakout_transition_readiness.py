@@ -64,7 +64,7 @@ def test_stale_removed_family_is_settled_before_inverse_breakout(clock):
     assert len(reads) == 4
     for call in reads[2:]:
         assert_targeted_read(call)
-    assert clock.sleeps == [2, 2]
+    assert clock.sleeps == [5, 5]
     assert all(call["payload"] is None for call in calls if call["verb"] == HttpVerbEnum.GET)
     assert calls[-1]["verb"] == HttpVerbEnum.POST
     assert report.get("after", []) == [] and report["after_status"] == "unknown"
@@ -85,7 +85,7 @@ def test_rediscovered_original_family_is_not_recreated_when_it_remains_broken(cl
     assert [call["path"] for call in writes(calls)] == [REMOVE]
     assert len(summary_calls(calls)) == 3
     assert_targeted_read(summary_calls(calls)[2])
-    assert clock.sleeps == [2]
+    assert clock.sleeps == [5]
     assert report.get("after", []) == [] and report["after_status"] == "unknown"
 
 
@@ -115,7 +115,7 @@ def test_unresolved_removed_family_preserves_changes_without_guessing_inverse(cl
     assert report.get("after", []) == [] and report["after_status"] == "unknown"
     if failure == "timeout":
         assert "90" in report["recovery"][0]["msg"]
-        assert 90 <= clock.now <= 92
+        assert clock.now == 90
     else:
         assert len(summary_calls(calls)) == 3
         assert "Transition GET" in report["recovery"][0]["msg"] or "interfaces array" in report["recovery"][0]["msg"]

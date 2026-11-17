@@ -17,7 +17,7 @@
       - {state: deleted, verify: true, child: true, changed: false, outcome: noop}
       - {state: deleted, verify: false, child: true, changed: false, outcome: noop}
 
-- name: CHECK MODE - Predict native creation or already-native family deletion
+- name: CHECK MODE - Predict native changes with custom timeouts and no waits
   cisco.nd.nd_manage_breakout_interfaces:
     fabric_name: "{{ test_fabric_name }}"
     state: "{{ native_prediction.state }}"
@@ -27,6 +27,8 @@
         breakout_map: "{{ breakout_map_a if native_prediction.state == 'merged' else omit }}"
     verify:
       enabled: "{{ native_prediction.verify }}"
+      wait_timeout: 1
+      discovery_timeout: 1
   check_mode: true
   register: breakout_native_prediction_results
   loop: "{{ breakout_native_predictions }}"
