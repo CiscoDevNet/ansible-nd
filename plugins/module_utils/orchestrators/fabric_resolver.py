@@ -310,6 +310,20 @@ class FabricResolverBase:
         )
         return result
 
+    def get_fabric_details(self, fabric_name: str, cluster_name: str | None = None) -> dict[str, Any]:
+        """
+        # Summary
+
+        Return cached full Manage details for a fabric, fetching them once if needed.
+
+        ## Raises
+
+        ### FabricResolverRequestError
+
+        - If the controller rejects the fabric-details request.
+        """
+        return self._fetch_manage_fabric_details(fabric_name, cluster_name)
+
     def _fetch_manage_fabric_members(self, fabric_name: str, cluster_name: str | None = None) -> list[dict[str, Any]]:
         """GET generic ND Manage fabric-group members."""
         endpoint = EpManageFabricsMembersGet(fabric_name=fabric_name)

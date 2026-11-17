@@ -18,6 +18,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsPost,
     EpManageFabricsPut,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import GatheredLuceneSpec
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_external import (
     FabricExternalConnectivityModel,
@@ -49,6 +50,17 @@ class ManageExternalFabricOrchestrator(
     model_class: ClassVar[type[NDBaseModel]] = FabricExternalConnectivityModel
     fabric_inventory_category: ClassVar[str] = "fabric"
     fabric_inventory_management_type: ClassVar[str] = "externalConnectivity"
+    supports_gathered_server_filtering: ClassVar[bool] = True
+    gathered_lucene_spec: ClassVar[GatheredLuceneSpec] = GatheredLuceneSpec(
+        base_terms=(("type", "externalConnectivity"),),
+        field_map={
+            ("fabric_name",): "name",
+            ("license_tier",): "licenseTier",
+            ("security_domain",): "securityDomain",
+            ("alert_suspend",): "alertSuspend",
+            ("telemetry_collection",): "telemetryCollection",
+        },
+    )
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageFabricsPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageFabricsPut

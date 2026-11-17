@@ -39,14 +39,10 @@
             adv_default_routes: false
             static_default_route: false
             bgp_password: abcdef12
-            bgp_passwd_encrypt: 3
+            bgp_passwd_encrypt: 3des
       - vrf_name: ansible-nd-vrf-mcfg-sanity-b
         vrf_id: "{{ nd_vrf_base_id + 61 }}"
-        l3vni_wo_vlan: true
         vrf_description: Ansible ND VRF MCFG sanity L3VNI without VLAN
-        adv_host_routes: false
-        adv_default_routes: true
-        static_default_route: true
         deploy: false
         child_fabric_config:
           - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"
@@ -61,9 +57,6 @@
         vrf_description: Ansible ND VRF MCFG sanity replaced
         max_bgp_paths: 4
         max_ibgp_paths: 4
-        adv_host_routes: false
-        adv_default_routes: true
-        static_default_route: true
         deploy: false
         child_fabric_config:
           - fabric_name: "{{ nd_vrf_mcfg_child_fabric }}"

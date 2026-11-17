@@ -29,6 +29,9 @@ nd_iw_enable_ethernet_routed_override: false
 # NX-OS l3Po intent. Enable only with the routed port-channel family selected
 # exclusively after confirming ownership of every managed routed port-channel.
 nd_iw_enable_port_channel_routed_override: false
+# Dot1q override resets all omitted managed NX-OS dot1qTunnelHost interfaces,
+# including config: []. Require exclusive ownership and a single-family run.
+nd_iw_enable_ethernet_dot1q_override: false
 nd_iw_enable_deploy: false
 
 nd_iw_output_level: normal

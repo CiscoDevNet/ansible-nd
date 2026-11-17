@@ -918,6 +918,7 @@ class FabricEbgpModel(FabricBaseModel):
     """
 
     _fabric_type: ClassVar[FabricTypeEnum] = FabricTypeEnum.VXLAN_EBGP
+    supports_gathered_filtering: ClassVar[bool] = True
 
     # Core Management Configuration
     management: VxlanEbgpManagementModel | None = Field(description="eBGP VXLAN management configuration", default=None)

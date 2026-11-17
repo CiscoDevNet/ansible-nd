@@ -196,6 +196,7 @@
         poap:
           serial_number: "{{ test_data.sw1_serial }}"
           hostname: "{{ test_data.poap_hostname }}"
+          software_image: "{{ nd_test_nos_image_name | default('') }}"
       - seed_ip: "{{ test_data.sw3 }}"
         auth_proto: MD5
         role: spine
@@ -207,6 +208,13 @@
   vars:
     file: poap
   ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: poap_enabled == True
+  tags: poap
+
+- name: Poap TC3 - Validate Rendered Image Selection
+  ansible.builtin.assert:
+    that:
+      - (nd_switches_poap_conf[0].poap.software_image | default('')) == (nd_test_nos_image_name | default(''))
   when: poap_enabled == True
   tags: poap
 

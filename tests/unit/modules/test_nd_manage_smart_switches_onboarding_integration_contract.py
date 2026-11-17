@@ -1,0 +1,230 @@
+# Copyright: (c) 2026, Gaspard Micol (@gmicol) <gmicol@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+"""Offline contracts for the target's independent inventory expressions.
+
+These tests render YAML expressions only; they execute no integration tasks.
+"""
+
+from pathlib import Path
+from copy import deepcopy
+
+import pytest
+from ansible.errors import AnsibleError
+from ansible.parsing.dataloader import DataLoader
+from ansible import template as ansible_template
+from ansible.utils.unsafe_proxy import wrap_var
+
+TARGET = Path(__file__).resolve().parents[2] / "integration" / "targets" / "nd_manage_smart_switches_onboarding"
+
+
+def load_tasks(path: Path) -> list[dict]:
+    """Preserve template trust only for task YAML owned by this test suite."""
+    trust = getattr(ansible_template, "trust_as_template", lambda value: value)
+    return DataLoader().load(trust(path.read_text(encoding="utf-8")), file_name=str(path))
+
+
+def task_named(file_name, name):
+    tasks = load_tasks(TARGET / "tasks" / "helpers" / file_name)
+    return next(task for task in tasks if task["name"] == name)
+
+
+def render(expression, variables):
+    if isinstance(expression, str):
+        trust = getattr(ansible_template, "trust_as_template", lambda value: value)
+        expression = trust(expression)
+    return ansible_template.Templar(loader=DataLoader(), variables=variables).template(expression)
+
+
+def assert_conditions(task, variables):
+    context = {**variables, **task.get("vars", {})}
+    for expression in task["ansible.builtin.assert"]["that"]:
+        assert render("{{ " + expression + " }}", context) is True, expression
+
+
+def inventory_row(identifier="a", *, integration="", alias="additionalData"):
+    return {
+        "switchId": identifier,
+        "hostname": f"leaf-{identifier}",
+        "fabricName": "fabric",
+        alias: {"smartSwitch": True, "hypershieldIntegrationName": integration},
+    }
+
+
+def test_inventory_does_not_include_a_fact_rebuilding_task_for_each_row():
+    path = TARGET / "tasks" / "helpers" / "inventory_page.yaml"
+    tasks = load_tasks(path)
+    assert not any("loop" in task and "ansible.builtin.include_tasks" in task for task in tasks)
+    assert all("loop" not in task for task in tasks if "ansible.builtin.set_fact" in task)
+
+
+@pytest.mark.parametrize("field", ["mapping", "sequence"])
+def test_render_task_containers_preserves_native_values_and_input(tmp_path, field):
+    path = tmp_path / "tasks.yaml"
+    path.write_text('- mapping:\n    ids: "{{ requested_ids }}"\n  sequence:\n    - ids: "{{ requested_ids }}"\n', encoding="utf-8")
+    value = load_tasks(path)[0][field]
+    original = deepcopy(value)
+    expected = {"ids": [1, 2]}
+    assert render(value, {"requested_ids": [1, 2]}) == (expected if field == "mapping" else [expected])
+    assert value == original
+
+
+def test_render_preserves_untrusted_controller_text():
+    controller_result = {"message": wrap_var("{{ 6 * 7 }}")}
+    assert render("{{ controller_result }}", {"controller_result": controller_result}) == {"message": "{{ 6 * 7 }}"}
+
+
+@pytest.mark.parametrize(
+    "rows", [[], [inventory_row()], [inventory_row("A", integration="h"), inventory_row("a", alias="additionalSwitchData"), {"switchId": "other"}]]
+)
+def test_actual_inventory_projection_preserves_exact_identity_and_aliases(rows):
+    original = deepcopy(rows)
+    validate = task_named("inventory_page.yaml", "Validate every row before retaining this page")
+    for row in rows:
+        assert_conditions(validate, {"ss_row": row, "ss_seen_ids": {}, "nd_test_smart_switches_fabric_name": "fabric"})
+    project = task_named("inventory.yaml", "Build the exact inventory index once per complete snapshot")
+    index = render(project["ansible.builtin.set_fact"]["ss_inventory"], {"ss_inventory_rows": rows})
+    assert isinstance(index, dict)
+    assert list(index) == [row["switchId"] for row in rows]
+    assert rows == original
+    associations = task_named("inventory.yaml", "Project all onboarded associations from the completed independent index")
+    onboarded = render(associations["ansible.builtin.set_fact"]["ss_associations"], {"ss_inventory": index})
+    assert [row["switch_id"] for row in onboarded] == (["A"] if "A" in index else [])
+    if "A" in index:
+        assert index["a"]["integration_name"] == ""
+        assert index["A"] == {"switch_id": "A", "switch_name": "leaf-A", "smart": True, "integration_name": "h"}
+        assert index["other"]["smart"] is False
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        None,
+        {},
+        {"switchId": 12},
+        {"switchId": ""},
+        {**inventory_row(), "fabricName": "other"},
+        {**inventory_row(), "additionalData": None},
+        {**inventory_row(), "additionalSwitchData": {"smartSwitch": False}},
+        {"switchId": "a", "additionalData": {"smartSwitch": "true", "hypershieldIntegrationName": ""}},
+        {"switchId": "a", "additionalData": {"smartSwitch": True}},
+        {"switchId": "a", "additionalData": {"smartSwitch": True, "hypershieldIntegrationName": None}},
+        {"switchId": "a", "additionalData": {"smartSwitch": False, "hypershieldIntegrationName": "h"}},
+    ],
+)
+def test_actual_row_guards_reject_ambiguous_evidence(row):
+    task = task_named("inventory_page.yaml", "Validate every row before retaining this page")
+    with pytest.raises((AssertionError, AnsibleError)):
+        assert_conditions(task, {"ss_row": row, "ss_seen_ids": {}, "nd_test_smart_switches_fabric_name": "fabric"})
+
+
+def test_duplicate_guards_cover_same_page_and_previous_pages_without_case_folding():
+    task = task_named("inventory_page.yaml", "Reject duplicate identifiers within this page")
+    assert_conditions(task, {"ss_page": {"jsondata": {"switches": [inventory_row("A"), inventory_row("a")]}}})
+    with pytest.raises(AssertionError):
+        assert_conditions(task, {"ss_page": {"jsondata": {"switches": [inventory_row(), inventory_row()]}}})
+    task = task_named("inventory_page.yaml", "Validate every row before retaining this page")
+    with pytest.raises(AssertionError):
+        assert_conditions(task, {"ss_row": inventory_row(), "ss_seen_ids": {"a": "a"}, "nd_test_smart_switches_fabric_name": "fabric"})
+
+
+@pytest.mark.parametrize("total,remaining,offset,previous,row_count", [(2, 1, 1, -1, 1), (2, 0, 2, 2, 1), (0, 0, 0, -1, 0)])
+def test_actual_page_counts_accept_complete_and_continuing_pages(total, remaining, offset, previous, row_count):
+    task = task_named("inventory_page.yaml", "Validate supplied inventory counts")
+    assert_conditions(
+        task,
+        {
+            "ss_page": {"jsondata": {"meta": {"counts": {"total": total, "remaining": remaining}}, "switches": [{}] * row_count}},
+            "ss_offset": offset,
+            "ss_total": previous,
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "counts,offset,previous,rows",
+    [
+        ({"total": True, "remaining": 0}, 1, -1, 1),
+        ({"total": 2, "remaining": -1}, 1, -1, 1),
+        ({"total": 2, "remaining": 0}, 1, -1, 1),
+        ({"total": 3, "remaining": 2}, 1, 2, 1),
+        ({"total": 2, "remaining": 1}, 1, -1, 0),
+        (None, 0, -1, 0),
+    ],
+)
+def test_actual_page_count_guards_reject_incomplete_or_unstable_reads(counts, offset, previous, rows):
+    task = task_named("inventory_page.yaml", "Validate supplied inventory counts")
+    with pytest.raises((AssertionError, AnsibleError)):
+        assert_conditions(task, {"ss_page": {"jsondata": {"meta": {"counts": counts}, "switches": [{}] * rows}}, "ss_offset": offset, "ss_total": previous})
+
+
+def test_count_free_termination_and_bound_do_not_claim_an_incomplete_snapshot():
+    terminal = task_named("inventory_page.yaml", "Terminate count-free pagination only on an empty page")
+    for rows, expected in [([], True), ([inventory_row()], False)]:
+        variables = {"ss_page": {"jsondata": {"switches": rows}}}
+        assert all(render("{{ " + condition + " }}", variables) for condition in terminal["when"]) is expected
+    guard = task_named("inventory_page.yaml", "Reject premature count-free termination after a counted page")
+    with pytest.raises(AssertionError):
+        assert_conditions(guard, {"ss_total": 2, "ss_offset": 1})
+    with pytest.raises(AssertionError):
+        assert_conditions(task_named("inventory.yaml", "Require safe pagination termination"), {"ss_inventory_done": False})
+    recurse = task_named("inventory_page.yaml", "Read another page only while incomplete and within bounds")
+    context = {"ss_inventory_done": False, "ss_inventory_page_number": 100, "nd_test_smart_switches_max_pages": 100}
+    assert not all(render("{{ " + condition + " }}", context) for condition in recurse["when"])
+
+
+def test_page_accumulation_retains_all_rows_and_exact_seen_keys():
+    retain = task_named("inventory_page.yaml", "Retain validated rows and identifier membership once per page")
+    row_guard = task_named("inventory_page.yaml", "Validate every row before retaining this page")
+    state = {"ss_inventory_rows": [], "ss_seen_ids": {}, "nd_test_smart_switches_fabric_name": "fabric"}
+    pages = [[inventory_row("A", integration="h")], [inventory_row("a", alias="additionalSwitchData")], []]
+    for rows in pages:
+        for row in rows:
+            assert_conditions(row_guard, {**state, "ss_row": row})
+        variables = {**state, **retain["vars"], "ss_page": {"jsondata": {"switches": rows}}}
+        state.update({name: render(expression, variables) for name, expression in retain["ansible.builtin.set_fact"].items()})
+    assert state["ss_inventory_rows"] == pages[0] + pages[1]
+    assert state["ss_seen_ids"] == {"A": "A", "a": "a"}
+
+
+@pytest.mark.parametrize("status,switches,meta", [(500, [], {}), (200, {}, {}), (200, "invalid", {}), (200, [], None)])
+def test_inventory_wrapper_requires_a_successful_unambiguous_collection(status, switches, meta):
+    task = task_named("inventory_page.yaml", "Validate inventory response wrapper and metadata")
+    with pytest.raises((AssertionError, AnsibleError)):
+        assert_conditions(task, {"ss_page": {"status": status, "jsondata": {"switches": switches, "meta": meta}}})
+
+
+def test_optional_controller_cases_cover_recovery_without_reonboarding_successes():
+    tasks = load_tasks(TARGET / "tasks" / "controller_failures.yaml")
+    variables = {
+        "ss_a": "a",
+        "ss_b": "b",
+        "ss_both": [{"switch_id": key, "integration_name": "valid"} for key in ("a", "b")],
+        "ss_delete_both": [{"switch_id": key} for key in ("a", "b")],
+        "nd_test_smart_switches_integration_name": "valid",
+        "nd_test_smart_switches_rejection_integration_name": "rejected",
+    }
+    cases = [render(task["vars"]["ss_case"], variables) for task in tasks if "ss_case" in task.get("vars", {})]
+    retry = [case for case in cases if case["state"] == "replaced" and case["expect"]["before_ids"] == ["a"] and case["expect"].get("failed")]
+    assert len(retry) == 1
+    assert retry[0]["expect"] == {"changed": False, "failed": True, "before_ids": ["a"], "after_ids": ["a"], "rejected": ["b"]}
+    recovered = [case for case in cases if case["state"] == "replaced" and case["expect"]["before_ids"] == ["a"] and not case["expect"].get("failed")]
+    assert len(recovered) == 1
+    assert recovered[0]["expect"]["created"] == ["b"]
+    assert recovered[0]["expect"]["after_ids"] == ["a", "b"]
+    stopped = next(case for case in cases if case["state"] == "overridden")
+    assert stopped["expect"]["before_ids"] == stopped["expect"]["after_ids"] == ["b"]
+    assert stopped["expect"]["planned_operations"] == [
+        {"identifier": "a", "operation": "create", "outcome": "failed"},
+        {"identifier": "b", "operation": "delete", "outcome": "not_attempted"},
+    ]
+
+
+def test_planned_operation_assertion_rejects_an_attempted_omitted_deletion():
+    task = task_named("assert_result.yaml", "Validate exact planned outcomes for stopped execution")
+    planned = [{"identifier": "a", "operation": "create", "outcome": "failed"}, {"identifier": "b", "operation": "delete", "outcome": "not_attempted"}]
+    variables = {"ss_case": {"expect": {"planned_operations": planned}}, "ss_result": {"planned_operations": list(reversed(planned))}}
+    assert_conditions(task, variables)
+    variables["ss_result"]["planned_operations"] = [planned[0], {**planned[1], "outcome": "succeeded"}]
+    with pytest.raises(AssertionError):
+        assert_conditions(task, variables)

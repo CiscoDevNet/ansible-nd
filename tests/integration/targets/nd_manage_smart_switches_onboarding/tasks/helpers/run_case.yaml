@@ -1,0 +1,40 @@
+---
+
+- name: Validate the target-local case contract
+  ansible.builtin.assert:
+    that:
+      - ss_case is mapping
+      - ss_case.name is string
+      - ss_case.state in ['replaced', 'overridden', 'deleted']
+      - ss_case.config is sequence and ss_case.config is not string and ss_case.config is not mapping
+      - ss_case.expect is mapping
+      - ss_case.expect.changed is boolean
+      - ss_case.expect.failed | default(false) is boolean
+      - ss_case.check_mode | default(false) is boolean
+      - ss_case.expect.before_ids is sequence and ss_case.expect.before_ids is not string
+      - ss_case.expect.after_ids is sequence and ss_case.expect.after_ids is not string
+
+- name: Recheck ownership immediately before every real broad override
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/ownership.yaml"
+  when:
+    - ss_case.state == 'overridden'
+    - not ss_case.check_mode | default(false)
+
+- name: "{{ ss_case.name }}"
+  cisco.nd.nd_manage_smart_switches_onboarding:
+    fabric_name: "{{ nd_test_smart_switches_fabric_name }}"
+    cluster_name: "{{ nd_test_smart_switches_cluster_name | default(omit, true) }}"
+    state: "{{ ss_case.state }}"
+    config: "{{ ss_case.config }}"
+    output_level: debug
+  check_mode: "{{ ss_case.check_mode | default(false) }}"
+  register: ss_result
+  ignore_errors: "{{ ss_case.expect.failed | default(false) }}"
+
+- name: Check result confidence and exact association snapshots
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/assert_result.yaml"
+
+- name: Verify full fabric state independently after the invocation
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/helpers/verify.yaml"
+  vars:
+    ss_expected_ids: "{{ ss_case.expect.before_ids if ss_case.check_mode | default(false) else ss_case.expect.after_ids }}"

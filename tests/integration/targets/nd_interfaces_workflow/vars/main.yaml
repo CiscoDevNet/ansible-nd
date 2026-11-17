@@ -35,6 +35,7 @@ nd_iw_family_order:
   - port_channel_routed
   - port_channel_trunk_host
   - ethernet_access
+  - ethernet_dot1q_tunnel_host
   - ethernet_routed
   - ethernet_trunk_host
 

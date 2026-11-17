@@ -13,6 +13,7 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.interface_family_adapters import INTERFACE_FAMILY_ADAPTERS
 from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
+from ansible_collections.cisco.nd.plugins.module_utils import interface_workflow_coordinator as workflow_coordinator
 from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_coordinator import (
     InterfaceWorkflowCoordinator,
     InterfaceWorkflowExecutionFailed,
@@ -33,6 +34,9 @@ COMPACT_RESULT_KEYS = {
     "resources",
     "request_stats",
     "execution",
+    "vpc_staged_deletions",
+    "staged_deletions",
+    "member_preparations",
 }
 
 
@@ -64,6 +68,80 @@ def test_opt_in_profile_is_returned_after_output_finishes(monkeypatch):
 
     assert result["performance_profile"]["phases"]["planning"]["calls"] == 1
     assert result["performance_profile"]["phases"]["output"]["calls"] == 1
+
+
+def test_preparation_scope_guard_runs_before_executor(monkeypatch):
+    """An explicitly invalid preparation scope cannot send a mutation."""
+    module = FakeModule(check_mode=False, verify_enabled=True)
+    module.params["execution_options"] = {"preparation_only": True}
+    coordinator = InterfaceWorkflowCoordinator(module)
+    monkeypatch.setattr(coordinator, "_build_plan", plan)
+    coordinator.executor_factory = lambda **_kwargs: pytest.fail("Invalid preparation must not construct an executor")
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="requires config_actions.deploy=false"):
+        coordinator.run()
+
+
+def test_operation_named_rejection_is_bound_to_exact_workflow_request():
+    """The public operation carries the exact whole-workflow request digest."""
+    module = FakeModule(check_mode=False)
+    coordinator = InterfaceWorkflowCoordinator(module)
+    key = (0, "create", "192.0.2.1", "vlan3991")
+    rejection = {
+        "version": 1,
+        "source": "native_named_sync_rejection_v1",
+        "action": "create",
+        "switch_id": "SERIAL1",
+        "interface_name": "vlan3991",
+        "http_status": 207,
+        "response_status": "error",
+    }
+    result = coordinator._operation_result(
+        SimpleNamespace(resource_index=0),
+        action="create",
+        switch_ip="192.0.2.1",
+        switch_id="SERIAL1",
+        interface_name="vlan3991",
+        before_by_target={},
+        after_by_target={},
+        execution_items={key: {"status": "failed", "rejection": rejection}},
+    )
+    assert result["rejection"] == dict(rejection, request_sha256=workflow_coordinator.workflow_contract(module.params)["request_sha256"])
+    assert "request_sha256" not in rejection
+
+
+@pytest.mark.parametrize("check_mode,changed,verified", [(True, True, False), (False, False, True), (False, True, True)])
+def test_preparation_output_uses_existing_snapshot_and_profiles_proof(check_mode, changed, verified, monkeypatch):
+    """Every normal preparation exit uses the exact already observed snapshot."""
+    module = FakeModule(check_mode=check_mode, verify_enabled=True)
+    module.params.update(config_actions={"deploy": False}, execution_options={"preparation_only": True}, profile=True)
+    coordinator = InterfaceWorkflowCoordinator(module)
+    snapshot = SimpleNamespace(request_stats={"switches": 2, "interface_inventory_gets": 2})
+    coordinator._snapshot = snapshot
+    workflow_plan = plan(changed=changed)
+    calls = []
+    coordinator.executor_factory = lambda **kwargs: FakeExecutor(calls, **kwargs)
+    monkeypatch.setattr(coordinator, "_build_plan", lambda: workflow_plan)
+    monkeypatch.setattr(workflow_coordinator, "validate_preparation_plan", lambda **_kwargs: None)
+    observations = []
+
+    def observe(**kwargs):
+        observations.append(kwargs)
+        return {"test_observation": True}
+
+    monkeypatch.setattr(workflow_coordinator, "preparation_observation", observe)
+    monkeypatch.setattr(coordinator, "_new_rest_send", lambda **_kwargs: pytest.fail("Proof must not create another transport"))
+
+    result = coordinator.run()
+
+    assert result["preparation_observation"] == {"test_observation": True}
+    assert result["performance_profile"]["phases"]["preparation_observation"]["calls"] == 1
+    assert len(observations) == 1
+    assert observations[0]["snapshot"] is snapshot
+    assert observations[0]["plan"] is workflow_plan
+    assert observations[0]["verified"] is verified
+    assert observations[0]["check_mode"] is check_mode
+    assert bool(calls) is (changed and not check_mode)
 
 
 @pytest.mark.parametrize("status", [204, 404])
@@ -256,6 +334,7 @@ def plan(*, changed=True, transition=False):
         target_switch_ids=("SERIAL1", "SERIAL2"),
         resources=resources,
         request_stats={"switches": 2, "interface_inventory_gets": 2},
+        member_preparations=(),
     )
 
 
@@ -633,12 +712,13 @@ def _deployment_only_plan(resource_type, sync_status_by_id, *, mutation=False, s
         target_switch_ids=target_switch_ids,
         resources=(resource_plan,),
         request_stats={"switches": len(target_switch_ids), "interface_inventory_gets": len(target_switch_ids)},
+        member_preparations=(),
     )
     return workflow_plan, context
 
 
 @pytest.mark.parametrize("resource_type", sorted(INTERFACE_FAMILY_ADAPTERS))
-def test_pending_deployment_selection_covers_all_ten_explicit_interface_types(resource_type):
+def test_pending_deployment_selection_covers_every_registered_interface_type(resource_type):
     adapter = INTERFACE_FAMILY_ADAPTERS[resource_type]
     statuses = {"SERIAL1": False, "SERIAL2": True}
     if adapter.ownership_domain == "vpc":
@@ -783,7 +863,7 @@ class ProjectionSnapshot:
 
 
 def _raw_ethernet(name, policy_type, **policy):
-    mode = "access" if policy_type == "accessHost" else "trunk"
+    mode = {"accessHost": "access", "dot1qTunnelHost": "dot1qTunnel"}.get(policy_type, "trunk")
     return {
         "interfaceName": name,
         "interfaceType": "ethernet",
@@ -870,6 +950,7 @@ def _projection_plan(resource_plan):
         target_switch_ids=("SERIAL1", "SERIAL2"),
         resources=(resource_plan,),
         request_stats={"switches": 2, "interface_inventory_gets": 0},
+        member_preparations=(),
     )
 
 
@@ -950,10 +1031,12 @@ def test_cross_policy_transition_uses_unknown_source_fallback_and_destination_mo
     assert projected["operations"][0]["changes"]
 
 
+@pytest.mark.parametrize("resource_type", ["ethernet_access", "ethernet_dot1q_tunnel_host"])
 @pytest.mark.parametrize(
     ("raw", "action", "expected_changed"),
     [
         (_raw_ethernet("Ethernet1/1", "accessHost", accessVlan=3900), "delete", True),
+        (_raw_ethernet("Ethernet1/1", "dot1qTunnelHost", accessVlan=3900), "delete", True),
         (
             {
                 **InterfaceDefaultConfig().to_payload(),
@@ -964,10 +1047,10 @@ def test_cross_policy_transition_uses_unknown_source_fallback_and_destination_mo
         ),
     ],
 )
-def test_physical_delete_reports_reset_default_or_idempotent_default(raw, action, expected_changed):
+def test_physical_delete_reports_reset_default_or_idempotent_default(resource_type, raw, action, expected_changed):
     proposed = [_ethernet_config("192.0.2.1", "Ethernet1/1")]
     resource_plan = _projection_resource(
-        "ethernet_access",
+        resource_type,
         "deleted",
         proposed,
         action=action,
@@ -985,7 +1068,7 @@ def test_physical_delete_reports_reset_default_or_idempotent_default(raw, action
     assert bool(projected["operations"]) is expected_changed
     if expected_changed:
         assert projected["operations"][0]["action"] == "reset"
-        assert {"path": "policy_type", "before": "accessHost", "after": "trunkHost"} in projected["operations"][0]["changes"]
+        assert {"path": "policy_type", "before": InterfaceStateSnapshot.policy_type(raw), "after": "trunkHost"} in projected["operations"][0]["changes"]
 
 
 def test_ios_xe_physical_delete_projects_defaults_only_routed_policy() -> None:
@@ -1625,3 +1708,112 @@ def test_authoritative_pair_inventory_seeds_one_cache_shared_by_all_vpc_orchestr
     assert access_orchestrator._resolve_peer_switch_id("192.0.2.1", "SERIAL1") == "SERIAL2"
     assert trunk_orchestrator._resolve_peer_switch_id("192.0.2.2", "SERIAL2") == "SERIAL1"
     assert len(requests) == 2
+
+
+@pytest.mark.parametrize("verify", [False, True])
+def test_dot1q_result_preserves_typed_policy_and_observation_status(verify):
+    previous = [_ethernet_config("192.0.2.1", "Ethernet1/40", access_vlan=150)]
+    desired = [_ethernet_config("192.0.2.1", "Ethernet1/40", access_vlan=151)]
+    resource_plan = _projection_resource(
+        "ethernet_dot1q_tunnel_host",
+        "replaced",
+        desired,
+        family_before=previous,
+        family_after=desired,
+        action="update",
+    )
+    workflow_plan = _projection_plan(resource_plan)
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=False, verify_enabled=verify))
+    coordinator._snapshot = ProjectionSnapshot(
+        [("SERIAL1", "Ethernet1/40", _raw_ethernet("Ethernet1/40", "dot1qTunnelHost", accessVlan=150))],
+        current=[("SERIAL1", "Ethernet1/40", _raw_ethernet("Ethernet1/40", "dot1qTunnelHost", accessVlan=151))],
+    )
+    execution = FakeExecution(workflow_plan, deploy=False, verify=verify)
+
+    result = coordinator._format_result(workflow_plan, execution)["resources"][0]
+
+    assert result["module"] == "cisco.nd.nd_interface_ethernet_dot1q_tunnel_host"
+    assert result["before"][0]["policy_type"] == "dot1qTunnelHost"
+    assert result["before"][0]["config_data"]["network_os"]["policy"]["access_vlan"] == 150
+    assert result["after"][0]["policy_type"] == "dot1qTunnelHost"
+    assert result["after"][0]["config_data"]["network_os"]["policy"]["access_vlan"] == 151
+    assert result["after_verified"] is verify
+    assert result["operations"][0]["action"] == "update"
+    assert result["operations"][0]["status"] == "succeeded"
+
+
+def test_dot1q_mixed_noop_shares_inventory_and_cached_equality(monkeypatch):
+    from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_contract import desired_equality
+    from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import EthernetBaseOrchestrator
+
+    rest_send = RestSend({"fabric_name": "FABRIC1", "check_mode": True})
+    context = FabricContext(rest_send=rest_send, fabric_name="FABRIC1")
+    context._fabric_summary = {"local": True, "fabricStatus": "default"}
+    context._switch_map = {"192.0.2.1": "SERIAL1"}
+    context._switch_map_by_id = {"SERIAL1": "192.0.2.1"}
+    requests = []
+    inventory = [
+        {"switchId": "SERIAL1", **_raw_ethernet("Ethernet1/40", "dot1qTunnelHost", accessVlan=150)},
+        {"switchId": "SERIAL1", **_raw_ethernet("Ethernet1/41", "accessHost", accessVlan=151)},
+    ]
+    snapshot = InterfaceStateSnapshot(
+        fabric_name="FABRIC1",
+        fabric_context=context,
+        request=lambda **kwargs: requests.append(kwargs) or {"interfaces": inventory},
+    )
+    monkeypatch.setattr(EthernetBaseOrchestrator, "_fabric_link_endpoints", lambda _self: set())
+    resources = [
+        {"type": family, "state": "merged", "config": [_ethernet_config("192.0.2.1", name, access_vlan=vlan)]}
+        for family, name, vlan in [
+            ("ethernet_dot1q_tunnel_host", "Ethernet1/40", 150),
+            ("ethernet_access", "Ethernet1/41", 151),
+        ]
+    ]
+    workflow_plan = InterfaceWorkflowPlanner(snapshot=snapshot).plan(resources)
+    params = {"fabric_name": "FABRIC1", "resources": resources, "config_actions": {"deploy": False}, "verify": {"enabled": False}}
+    original = deepcopy(snapshot.clean_interfaces_by_switch)
+
+    equality = desired_equality(
+        params=params,
+        plan=workflow_plan,
+        snapshot=snapshot,
+        rest_send_factory=RestSend,
+    )
+
+    assert workflow_plan.changed is False
+    assert workflow_plan.mutation_count == 0
+    assert snapshot.request_stats["interface_inventory_gets"] == 1
+    assert len(requests) == 1
+    assert equality["complete"] is True
+    assert equality["all_satisfied"] is True
+    assert {row["type"] for row in equality["resources"]} == {"ethernet_dot1q_tunnel_host", "ethernet_access"}
+    assert snapshot.clean_interfaces_by_switch == original
+
+
+def test_dot1q_unqualified_shortcuts_keep_the_existing_fallback():
+    from ansible_collections.cisco.nd.plugins.module_utils.interface_observed_satisfaction import observed_satisfaction
+    from ansible_collections.cisco.nd.plugins.module_utils.interface_preparation_observation import validate_preparation_plan
+
+    desired = [_ethernet_config("192.0.2.1", "Ethernet1/40", access_vlan=150)]
+    resource_plan = _projection_resource(
+        "ethernet_dot1q_tunnel_host",
+        "merged",
+        desired,
+        family_before=desired,
+        family_after=desired,
+    )
+    workflow_plan = _projection_plan(resource_plan)
+    snapshot = SimpleNamespace(_overlay_baselines_by_switch={}, clean_interfaces_by_switch={}, fabric_context=FakeFabricContext())
+    params = {"config_actions": {"deploy": False}, "verify": {"enabled": False}}
+    proof = observed_satisfaction(
+        params=params,
+        plan=workflow_plan,
+        snapshot=snapshot,
+        rest_send_factory=lambda _values: pytest.fail("An unsupported shortcut must not query ND"),
+        check_mode=True,
+    )
+    assert proof["complete"] is False
+    assert proof["reason"] == "Unqualified family or state"
+    params["verify"]["enabled"] = True
+    with pytest.raises(InterfaceWorkflowValidationError, match="only explicit merged/replaced L2 interface targets"):
+        validate_preparation_plan(params=params, plan=workflow_plan, snapshot=snapshot)

@@ -1,0 +1,69 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe)
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Supply these through inventory or extra-vars; no controller or physical ports
+# are selected by default. Use three dedicated, down, default-trunk NX-OS ports.
+test_fabric_name: "{{ nd_test_fabric_name | default('') }}"
+test_switch_ip: "{{ nd_test_switch_ip | default('') }}"
+test_interface_names: "{{ nd_test_dot1q_interface_names | default([]) }}"
+test_expected_release: "{{ nd_test_expected_release | default('') }}"
+test_deploy: "{{ nd_test_deploy | default(false) | bool }}"
+test_access_vlan: "{{ nd_test_dot1q_vlan | default(150) | int }}"
+test_output_level: "{{ nd_test_output_level | default('debug') }}"
+test_storm_transition: "{{ nd_test_dot1q_storm_transition | default(false) | bool }}"
+test_verify_cli: "{{ nd_test_verify_cli | default(false) | bool }}"
+dot1q_interfaces_path: >-
+  {{ '/api/v1/manage/fabrics/'
+     ~ (test_fabric_name | urlencode | replace('/', '%2F'))
+     ~ '/switches/' ~ (test_switch_id | urlencode) ~ '/interfaces/' }}
+
+# Missing GET fields can represent controller template defaults. Do not supply
+# a default for required identity, discriminator, or nondefault test values.
+dot1q_read_defaults:
+  description: ''
+  cdp: true
+  bpduFilter: enable
+  bpduGuard: enable
+  mtu: jumbo
+  stormControl: false
+
+dot1q_single:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names: ["{{ test_interface_names[0] }}"]
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: "{{ test_access_vlan }}"
+        bpdu_guard: disable
+        cdp: false
+        mtu: default
+        description: ansible-dot1q-single
+
+dot1q_fanout:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names: "{{ test_interface_names[1:] }}"
+  config_data:
+    network_os:
+      policy:
+        access_vlan: "{{ (test_access_vlan | int) + 1 }}"
+        description: ansible-dot1q-fanout
+
+dot1q_replacement:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names: ["{{ test_interface_names[0] }}"]
+  config_data:
+    network_os:
+      policy:
+        access_vlan: "{{ (test_access_vlan | int) + 2 }}"
+        description: ansible-dot1q-replaced
+
+dot1q_override:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names: "{{ test_interface_names[:2] }}"
+  config_data:
+    network_os:
+      policy:
+        access_vlan: "{{ (test_access_vlan | int) + 3 }}"
+        description: ansible-dot1q-overridden

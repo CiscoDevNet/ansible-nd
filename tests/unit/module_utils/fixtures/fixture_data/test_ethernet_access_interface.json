@@ -2221,5 +2221,75 @@
                 }
             ]
         }
+    },
+    "test_reset_partial_failure_00630_inventory": {
+        "TEST_NOTES": [
+            "Complete current Class C access-host inventory before the first reset PUT."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaces?switchId=FDO11111AAA&max=500&offset=0",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "switchId": "FDO11111AAA",
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "operData": {
+                        "portChannelId": -1
+                    },
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 100,
+                                "bandwidth": 100
+                            }
+                        }
+                    }
+                },
+                {
+                    "switchId": "FDO11111AAA",
+                    "interfaceName": "Ethernet1/2",
+                    "interfaceType": "ethernet",
+                    "operData": {
+                        "portChannelId": -1
+                    },
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 100,
+                                "bandwidth": 100
+                            }
+                        }
+                    }
+                },
+                {
+                    "switchId": "FDO11111AAA",
+                    "interfaceName": "Ethernet1/3",
+                    "interfaceType": "ethernet",
+                    "operData": {
+                        "portChannelId": -1
+                    },
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 100,
+                                "bandwidth": 100
+                            }
+                        }
+                    }
+                }
+            ]
+        }
     }
 }

@@ -186,6 +186,8 @@ class EthernetRoutedInterfaceOrchestrator(EthernetBaseOrchestrator):
         for key, value in policy.items():
             if key == "policyType":
                 continue
+            if policy_type == "routedHost" and key == "ptp" and value is not False:
+                return False
             if key not in defaults or value != defaults[key]:
                 return False
         return True

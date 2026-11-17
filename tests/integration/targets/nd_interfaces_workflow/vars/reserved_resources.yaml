@@ -12,6 +12,11 @@ nd_iw_reserved_resources:
         - "{{ nd_iw_ethernet_access_fanout | default('Ethernet1/42', true) }}"
       secondary:
         - "{{ nd_iw_ethernet_access_secondary | default('Ethernet1/43', true) }}"
+    ethernet_dot1q_tunnel_host:
+      primary:
+        - "{{ nd_iw_ethernet_dot1q_primary | default('Ethernet1/56', true) }}"
+      secondary:
+        - "{{ nd_iw_ethernet_dot1q_secondary | default('Ethernet1/57', true) }}"
     ethernet_routed:
       primary_name: "{{ nd_iw_ethernet_routed_primary | default('Ethernet1/52', true) }}"
       secondary_name: "{{ nd_iw_ethernet_routed_secondary | default('Ethernet1/53', true) }}"
@@ -205,6 +210,11 @@ nd_iw_cleanup_resources:
     config:
       - switch_ip: "{{ nd_iw_active_switches.primary }}"
         interface_names: "{{ nd_iw_active_resources.ethernet_access.primary + nd_iw_active_resources.ethernet_access.secondary }}"
+  - type: ethernet_dot1q_tunnel_host
+    state: deleted
+    config:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_names: "{{ nd_iw_active_resources.ethernet_dot1q_tunnel_host.primary + nd_iw_active_resources.ethernet_dot1q_tunnel_host.secondary }}"
   - type: ethernet_routed
     state: deleted
     config:

@@ -1,0 +1,77 @@
+---
+# csrLoopback refusal coverage for nd_interface_loopback on ND 4.3.1 and later.
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Included by xe.yaml when xe_csr_loopback_supported is false. ND 4.3.1 rejects the
+# csrLoopback policy on create and update (issue #632); the module must refuse it
+# before any write, in check mode and normal mode, and leave nothing behind.
+
+- name: "XE CSR UNSUPPORTED: Propose loopback206 (csrLoopback) (check mode)"
+  cisco.nd.nd_interface_loopback: &xe_merge_106_unsupported
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - "{{ xe_loopback_206 }}"
+    state: merged
+  check_mode: true
+  register: cm_xe_csr_unsupported
+  ignore_errors: true
+
+- name: "XE CSR UNSUPPORTED: Propose loopback206 (csrLoopback) (normal mode)"
+  cisco.nd.nd_interface_loopback: *xe_merge_106_unsupported
+  register: nm_xe_csr_unsupported
+  ignore_errors: true
+
+- name: "XE CSR UNSUPPORTED: Verify the module refused csrLoopback before any write"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_csr_unsupported is failed
+      - nm_xe_csr_unsupported is failed
+      - "'csrLoopback cannot be configured on ND 4.3.1 or later' in cm_xe_csr_unsupported.msg"
+      - "'csrLoopback cannot be configured on ND 4.3.1 or later' in nm_xe_csr_unsupported.msg"
+      - "'loopback206' in nm_xe_csr_unsupported.msg"
+
+- name: "XE CSR UNSUPPORTED: Propose loopback206 (csrLoopback) through the aggregate workflow (check mode)"
+  cisco.nd.nd_interfaces_workflow: &xe_workflow_106_unsupported
+    fabric_name: "{{ test_xe_fabric_name }}"
+    resources:
+      - type: loopback
+        state: merged
+        config:
+          - "{{ xe_loopback_206 }}"
+    config_actions:
+      deploy: false
+  check_mode: true
+  register: cm_xe_csr_workflow_unsupported
+  ignore_errors: true
+
+- name: "XE CSR UNSUPPORTED: Propose loopback206 (csrLoopback) through the aggregate workflow (normal mode)"
+  cisco.nd.nd_interfaces_workflow: *xe_workflow_106_unsupported
+  register: nm_xe_csr_workflow_unsupported
+  ignore_errors: true
+
+- name: "XE CSR UNSUPPORTED: Verify the aggregate workflow refused csrLoopback in both modes"
+  ansible.builtin.assert:
+    that:
+      - cm_xe_csr_workflow_unsupported is failed
+      - nm_xe_csr_workflow_unsupported is failed
+      - "'csrLoopback cannot be configured on ND 4.3.1 or later' in cm_xe_csr_workflow_unsupported.msg"
+      - "'csrLoopback cannot be configured on ND 4.3.1 or later' in nm_xe_csr_workflow_unsupported.msg"
+      - "'loopback206' in cm_xe_csr_workflow_unsupported.msg"
+
+- name: "XE CSR UNSUPPORTED: Delete loopback206 to prove nothing was created"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_xe_fabric_name }}"
+    config:
+      - switch_ip: "{{ xe_loopback_206.switch_ip }}"
+        interface_name: "{{ xe_loopback_206.interface_name }}"
+    state: deleted
+  register: nm_xe_csr_unsupported_cleanup
+
+- name: "XE CSR UNSUPPORTED: Verify the cleanup found nothing to delete"
+  ansible.builtin.assert:
+    that:
+      - nm_xe_csr_unsupported_cleanup is not changed

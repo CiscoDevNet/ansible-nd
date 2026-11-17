@@ -1,0 +1,35 @@
+---
+# No config=[] override in cleanup: only the three verified reserved identities.
+- name: CLEANUP | Reset the three verified test ports to fabric defaults
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host:
+    fabric_name: "{{ test_fabric_name }}"
+    state: deleted
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names: "{{ test_interface_names }}"
+
+- name: CLEANUP | Verify all reserved physical ports are default trunks again
+  ansible.builtin.include_tasks: verify.yaml
+  vars:
+    dot1q_expected:
+      - {name: "{{ test_interface_names[0] }}", policy_type: trunkHost, policy: {description: ''}}
+      - {name: "{{ test_interface_names[1] }}", policy_type: trunkHost, policy: {description: ''}}
+      - {name: "{{ test_interface_names[2] }}", policy_type: trunkHost, policy: {description: ''}}
+
+- name: CLEANUP | Query the managed family without mutation
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host:
+    fabric_name: "{{ test_fabric_name }}"
+    state: overridden
+    config: []
+  check_mode: true
+  register: dot1q_cleanup_scope
+
+- name: CLEANUP | Require no remaining dot1q hosts
+  ansible.builtin.assert:
+    that:
+      - dot1q_cleanup_scope.before | length == 0
+      - dot1q_cleanup_scope is not changed
+
+- name: CLEANUP | Disarm this invocation's cleanup flag
+  ansible.builtin.set_fact:
+    dot1q_cleanup_armed: false

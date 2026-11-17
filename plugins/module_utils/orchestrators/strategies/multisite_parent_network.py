@@ -66,8 +66,10 @@ class MultisiteParentNetworkStrategy(StandaloneNetworkStrategy):
         """
         child_configs = copy.deepcopy(network_configs)
 
-        # Translate 'overridden' to 'replaced' for child fabric compatibility
-        child_state = "replaced" if state == "overridden" else state
+        # child_fabric_config entries are partial per-child overrides.  Use
+        # merged semantics for mutating child tasks so replaced/overridden
+        # parent runs do not treat child GET-only definition fields as removals.
+        child_state = "gathered" if state == "gathered" else "merged"
 
         return {
             "fabric_name": child_fabric_name,
