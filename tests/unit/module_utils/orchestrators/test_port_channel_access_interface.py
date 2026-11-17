@@ -361,17 +361,27 @@ def _absent_delete_preview(running: str, pending: str) -> dict:
 
 
 def test_absent_port_channel_replay_accepts_configure_terminal_between_member_stanzas() -> None:
-    """ND can delimit member-reset stanzas with `configure terminal` (issue #652)."""
+    """ND ends each member-restore stanza with `configure terminal`, so two members put one mid-preview (issue #652).
+
+    The running and pending CLI are the preview ND 4.2.1 and 4.3.1 returned for a staged two-member routed port-channel delete on a leaf.
+    """
     orchestrator = _build_orchestrator(ResponseGenerator(iter(())), state="deleted")
     preview = _absent_delete_preview(
-        running=("interface port-channel982\ninterface Ethernet1/46\nchannel-group 982 mode active\ninterface Ethernet1/47\nchannel-group 982 mode active\n"),
+        running=(
+            "interface port-channel982\n  description preview scope probe\n  no switchport\n  mtu 9216\n  ip address 10.49.62.1/30\n\n"
+            "interface Ethernet1/46\n\n  no switchport\n  mtu 9216\n  channel-group 982 mode active\n  no shutdown\n\n"
+            "interface Ethernet1/47\n\n  no switchport\n  mtu 9216\n  channel-group 982 mode active\n  no shutdown\n"
+        ),
         pending=(
             "no interface port-channel982\n"
             "interface ethernet1/46\n  no channel-group 982 force mode active\n"
-            "configure terminal\n"
             "interface ethernet1/47\n  no channel-group 982 force mode active\n"
+            "interface ethernet1/46\n  switchport\n  switchport mode trunk\n  switchport trunk allowed vlan none\n  mtu 9216\n"
+            "  spanning-tree port type edge trunk\n  no shutdown\n"
             "configure terminal\n"
-            "interface ethernet1/46\n  mtu 9216\n  no shutdown\n"
+            "interface ethernet1/47\n  switchport\n  switchport mode trunk\n  switchport trunk allowed vlan none\n  mtu 9216\n"
+            "  spanning-tree port type edge trunk\n  no shutdown\n"
+            "configure terminal\n"
         ),
     )
 
