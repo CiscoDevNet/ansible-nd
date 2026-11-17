@@ -21,10 +21,25 @@ TARGET = Path(__file__).resolve().parents[2] / "integration" / "targets" / "nd_m
 SERIAL = "FDO28481BXX"
 OWNED = ["Ethernet1/53", "Ethernet1/54"]
 OUTSIDE = ["Ethernet1/50", "Ethernet1/51", "Ethernet1/52"]
+# Collection happens before ansible-test forks each case. Reuse parsed static
+# sources across those forks, while returning an isolated document per access.
+_YAML_SOURCES = {
+    path: yaml.safe_load((TARGET / path).read_text())
+    for path in (
+        "tasks/matrix_prepare.yaml",
+        "tasks/matrix_observe_one.yaml",
+        "tasks/override_case.yaml",
+        "tests/overridden.yaml",
+        "tests/fabric_clear.yaml",
+        "tasks/matrix_cleanup.yaml",
+        "tasks/api_failure_case.yaml",
+    )
+}
 
 
 def tasks(path):
-    return yaml.safe_load((TARGET / path).read_text())
+    """Return fresh task data without reparsing the same integration source."""
+    return deepcopy(_YAML_SOURCES[path])
 
 
 def task(path, prefix):

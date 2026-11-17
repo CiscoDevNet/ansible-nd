@@ -24,6 +24,12 @@ TARGET = Path(__file__).resolve().parents[2] / "integration" / "targets" / "nd_m
 BASE = "/api/v1/manage/fabrics/fab1"
 SERIAL = "FDO28481BXX"
 OTHER = "FDO28481BYY"
+# Parse static sources during collection so forked tests inherit them. Each
+# access below copies the document, keeping adversarial cases isolated.
+_YAML_SOURCES = {
+    path: yaml.safe_load((TARGET / path).read_text())
+    for path in ("tasks/assert_result.yaml", "tests/lifecycle.yaml", "tasks/fabric_clear_case.yaml", "defaults/main.yaml")
+}
 
 
 def render(value, variables):
@@ -87,7 +93,7 @@ def execute_tasks(tasks, variables):
 
 def accepted(variables):
     try:
-        tasks = yaml.safe_load((TARGET / "tasks" / "assert_result.yaml").read_text())
+        tasks = deepcopy(_YAML_SOURCES["tasks/assert_result.yaml"])
         execute_tasks(tasks, deepcopy(variables))
     except Exception as error:
         return False, str(error)
@@ -404,7 +410,7 @@ def task_nodes(value):
 
 
 def test_lifecycle_opt_ins_are_limited_to_two_successful_guarded_creation_assertions():
-    tasks = yaml.safe_load((TARGET / "tests" / "lifecycle.yaml").read_text())
+    tasks = deepcopy(_YAML_SOURCES["tests/lifecycle.yaml"])
     opted = [task for task in task_nodes(tasks) if "breakout_allow_guard_settling" in task.get("vars", {})]
     assert len(opted) == 2
     for task in opted:
@@ -419,12 +425,12 @@ def test_lifecycle_opt_ins_are_limited_to_two_successful_guarded_creation_assert
 
 @pytest.mark.parametrize("changed", [False, True])
 def test_fabric_clear_does_not_opt_in_its_unchanged_idempotent_repeat(changed):
-    tasks = yaml.safe_load((TARGET / "tasks" / "fabric_clear_case.yaml").read_text())
+    tasks = deepcopy(_YAML_SOURCES["tasks/fabric_clear_case.yaml"])
     opted = [task for task in tasks if "breakout_allow_guard_settling" in task.get("vars", {})]
     assert len(opted) == 1
     assert render(opted[0]["vars"]["breakout_allow_guard_settling"], {"breakout_fabric_case": {"changed": changed}}) is changed
 
 
 def test_the_opt_in_is_not_enabled_globally_in_role_defaults():
-    defaults = yaml.safe_load((TARGET / "defaults" / "main.yaml").read_text())
+    defaults = deepcopy(_YAML_SOURCES["defaults/main.yaml"])
     assert not defaults.get("breakout_allow_guard_settling", False)

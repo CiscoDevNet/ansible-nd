@@ -8,6 +8,7 @@ templar. They neither mock a successful controller run nor establish live
 global-clear coverage.
 """
 
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -23,10 +24,17 @@ CASE = "tasks/fabric_clear_case.yaml"
 CLEANUP = "tasks/fabric_clear_cleanup.yaml"
 CHECK_MODE = "tests/check_mode.yaml"
 CHECK_MODE_ASSERT = "tasks/assert_check_mode.yaml"
+# Parse once before ansible-test forks its cases. Deep copies in tasks() keep
+# nested mutations in one adversarial case out of every other case.
+_YAML_SOURCES = {
+    path: yaml.safe_load((TARGET / path).read_text())
+    for path in (PAGE, READ, CASE, CLEANUP, CHECK_MODE, CHECK_MODE_ASSERT, "tasks/fabric_clear_observe_one.yaml")
+}
 
 
 def tasks(path):
-    return yaml.safe_load((TARGET / path).read_text())
+    """Return fresh task data without reparsing the same integration source."""
+    return deepcopy(_YAML_SOURCES[path])
 
 
 def task(path, prefix):
