@@ -44,9 +44,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import Res
 
 _PAGE_SIZE = 1000
 _MAX_PAGES = 100
-_DISCOVERY_WAIT_SECONDS = 90
+_DISCOVERY_WAIT_SECONDS = 180
 _DISCOVERY_POLL_INTERVAL = 5
-_VERIFICATION_WAIT_SECONDS = 30
+_VERIFICATION_WAIT_SECONDS = 180
 _VERIFICATION_POLL_INTERVAL = 5
 _PARENT = re.compile(r"^Ethernet(?P<slot>[1-9]\d*)/(?P<port>[1-9]\d*)$", re.IGNORECASE)
 _PHYSICAL = re.compile(r"Ethernet([1-9]\d*)/([1-9]\d*)(?:/([1-9]\d*))?", re.IGNORECASE)

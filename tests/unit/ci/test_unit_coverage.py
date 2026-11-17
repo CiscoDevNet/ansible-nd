@@ -21,19 +21,20 @@ SPEC.loader.exec_module(helper)
 def write_coverage(path, files, *, context="", has_arcs="1"):
     """Create the native schema-7 fields consumed by the helper, without dependencies."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(path)) as database, database:
-        database.executescript(
-            "CREATE TABLE coverage_schema (version INTEGER); INSERT INTO coverage_schema VALUES (7);"
-            "CREATE TABLE meta (key TEXT, value TEXT);"
-            "CREATE TABLE context (id INTEGER PRIMARY KEY, context TEXT);"
-            "CREATE TABLE file (id INTEGER PRIMARY KEY, path TEXT UNIQUE);"
-            "CREATE TABLE arc (file_id INTEGER, context_id INTEGER, fromno INTEGER, tono INTEGER);"
-        )
-        database.execute("INSERT INTO meta VALUES ('has_arcs', ?)", (has_arcs,))
-        database.execute("INSERT INTO context VALUES (1, ?)", (context,))
-        for index, (name, arcs) in enumerate(files.items(), 1):
-            database.execute("INSERT INTO file VALUES (?, ?)", (index, name))
-            database.executemany("INSERT INTO arc VALUES (?, 1, ?, ?)", [(index, *arc) for arc in arcs])
+    with closing(sqlite3.connect(path)) as database:
+        with database:
+            database.executescript(
+                "CREATE TABLE coverage_schema (version INTEGER); INSERT INTO coverage_schema VALUES (7);"
+                "CREATE TABLE meta (key TEXT, value TEXT);"
+                "CREATE TABLE context (id INTEGER PRIMARY KEY, context TEXT);"
+                "CREATE TABLE file (id INTEGER PRIMARY KEY, path TEXT UNIQUE);"
+                "CREATE TABLE arc (file_id INTEGER, context_id INTEGER, fromno INTEGER, tono INTEGER);"
+            )
+            database.execute("INSERT INTO meta VALUES ('has_arcs', ?)", (has_arcs,))
+            database.execute("INSERT INTO context VALUES (1, ?)", (context,))
+            for index, (name, arcs) in enumerate(files.items(), 1):
+                database.execute("INSERT INTO file VALUES (?, ?)", (index, name))
+                database.executemany("INSERT INTO arc VALUES (?, 1, ?, ?)", [(index, *arc) for arc in arcs])
 
 
 def raw(root, suffix="one"):

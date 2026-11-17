@@ -230,8 +230,8 @@ def test_unready_or_unreadable_inverse_target_never_causes_a_mutation_replay(clo
     for call in summary_calls(calls)[2:]:
         assert_targeted_read(call)
     if failure == "timeout":
-        assert "90" in report["recovery"][0]["msg"]
-        assert clock.now == 90
+        assert "180 seconds" in report["recovery"][0]["msg"]
+        assert clock.now == 180
     else:
         assert len(summary_calls(calls)) == 3
 

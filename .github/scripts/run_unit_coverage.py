@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright: (c) 2026, Cisco Systems, Inc.
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -23,7 +22,7 @@ import sys
 import tempfile
 import time
 from urllib.parse import quote
-import xml.etree.ElementTree as ElementTree
+from xml.etree import ElementTree
 
 
 class CoverageBatchError(RuntimeError):
@@ -165,8 +164,9 @@ def compact_coverage(root, runner=subprocess.run, ansible_test="ansible-test", n
                 version = path.name.split("=", 4)[3]
                 missing = set(expected.get(version, {})) - set(exported.get(version, {}))
                 if missing:
-                    with closing(sqlite3.connect(path)) as connection, connection:
-                        connection.executemany("INSERT OR IGNORE INTO file (path) VALUES (?)", [(name,) for name in sorted(missing)])
+                    with closing(sqlite3.connect(path)) as connection:
+                        with connection:
+                            connection.executemany("INSERT OR IGNORE INTO file (path) VALUES (?)", [(name,) for name in sorted(missing)])
             if read_branch_data(exports, normalize) != expected:
                 raise CoverageBatchError("Verified coverage differs from the input union; raw inputs were retained.")
             destinations = {directory / path.name for path in exports}
@@ -228,7 +228,7 @@ def summarize_junit(root, paths):
             # Also honor explicit failure/error elements if summary attributes
             # were omitted or contradict the testcase diagnostics.
             for name, tag in (("failures", "failure"), ("errors", "error"), ("skipped", "skipped")):
-                counts[name] = max(counts[name], sum(1 for _ in suite.iter(tag)))
+                counts[name] = max(counts[name], sum(1 for unused_element in suite.iter(tag)))
             for name, count in counts.items():
                 totals[name] += count
         if not report_tests:

@@ -210,7 +210,7 @@ def test_exhaustion_preserves_confirmed_changes_last_snapshot_and_stops_cleanup(
         [deepcopy(pending), action(item(P21)), *[deepcopy(pending) for _unused_attempt in range(12)]],
         state=state,
         config=[group(P21)],
-        verify=VERIFY,
+        verify={**VERIFY, "wait_timeout": 30},
     )
     assert report["failed"] is True and report["changed"] is True
     assert report["may_have_changed"] is False
@@ -239,7 +239,11 @@ def test_get_latency_consumes_the_same_guard_budget(clock, monkeypatch):
 
     monkeypatch.setattr(implementation.ManageBreakoutInterfacesOrchestrator, "_topology_snapshot", slow_snapshot)
     pending = topology(native=(P21,))
-    report, calls = run([deepcopy(pending), action(item(P21)), *[deepcopy(pending) for _unused_attempt in range(8)]], config=[group(P21)], verify=VERIFY)
+    report, calls = run(
+        [deepcopy(pending), action(item(P21)), *[deepcopy(pending) for _unused_attempt in range(8)]],
+        config=[group(P21)],
+        verify={**VERIFY, "wait_timeout": 30},
+    )
     assert report["failed"] is True and report["changed"] is True
     assert len(writes(calls)) == 1
     assert len(summary_calls(calls)) == 3
@@ -254,7 +258,7 @@ def test_initial_guard_read_that_exhausts_budget_is_not_followed_by_another_get(
     def slow_snapshot(self, switch_ids=None, evidence="post_action_discovery"):
         snapshot = original(self, switch_ids, evidence=evidence)
         if evidence != "initial_discovery":
-            clock.now += 31
+            clock.now += 181
         return snapshot
 
     monkeypatch.setattr(implementation.ManageBreakoutInterfacesOrchestrator, "_topology_snapshot", slow_snapshot)
@@ -274,7 +278,7 @@ def test_budget_expiring_during_pagination_does_not_start_the_next_page(clock, m
         if self.verb == HttpVerbEnum.POST:
             action_started = True
         elif action_started and "/interfacesSummary?" in self.path:
-            clock.now += 31
+            clock.now += 181
 
     monkeypatch.setattr(RecordingSender, "commit", slow_commit)
     parent = topology(native=(P21,))["DATA"]["interfaces"]

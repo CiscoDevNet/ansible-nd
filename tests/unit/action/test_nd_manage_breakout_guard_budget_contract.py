@@ -180,13 +180,13 @@ def test_default_budget_rejects_an_extra_complete_summary_round():
     assert not accepted(variables(extra=1))[0]
 
 
-@pytest.mark.parametrize("extra", range(6))
+@pytest.mark.parametrize("extra", [*range(6), 35])
 def test_explicit_guard_opt_in_allows_only_bounded_additional_original_action_rounds(extra):
     require_accepted(variables(extra=extra, opt_in=True))
 
 
-def test_guard_opt_in_rejects_six_additional_rounds_on_one_switch():
-    assert not accepted(variables(extra=6, opt_in=True))[0]
+def test_guard_opt_in_rejects_thirty_six_additional_rounds_on_one_switch():
+    assert not accepted(variables(extra=36, opt_in=True))[0]
 
 
 @pytest.mark.parametrize(
@@ -228,7 +228,7 @@ def test_opt_in_rejects_duplicate_scope_or_pagination_parameters(suffix):
 
 
 def test_valid_same_switch_pagination_does_not_consume_an_additional_observation_round():
-    values = variables(extra=5, opt_in=True)
+    values = variables(extra=35, opt_in=True)
     values["breakout_result"]["api_calls"].append(summary(offset=1000))
     require_accepted(values)
 
@@ -308,7 +308,7 @@ def test_a_configured_noop_switch_cannot_be_used_for_additional_guard_rounds():
 
 
 def test_two_mutated_switches_can_each_have_their_own_bounded_guard_rounds():
-    values = variables(extra=5, opt_in=True)
+    values = variables(extra=35, opt_in=True)
     result = values["breakout_result"]
     values.update(breakout_expected_outcome_count=2, breakout_expected_discovery_rounds=4, breakout_expected_metadata_count=2)
     result["api_outcomes"].append({"switch_id": OTHER, "interface_name": "Ethernet1/53", "action": "breakout", "outcome": "success"})
@@ -316,7 +316,7 @@ def test_two_mutated_switches_can_each_have_their_own_bounded_guard_rounds():
     result["proposed"].append({"switch_id": OTHER, "interface_names": ["Ethernet1/53"], "breakout_map": "25g-4x"})
     result["api_calls"].insert(1, {"method": "GET", "path": BASE + "/switches/" + OTHER, "purpose": "switch_metadata", "http_status": 200})
     result["api_calls"].insert(3, summary(switch=OTHER))
-    result["api_calls"].extend(summary(switch=OTHER) for _unused_index in range(6))
+    result["api_calls"].extend(summary(switch=OTHER) for _unused_index in range(36))
     result["api_payload"] = [
         (
             None
@@ -364,9 +364,10 @@ def test_global_fabric_baseline_and_two_switch_guard_reports_allow_retry_only_on
 
 def test_one_switch_cannot_exceed_its_round_cap_even_with_unused_other_switch_allowance():
     values = fabric_clear_variables()
-    # Nine total summary starts are below 3 + 5*2, but the second switch has
-    # seven post-action starts. The aggregate cap alone must not authorize it.
-    values["breakout_result"]["api_calls"].extend(summary(switch=OTHER) for _unused_index in range(5))
+    # Thirty-nine total summary starts are below 3 + 35*2, but the second
+    # switch has thirty-seven post-action starts. Unused peer allowance cannot
+    # authorize exceeding the per-switch 36-start limit.
+    values["breakout_result"]["api_calls"].extend(summary(switch=OTHER) for _unused_index in range(35))
     assert not accepted(values)[0]
 
 

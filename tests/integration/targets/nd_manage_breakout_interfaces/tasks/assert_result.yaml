@@ -150,7 +150,7 @@
           - (breakout_expected_discovery_rounds | int) > (breakout_guard_mutated_switches | length)
           - (breakout_guard_before_rounds | int) == (breakout_expected_discovery_rounds | int) - (breakout_guard_mutated_switches | length)
           - (breakout_guard_after_rounds | int) >= (breakout_guard_mutated_switches | length)
-          - (breakout_guard_before_rounds | int) + (breakout_guard_after_rounds | int) <= (breakout_expected_discovery_rounds | int) + 5 * (breakout_guard_mutated_switches | length)
+          - (breakout_guard_before_rounds | int) + (breakout_guard_after_rounds | int) <= (breakout_expected_discovery_rounds | int) + 35 * (breakout_guard_mutated_switches | length)
           - breakout_guard_after | rejectattr('method', 'equalto', 'GET') | list | length == 0
           - breakout_guard_summary_calls | length == (breakout_guard_after | selectattr('method', 'equalto', 'GET') | list | length)
         fail_msg: Only bounded post-action Ethernet guard reads may exceed the original query-start budget; mandatory initial reads remain exact.
@@ -181,7 +181,7 @@
       loop_control:
         label: "{{ item.path }}"
 
-    - name: Bound each mutated switch to one immediate guard round and at most five retries
+    - name: Bound each mutated switch to one immediate guard round and at most thirty-five retries
       ansible.builtin.assert:
         that:
           - >-
@@ -191,8 +191,8 @@
           - >-
             breakout_guard_summary_calls |
             selectattr('path', 'search', '[?&]switchId=' ~ (item | regex_escape) ~ '(?:&|$)') |
-            selectattr('path', 'search', '[?&]offset=0(?:&|$)') | list | length <= 6
-        fail_msg: Each mutated switch needs a complete initial guard query and no more than five additional query starts within the 30-second/five-second contract.
+            selectattr('path', 'search', '[?&]offset=0(?:&|$)') | list | length <= 36
+        fail_msg: Each mutated switch needs a complete initial guard query and no more than thirty-five additional query starts within the 180-second/five-second contract.
       loop: "{{ breakout_guard_mutated_switches }}"
 
 - name: Validate outcomes by original composite identity rather than response order

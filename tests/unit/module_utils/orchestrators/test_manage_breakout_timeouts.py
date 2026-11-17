@@ -21,7 +21,6 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.orchestrators.test_man
     P23,
     P49,
     REMOVE,
-    SERIAL,
     action,
     assert_targeted_read,
     clock as shared_clock_fixture,
@@ -39,24 +38,26 @@ clock = shared_clock_fixture
 
 
 @pytest.mark.parametrize("state", ["deleted", "overridden"])
-def test_longer_verification_budget_accepts_native_restoration_after_thirty_seconds(clock, state):
+@pytest.mark.parametrize("wait_timeout,settle_after", [(40, 35), (None, 175), (200, 185)])
+def test_custom_and_default_verification_budgets_accept_later_native_restoration(clock, state, wait_timeout, settle_after):
+    """Exercise shorter overrides, the default and an override beyond 180 seconds."""
     retained = (P23,) if state == "overridden" else ()
     pending = topology(P21, *retained)
     responses = [topology(P21, native=retained)]
     if state == "overridden":
         responses.extend([action(item(P23)), deepcopy(pending)])
-    responses.extend([action(item(P21 + "/1")), *[deepcopy(pending) for _ in range(7)], topology(*retained, native=(P21,))])
+    responses.extend([action(item(P21 + "/1")), *[deepcopy(pending) for _unused_attempt in range(settle_after // 5)], topology(*retained, native=(P21,))])
     report, calls = run(
         responses,
         state=state,
         config=[group(P23)] if state == "overridden" else [group(P21, breakout_map=None)],
-        verify={"enabled": True, "wait_timeout": 40},
+        verify={"enabled": True, **({"wait_timeout": wait_timeout} if wait_timeout is not None else {})},
     )
     assert report["failed"] is False and report["changed"] is True
     assert report["after_status"] == "observed"
     assert report["recovery"] == []
     assert all(phase["topology_matches"] for phase in report["verification"]["phases"])
-    assert clock.now == 35 and clock.sleeps == [5] * 7
+    assert clock.now == settle_after and clock.sleeps == [5] * (settle_after // 5)
     assert [call["path"] for call in writes(calls)] == ([BREAKOUT, REMOVE] if state == "overridden" else [REMOVE])
     assert_guard_queries(calls)
 
@@ -174,20 +175,38 @@ def test_discovery_budget_shorter_than_poll_interval_stops_without_a_readiness_g
     assert len(summary_calls(calls)) == 1
 
 
-def test_longer_discovery_budget_can_obtain_a_recovery_map_after_ninety_seconds(clock):
+@pytest.mark.parametrize("discovery_timeout,ready_after", [(98, 95), (None, 175), (200, 185)])
+def test_custom_and_default_discovery_budgets_can_obtain_a_later_recovery_map(clock, discovery_timeout, ready_after):
+    """A custom budget may be shorter or longer than the 180-second default."""
     pending = intent_topology(P21)
     report, calls = run(
-        [pending, *[deepcopy(pending) for _ in range(18)], topology(P21), action(item(P21 + "/1")), topology(native=(P21,))],
+        [pending, *[deepcopy(pending) for _unused_attempt in range(ready_after // 5 - 1)], topology(P21), action(item(P21 + "/1")), topology(native=(P21,))],
         state="deleted",
         config=[group(P21, breakout_map=None)],
-        verify={"enabled": True, "discovery_timeout": 98},
+        verify={"enabled": True, **({"discovery_timeout": discovery_timeout} if discovery_timeout is not None else {})},
     )
     assert report["failed"] is False and report["changed"] is True
-    assert clock.now == 95 and clock.sleeps == [5] * 19
+    assert clock.now == ready_after and clock.sleeps == [5] * (ready_after // 5)
     assert report["after_status"] == "observed" and report["recovery"] == []
     assert [call["path"] for call in writes(calls)] == [REMOVE]
     for call in summary_calls(calls)[1:-1]:
         assert_targeted_read(call)
+
+
+def test_default_verification_budget_expires_at_180_seconds_without_replaying_mutation(clock):
+    pending = topology(native=(P21,))
+    report, calls = run(
+        [deepcopy(pending), action(item(P21)), *[deepcopy(pending) for _unused_attempt in range(36)]],
+        config=[group(P21)],
+        verify={"enabled": True},
+    )
+    assert report["failed"] is True and report["changed"] is True
+    assert "within the 180-second verification budget" in report["msg"]
+    assert report["after_status"] == "observed" and report["recovery"] == []
+    assert clock.now == 180 and clock.sleeps == [5] * 36
+    assert len(summary_calls(calls)) == 37
+    assert [call["path"] for call in writes(calls)] == [BREAKOUT]
+    assert_guard_queries(calls)
 
 
 @pytest.mark.parametrize("scenario", ["inverse_unbreakout", "inverse_breakout", "unbreakout_transition"])

@@ -294,8 +294,8 @@ def test_argument_spec_has_grouped_dual_identifier_contract_and_no_map_choices()
     assert "choices" not in spec["config"]["options"]["breakout_map"]
     assert spec["verify"]["apply_defaults"] is True
     assert spec["verify"]["options"]["enabled"]["default"] is True
-    assert spec["verify"]["options"]["wait_timeout"] == {"type": "int", "default": 30}
-    assert spec["verify"]["options"]["discovery_timeout"] == {"type": "int", "default": 90}
+    assert spec["verify"]["options"]["wait_timeout"] == {"type": "int", "default": 180}
+    assert spec["verify"]["options"]["discovery_timeout"] == {"type": "int", "default": 180}
 
 
 @pytest.mark.parametrize("option", ["wait_timeout", "discovery_timeout"])
