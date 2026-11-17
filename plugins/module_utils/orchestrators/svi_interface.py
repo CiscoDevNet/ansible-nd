@@ -57,7 +57,8 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
 
     ### RuntimeError
 
-    - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
+    - Via `validate_prerequisites` if the fabric does not exist, or is in deployment-freeze mode for a state
+      that mutates configuration.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `create` if the create API request fails.
     - Via `update` if the update API request fails.
@@ -72,10 +73,16 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
     # Capability preflight (PR #571 review): `capableSwitches?interfaceType=svi&mode=managed` lists every switch of a VXLAN and a
     # Campus VXLAN fabric, Catalyst included (lab-verified 2026-09-21 on ND 4.2.1.10 and 4.3.1.175).
     interface_type: ClassVar[str] = "svi"
+    staged_delete_echo_interface_types: ClassVar[frozenset[str]] = frozenset({"svi"})
     interface_mode: ClassVar[str] = "managed"
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_full_modify: ClassVar[bool] = True
-    supports_bulk_modify_create: ClassVar[bool] = True
+    # TODO(4.3.1) TBD
+    # Observed request-path limitation: modify-create can reject a removed SVI
+    # as an overlay-only edit even after its interface/VLAN are absent. Use the
+    # supported grouped POST creation path; existing SVI updates still qualify
+    # for bulk full modify.
+    supports_bulk_modify_create: ClassVar[bool] = False
     supports_bulk_delete: ClassVar[bool] = True
     xe_removal_requires_discovery: ClassVar[bool] = True
 
@@ -257,7 +264,7 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
         ### RuntimeError
 
         - If the fabric does not exist on the target ND node.
-        - If the fabric is in deployment-freeze mode.
+        - If the fabric is in deployment-freeze mode and the state mutates configuration.
         - If the query API request fails.
         """
         managed_policy_types = self._managed_policy_types()

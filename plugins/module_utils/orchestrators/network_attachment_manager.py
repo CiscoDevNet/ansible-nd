@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 
 from typing import Any
@@ -40,12 +41,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.ne
     NetworkAttachmentValidateInterfaceModel,
     NetworkAttachmentValidateInterfacesPayloadModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_common import normalize_ethernet_interface_name
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_channel_common import normalize_port_channel_interface_name
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.attachment_vpc_peer_expander import (
     expand_desired_attachments_with_vpc_peers,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.delete_readiness import (
     DeleteReadinessPolicy,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_staging_effects import staging_observer
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_config_utils import (
     configured_network_names,
     deploy_enabled_by_network,
@@ -144,6 +148,7 @@ class NetworkAttachmentManager:
                 current_count=len(current),
             )
 
+        explicit_interface_keys = {key for key, payload in desired.items() if "interfaces" in payload}
         if desired:
             desired = self.expand_desired_attachments_with_vpc_peers(
                 desired,
@@ -152,7 +157,7 @@ class NetworkAttachmentManager:
             self._trace("network_attachment_desired_expanded", phase=phase, desired_count=len(desired))
 
         payloads = (
-            self.planned_detach_payloads(state, config, current, desired)
+            self.planned_detach_payloads(state, config, current, desired, explicit_interface_keys)
             if phase == "pre"
             else self.planned_attach_payloads(current, desired, preserve_omitted_fields=state == "merged")
         )
@@ -254,6 +259,9 @@ class NetworkAttachmentManager:
             switches = data
         resolved: dict[str, str] = {}
         for switch in switches or []:
+            observer = staging_observer(self.coordinator)
+            if observer is not None:
+                observer.remember_switch(switch)
             ip_address = switch.get("ipAddress") or switch.get("ip_address") or switch.get("managementIpAddress") or switch.get("fabricManagementIp")
             switch_id = switch.get("switchId") or switch.get("switch_id") or switch.get("serialNumber")
             if ip_address in wanted_ips and switch_id:
@@ -270,8 +278,8 @@ class NetworkAttachmentManager:
         if "interfaces" not in attachment:
             return None
         interfaces = attachment.get("interfaces")
-        if not interfaces:
-            return []
+        if interfaces is None:
+            return None
         payloads = []
         for interface in interfaces:
             mapping_type = interface.get("mapping_type")
@@ -305,7 +313,11 @@ class NetworkAttachmentManager:
             data = self._current_attachment_details_page(module_args, strategy, network_names, offset)
             page_items = self._attachment_items_from_query_result(data)
             attachments.extend(page_items)
-            if not self._has_more_attachment_pages(data, len(page_items), len(attachments)):
+            more = self._has_more_attachment_pages(data, len(page_items), len(attachments))
+            observer = staging_observer(self.coordinator)
+            if observer is not None:
+                observer.observe_page("attachments", data, page_items, offset, self.attachment_query_page_size, more, network_names)
+            if not more:
                 break
             if not page_items:
                 break
@@ -401,7 +413,9 @@ class NetworkAttachmentManager:
     @staticmethod
     def _attachment_query_missing_network(error: Exception) -> bool:
         message = str(error)
-        return "Network(s)" in message and "not found in fabric" in message
+        if "Network(s)" in message and "not found in fabric" in message:
+            return True
+        return bool(re.search(r"\bNetwork '[^']+' doesn't exist in the fabric\b", message))
 
     def current_attachment_map(
         self,
@@ -482,6 +496,7 @@ class NetworkAttachmentManager:
         config: list[dict],
         current: dict[tuple[str, str], dict[str, Any]],
         desired: dict[tuple[str, str], dict[str, Any]],
+        explicit_interface_keys: set[tuple[str, str]] | None = None,
     ) -> list[dict[str, Any]]:
         detach_keys: set[tuple[str, str]] = set()
         if state == "deleted":
@@ -492,6 +507,15 @@ class NetworkAttachmentManager:
         elif state == "replaced":
             target_names = set(configured_network_names(config))
             detach_keys = {key for key in current if key[0] in target_names and key not in desired}
+        if state in ("replaced", "overridden", "staged"):
+            for key in current.keys() & desired.keys():
+                # Peer expansion uses interfaces=[] as passive peer metadata.
+                # Only an explicitly configured switch attachment may authorize
+                # clearing ports on that switch before the exact reattachment.
+                if explicit_interface_keys is not None and key not in explicit_interface_keys:
+                    continue
+                if NetworkAttachmentManager._has_removed_ports(current[key], desired[key]):
+                    detach_keys.add(key)
         payloads = []
         for name, switch_id in sorted(detach_keys):
             attachment = current.get((name, switch_id), {})
@@ -500,13 +524,115 @@ class NetworkAttachmentManager:
         return payloads
 
     @staticmethod
+    def _has_removed_ports(current: dict[str, Any], desired: dict[str, Any]) -> bool:
+        """Recognize removed explicit ports or replaced opaque group targets."""
+        if "interfaces" not in desired or not current.get("interfaces"):
+            return False
+        before = NetworkAttachmentManager._normalized_interfaces(current.get("interfaces"))
+        after = NetworkAttachmentManager._normalized_interfaces(desired.get("interfaces"))
+        if before == after:
+            return False
+
+        def group_targets(interfaces):
+            targets = set()
+            for interface in interfaces:
+                group = interface.get("interfaceGroupName")
+                if not group:
+                    continue
+                selector = interface.get("interfaceRange")
+                if not isinstance(group, str) or not group.strip() or selector is not None and not isinstance(selector, str):
+                    raise ValueError("Cannot replace Network attachment ports using a malformed interface group selector")
+                targets.add((group, selector))
+            return targets
+
+        # Group membership is opaque. Removing an exact group target replaces
+        # this known Network/switch attachment, without guessing physical ports.
+        # Stable group targets with only option edits need no pre-detachment.
+        removed_groups = group_targets(before) - group_targets(after)
+        before = [interface for interface in before if not interface.get("interfaceGroupName")]
+        after = [interface for interface in after if not interface.get("interfaceGroupName")]
+
+        def members(interfaces):
+            result = set()
+            for interface in interfaces:
+                selector = interface.get("interfaceRange")
+                if not isinstance(selector, str):
+                    raise ValueError("Cannot replace Network attachment ports without an explicit interface range")
+                for token in selector.split(","):
+                    match = re.fullmatch(r"(?i)(ethernet|eth|port-channel|portchannel|po)([0-9]+(?:/[0-9]+)*)(?:-([0-9]+))?", token.strip())
+                    if match is None:
+                        opaque = NetworkAttachmentManager._opaque_ios_xe_selector(token)
+                        if opaque is not None:
+                            result.add(opaque)
+                            continue
+                        raise ValueError(f"Cannot prove Network port omission for interface selector {token!r}")
+                    family, identity, end = match.groups()
+                    family = "Ethernet" if family.lower() in ("ethernet", "eth") else "port-channel"
+                    components = identity.split("/")
+                    if family == "Ethernet" and len(components) < 2 or family == "port-channel" and len(components) != 1:
+                        raise ValueError(f"Cannot prove Network port omission for interface selector {token!r}")
+                    start = int(components[-1])
+                    stop = int(end) if end is not None else start
+                    if start < 1 or stop < start or stop > 4096 or stop - start >= 4096:
+                        raise ValueError("Network interface replacement range is invalid or exceeds the bounded port limit")
+                    prefix = "/".join(str(int(value)) for value in components[:-1])
+                    for number in range(start, stop + 1):
+                        result.add(family + (prefix + "/" if prefix else "") + str(number))
+            return result
+
+        removed_ports = members(before) - members(after)
+        return bool(removed_groups or removed_ports)
+
+    @staticmethod
+    def _opaque_ios_xe_selector(value: Any) -> str | None:
+        """Recognize existing IOS-XE physical families without expanding ports.
+
+        Reuse the native parent-name contract only for non-NX-OS selectors.
+        A changed opaque literal/range replaces the exact Network attachment;
+        it grants no interface-workflow family support or hardware discovery.
+        """
+        if not isinstance(value, str):
+            return None
+        match = re.fullmatch(r"([A-Za-z]+)([0-9]+(?:/[0-9]+)*)(?:-([0-9]+))?", value.strip())
+        if match is None:
+            return None
+        family, path, end = match.groups()
+        if family.lower() in ("ethernet", "eth", "portchannel", "po"):
+            return None
+        # Lazy reuse keeps ordinary NX-OS attachment planning independent of
+        # the IOS-XE model's import cost and avoids another family inventory.
+        from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.subinterface_managed_interface import SubinterfaceManagedInterfaceModel
+
+        try:
+            parent = SubinterfaceManagedInterfaceModel._normalize_parent(family + path, strict=True)
+        except ValueError:
+            return None
+        if parent.startswith(("Ethernet", "Port-channel")):
+            return None
+        if end is not None and int(end) < int(path.rsplit("/", 1)[-1]):
+            raise ValueError("Network interface replacement range is invalid")
+        return parent + ("-" + end if end is not None else "")
+
+    @staticmethod
     def _attachment_changed(current: dict[str, Any], desired: dict[str, Any]) -> bool:
+        def normalized_options(value):
+            if not isinstance(value, dict):
+                return value
+            aliases = {name: field.alias or name for name, field in NetworkAttachmentInstanceValuesModel.model_fields.items()}
+            normalized = {aliases.get(key, key): item for key, item in value.items()}
+            # Conflicting alias spellings must remain visible rather than having
+            # dictionary insertion order decide which intent wins.
+            return normalized if len(normalized) == len(value) else value
+
         for key in ("vlanId", "instanceValues", "extraConfig"):
             if key not in desired:
                 continue
             if NetworkAttachmentManager._empty_equivalent(desired.get(key)) and NetworkAttachmentManager._empty_equivalent(current.get(key)):
                 continue
-            if desired.get(key) != current.get(key):
+            want, have = desired.get(key), current.get(key)
+            if key == "instanceValues":
+                want, have = normalized_options(want), normalized_options(have)
+            if want != have:
                 return True
         if "interfaces" in desired and NetworkAttachmentManager._normalized_interfaces(
             desired.get("interfaces")
@@ -522,12 +648,29 @@ class NetworkAttachmentManager:
     @staticmethod
     def _normalized_interfaces(interfaces: Any) -> list[dict[str, Any]]:
         """Normalize attachment interfaces to fields that affect Network attachment intent."""
+
+        def normalized_name(value):
+            if not isinstance(value, str):
+                return value
+            if re.fullmatch(r"(?:Ethernet|Eth)\d+(?:/\d+)+(?:\.\d+)?", value, re.IGNORECASE):
+                return normalize_ethernet_interface_name(value)
+            match = re.fullmatch(r"(?:port-channel|po)(\d+)", value, re.IGNORECASE)
+            if match:
+                try:
+                    return normalize_port_channel_interface_name("port-channel" + match.group(1))
+                except ValueError:
+                    pass
+            opaque = NetworkAttachmentManager._opaque_ios_xe_selector(value)
+            if opaque is not None:
+                return opaque
+            return value
+
         normalized = []
         for interface in interfaces or []:
             mapping = interface.get("mapping") or {}
             normalized_interface = {
-                "mode": public_network_attachment_mode(NetworkAttachmentManager._status_value(interface.get("mode"))),
-                "interfaceRange": interface.get("interfaceRange") or interface.get("interface_range"),
+                "mode": public_network_attachment_mode(NetworkAttachmentManager._status_value(interface.get("mode"))).lower(),
+                "interfaceRange": normalized_name(interface.get("interfaceRange") or interface.get("interface_range")),
                 "interfaceGroupName": interface.get("interfaceGroupName") or interface.get("interface_group_name"),
                 "nativeVlan": bool(interface.get("nativeVlan") if "nativeVlan" in interface else interface.get("native_vlan", False)),
             }
@@ -619,9 +762,46 @@ class NetworkAttachmentManager:
             operation_type=operation_type,
         )
         self._raise_on_failed_results(response, "Network attachment failed")
+        observer = staging_observer(self.coordinator)
+        if observer is not None:
+            observer.record_payloads(payloads)
         trace = self.coordinator._finalize_api_trace(results, deploy_targets)
         self._trace("network_attachment_post_end", operation_type=operation_type.value, changed=trace.get("changed"), failed=trace.get("failed"))
         return trace
+
+    def preflight_replacement_interfaces(
+        self,
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        current: dict[tuple[str, str], dict[str, Any]],
+        desired: dict[tuple[str, str], dict[str, Any]],
+    ) -> None:
+        """Validate existing attachment replacements before any workflow write.
+
+        The post phase validates again against the then-current definition.
+        New Networks are deliberately excluded: their ports cannot be validated
+        until the definition exists. Passive synthesized peers do not grant
+        authority to replace their ports.
+        """
+        if module_args.get("state") not in ("staged", "replaced", "overridden"):
+            return
+        replacements = [
+            payload for key, payload in desired.items() if key in current and payload.get("interfaces") and self._has_removed_ports(current[key], payload)
+        ]
+        if not replacements:
+            return
+        orchestrator, _results = self.coordinator._new_network_orchestrator(module_args, strategy)
+        controller_version = getattr(getattr(orchestrator, "rest_send", None), "controller_version", None)
+        replacements = self._payloads_for_controller(self._prepare_attachment_payloads(strategy, replacements), controller_version)
+        # This POST is read-only, so perform the same safety check in check
+        # mode without enabling any of the later attachment mutation requests.
+        rest_send = orchestrator.rest_send
+        rest_send.save_settings()
+        rest_send.check_mode = False
+        try:
+            self.validate_attachment_interfaces(orchestrator, strategy, replacements)
+        finally:
+            rest_send.restore_settings()
 
     def validate_attachment_interfaces(self, orchestrator: Any, strategy: BaseNetworkStrategy, payloads: list[dict[str, Any]]) -> None:
         """Ask ND to validate attachment interfaces before mutation."""
@@ -684,13 +864,17 @@ class NetworkAttachmentManager:
 
     @staticmethod
     def _validation_payload(payload: dict[str, Any]) -> dict[str, Any]:
-        return {
+        validation = {
             "networkName": payload.get("networkName"),
             "switchId": payload.get("switchId"),
-            "vlanId": payload.get("vlanId", -1),
             "interfaces": payload.get("interfaces"),
             "attach": payload.get("attach", True),
         }
+        # VLAN is optional and can be allocated during attachment. The API's
+        # valid range is 2..4094; an invented -1 sentinel fails validation.
+        if payload.get("vlanId") is not None:
+            validation["vlanId"] = payload["vlanId"]
+        return validation
 
     @staticmethod
     def _raise_on_failed_results(response: Any, prefix: str) -> None:
@@ -835,6 +1019,9 @@ class NetworkAttachmentManager:
         """
         if not deploy_payload.get("networkNames"):
             raise ValueError("Network deployment requires Network names.")
+        observer = staging_observer(self.coordinator)
+        if observer is not None:
+            observer.deployment_attempts += 1
         self._trace("network_attachment_deploy_start", deploy_payload=deploy_payload, undeploy=undeploy)
         orchestrator, results = self.coordinator._new_network_orchestrator(module_args, strategy)
         endpoint = orchestrator._make_endpoint(strategy.network_actions_deploy_post_cls())

@@ -55,7 +55,7 @@
         static_default_route: false
         trm_enable: false
         bgp_password: abcdef12
-        bgp_passwd_encrypt: 3
+        bgp_passwd_encrypt: 3des
         netflow_enable: false
         deploy: false
       - vrf_name: ansible-nd-vrf-replaced-l3vni
@@ -65,7 +65,8 @@
         loopback_route_tag: 12356
         max_bgp_paths: 2
         max_ibgp_paths: 2
-        ipv6_linklocal_enable: true
+        # No SVI exists with l3vni_wo_vlan; this former setting is inapplicable:
+        # ipv6_linklocal_enable: true
         disable_rt_auto: false
         import_vpn_rt:
           - "65000:50012"

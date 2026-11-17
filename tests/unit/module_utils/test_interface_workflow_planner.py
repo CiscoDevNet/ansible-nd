@@ -80,6 +80,16 @@ def _planner(
     return InterfaceWorkflowPlanner(snapshot=snapshot, vpc_pair_by_switch_ip=vpc_pairs), recorder
 
 
+def _set_non_vpc_topology(planner: InterfaceWorkflowPlanner) -> None:
+    """Supply complete non-vPC metadata for dependency-only planner fixtures."""
+    context = planner.fabric_context
+    context._switches = [
+        {"switchId": serial, "fabricManagementIp": address, "vpcConfigured": False, "vpcData": {}} for address, serial in context.switch_map.items()
+    ]
+    planner.snapshot._topology_context = context
+    planner.snapshot._topology_pairs = {serial: {} for serial in context.switch_map_by_id}
+
+
 def _loopback(
     switch_ip: str,
     name: str = "loopback10",
@@ -166,7 +176,7 @@ def _wire_interface(
     policy_type: str,
     *,
     network_os_type: str = "nx-os",
-    mode: str = "access",
+    mode: str | None = None,
     oper_mode: str | None = None,
     **policy: Any,
 ) -> dict[str, Any]:
@@ -174,7 +184,11 @@ def _wire_interface(
         "interfaceName": name,
         "interfaceType": interface_type,
         "configData": {
-            "mode": mode,
+            "mode": (
+                mode
+                if mode is not None
+                else ("dot1qTunnel" if policy_type == "dot1qTunnelHost" else "trunk" if policy_type in {"trunkHost", "iosXeTrunkHost"} else "access")
+            ),
             "networkOS": {
                 "networkOSType": network_os_type,
                 "policy": {"policyType": policy_type, **policy},
@@ -209,10 +223,11 @@ def _summary_row(
     return row
 
 
-def test_registry_is_the_exact_twelve_family_scope_and_delegates_model_ownership() -> None:
+def test_registry_is_the_exact_thirteen_family_scope_and_delegates_model_ownership() -> None:
     """The authoritative registry excludes flow-rules and derives every model from its orchestrator."""
     assert set(INTERFACE_FAMILY_ADAPTERS) == {
         "ethernet_access",
+        "ethernet_dot1q_tunnel_host",
         "ethernet_routed",
         "ethernet_trunk_host",
         "loopback",
@@ -229,6 +244,7 @@ def test_registry_is_the_exact_twelve_family_scope_and_delegates_model_ownership
     assert all(adapter.model_class is adapter.orchestrator_class.model_class for adapter in INTERFACE_FAMILY_ADAPTERS.values())
     assert all(adapter.supported_states == frozenset({"merged", "replaced", "overridden", "deleted"}) for adapter in INTERFACE_FAMILY_ADAPTERS.values())
     assert INTERFACE_FAMILY_ADAPTERS["ethernet_access"].policy_types == frozenset({"accessHost", "iosXeAccess"})
+    assert INTERFACE_FAMILY_ADAPTERS["ethernet_dot1q_tunnel_host"].policy_types == frozenset({"dot1qTunnelHost"})
     assert INTERFACE_FAMILY_ADAPTERS["ethernet_trunk_host"].policy_types == frozenset({"trunkHost", "iosXeTrunkHost"})
     assert INTERFACE_FAMILY_ADAPTERS["port_channel_access"].policy_types == frozenset({"accessPoHost", "iosXeAccessPoHost"})
     assert INTERFACE_FAMILY_ADAPTERS["port_channel_trunk_host"].policy_types == frozenset({"trunkPoHost", "iosXeTrunkPoHost"})
@@ -249,6 +265,7 @@ def test_adapter_policy_sets_match_standalone_orchestrator_contracts() -> None:
 
     assert checked == {
         "ethernet_access",
+        "ethernet_dot1q_tunnel_host",
         "ethernet_routed",
         "ethernet_trunk_host",
         "port_channel_access",
@@ -286,6 +303,7 @@ def test_registry_declares_generic_transition_delete_and_structural_safety_metad
     """Every adapter advertises its mutation strategy and structural dependency guards."""
     expected = {
         "ethernet_access": (InterfaceDeleteStrategy.NORMALIZE, False, False, True),
+        "ethernet_dot1q_tunnel_host": (InterfaceDeleteStrategy.NORMALIZE, False, False, True),
         "ethernet_routed": (InterfaceDeleteStrategy.NORMALIZE, False, False, True),
         "ethernet_trunk_host": (InterfaceDeleteStrategy.NORMALIZE, False, False, True),
         "loopback": (InterfaceDeleteStrategy.REMOVE, False, False, False),
@@ -302,12 +320,12 @@ def test_registry_declares_generic_transition_delete_and_structural_safety_metad
     for resource_type, adapter in INTERFACE_FAMILY_ADAPTERS.items():
         delete_strategy, pair_consistency, owns_members, child_guard = expected[resource_type]
         assert adapter.transition_strategy is InterfaceTransitionStrategy.UPDATE
-        assert adapter.transition_states == IMPLICIT_TRANSITION_STATES
+        assert adapter.transition_states == (frozenset() if resource_type == "loopback" else IMPLICIT_TRANSITION_STATES)
         assert adapter.delete_strategy is delete_strategy
         assert adapter.safety.requires_pair_consistency is pair_consistency
         assert adapter.safety.owns_physical_members is owns_members
         assert adapter.safety.guards_child_subinterfaces is child_guard
-        assert adapter.supports_intra_family_policy_transitions is (resource_type in {"ethernet_routed", "loopback", "subinterface_managed", "svi"})
+        assert adapter.supports_intra_family_policy_transitions is (resource_type in {"ethernet_routed", "subinterface_managed", "svi"})
         assert not hasattr(adapter, "policy_transition_sources")
 
     assert IMPLICIT_TRANSITION_STATES == frozenset({"merged", "replaced"})
@@ -461,6 +479,7 @@ def test_overridden_discovery_preflight_keeps_unchanged_desired_interfaces() -> 
     resource_plan = SimpleNamespace(
         resource_index=0,
         resource_type="svi",
+        adapter=INTERFACE_FAMILY_ADAPTERS["svi"],
         state="overridden",
         orchestrator=orchestrator,
         proposed=[retained],
@@ -592,8 +611,15 @@ def test_check_mode_planning_refuses_csr_loopback_create_on_nd_431() -> None:
     assert {getattr(call["verb"], "value", call["verb"]) for call in recorder.calls} == {"GET"}
 
 
-def test_check_mode_planning_refuses_transition_to_csr_loopback_on_nd_431() -> None:
-    """A policy transition onto csrLoopback is a typed write ND 4.3.1 rejects, so the planner refuses it too."""
+@pytest.mark.parametrize(
+    "state, error",
+    [
+        ("merged", r"Cannot change policy_type.*csrLoopback"),
+        ("replaced", r"csrLoopback.*loopback206 \(192\.0\.2\.1\)"),
+    ],
+)
+def test_check_mode_planning_refuses_transition_to_csr_loopback_on_nd_431(state: str, error: str) -> None:
+    """Merged keeps policy immutability; a replaced transition reaches the ND 4.3.1 release guard."""
     current = _wire_loopback("loopback206", "iosXeLoopback", network_os_type="ios-xe", adminState=True, ip="10.100.206.1")
     planner, recorder = _planner(
         switches={"192.0.2.1": "SERIAL1"},
@@ -603,8 +629,8 @@ def test_check_mode_planning_refuses_transition_to_csr_loopback_on_nd_431() -> N
     planner.fabric_context._platform_map = {"192.0.2.1": PlatformType.IOS_XE}
     planner.rest_send_factory = _versioned_rest_send_factory("4.3.1.175")
 
-    with pytest.raises(InterfaceWorkflowValidationError, match=r"csrLoopback.*loopback206 \(192\.0\.2\.1\)"):
-        planner.plan([{"type": "loopback", "state": "merged", "config": [_csr_loopback()]}])
+    with pytest.raises(InterfaceWorkflowValidationError, match=error):
+        planner.plan([{"type": "loopback", "state": state, "config": [_csr_loopback()]}])
 
     assert {getattr(call["verb"], "value", call["verb"]) for call in recorder.calls} == {"GET"}
 
@@ -877,9 +903,16 @@ def test_implicit_transition_is_generic_across_non_vpc_adapters(
     plan = planner.plan([{"type": resource_type, "state": "merged", "config": [config]}])
 
     resource = plan.resources[0]
-    assert len(resource.transitions) == 1
-    assert resource.operations.creates == ()
-    assert resource.transitions[0].to_policy_type in resource.adapter.policy_types
+    if resource_type == "loopback":
+        # Loopback upserts use the standalone family plan, including discovered
+        # or foreign-policy rows outside its managed collection.
+        assert resource.transitions == ()
+        assert len(resource.operations.creates) == 1
+        assert plan.request_stats["interface_summary_gets"] == 0
+    else:
+        assert len(resource.transitions) == 1
+        assert resource.operations.creates == ()
+        assert resource.transitions[0].to_policy_type in resource.adapter.policy_types
 
 
 def test_svi_transition_accepts_switch_virtual_interface_summary_alias() -> None:
@@ -2207,6 +2240,7 @@ def test_same_family_ethernet_member_update_preserves_standalone_whitelist() -> 
     ("resource_type", "parent", "interface_type", "policy_type"),
     [
         ("ethernet_access", "Ethernet1/1", "ethernet", "accessHost"),
+        ("ethernet_dot1q_tunnel_host", "Ethernet1/1", "ethernet", "dot1qTunnelHost"),
         ("port_channel_access", "port-channel10", "portChannel", "accessPoHost"),
     ],
 )
@@ -2231,6 +2265,7 @@ def test_overridden_parent_delete_rejects_existing_child_subinterface(
     ("resource_type", "config", "parent", "interface_type"),
     [
         ("ethernet_access", _ethernet("192.0.2.1"), "Ethernet1/1", "ethernet"),
+        ("ethernet_dot1q_tunnel_host", _ethernet("192.0.2.1"), "Ethernet1/1", "ethernet"),
         ("port_channel_access", _port_channel("192.0.2.1"), "port-channel10", "portChannel"),
     ],
 )
@@ -2283,6 +2318,13 @@ def test_parent_transition_conflicts_with_planned_child_create() -> None:
             "Ethernet1/1",
             "ethernet",
             "accessHost",
+            _ethernet("192.0.2.1"),
+        ),
+        (
+            "ethernet_dot1q_tunnel_host",
+            "Ethernet1/1",
+            "ethernet",
+            "dot1qTunnelHost",
             _ethernet("192.0.2.1"),
         ),
         (
@@ -2726,6 +2768,8 @@ def test_port_channel_current_and_final_members_conflict_with_ethernet_mutation(
     final_members = ["Ethernet1/2"] if current_member else ["Ethernet1/1"]
     planner, _recorder = _planner(responses=responses, summary_responses=summaries)
 
+    _set_non_vpc_topology(planner)
+
     with pytest.raises(InterfaceWorkflowConflictError) as exc_info:
         planner.plan(
             [
@@ -3161,6 +3205,8 @@ def test_ios_xe_host_conversion_precedes_port_channel_attach(monkeypatch) -> Non
         },
     }
 
+    _set_non_vpc_topology(planner)
+
     plan = planner.plan(
         [
             {"type": "port_channel_access", "state": "merged", "config": [desired_parent]},
@@ -3215,6 +3261,8 @@ def test_ios_xe_routed_host_conversion_precedes_routed_port_channel_attach(monke
             }
         },
     }
+
+    _set_non_vpc_topology(planner)
 
     plan = planner.plan(
         [
@@ -3310,6 +3358,8 @@ def test_override_delete_conflicts_with_another_group_desiring_the_identity() ->
 def test_ethernet_mutation_cannot_race_a_new_port_channel_membership() -> None:
     """A physical port cannot be changed independently while a port-channel claims it."""
     planner, _recorder = _planner()
+
+    _set_non_vpc_topology(planner)
 
     with pytest.raises(InterfaceWorkflowConflictError) as exc_info:
         planner.plan(
@@ -3547,3 +3597,616 @@ def test_overridden_still_rejects_an_unknown_configured_switch_before_inventory(
         planner.plan([{"type": "loopback", "state": "overridden", "config": [_loopback("192.0.2.99")]}])
 
     assert recorder.calls == []
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "deleted"])
+def test_dot1q_empty_interface_group_fails_before_inventory(state: str) -> None:
+    """An accidental empty group cannot turn into a fabric-wide override."""
+    planner, recorder = _planner()
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="must name at least one interface"):
+        planner.plan(
+            [
+                {
+                    "type": "ethernet_dot1q_tunnel_host",
+                    "state": state,
+                    "config": [{"switch_ip": "192.0.2.1", "interface_names": []}],
+                }
+            ]
+        )
+
+    assert recorder.calls == []
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced"])
+@pytest.mark.parametrize("source_policy,mode", [("accessHost", "access"), ("trunkHost", "trunk"), ("routedHost", "routed")])
+def test_dot1q_transition_accepts_existing_nx_host_policies(state: str, source_policy: str, mode: str) -> None:
+    """Dot1q uses the same guarded destination-family transition as other hosts."""
+    current = _wire_interface("Ethernet1/1", "ethernet", source_policy, mode=mode, description="configured host")
+    planner, recorder = _planner(
+        responses=[{"interfaces": [current]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
+    )
+
+    plan = planner.plan([{"type": "ethernet_dot1q_tunnel_host", "state": state, "config": [_ethernet("192.0.2.1")]}])
+
+    transition = plan.resources[0].transitions[0]
+    assert transition.from_policy_type == source_policy
+    assert transition.to_policy_type == "dot1qTunnelHost"
+    assert plan.mutation_count == 1
+    assert plan.request_stats["interface_inventory_gets"] == 1
+    assert plan.request_stats["interface_summary_gets"] == 1
+    assert all(call["verb"] == HttpVerbEnum.GET for call in recorder.calls)
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced"])
+@pytest.mark.parametrize(
+    "resource_type,policy_type",
+    [
+        ("ethernet_access", "accessHost"),
+        ("ethernet_trunk_host", "trunkHost"),
+        ("ethernet_routed", "routedHost"),
+    ],
+)
+def test_existing_ethernet_families_transition_out_of_dot1q(state: str, resource_type: str, policy_type: str) -> None:
+    """Registering dot1q does not remove existing host transition paths."""
+    current = _wire_interface("Ethernet1/1", "ethernet", "dot1qTunnelHost", mode="dot1qTunnel", accessVlan=150)
+    planner, recorder = _planner(
+        responses=[{"interfaces": [current]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
+    )
+    if resource_type == "ethernet_routed":
+        config = {
+            "switch_ip": "192.0.2.1",
+            "interface_name": "Ethernet1/1",
+            "config_data": {"network_os": {"network_os_type": "nx-os", "policy": {"ip": "198.51.100.1", "prefix": 30}}},
+        }
+    else:
+        config = _ethernet("192.0.2.1", trunk=resource_type == "ethernet_trunk_host")
+
+    plan = planner.plan([{"type": resource_type, "state": state, "config": [config]}])
+
+    transition = plan.resources[0].transitions[0]
+    assert transition.from_policy_type == "dot1qTunnelHost"
+    assert transition.to_policy_type == policy_type
+    assert plan.mutation_count == 1
+    assert all(call["verb"] == HttpVerbEnum.GET for call in recorder.calls)
+
+
+@pytest.mark.parametrize(
+    "policy_type,network_os_type",
+    [
+        ("iosXeTrunkHost", "ios-xe"),
+        ("iosXeRoutedHost", "ios-xe"),
+        ("foreignHost", "ios-xr"),
+        ("foreignHost", "sonic"),
+        ("foreignHost", "apic"),
+        ("foreignHost", "other"),
+    ],
+)
+@pytest.mark.parametrize("state", ["merged", "replaced", "deleted"])
+def test_dot1q_rejects_observed_non_nx_os_interfaces_before_policy_rewrite(policy_type: str, network_os_type: str, state: str) -> None:
+    """Identifier-only deletes must not enter another platform's reset path."""
+    current = _wire_interface("Ethernet1/1", "ethernet", policy_type, network_os_type=network_os_type, adminState=True, speed="auto")
+    planner, recorder = _planner(responses=[{"interfaces": [current]}])
+    config = {"switch_ip": "192.0.2.1", "interface_names": ["Ethernet1/1"]} if state == "deleted" else _ethernet("192.0.2.1")
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="supports NX-OS only"):
+        planner.plan([{"type": "ethernet_dot1q_tunnel_host", "state": state, "config": [config]}])
+
+    assert len(recorder.calls) == 1
+    assert recorder.calls[0]["verb"] == HttpVerbEnum.GET
+
+
+@pytest.mark.parametrize("platform", [PlatformType.IOS_XE, PlatformType.IOS_XR, PlatformType.SONIC, PlatformType.APIC, PlatformType.OTHER])
+@pytest.mark.parametrize("state", ["merged", "replaced", "deleted"])
+def test_dot1q_rejects_non_nx_os_switch_when_interface_is_absent(platform: PlatformType, state: str) -> None:
+    """Cached platform evidence also protects an absent identifier-only target."""
+    planner, recorder = _planner(responses=[{"interfaces": []}])
+    planner.fabric_context._platform_map = {"192.0.2.1": platform, "192.0.2.2": PlatformType.NX_OS}
+    config = {"switch_ip": "192.0.2.1", "interface_names": ["Ethernet1/1"]} if state == "deleted" else _ethernet("192.0.2.1")
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="supports NX-OS only"):
+        planner.plan([{"type": "ethernet_dot1q_tunnel_host", "state": state, "config": [config]}])
+
+    assert len(recorder.calls) == 1
+
+
+@pytest.mark.parametrize("member_policy", ["dot1qTunnelPoMember", "dot1qTunnelVpcMember", "dot1qTunnelVpcPoMember"])
+def test_dot1q_refuses_member_policy_transitions_before_summary(member_policy: str) -> None:
+    """The new family owns Ethernet hosts, not dot1q aggregate members."""
+    current = _wire_interface("Ethernet1/1", "ethernet", member_policy, portChannelId=10)
+    current["operData"] = {"portChannelId": 10}
+    planner, recorder = _planner(responses=[{"interfaces": [current]}])
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="member of port-channel 10"):
+        planner.plan([{"type": "ethernet_dot1q_tunnel_host", "state": "replaced", "config": [_ethernet("192.0.2.1")]}])
+
+    assert len(recorder.calls) == 1
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "deleted"])
+def test_dot1q_refuses_fabric_owned_ethernet_policy(state: str) -> None:
+    """A physical dot1q request cannot overwrite or reset an underlay link."""
+    current = _wire_interface("Ethernet1/1", "ethernet", "numbered", mode="routed", ip="198.51.100.1", prefix=30)
+    planner, recorder = _planner(
+        responses=[{"interfaces": [current]}],
+        summary_responses={"SERIAL1": {"interfaces": [_summary_row(current, "SERIAL1")]}},
+    )
+    config = {"switch_ip": "192.0.2.1", "interface_names": ["Ethernet1/1"]} if state == "deleted" else _ethernet("192.0.2.1")
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="system policy 'numbered'"):
+        planner.plan([{"type": "ethernet_dot1q_tunnel_host", "state": state, "config": [config]}])
+
+    assert all(call["verb"] == HttpVerbEnum.GET for call in recorder.calls)
+
+
+def test_dot1q_override_resets_only_omitted_host_policies(monkeypatch) -> None:
+    """A fabric-wide dot1q override leaves other hosts and member policies alone."""
+    dot1q = _wire_interface("Ethernet1/1", "ethernet", "dot1qTunnelHost", mode="dot1qTunnel", accessVlan=150)
+    unrelated = [
+        _wire_interface("Ethernet1/2", "ethernet", "accessHost", accessVlan=10),
+        _wire_interface("Ethernet1/3", "ethernet", "trunkHost", allowedVlans="10-20"),
+        _wire_interface("Ethernet1/4", "ethernet", "dot1qTunnelPoMember", portChannelId=10),
+        _wire_interface("Ethernet1/5", "ethernet", "dot1qTunnelVpcMember", portChannelId=20),
+        _wire_interface("Ethernet1/6", "ethernet", "dot1qTunnelVpcPoMember", portChannelId=30),
+    ]
+    planner, recorder = _planner(
+        switches={"192.0.2.1": "SERIAL1", "192.0.2.2": "SERIAL2"},
+        responses=[{"interfaces": [dot1q, *unrelated]}, {"interfaces": []}],
+    )
+    monkeypatch.setattr(EthernetBaseOrchestrator, "_fabric_link_endpoints", lambda _self: {})
+
+    plan = planner.plan([{"type": "ethernet_dot1q_tunnel_host", "state": "overridden", "config": []}])
+
+    assert plan.target_switch_ids == ("SERIAL1", "SERIAL2")
+    assert [model.interface_name for model in plan.resources[0].operations.deletes] == ["Ethernet1/1"]
+    assert len(plan.resources[0].before) == 1
+    assert plan.request_stats["interface_inventory_gets"] == 2
+    assert len(recorder.calls) == 2
+
+
+@pytest.mark.parametrize("platform", [PlatformType.IOS_XE, PlatformType.IOS_XR, PlatformType.SONIC, PlatformType.APIC, PlatformType.OTHER])
+@pytest.mark.parametrize("retain_primary", [False, True])
+def test_dot1q_override_rejects_non_nx_os_omitted_targets(platform: PlatformType, retain_primary: bool) -> None:
+    """Empty and partial overrides validate switch evidence for omitted resets."""
+    primary = _wire_interface("Ethernet1/1", "ethernet", "dot1qTunnelHost", mode="dot1qTunnel", accessVlan=10)
+    omitted = _wire_interface("Ethernet1/40", "ethernet", "dot1qTunnelHost", mode="dot1qTunnel", accessVlan=150)
+    planner, recorder = _planner(responses=[{"interfaces": [primary]}, {"interfaces": [omitted]}])
+    planner.fabric_context._platform_map = {"192.0.2.1": PlatformType.NX_OS, "192.0.2.2": platform}
+    desired = [_ethernet("192.0.2.1")] if retain_primary else []
+
+    with pytest.raises(InterfaceWorkflowValidationError, match=r"supports NX-OS only; 192\.0\.2\.2/Ethernet1/40"):
+        planner.plan([{"type": "ethernet_dot1q_tunnel_host", "state": "overridden", "config": desired}])
+
+    assert len(recorder.calls) == 2
+    assert all(call["verb"] == HttpVerbEnum.GET for call in recorder.calls)
+
+
+def test_dot1q_override_leaves_unrelated_non_nx_os_interfaces_untouched(monkeypatch) -> None:
+    """The platform guard applies to selected dot1q hosts, not every fabric row."""
+    dot1q = _wire_interface("Ethernet1/40", "ethernet", "dot1qTunnelHost", mode="dot1qTunnel", accessVlan=150)
+    unrelated = _wire_interface("GigabitEthernet1/0/1", "ethernet", "iosXeRoutedHost", network_os_type="ios-xe")
+    planner, recorder = _planner(responses=[{"interfaces": [dot1q]}, {"interfaces": [unrelated]}])
+    planner.fabric_context._platform_map = {"192.0.2.1": PlatformType.NX_OS, "192.0.2.2": PlatformType.IOS_XE}
+    monkeypatch.setattr(EthernetBaseOrchestrator, "_fabric_link_endpoints", lambda _self: {})
+
+    plan = planner.plan([{"type": "ethernet_dot1q_tunnel_host", "state": "overridden", "config": []}])
+
+    assert [(item.switch_ip, item.interface_name) for item in plan.resources[0].operations.deletes] == [("192.0.2.1", "Ethernet1/40")]
+    assert plan.request_stats["interface_inventory_gets"] == 2
+    assert len(recorder.calls) == 2
+
+
+def test_dot1q_absent_delete_keeps_unknown_platform_metadata_tolerance() -> None:
+    """Missing platform metadata alone does not turn a safe no-op into a failure."""
+    planner, recorder = _planner(responses=[{"interfaces": []}])
+    planner.fabric_context._platform_map = {"192.0.2.1": None, "192.0.2.2": None}
+
+    plan = planner.plan(
+        [
+            {
+                "type": "ethernet_dot1q_tunnel_host",
+                "state": "deleted",
+                "config": [{"switch_ip": "192.0.2.1", "interface_names": ["Ethernet1/1"]}],
+            }
+        ]
+    )
+
+    assert plan.changed is False
+    assert plan.mutation_count == 0
+    assert len(recorder.calls) == 1
+
+
+def _xe_tombstone(name: str, interface_type: str) -> dict[str, Any]:
+    """Return the IOS-XE `interface_delete` row as ND 4.2.1.10 listed it on a Catalyst 9000v (lab capture 2026-11-10, issue #688)."""
+    return {
+        "configData": {
+            "networkOS": {
+                "networkOSType": "ios-xe",
+                "policy": {"policyType": "userDefined", "templateConfig": {"ReadOnlyOnEdit": True}, "templateName": "interface_delete"},
+            }
+        },
+        "interfaceName": name,
+        "interfaceType": interface_type,
+        "operData": {"adminStatus": "up", "operationalStatus": "up", "portChannelId": -1},
+        "switchId": "SERIAL1",
+    }
+
+
+def _xe_preview(name: str, running: str, pending: str, expected: str, expected_lines: int) -> dict[str, Any]:
+    """Return an `interfaceActions/preview` body in the shape ND 4.2.1.10 returned for an IOS-XE tombstone (issue #688)."""
+    return {
+        "configurationDiffs": [
+            {
+                "adminStatus": "up",
+                "combinedConfigs": [
+                    {"config": running, "configType": "RUNNING", "lines": len(running.splitlines())},
+                    {"config": pending, "configType": "PENDING", "lines": len(pending.splitlines())},
+                    {"config": expected, "configType": "EXPECTED", "lines": expected_lines},
+                ],
+                "fabricName": "fabric_1",
+                "interfaceName": name,
+                "message": "",
+                "operationalStatus": "up",
+                "status": "success",
+                "switchId": "SERIAL1",
+                "switchName": "C1_LE1",
+            }
+        ]
+    }
+
+
+@pytest.mark.parametrize(
+    "family,requested,wire_name,interface_type,running,pending,expected,expected_lines,proof_published",
+    [
+        (
+            "loopback",
+            "loopback206",
+            "Loopback206",
+            "loopback",
+            "interface Loopback206\r\n ip address 10.100.206.1 255.255.255.255\r\nend\r\n",
+            "no interface Loopback206\n",
+            "<font color='red'><strike>interface Loopback206\n</strike></font>",
+            2,
+            True,
+        ),
+        (
+            "svi",
+            "vlan982",
+            "Vlan982",
+            "svi",
+            "interface Vlan982\r\n ip address 10.99.82.1 255.255.255.0\r\n no ip redirects\r\n no ipv6 redirects\r\nend\r\n",
+            "no interface Vlan982\nno vlan 982\n",
+            "<font color='red'><strike>interface vlan982\n</strike></font><font color='red'><strike>vlan 982\n</strike></font>",
+            3,
+            False,
+        ),
+    ],
+)
+def test_deleted_ios_xe_logical_tombstone_replays_staged_removal(
+    monkeypatch, family, requested, wire_name, interface_type, running, pending, expected, expected_lines, proof_published
+) -> None:
+    """
+    # Summary
+
+    Verify a loopback or SVI deletion staged on IOS-XE is replayed as a staged delete target instead of failing safety validation (issue #688).
+
+    ## Test
+
+    - ND lists the canonical-case `userDefined` / `interface_delete` tombstone with `networkOSType` `ios-xe`
+    - The scoped preview shows the running header and the pending `no interface` (plus `no vlan` for the SVI)
+    - `plan()` reports no mutation, names the interface as a staged delete target, and requests no interface summary
+    - The strict current-observation proof is published only when the expected CLI is one struck-through block
+
+    ## Classes and Methods
+
+    - InterfaceWorkflowPlanner.plan()
+    - InterfaceWorkflowPlanner._staged_logical_delete_echo()
+    - InterfaceWorkflowPlanner._record_current_logical_deletion()
+    """
+    tombstone = _xe_tombstone(wire_name, interface_type)
+    preview = _xe_preview(wire_name, running, pending, expected, expected_lines)
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", lambda _self, _payload: preview)
+    planner, recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": [tombstone]}])
+
+    plan = planner.plan([{"type": family, "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": requested}]}])
+
+    assert not plan.changed
+    assert plan.staged_delete_targets == ((requested, "SERIAL1"),)
+    assert [proof.interface_name for proof in plan.logical_staged_deletions] == ([requested] if proof_published else [])
+    assert not any("/interfacesSummary" in str(call.get("path")) for call in recorder.calls)
+
+
+def test_deleted_ios_xe_tombstone_with_foreign_pending_command_is_not_replayed(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify the IOS-XE tombstone replay keeps the exact-preview requirement: any pending command beyond the removal refuses the replay.
+
+    ## Test
+
+    - ND lists an IOS-XE loopback tombstone
+    - The scoped preview carries an extra pending command after `no interface`
+    - `_staged_logical_delete_echo()` returns False
+
+    ## Classes and Methods
+
+    - InterfaceWorkflowPlanner._staged_logical_delete_echo()
+    """
+    tombstone = _xe_tombstone("Loopback206", "loopback")
+    preview = _xe_preview(
+        "Loopback206",
+        "interface Loopback206\r\nend\r\n",
+        "no interface Loopback206\n",
+        "<font color='red'><strike>interface Loopback206\n</strike></font>",
+        2,
+    )
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", lambda _self, _payload: preview)
+    planner, _recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": [tombstone]}])
+    plan = planner.plan([{"type": "loopback", "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": "loopback206"}]}])
+    assert plan.staged_delete_targets == (("loopback206", "SERIAL1"),)
+
+    preview["configurationDiffs"][0]["combinedConfigs"][1]["config"] += "interface GigabitEthernet1/0/7\nshutdown\n"
+
+    assert not planner._staged_logical_delete_echo(
+        plan.resources[0], next(iter(plan.resources[0].proposed)), (("SERIAL1", tombstone),), planner._inventory(), set()
+    )
+
+
+def test_deleted_ios_xe_port_channel_tombstone_is_not_replayed(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify the IOS-XE widening stops at loopback and SVI: the port-channel member validation is NX-OS CLI, so an IOS-XE port-channel tombstone is not replayed.
+
+    ## Test
+
+    - ND lists an IOS-XE port-channel tombstone with an exact pending removal
+    - `_staged_logical_delete_echo()` returns False without requesting a preview
+
+    ## Classes and Methods
+
+    - InterfaceWorkflowPlanner._staged_logical_delete_echo()
+    """
+    tombstone = _xe_tombstone("Port-channel21", "portChannel")
+    previews: list[Any] = []
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", lambda _self, payload: previews.append(payload))
+    planner, _recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": [tombstone]}])
+    resources = planner._validate_resource_groups(
+        [{"type": "port_channel_routed", "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": "port-channel21"}]}]
+    )
+    _index, adapter, _state, proposed = resources[0]
+    resource = SimpleNamespace(state="deleted", adapter=adapter, orchestrator=None, resource_index=0, resource_type="port_channel_routed")
+
+    assert not planner._staged_logical_delete_echo(resource, next(iter(proposed)), (("SERIAL1", tombstone),), {}, {("SERIAL1", "21")})
+    assert not previews
+
+
+def _nothing_pending_preview(name: str) -> dict[str, Any]:
+    """Return an `interfaceActions/preview` body that succeeds with zero pending lines (lab capture 2026-11-10, ND 4.2.1.10, issue #688)."""
+    return {
+        "configurationDiffs": [
+            {
+                "adminStatus": "up",
+                "combinedConfigs": [{"config": "", "configType": "PENDING", "lines": 0}, {"config": "", "configType": "EXPECTED", "lines": 0}],
+                "fabricName": "fabric_1",
+                "interfaceName": name,
+                "message": "",
+                "operationalStatus": "up",
+                "status": "success",
+                "switchId": "SERIAL1",
+                "switchName": "C1_LE1",
+            }
+        ]
+    }
+
+
+def _policyless_row(name: str, interface_type: str, network_os_type: str) -> dict[str, Any]:
+    """Return a loopback or SVI row as ND lists it without a policy (`mode: unknown`, stale `operData`)."""
+    return {
+        "configData": {"mode": "unknown", "networkOS": {"networkOSType": network_os_type}},
+        "interfaceName": name,
+        "interfaceType": interface_type,
+        "operData": {"adminStatus": "up", "ipAddress": "10.100.207.1/32", "operationalStatus": "up"},
+        "switchId": "SERIAL1",
+    }
+
+
+@pytest.mark.parametrize(
+    "family,name,interface_type,network_os_type",
+    [
+        ("loopback", "loopback207", "loopback", "nx-os"),
+        ("svi", "vlan983", "svi", "nx-os"),
+        ("loopback", "Loopback207", "loopback", "ios-xe"),
+        ("svi", "Vlan1", "svi", "ios-xe"),
+    ],
+)
+def test_deleted_policyless_logical_row_is_already_absent(monkeypatch, family, name, interface_type, network_os_type) -> None:
+    """
+    # Summary
+
+    Verify a loopback or SVI row that carries no policy is treated as already absent by `state: deleted`, as the standalone modules do (issue #688).
+
+    ## Test
+
+    - ND lists the interface with `mode: unknown`, no `policy`, and stale `operData` (the row it keeps after a deployed removal)
+    - The scoped preview of that exact name succeeds and reports zero pending lines
+    - `plan()` reports no mutation, no staged delete target, and raises no safety validation error
+    - Exactly one preview is requested for the row, and no interface summary
+
+    ## Classes and Methods
+
+    - InterfaceWorkflowPlanner.plan()
+    - InterfaceWorkflowPlanner._staged_logical_delete_echo()
+    """
+    row = _policyless_row(name, interface_type, network_os_type)
+    previews: list[Any] = []
+
+    def preview(_self, payload):
+        previews.append(payload)
+        return _nothing_pending_preview(name)
+
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", preview)
+    planner, recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": [row]}])
+
+    plan = planner.plan([{"type": family, "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": name.lower()}]}])
+
+    assert not plan.changed
+    assert not plan.staged_delete_targets
+    assert not plan.resources[0].operations.deletes
+    assert previews == [{"interfaces": [{"interfaceName": name.lower(), "switchId": "SERIAL1"}]}]
+    assert len(recorder.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "family,requested,wire_name,interface_type,network_os_type,running,pending",
+    [
+        ("loopback", "loopback207", "loopback207", "loopback", "nx-os", "interface loopback207\n  ip address 10.100.207.1/32\n", "no interface loopback207\n"),
+        ("svi", "vlan983", "Vlan983", "svi", "ios-xe", "interface Vlan983\r\n no ip address\r\nend\r\n", "no interface Vlan983\nno vlan 983\n"),
+    ],
+)
+def test_deleted_policyless_logical_row_with_pending_removal_is_staged(
+    monkeypatch, family, requested, wire_name, interface_type, network_os_type, running, pending
+) -> None:
+    """
+    # Summary
+
+    Verify a policy-less loopback or SVI row whose removal is still pending is named as a staged delete target, whatever the switch sync status says.
+
+    ## Test
+
+    - ND lists the interface without a policy (a removal staged before ND discovered the interface)
+    - The scoped preview shows the running header and the pending `no interface` (plus `no vlan` for the SVI)
+    - The switch inventory carries no `configSyncStatus`
+    - `plan()` reports no mutation and names the interface as a staged delete target, so the coordinator deploys it
+
+    ## Classes and Methods
+
+    - InterfaceWorkflowPlanner.plan()
+    - InterfaceWorkflowPlanner._staged_logical_delete_echo()
+    """
+    row = _policyless_row(wire_name, interface_type, network_os_type)
+    preview = _xe_preview(wire_name, running, pending, "", 0)
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", lambda _self, _payload: preview)
+    planner, recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": [row]}])
+
+    plan = planner.plan([{"type": family, "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": requested}]}])
+
+    assert not plan.changed
+    assert plan.staged_delete_targets == ((requested, "SERIAL1"),)
+    assert not plan.logical_staged_deletions
+    assert not plan.resources[0].operations.deletes
+    assert not any("/interfacesSummary" in str(call.get("path")) for call in recorder.calls)
+
+
+@pytest.mark.parametrize(
+    "pending",
+    ["no interface loopback207\ninterface Ethernet1/7\nshutdown\n", "interface loopback207\n  ip address 10.100.207.9/32\n"],
+)
+def test_deleted_policyless_logical_row_with_foreign_pending_command_is_rejected(monkeypatch, pending) -> None:
+    """
+    # Summary
+
+    Verify a policy-less loopback row is neither skipped nor deployed when its preview carries pending commands other than its own removal.
+
+    ## Test
+
+    - ND lists the loopback without a policy
+    - The scoped preview carries a pending command that is not the removal of that interface
+    - `plan()` raises `InterfaceWorkflowValidationError` naming the interface
+
+    ## Classes and Methods
+
+    - InterfaceWorkflowPlanner.plan()
+    - InterfaceWorkflowPlanner._staged_logical_delete_echo()
+    """
+    row = _policyless_row("loopback207", "loopback", "nx-os")
+    preview = _xe_preview("loopback207", "interface loopback207\n", pending, "", 0)
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", lambda _self, _payload: preview)
+    planner, _recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": [row]}])
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="cannot delete loopback207: ND lists it without a policy"):
+        planner.plan([{"type": "loopback", "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": "loopback207"}]}])
+
+
+def test_deleted_policyless_port_channel_row_still_fails_safety_validation() -> None:
+    """
+    # Summary
+
+    Verify the policy-less exemption is limited to loopback and SVI: a policy-less port-channel row keeps failing safety validation.
+
+    ## Test
+
+    - ND lists a port-channel with no `policy`
+    - `plan()` raises `InterfaceWorkflowValidationError` naming the missing policy type
+
+    ## Classes and Methods
+
+    - InterfaceWorkflowPlanner.plan()
+    - InterfaceWorkflowPlanner._candidate_safety_errors()
+    """
+    row = {
+        "configData": {"mode": "unknown", "networkOS": {"networkOSType": "nx-os"}},
+        "interfaceName": "port-channel21",
+        "interfaceType": "portChannel",
+        "switchId": "SERIAL1",
+    }
+    planner, _recorder = _planner(
+        switches={"192.0.2.1": "SERIAL1"},
+        responses=[{"interfaces": [row]}],
+        summary_responses={"SERIAL1": {"interfaces": [{"interfaceName": "port-channel21", "interfaceType": "portChannel", "switchId": "SERIAL1"}]}},
+    )
+    _set_non_vpc_topology(planner)
+
+    with pytest.raises(InterfaceWorkflowValidationError, match="the current policy type is missing"):
+        planner.plan([{"type": "port_channel_routed", "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": "port-channel21"}]}])
+
+
+@pytest.mark.parametrize(
+    "family,requested,wire_name,interface_type",
+    [("loopback", "loopback206", "Loopback206", "loopback"), ("svi", "vlan982", "Vlan982", "svi")],
+)
+def test_deleted_logical_tombstone_with_nothing_pending_is_already_absent(monkeypatch, family, requested, wire_name, interface_type) -> None:
+    """
+    # Summary
+
+    Verify a tombstone ND still lists just after its removal was deployed is treated as already absent (issue #688).
+
+    ## Test
+
+    - ND lists the `userDefined` / `interface_delete` tombstone for a few seconds after the deploy that pushed `no interface`
+    - The scoped preview succeeds and reports zero pending lines (lab capture 2026-11-10, ND 4.2.1.10)
+    - `plan()` reports no mutation and no staged delete target, and requests no interface summary
+
+    ## Classes and Methods
+
+    - InterfaceWorkflowPlanner.plan()
+    - InterfaceWorkflowPlanner._staged_logical_delete_echo()
+    """
+    tombstone = _xe_tombstone(wire_name, interface_type)
+    preview = {
+        "configurationDiffs": [
+            {
+                "adminStatus": "up",
+                "combinedConfigs": [{"config": "", "configType": "PENDING", "lines": 0}, {"config": "", "configType": "EXPECTED", "lines": 0}],
+                "fabricName": "fabric_1",
+                "interfaceName": wire_name,
+                "message": "",
+                "operationalStatus": "up",
+                "status": "success",
+                "switchId": "SERIAL1",
+                "switchName": "C1_LE1",
+            }
+        ]
+    }
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", lambda _self, _payload: preview)
+    planner, recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": [tombstone]}])
+
+    plan = planner.plan([{"type": family, "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": requested}]}])
+
+    assert not plan.changed
+    assert not plan.staged_delete_targets
+    assert not plan.logical_staged_deletions
+    assert not plan.resources[0].operations.deletes
+    assert len(recorder.calls) == 1

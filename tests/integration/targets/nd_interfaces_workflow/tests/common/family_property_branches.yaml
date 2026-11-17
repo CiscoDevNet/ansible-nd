@@ -34,13 +34,15 @@
           and nd_iw_enable_ethernet_routed_override | bool)
       or (nd_iw_expected_family == 'port_channel_routed'
           and nd_iw_enable_port_channel_routed_override | bool)
+      or (nd_iw_expected_family == 'ethernet_dot1q_tunnel_host'
+          and nd_iw_enable_ethernet_dot1q_override | bool)
 
 - name: Report skipped generic authoritative override for {{ nd_iw_expected_family }}
   ansible.builtin.debug:
     msg: >-
       The generic authoritative override is disabled for {{ nd_iw_expected_family }} because it can reset
-      unrelated managed routed interfaces. Select only this family and explicitly enable its dedicated
-      override gate after confirming exclusive ownership of every managed interface in its routed policy domain.
+      unrelated managed interfaces. Select only this family and explicitly enable its dedicated
+      override gate after confirming exclusive ownership of every managed interface in its policy domain.
   when:
     - nd_iw_run_destructive | bool
     - not (nd_iw_current_case.generic_override_safe | default(true) | bool)
@@ -48,4 +50,6 @@
       not ((nd_iw_expected_family == 'ethernet_routed'
             and nd_iw_enable_ethernet_routed_override | bool)
            or (nd_iw_expected_family == 'port_channel_routed'
-               and nd_iw_enable_port_channel_routed_override | bool))
+               and nd_iw_enable_port_channel_routed_override | bool)
+           or (nd_iw_expected_family == 'ethernet_dot1q_tunnel_host'
+               and nd_iw_enable_ethernet_dot1q_override | bool))

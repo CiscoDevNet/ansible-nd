@@ -11,7 +11,10 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from ansible_collections.cisco.nd.plugins.module_utils.interface_config_normalizer import expand_ethernet_config
+from ansible_collections.cisco.nd.plugins.module_utils.interface_config_normalizer import (
+    expand_ethernet_config,
+    expand_ethernet_dot1q_tunnel_host_config,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
@@ -32,6 +35,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection impo
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_plan import NDStatePlan, NDStatePlanner, SUPPORTED_STATES
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_access_interface import EthernetAccessInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_dot1q_tunnel_host_interface import (
+    EthernetDot1qTunnelHostInterfaceOrchestrator,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_routed_interface import EthernetRoutedInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_trunk_host_interface import EthernetTrunkHostInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
@@ -90,6 +96,11 @@ class InterfaceDeleteStrategy(str, Enum):
     DELETE = "delete"
 
 
+def expand_ethernet_overridden_config(config: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Expand aggregate ethernet config while retaining explicit reset-all groups."""
+    return expand_ethernet_config(config, allow_empty_interface_names=True)
+
+
 @dataclass(frozen=True)
 class InterfaceFamilySafety:
     """Structural dependency guards required by an interface family."""
@@ -115,6 +126,7 @@ class InterfaceFamilyAdapter:
     transition_states: frozenset[str] = IMPLICIT_TRANSITION_STATES
     safety: InterfaceFamilySafety = InterfaceFamilySafety()
     config_normalizer: ConfigNormalizer | None = None
+    overridden_config_normalizer: ConfigNormalizer | None = None
     supported_states: frozenset[str] = SUPPORTED_STATES
 
     @property
@@ -155,7 +167,10 @@ class InterfaceFamilyAdapter:
                         f"resources[{resource_index}].config[{item_index}].config_data.network_os.policy.policy_type is required for a configured loopback."
                     )
         try:
-            normalized = self.config_normalizer(config) if self.config_normalizer is not None else config
+            config_normalizer = (
+                self.overridden_config_normalizer if state == "overridden" and self.overridden_config_normalizer is not None else self.config_normalizer
+            )
+            normalized = config_normalizer(config) if config_normalizer is not None else config
             # The standalone modules reject unknown Ansible options before
             # model validation.  The aggregate workflow's nested resource
             # dictionaries bypass that argspec, so forbid extras here rather
@@ -203,6 +218,18 @@ _ADAPTER_DEFINITIONS = (
         "delete_strategy": InterfaceDeleteStrategy.NORMALIZE,
         "safety": InterfaceFamilySafety(guards_child_subinterfaces=True),
         "config_normalizer": expand_ethernet_config,
+        "overridden_config_normalizer": expand_ethernet_overridden_config,
+    },
+    {
+        "resource_type": "ethernet_dot1q_tunnel_host",
+        "module_name": "cisco.nd.nd_interface_ethernet_dot1q_tunnel_host",
+        "orchestrator_class": EthernetDot1qTunnelHostInterfaceOrchestrator,
+        "ownership_domain": "ethernet",
+        "interface_types": frozenset({"ethernet"}),
+        "policy_types": frozenset({"dot1qTunnelHost"}),
+        "delete_strategy": InterfaceDeleteStrategy.NORMALIZE,
+        "safety": InterfaceFamilySafety(guards_child_subinterfaces=True),
+        "config_normalizer": expand_ethernet_dot1q_tunnel_host_config,
     },
     {
         "resource_type": "ethernet_routed",
@@ -225,6 +252,7 @@ _ADAPTER_DEFINITIONS = (
         "delete_strategy": InterfaceDeleteStrategy.NORMALIZE,
         "safety": InterfaceFamilySafety(guards_child_subinterfaces=True),
         "config_normalizer": expand_ethernet_config,
+        "overridden_config_normalizer": expand_ethernet_overridden_config,
     },
     {
         "resource_type": "loopback",
@@ -234,7 +262,9 @@ _ADAPTER_DEFINITIONS = (
         "interface_types": frozenset({"loopback"}),
         "policy_types": LOOPBACK_POLICY_TYPES,
         "delete_strategy": InterfaceDeleteStrategy.REMOVE,
-        "supports_intra_family_policy_transitions": True,
+        # Keep the standalone loopback create/update plan instead of rewriting
+        # discovered rows or policy changes into workflow-only transitions.
+        "transition_states": frozenset(),
     },
     {
         "resource_type": "port_channel_access",

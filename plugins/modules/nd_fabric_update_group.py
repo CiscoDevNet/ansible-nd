@@ -5,7 +5,11 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
+ANSIBLE_METADATA = {
+    "metadata_version": "1.1",
+    "status": ["preview"],
+    "supported_by": "community",
+}
 
 DOCUMENTATION = r"""
 ---
@@ -28,6 +32,13 @@ options:
   config:
     description:
     - The list of fabric update groups to configure.
+    - Required for O(state=merged) (when O(auto_assign) is not used), O(state=replaced), O(state=overridden), and O(state=deleted).
+    - When provided with O(state=gathered), each item acts as a filter criterion.
+    - For O(state=gathered), supported supplied fields are filter criteria. Criteria within one list item use AND semantics,
+      while multiple list items use OR semantics.
+    - "Supported gathered filter properties: O(config.update_group_name), O(config.execution), O(config.contingency),
+      O(config.analysis), O(config.is_maintenance), and O(config.is_disruptive_update). Other configuration properties
+      are rejected when used as gathered filters."
     type: list
     elements: dict
     suboptions:
@@ -35,8 +46,9 @@ options:
         description:
         - The name of the update group.
         - The O(config.update_group_name) must be defined when creating, updating or deleting an update group.
+        - Optional filter for O(state=gathered).
         type: str
-        required: true
+        required: false
       execution:
         description:
         - The execution strategy for the upgrade run.
@@ -85,7 +97,6 @@ options:
         - When V(false), an ND warning (for example, that upgrading the selected switches would impact all
           roles in the fabric) fails the task. Set V(true) to acknowledge such warnings and apply anyway.
         type: bool
-        default: false
       installation_order_devices:
         description:
         - The order in which switches are upgraded when O(config.execution=serial).
@@ -175,9 +186,11 @@ options:
     - Use O(state=overridden) to enforce the configuration as the single source of truth.
       Update groups on ND but not in the configuration will be deleted. Use with caution.
     - Use O(state=deleted) to delete the update groups specified in the configuration.
+    - Use O(state=gathered) to read all user-managed fabric update groups in the fabric without making changes.
+      The result is returned under C(gathered) in a format that can be reused as O(config).
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -224,9 +237,111 @@ EXAMPLES = r"""
     fabric_name: SITE1
     auto_assign: roleBased
     state: merged
+
+- name: Gather all fabric update groups
+  cisco.nd.nd_fabric_update_group:
+    fabric_name: SITE1
+    state: gathered
+
+- name: Gather only the update group named leaf_group
+  cisco.nd.nd_fabric_update_group:
+    fabric_name: SITE1
+    config:
+      - update_group_name: leaf_group
+    state: gathered
 """
 
 RETURN = r"""
+changed:
+  description:
+  - Whether the module changed, or in check mode would change, the fabric update-group configuration.
+  - Always V(false) for O(state=gathered).
+  - For O(auto_assign), check mode reports V(false) because the controller action cannot be previewed.
+  returned: always
+  type: bool
+  sample: true
+output_level:
+  description: The output verbosity level in effect for the run, echoing the O(output_level) parameter.
+  returned: always
+  type: str
+  sample: normal
+before:
+  description:
+  - The existing fabric update-group configurations before the module ran, structured the same as O(config).
+  - For O(state=gathered), this is an empty list because gathered resources are returned under C(gathered).
+  - For O(auto_assign), this contains the update groups captured before the controller auto-assign action.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - update_group_name: leaf_group
+    execution: serial
+    contingency: continue
+    analysis: snapshot
+    is_maintenance: true
+    is_disruptive_update: true
+    update_group_switches:
+    - 192.168.7.11
+    - 192.168.7.12
+after:
+  description:
+  - The resulting fabric update-group configurations after reconciliation, structured the same as O(config).
+  - In check mode for per-group configuration states, this is the configuration that would result if the module ran outside check mode.
+  - For O(state=gathered), this is an empty list because no reconciliation is performed.
+  - For O(auto_assign), this contains the update groups captured after the controller action. In check mode, the action is skipped.
+  returned: always
+  type: list
+  elements: dict
+  sample:
+  - update_group_name: leaf_group
+    execution: parallel
+    contingency: continue
+    analysis: snapshot
+    is_maintenance: true
+    is_disruptive_update: true
+    update_group_switches:
+    - 192.168.7.11
+    - 192.168.7.12
+gathered:
+  description:
+  - User-managed fabric update groups matching the supplied O(config) filters.
+  - Returned in reusable Ansible configuration format.
+  returned: when O(state=gathered)
+  type: list
+  elements: dict
+  sample:
+  - update_group_name: leaf_group
+    execution: serial
+    contingency: continue
+    analysis: snapshot
+    is_maintenance: true
+    is_disruptive_update: true
+    update_group_switches:
+    - 192.168.7.11
+    - 192.168.7.12
+diff:
+  description:
+  - The per-update-group difference between C(before) and C(after).
+  - For O(auto_assign), this is empty because the fabric-wide action does not create a per-group configuration diff.
+  returned: when O(state) is not V(gathered)
+  type: list
+  elements: dict
+proposed:
+  description:
+  - The fabric update-group configuration proposed before reconciliation with the controller.
+  - For O(auto_assign), this is empty because the configuration is generated by the controller.
+  returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
+  type: list
+  elements: dict
+logs:
+  description: Internal diagnostic log messages collected during the run.
+  returned: when O(output_level) is V(debug)
+  type: list
+  elements: str
+msg:
+  description: A human-readable error message, present when the module fails.
+  returned: on failure
+  type: str
 """
 
 import logging
@@ -314,7 +429,7 @@ def _validate_report_analysis_exclusion(module: AnsibleModule) -> None:
 
     Calls `module.fail_json` (which raises) on a conflicting config item.
     """
-    if module.params.get("state") == "deleted":
+    if module.params.get("state") in ("deleted", "gathered"):
         return
     for item in module.params.get("config") or []:
         if not isinstance(item, dict):
@@ -340,6 +455,11 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=True,
         mutually_exclusive=[["config", "auto_assign"]],
+        required_if=[
+            ("state", "replaced", ("config",)),
+            ("state", "overridden", ("config",)),
+            ("state", "deleted", ("config",)),
+        ],
     )
     require_pydantic(module)
     setup_logging(module)
@@ -358,7 +478,11 @@ def main():
 
         output = NDOutput(output_level=module.params.get("output_level", "normal"))
         try:
-            module_log.debug("auto_assign begin auto_assign=%s check_mode=%s", auto_assign, module.check_mode)
+            module_log.debug(
+                "auto_assign begin auto_assign=%s check_mode=%s",
+                auto_assign,
+                module.check_mode,
+            )
             _run_auto_assign(module, output)
             module_log.debug("auto_assign end")
             module.exit_json(**output.format())

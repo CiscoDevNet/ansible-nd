@@ -604,7 +604,7 @@ def test_ethernet_access_orchestrator_00525(monkeypatch: pytest.MonkeyPatch) -> 
 
     - Existing data has policyType=routedHost and is not a port-channel member
     - The destination model requests policyType=accessHost, VLAN 100, and a description
-    - Exactly one request is issued to the encoded per-interface PUT endpoint
+    - The complete inventory is read for the ownership guard, then exactly one PUT is issued
     - The body is exactly the destination model payload plus the resolved switch ID
     - One deployment target is queued for the workflow's consolidated deploy phase
 
@@ -620,6 +620,7 @@ def test_ethernet_access_orchestrator_00525(monkeypatch: pytest.MonkeyPatch) -> 
     instance = _build_orchestrator(gen_responses)
     model = _build_access_model({"access_vlan": 100, "description": "workflow transition"})
     current = {
+        "switchId": "FDO11111AAA",
         "interfaceName": "Ethernet1/1",
         "interfaceType": "ethernet",
         "configData": {
@@ -633,22 +634,30 @@ def test_ethernet_access_orchestrator_00525(monkeypatch: pytest.MonkeyPatch) -> 
     }
     requests = []
 
+    def request(**kwargs):
+        requests.append(kwargs)
+        if kwargs["verb"] == HttpVerbEnum.GET:
+            return {"interfaces": [deepcopy(current)]}
+        return {"ok": True}
+
     monkeypatch.setattr(instance, "_resolve_switch_id", lambda _switch_ip: "FDO11111AAA")
-    monkeypatch.setattr(instance, "_request", lambda **kwargs: requests.append(kwargs) or {"ok": True})
+    monkeypatch.setattr(instance, "_request", request)
 
     result = instance.update(model, existing_data=current)
 
     expected_payload = model.to_payload()
     expected_payload["switchId"] = "FDO11111AAA"
     assert result == {"ok": True}
-    assert requests == [
+    assert requests[0]["verb"] == HttpVerbEnum.GET
+    assert "/interfaces?" in requests[0]["path"]
+    assert requests[1:] == [
         {
             "path": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/Ethernet1%2F1",
             "verb": HttpVerbEnum.PUT,
             "data": expected_payload,
         }
     ]
-    assert requests[0]["data"]["configData"]["networkOS"]["policy"]["policyType"] == "accessHost"
+    assert requests[1]["data"]["configData"]["networkOS"]["policy"]["policyType"] == "accessHost"
     assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
 
 
@@ -1180,7 +1189,7 @@ def test_ethernet_access_orchestrator_00630() -> None:
     - `_pending_resets` carries three (interface, switch) pairs
     - First PUT returns 200 (Ethernet1/1 reset), second PUT returns 500 (Ethernet1/2 fails)
     - `remove_pending` raises RuntimeError naming the failed interface, the one reset before it, and the one not attempted
-    - The third interface is never requested (fail-fast: only two responses are consumed)
+    - One inventory GET precedes the two PUT responses; the third interface is never reset
 
     ## Classes and Methods
 
@@ -1189,6 +1198,7 @@ def test_ethernet_access_orchestrator_00630() -> None:
     """
 
     def responses():
+        yield responses_access("test_reset_partial_failure_00630_inventory")
         yield responses_access("test_reset_partial_failure_00630a")
         yield responses_access("test_reset_partial_failure_00630b")
 

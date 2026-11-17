@@ -22,6 +22,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.mixin import (
     ConfigActionsMixin,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import GatheredLuceneSpec
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ai_ibgp_vxlan import (
     FabricAiIbgpVxlanModel,
@@ -48,6 +49,17 @@ class ManageAiIbgpVxlanFabricOrchestrator(
     model_class: ClassVar[type[NDBaseModel]] = FabricAiIbgpVxlanModel
     fabric_inventory_category: ClassVar[str] = "fabric"
     fabric_inventory_management_type: ClassVar[str] = "aimlVxlanIbgp"
+    supports_gathered_server_filtering: ClassVar[bool] = True
+    gathered_lucene_spec: ClassVar[GatheredLuceneSpec] = GatheredLuceneSpec(
+        base_terms=(("type", "aimlVxlanIbgp"),),
+        field_map={
+            ("fabric_name",): "name",
+            ("license_tier",): "licenseTier",
+            ("security_domain",): "securityDomain",
+            ("alert_suspend",): "alertSuspend",
+            ("telemetry_collection",): "telemetryCollection",
+        },
+    )
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageFabricsPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageFabricsPut

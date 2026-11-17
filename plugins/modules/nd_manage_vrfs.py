@@ -53,6 +53,18 @@ options:
     type: str
     choices: [ merged, replaced, overridden, deleted, gathered, staged ]
     default: merged
+  deletion_mode:
+    description:
+      - V(standard) retains the ordinary detach, optional deployment, and VRF deletion workflow.
+      - V(finalize) deletes only explicitly named VRF definitions on a standalone Manage fabric without attachment or deployment requests.
+      - The caller is responsible for completing detachment and deployment before selecting finalization.
+      - Normal definition discovery, input validation, Network dependency checks and deletion error handling still apply.
+      - Finalization does not perform additional attachment-readiness or post-delete absence queries.
+        A successful result confirms definition operations succeeded; it is not an independent resource or switch audit.
+      - Only valid with O(state=deleted) and a nonempty O(config).
+    type: str
+    choices: [ standard, finalize ]
+    default: standard
   config:
     description:
       - List of VRF definition configurations to manage.
@@ -755,6 +767,14 @@ EXAMPLES = r"""
     config:
       - vrf_name: VRF_BLUE
 
+- name: Finalize a VRF whose detachment was already deployed
+  cisco.nd.nd_manage_vrfs:
+    fabric_name: fab1
+    state: deleted
+    deletion_mode: finalize
+    config:
+      - vrf_name: VRF_BLUE
+
 # Replace VRF configuration
 - name: Replace VRF configuration (full replace)
   cisco.nd.nd_manage_vrfs:
@@ -805,6 +825,16 @@ changed:
   returned: always
   type: bool
   sample: true
+deletion_finalization:
+  description:
+    - Version-1 operation result for O(deletion_mode=finalize), including resource, fabric name,
+      requested names, request digest, and existing definitions from normal CRUD discovery.
+    - C(detach_attempts) and C(deployment_attempts) are zero for this workflow.
+    - C(deletion_operations_succeeded) is V(null) in check mode, V(true) when definition processing succeeds,
+      and V(false) when the returned definition result reports failure. Already absent targets can succeed without a DELETE request.
+    - This result does not claim verified attachment readiness, definition absence, or final device convergence.
+  returned: when finalization validation succeeds and the definition state machine returns
+  type: dict
 output_level:
   description: The output verbosity level in effect for the run, echoing the O(output_level) parameter.
   returned: always
@@ -1006,6 +1036,7 @@ def main():
                 "staged",
             ],
         ),
+        deletion_mode=dict(type="str", default="standard", choices=["standard", "finalize"]),
         config=dict(
             type="list",
             elements="dict",

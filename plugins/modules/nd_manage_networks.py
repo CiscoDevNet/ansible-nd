@@ -27,6 +27,18 @@ description:
 author:
   - Akshayanat C S (@achengam)
 options:
+  deletion_mode:
+    description:
+      - V(standard) retains the normal detach, deploy and delete workflow.
+      - V(finalize) deletes only explicitly listed definitions without attachment or deployment requests.
+        The caller is responsible for completing detachment and deployment before selecting this mode.
+      - Finalization requires O(state=deleted), non-empty O(config), and a standalone Manage fabric.
+        Normal definition discovery, input validation and deletion error handling still apply.
+      - Finalization does not perform additional attachment-readiness or post-delete absence queries.
+        A successful result confirms definition operations succeeded; it is not an independent resource or switch audit.
+    type: str
+    choices: [standard, finalize]
+    default: standard
   fabric_name:
     description:
       - Name of the fabric to operate on.
@@ -156,6 +168,8 @@ options:
               - Under C(state=merged), omission preserves existing port bindings.
               - An explicit empty list requests no interface bindings and also
                 supports a new switch-only attachment.
+              - In V(replaced), V(overridden) and V(staged), removed ports cause the exact Network/switch attachment
+                to be detached and reattached with desired ports before any final deployment.
             type: list
             elements: dict
             suboptions:
@@ -612,6 +626,25 @@ EXAMPLES = r"""
                 mode: trunk
 """
 RETURN = r"""
+network_staging_effects:
+  description:
+    - Compact request-bound effect scope for V(staged), independent of output verbosity.
+    - Reports affected whole switches from accepted attachment writes and changed Network definitions using existing native observations.
+    - C(complete=true) requires successful non-check-mode execution, complete snapshots and bounded known effects.
+    - Custom or dynamic effects, incomplete observations and unknown switch identities require the caller to use full reconciliation.
+    - This receipt describes staging effects and does not prove deployment or successful completion of the caller's whole run.
+  type: dict
+  returned: when the standalone staged workflow returns a result
+deletion_finalization:
+  description:
+    - Version-1 operation result returned by O(deletion_mode=finalize), including resource, fabric name,
+      requested names, request digest, and existing definitions from normal CRUD discovery.
+    - C(detach_attempts) and C(deployment_attempts) are zero for this continuation.
+    - C(deletion_operations_succeeded) is null in check mode, true when definition processing succeeds,
+      and false when the returned definition result reports failure. Already absent targets can succeed without a DELETE request.
+    - This result does not claim verified attachment readiness, definition absence, or final device convergence.
+  returned: when O(deletion_mode=finalize) reaches definition planning
+  type: dict
 changed:
   description: Whether the module changed Network, attachment, or deployment state.
   returned: always
@@ -803,6 +836,7 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         fabric_name=dict(type="str", required=True),
+        deletion_mode=dict(type="str", default="standard", choices=["standard", "finalize"]),
         state=dict(
             type="str",
             default="merged",
