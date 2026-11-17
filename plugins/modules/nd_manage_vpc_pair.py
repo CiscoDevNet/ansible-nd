@@ -561,6 +561,9 @@ def main() -> None:
     force_applicable = state == "deleted"
     if force and not force_applicable:
         module.warn("Parameter 'force' only applies to state 'deleted'. " f"Ignoring force for state '{state}'.")
+    # Downstream deletion handlers read module.params directly. Normalize the
+    # runtime value so states that ignore force cannot bypass delete safeguards.
+    module.params["force"] = bool(force and force_applicable)
 
     # Normalize config keys for runtime/state-machine model handling.
     normalized_config = [item.to_runtime_config() for item in (module_config.config or [])]
