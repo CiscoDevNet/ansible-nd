@@ -177,9 +177,10 @@ def test_manage_fabric_campus_ibgp_vxlan_00080() -> None:
 
 
 def test_manage_fabric_campus_ibgp_vxlan_00090() -> None:
-    """The supported ND 4.3 field is optional and /31 remains live-rejected."""
+    """The native ND 4.3 default is false and /31 remains live-rejected."""
     omitted = FabricCampusIbgpVxlanModel.from_config(_config()).to_payload()["management"]
-    assert "bgpFastConvergence" not in omitted
+    # Release preflight removes this omitted newer default on older controllers.
+    assert omitted["bgpFastConvergence"] is False
 
     enabled = FabricCampusIbgpVxlanModel.from_config(_config(bgp_fast_convergence=True, management_ipv4_prefix=30)).to_payload()["management"]
     assert enabled["bgpFastConvergence"] is True

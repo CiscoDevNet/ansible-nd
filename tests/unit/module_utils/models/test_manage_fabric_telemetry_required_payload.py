@@ -23,6 +23,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     TelemetryFlowCollectionModel,
     TelemetryNasModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import FabricBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import (
     FabricEbgpModel,
 )
@@ -41,7 +42,18 @@ FABRIC_MODELS = (
     pytest.param(FabricExternalConnectivityModel, id="external"),
     pytest.param(FabricCampusIbgpVxlanModel, id="campus"),
 )
-ENERGY_MANAGED_MODELS = (FabricCampusIbgpVxlanModel,)
+
+
+# Dedicated action models retain their original shared contract; fabric-type
+# subclasses deliberately exclude these action-owned fields.
+class SharedFabricModel(FabricBaseModel):
+    """Retain independent shared action-model coverage without a fabric-type consumer."""
+
+    _fabric_type = FabricCampusIbgpVxlanModel._fabric_type
+    management: type(None) = None
+
+
+ENERGY_MANAGED_MODELS = (SharedFabricModel,)
 
 
 def _config(**patch) -> dict:
@@ -230,7 +242,7 @@ def test_explicit_nas_object_retains_existing_child_defaults():
 )
 def test_omitted_energy_cost_uses_formal_default_instead_of_api_example(model_class, patch):
     """The declared/live 0.1 default applies when telemetry materializes without a cost."""
-    model = model_class.from_config(_config(**patch))
+    model = model_class.from_config(_config(management=None, **patch))
     assert model.telemetry_settings.energy_management.cost == 0.1
     assert model.to_payload()["telemetrySettings"]["energyManagement"]["cost"] == 0.1
     assert model.to_config()["telemetry_settings"]["energy_management"]["cost"] == 0.1
@@ -241,7 +253,7 @@ def test_omitted_energy_cost_uses_formal_default_instead_of_api_example(model_cl
 @pytest.mark.parametrize("cost", (0.0, 1.2, 1.3))
 def test_explicit_energy_cost_serialization_is_preserved(model_class, cost):
     """Default correction must not replace explicit values; live write acceptance is separate."""
-    model = model_class.from_config(_config(telemetry_settings={"energy_management": {"cost": cost}}))
+    model = model_class.from_config(_config(management=None, telemetry_settings={"energy_management": {"cost": cost}}))
     assert model.to_payload()["telemetrySettings"]["energyManagement"]["cost"] == cost
     assert model.to_config()["telemetry_settings"]["energy_management"]["cost"] == cost
     assert model.to_gathered_config()["telemetry_settings"]["energy_management"]["cost"] == cost
@@ -250,7 +262,7 @@ def test_explicit_energy_cost_serialization_is_preserved(model_class, cost):
 @pytest.mark.parametrize("model_class", ENERGY_MANAGED_MODELS)
 def test_energy_default_echo_and_gathered_argument_spec_round_trip(model_class):
     """A 0.1 controller echo compares unchanged and omitted Ansible input stays unforced."""
-    proposed = model_class.from_config(_config(telemetry_settings={}))
+    proposed = model_class.from_config(_config(management=None, telemetry_settings={}))
     response = proposed.to_payload()
     response["telemetrySettings"]["energyManagement"]["cost"] = 0.1
     existing = model_class.from_response(deepcopy(response))
@@ -264,7 +276,7 @@ def test_energy_default_echo_and_gathered_argument_spec_round_trip(model_class):
     validated = ModuleArgumentSpecValidator(argspec).validate(
         {
             "state": "merged",
-            "config": [_config(telemetry_settings={"energy_management": {}})],
+            "config": [_config(management=None, telemetry_settings={"energy_management": {}})],
         }
     )
     assert validated.error_messages == []

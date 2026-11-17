@@ -55,12 +55,6 @@ options:
         type: str
         default: essentials
         choices: [ essentials, advantage, premier ]
-      alert_suspend:
-        description:
-        - Alert Suspend state configured on the fabric.
-        type: str
-        default: disabled
-        choices: [ enabled, disabled ]
       telemetry_collection:
         description:
         - Enable telemetry collection for the fabric.
@@ -68,7 +62,7 @@ options:
         default: false
       telemetry_collection_type:
         description:
-        - Telemetry collection method.
+        - Telemetry collection method. The Campus default is C(inBand).
         - Applies when O(config.telemetry_collection=true).
         type: str
         default: inBand
@@ -102,9 +96,14 @@ options:
         - The Campus iBGP VXLAN management configuration for the fabric.
         type: dict
         suboptions:
+          # General
           bgp_asn:
             description:
-            - Autonomous system number 1-4294967295 | 1-65535[.0-65535].
+            - Autonomous system number.
+            - On ND 4.2.1, use a decimal value from C(1) through C(65535).
+            - On ND 4.3.1 and later, decimal values from C(1) through C(4294967295) and ASDOT notation are supported.
+            - ASDOT uses a first component from C(1) through C(65535) and a second component from C(0) through C(65535).
+            - An optional leading C(+) on a decimal ASN is normalized to unsigned API notation; it is not supported for ASDOT.
             - Required when creating a fabric and when using O(state=replaced) or O(state=overridden).
             - May be omitted from a partial O(state=merged) update to an existing fabric.
             type: str
@@ -123,6 +122,19 @@ options:
             - Enable switch metrics via periodic SNMP polling.
             type: bool
             default: false
+          link_state_routing_protocol:
+            description:
+            - The ND 4.2.1 and 4.3.1 Campus native templates make this field read-only and fix it to C(ospf).
+            type: str
+            default: ospf
+            choices: [ ospf ]
+          route_reflector_count:
+            description:
+            - Number of spines acting as Route-Reflectors.
+            type: int
+            default: 2
+            choices: [ 2, 4 ]
+          # Replication
           replication_mode:
             description:
             - Replication Mode for BUM Traffic.
@@ -133,7 +145,7 @@ options:
             choices: [ multicast ]
           multicast_group_subnet:
             description:
-            - IPv4 multicast pool in CIDR notation with a prefix length from C(8) through C(30).
+            - IPv4 multicast pool in CIDR notation with a prefix length from C(16) through C(30).
             - Applies when O(config.management.replication_mode=multicast).
             type: str
             default: "239.1.1.0/25"
@@ -168,9 +180,11 @@ options:
             - Applies when O(config.management.replication_mode=multicast).
             type: int
             default: 254
+          # Border Gateway
           vpc_peer_link_vlan:
             description:
             - VLAN range (2-4094) for vPC Peer Link SVI.
+            - Accepts comma-separated integers or ascending integer ranges.
             type: str
             default: "3600"
           vpc_peer_link_enable_native_vlan:
@@ -197,6 +211,7 @@ options:
           vpc_peer_link_port_channel_id:
             description:
             - vPC Peer Link Port Channel ID (1-4096).
+            - Accepts comma-separated integers or ascending integer ranges.
             type: str
             default: "500"
           vpc_ipv6_neighbor_discovery_sync:
@@ -212,8 +227,61 @@ options:
           vpc_domain_id_range:
             description:
             - vPC Domain Id range (1-1000).
+            - Accepts comma-separated integers or ascending integer ranges.
             type: str
             default: "1-1000"
+          l3_vni_no_vlan_default_option:
+            description:
+            - L3 VNI config without VLAN; propagated on VRF creation.
+            type: bool
+            default: false
+          site_id:
+            description:
+            - Accepts a non-zero decimal without leading zeros or dotted ASN notation (1-65535.0-65535).
+            - Decimal values up to C(4294967295) are supported on ND 4.2.1 and later.
+            - Decimal values from C(4294967296) through C(281474976710655) require ND 4.3.1 or later.
+            - On creation and with O(state=replaced) or O(state=overridden), an omitted value defaults to O(config.management.bgp_asn).
+            - On an existing fabric with O(state=merged), omission preserves its site ID even when O(config.management.bgp_asn) is supplied.
+            type: str
+          nxapi:
+            description:
+            - Enable NX-API over HTTPS.
+            type: bool
+            default: true
+          nxapi_https_port:
+            description:
+            - HTTPS port for NX-API (1-65535).
+            - Applies when O(config.management.nxapi=true).
+            type: int
+            default: 443
+          nxapi_http:
+            description:
+            - Enable NX-API over HTTP.
+            type: bool
+            default: true
+          nxapi_http_port:
+            description:
+            - HTTP port for NX-API (1-65535).
+            - Applies when O(config.management.nxapi_http=true).
+            type: int
+            default: 80
+          anycast_border_gateway_advertise_physical_ip:
+            description:
+            - Advertise Anycast Border Gateway PIP as VTEP.
+            type: bool
+            default: false
+          greenfield_debug_flag:
+            description:
+            - Allow switch config to be cleared without reload.
+            type: str
+            default: disable
+            choices: [ enable, disable ]
+          tcam_allocation:
+            description:
+            - TCAM commands auto-generated for VxLAN and vPC Fabric Peering.
+            type: bool
+            default: true
+          # Protocols
           bgp_loopback_id:
             description:
             - Underlay Routing Loopback Id (0-1023).
@@ -224,6 +292,35 @@ options:
             - Underlay VTEP loopback Id (NVE interface) (0-1023).
             type: int
             default: 1
+          bgp_ipv4_unicast_peering:
+            description:
+            - Enable BGP IPv4 unicast session between RR and RR client.
+            type: bool
+            default: false
+          auto_bgp_neighbor_description:
+            description:
+            - Generate BGP EVPN Neighbor Description.
+            type: bool
+            default: true
+          bgp_fast_convergence:
+            description:
+            - Enable fast convergence for BGP sessions and next-hop updates.
+            - This option requires Nexus Dashboard 4.3.1 or later.
+            type: bool
+            default: false
+          ospf_process_id:
+            description:
+            - OSPF Process Id (for Nexus - OSPF Process Tag, 1-65535).
+            - Applies when O(config.management.link_state_routing_protocol=ospf).
+            type: int
+            default: 1
+          ospf_area_id:
+            description:
+            - OSPF area ID as a valid IPv4 address.
+            - Applies when O(config.management.link_state_routing_protocol=ospf).
+            type: str
+            default: "0.0.0.0"
+          # Advanced
           vrf_template:
             description:
             - Default overlay VRF template for leafs.
@@ -244,75 +341,24 @@ options:
             - Default overlay network template for borders.
             type: str
             default: Default_Network_Extension_Universal
-          l3_vni_no_vlan_default_option:
-            description:
-            - L3 VNI config without VLAN; propagated on VRF creation.
-            type: bool
-            default: false
-          site_id:
-            description:
-            - Accepts a non-zero decimal without leading zeros or dotted ASN notation (1-65535.0-65535).
-            - Decimal values up to C(4294967295) are supported on ND 4.2.1 and later.
-            - Decimal values from C(4294967296) through C(281474976710655) require ND 4.3.1 or later.
-            - On creation and with O(state=replaced) or O(state=overridden), an omitted value defaults to O(config.management.bgp_asn).
-            - On an existing fabric with O(state=merged), omission preserves its site ID even when O(config.management.bgp_asn) is supplied.
-            type: str
           fabric_mtu:
             description:
-            - Intra Fabric Interface MTU (must be even, 576-9216).
+            - Intra Fabric Interface MTU (1500-9216).
             type: int
-            default: 9216
+            default: 9198
           l2_host_interface_mtu:
             description:
-            - Layer 2 host interface MTU (must be even, 1500-9216).
+            - Layer 2 host interface MTU (1500-9216).
             type: int
-            default: 9216
+            default: 9198
           tenant_dhcp:
             description:
             - Enable Tenant DHCP.
             type: bool
             default: true
-          nxapi:
-            description:
-            - Enable NX-API over HTTPS.
-            type: bool
-            default: false
-          nxapi_https_port:
-            description:
-            - HTTPS port for NX-API (1-65535).
-            - Applies when O(config.management.nxapi=true).
-            type: int
-            default: 443
-          nxapi_http:
-            description:
-            - Enable NX-API over HTTP.
-            type: bool
-            default: false
-          nxapi_http_port:
-            description:
-            - HTTP port for NX-API (1-65535).
-            - Applies when O(config.management.nxapi_http=true).
-            type: int
-            default: 80
           snmp_trap:
             description:
             - Configure Nexus Dashboard as a receiver for SNMP traps.
-            type: bool
-            default: true
-          anycast_border_gateway_advertise_physical_ip:
-            description:
-            - Advertise Anycast Border Gateway PIP as VTEP.
-            type: bool
-            default: false
-          greenfield_debug_flag:
-            description:
-            - Allow switch config to be cleared without reload.
-            type: str
-            default: disable
-            choices: [ enable, disable ]
-          tcam_allocation:
-            description:
-            - TCAM commands auto-generated for VxLAN and vPC Fabric Peering.
             type: bool
             default: true
           real_time_interface_statistics_collection:
@@ -326,6 +372,45 @@ options:
             - Applies when O(config.management.real_time_interface_statistics_collection=true).
             type: int
             default: 10
+          banner:
+            description:
+            - MOTD banner (delimiter char + message + delimiter).
+            - Leading and trailing whitespace and line breaks are preserved.
+            type: str
+            default: ""
+          system_mtu:
+            description:
+            - IOS XE System MTU (1500-9198).
+            type: int
+            default: 1500
+          vlan_trunking_protocol_mode:
+            description:
+            - VLAN Trunking Protocol Mode.
+            type: str
+            default: "off"
+            choices: [ "off", transparent ]
+          overlay_conversion:
+            description:
+            - One-time conversion of existing VRFs/networks from IOS_XE templates to Universal templates.
+            type: bool
+            default: false
+          ssh_bulk_mode:
+            description:
+            - Enable optimizations for bulk data transfer (IOS XE only).
+            type: bool
+            default: false
+          ssh_window_size:
+            description:
+            - SSH window size (IOS XE only).
+            type: int
+            default: 131072
+          ios_xe_banner:
+            description:
+            - MOTD banner for IOS XE (delimiter + message + delimiter).
+            - Leading and trailing whitespace and line breaks are preserved.
+            type: str
+            default: ""
+          # Resources
           bgp_loopback_ip_range:
             description:
             - Typically Loopback0 IP Address Range.
@@ -350,26 +435,31 @@ options:
           l2_vni_range:
             description:
             - Overlay network identifier range (1-16777214).
+            - Accepts comma-separated integers or ascending integer ranges.
             type: str
             default: "30000-49000"
           l3_vni_range:
             description:
             - Overlay VRF identifier range (1-16777214).
+            - Accepts comma-separated integers or ascending integer ranges.
             type: str
             default: "50000-59000"
           network_vlan_range:
             description:
             - Per Switch Overlay Network VLAN Range (2-4094).
+            - Accepts comma-separated integers or ascending integer ranges.
             type: str
             default: "2300-2999"
           vrf_vlan_range:
             description:
             - Per Switch Overlay VRF VLAN Range (2-4094).
+            - Accepts comma-separated integers or ascending integer ranges.
             type: str
             default: "2000-2299"
           sub_interface_dot1q_range:
             description:
-            - Per aggregation dot1q range for VRF-Lite (2-4093).
+            - Per aggregation dot1q range for VRF-Lite (2-4094).
+            - Accepts comma-separated integers or ascending integer ranges.
             type: str
             default: "2-511"
           vrf_lite_auto_config:
@@ -410,23 +500,31 @@ options:
             - Applies when O(config.management.per_vrf_loopback_auto_provision=true).
             type: str
             default: "10.5.0.0/22"
-          per_vrf_loopback_auto_provision_ipv6:
+          auto_symmetric_vrf_lite:
             description:
-            - Auto provision IPv6 loopback on VTEP on VRF attachment.
-            - Allocates addresses from O(config.management.per_vrf_loopback_ipv6_range) when enabled.
+            - Auto-generate VRF LITE sub-interface and BGP peering on managed neighbor devices.
+            - Applies to links automatically created with O(config.management.vrf_lite_auto_config=back2BackAndToExternal).
             type: bool
             default: false
-          per_vrf_loopback_ipv6_range:
+          auto_vrf_lite_default_vrf:
             description:
-            - Prefix pool for IPv6 loopback addresses on VTEPs per VRF.
-            - Applies when O(config.management.per_vrf_loopback_auto_provision_ipv6=true).
-            type: str
-            default: "fd00::a05:0/112"
-          banner:
+            - Auto-generate Default VRF interface and BGP peering on VRF LITE IFC auto deployment.
+            - Applies to links automatically created with O(config.management.vrf_lite_auto_config=back2BackAndToExternal).
+            type: bool
+            default: false
+          auto_symmetric_default_vrf:
             description:
-            - MOTD banner (delimiter char + message + delimiter).
+            - Auto-generate Default VRF interface and BGP peering on managed neighbor devices.
+            - Applies to links automatically created with O(config.management.vrf_lite_auto_config=back2BackAndToExternal).
+            type: bool
+            default: false
+          default_vrf_redistribution_bgp_route_map:
+            description:
+            - Route Map for redistributing BGP routes to IGP in default VRF.
+            - Applies to default-VRF peering generated by O(config.management.auto_vrf_lite_default_vrf) or O(config.management.auto_symmetric_default_vrf).
             type: str
-            default: ""
+            default: "extcon-rmap-filter"
+          # Bootstrap
           day0_bootstrap:
             description:
             - Automatic IP Assignment For POAP.
@@ -451,10 +549,7 @@ options:
             - DHCP Scope Start Address.
             - Applies when O(config.management.day0_bootstrap=true),
               O(config.management.local_dhcp_server=true).
-            - Use an IPv4 address without a prefix length with O(config.management.dhcp_protocol_version=dhcpv4) on ND 4.2 or later.
-            - An IPv6 address without a prefix length requires ND 4.3.1 or later,
-              O(config.management.dhcp_protocol_version=dhcpv6), and a V6 controller installation.
-            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject DHCPv6.
+            - Use an IPv4 or IPv6 address without a prefix length; O(config.management.dhcp_protocol_version) selects the address family.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           dhcp_end_address:
@@ -462,21 +557,14 @@ options:
             - DHCP Scope End Address.
             - Applies when O(config.management.day0_bootstrap=true),
               O(config.management.local_dhcp_server=true).
-            - Use an IPv4 address without a prefix length with O(config.management.dhcp_protocol_version=dhcpv4) on ND 4.2 or later.
-            - An IPv6 address without a prefix length requires ND 4.3.1 or later,
-              O(config.management.dhcp_protocol_version=dhcpv6), and a V6 controller installation.
-            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject DHCPv6.
+            - Use an IPv4 or IPv6 address without a prefix length; O(config.management.dhcp_protocol_version) selects the address family.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_gateway:
             description:
             - Default Gateway For Management VRF.
             - Applies to management addressing when O(config.management.day0_bootstrap=true).
-            - Use an IPv4 address without a prefix length on ND 4.2 or later.
-            - An IPv6 address without a prefix length is accepted as module config on ND 4.3.1 or later.
-            - With local DHCP, O(config.management.dhcp_protocol_version=dhcpv6) requires a V6 controller installation.
-            - With external DHCP, controller acceptance of an IPv6 gateway alone has not been verified.
-            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject local DHCPv6.
+            - Use an IPv4 or IPv6 address without a prefix length.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_ipv4_prefix:
@@ -503,6 +591,7 @@ options:
             - When O(state=replaced), omitting this option resets the collection to its default empty value.
             type: list
             elements: dict
+            default: []
             suboptions:
               start_ip:
                 description:
@@ -524,130 +613,10 @@ options:
                 - Prefix length. Use C(8)-C(30) for IPv4 or C(64)-C(126) for IPv6.
                 type: int
                 required: true
-          real_time_backup:
-            description:
-            - Backup hourly only if config deployed since last backup.
-            type: bool
-          scheduled_backup:
-            description:
-            - Enable daily backup at scheduled time.
-            type: bool
-          scheduled_backup_time:
-            description:
-            - Backup time (UTC) in 24-hour C(HH:MM) format (C(00:00) to C(23:59)).
-            - Applies when O(config.management.scheduled_backup=true).
-            type: str
-          link_state_routing_protocol:
-            description:
-            - The ND 4.2.1 and 4.3.1 Campus native templates make this field read-only and fix it to C(ospf).
-            type: str
-            default: ospf
-            choices: [ ospf ]
-          route_reflector_count:
-            description:
-            - Number of spines acting as Route-Reflectors.
-            type: int
-            default: 2
-            choices: [ 2, 4 ]
-          bgp_ipv4_unicast_peering:
-            description:
-            - Enable BGP IPv4 unicast session between RR and RR client.
-            type: bool
-            default: false
-          auto_bgp_neighbor_description:
-            description:
-            - Generate BGP EVPN Neighbor Description.
-            type: bool
-            default: true
-          bgp_fast_convergence:
-            description:
-            - Enable fast convergence for BGP sessions and next-hop updates.
-            - This option requires Nexus Dashboard 4.3.1 or later.
-            type: bool
-          ospf_process_id:
-            description:
-            - OSPF Process Id (for Nexus - OSPF Process Tag, 1-65535).
-            - Applies when O(config.management.link_state_routing_protocol=ospf).
-            type: int
-            default: 1
-          ospf_area_id:
-            description:
-            - OSPF area ID as a valid IPv4 address.
-            - Applies when O(config.management.link_state_routing_protocol=ospf).
-            type: str
-            default: "0.0.0.0"
-          system_mtu:
-            description:
-            - IOS XE System MTU (1500-9198).
-            type: int
-            default: 1500
-          vlan_trunking_protocol_mode:
-            description:
-            - VLAN Trunking Protocol Mode.
-            type: str
-            default: "off"
-            choices: [ "off", transparent ]
-          overlay_conversion:
-            description:
-            - One-time conversion of existing VRFs/networks from IOS_XE templates to Universal templates.
-            type: bool
-            default: false
-          ssh_bulk_mode:
-            description:
-            - Enable optimizations for bulk data transfer (IOS XE only).
-            type: bool
-            default: false
-          ssh_window_size:
-            description:
-            - SSH window size (IOS XE only).
-            type: int
-            default: 131072
-          ios_xe_banner:
-            description:
-            - MOTD banner for IOS XE (delimiter + message + delimiter).
-            type: str
-            default: ""
-          ios_xe_leaf_freeform:
-            description:
-            - Additional CLIs for all leafs (from show run).
-            type: str
-          extra_config_xe_spine:
-            description:
-            - Additional CLIs for all spines (from show run).
-            type: str
-            default: ""
-          extra_config_xe_intra_fabric_links:
-            description:
-            - Additional CLIs for all intra-fabric links.
-            type: str
-            default: ""
-          auto_symmetric_vrf_lite:
-            description:
-            - Auto-generate VRF LITE sub-interface and BGP peering on managed neighbor devices.
-            - Applies to links automatically created with O(config.management.vrf_lite_auto_config=back2BackAndToExternal).
-            type: bool
-            default: false
-          auto_vrf_lite_default_vrf:
-            description:
-            - Auto-generate Default VRF interface and BGP peering on VRF LITE IFC auto deployment.
-            - Applies to links automatically created with O(config.management.vrf_lite_auto_config=back2BackAndToExternal).
-            type: bool
-            default: false
-          auto_symmetric_default_vrf:
-            description:
-            - Auto-generate Default VRF interface and BGP peering on managed neighbor devices.
-            - Applies to links automatically created with O(config.management.vrf_lite_auto_config=back2BackAndToExternal).
-            type: bool
-            default: false
-          default_vrf_redistribution_bgp_route_map:
-            description:
-            - Route Map for redistributing BGP routes to IGP in default VRF.
-            - Applies to default-VRF peering generated by O(config.management.auto_vrf_lite_default_vrf) or O(config.management.auto_symmetric_default_vrf).
-            type: str
-            default: "extcon-rmap-filter"
           domain_name:
             description:
             - Domain name for DHCP server PnP block.
+            - A non-empty value must be a fully qualified domain name with a final label of two to six letters.
             type: str
             default: ""
           inband_management:
@@ -666,21 +635,57 @@ options:
           extra_config_xe_bootstrap:
             description:
             - Additional CLIs during device bootup/login (IOS-XE, e.g. AAA/Radius).
+            - Leading and trailing whitespace and line breaks are preserved.
             type: str
             default: ""
           extra_config_bootstrap_nxos_border_gateway:
             description:
             - Additional CLIs during device bootup/login for NX-OS border gateways.
+            - Leading and trailing whitespace and line breaks are preserved.
+            type: str
+            default: ""
+          # Configuration Backup
+          real_time_backup:
+            description:
+            - Backup hourly only if config deployed since last backup.
+            type: bool
+          scheduled_backup:
+            description:
+            - Enable daily backup at scheduled time.
+            type: bool
+          scheduled_backup_time:
+            description:
+            - Backup time (UTC) in 24-hour C(HH:MM) format (C(00:00) to C(23:59)).
+            - Applies when O(config.management.scheduled_backup=true).
+            type: str
+          # Freeform
+          ios_xe_leaf_freeform:
+            description:
+            - Additional CLIs for all leafs (from show run).
+            - Leading and trailing whitespace and line breaks are preserved.
+            type: str
+          extra_config_xe_spine:
+            description:
+            - Additional CLIs for all spines (from show run).
+            - Leading and trailing whitespace and line breaks are preserved.
+            type: str
+            default: ""
+          extra_config_xe_intra_fabric_links:
+            description:
+            - Additional CLIs for all intra-fabric links.
+            - Leading and trailing whitespace and line breaks are preserved.
             type: str
             default: ""
           extra_config_nxos_border_gateway:
             description:
             - Additional CLIs for all Border Gateways (from show run).
+            - Leading and trailing whitespace and line breaks are preserved.
             type: str
             default: ""
           extra_config_nxos_intra_fabric_links:
             description:
             - Additional CLIs for all NX-OS intra-fabric links.
+            - Leading and trailing whitespace and line breaks are preserved.
             type: str
             default: ""
       telemetry_settings:
@@ -784,16 +789,6 @@ options:
                     choices:
                     - json
                     default: json
-          energy_management:
-            description:
-            - Energy management settings.
-            type: dict
-            suboptions:
-              cost:
-                description:
-                - Energy cost per unit.
-                type: float
-                default: 0.1
       external_streaming_settings:
         description:
         - External streaming settings for the fabric.
@@ -869,7 +864,7 @@ extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 notes:
-- This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
+- This module is only supported on Nexus Dashboard having version 4.2.1 or higher.
 - Only Campus iBGP VXLAN fabric type (C(vxlanCampus)) is supported by this module.
 - With O(state=replaced) or O(state=overridden), omitted settings revert to their documented defaults except for identified
   dynamic or controller-owned values, which are preserved from an existing fabric.
@@ -888,7 +883,6 @@ EXAMPLES = r"""
           latitude: 37.7749
           longitude: -122.4194
         license_tier: premier
-        alert_suspend: disabled
         security_domain: all
         telemetry_collection: false
         management:
@@ -940,7 +934,6 @@ EXAMPLES = r"""
           latitude: 37.7749
           longitude: -122.4194
         license_tier: premier
-        alert_suspend: disabled
         security_domain: all
         telemetry_collection: false
         management:

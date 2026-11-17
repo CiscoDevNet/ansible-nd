@@ -9,6 +9,9 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
+from ansible.module_utils.common.arg_spec import ModuleArgumentSpecValidator
+
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_campus_ibgp_vxlan import FabricCampusIbgpVxlanModel
 
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
     NDStateMachine,
@@ -65,6 +68,7 @@ def _rest_send() -> RestSend:
     rest_send.response_handler = ResponseHandler()
     rest_send.unit_test = True
     rest_send.timeout = 1
+    rest_send.controller_product_version = "4.3.1"
     return rest_send
 
 
@@ -281,3 +285,149 @@ def test_nd_state_machine_campus_fabric_00100() -> None:
     assert instance.existing.get("campus2").management.dhcp_start_address == "2001:db8::10"
     assert instance.existing.get("campus2").management.dhcp_end_address == "2001:db8::20"
     assert instance.existing.get("campus2").management.management_gateway == "2001:db8::1"
+
+
+def _memory_run(backend: dict, config: dict, state: str, version: str) -> NDStateMachine:
+    """Run the actual state lifecycle while retaining callback wire bodies for repeat checks."""
+
+    class MemoryCampusOrchestrator(ManageCampusIbgpVxlanFabricOrchestrator):
+        def query_all(self) -> ResponseType:
+            return [deepcopy(backend["response"])] if backend["response"] is not None else []
+
+        def create(self, model_instance, **kwargs) -> ResponseType:
+            return self._remember("create", model_instance)
+
+        def update(self, model_instance, **kwargs) -> ResponseType:
+            return self._remember("update", model_instance)
+
+        def _remember(self, operation: str, model_instance) -> ResponseType:
+            payload = model_instance.to_payload()
+            if version == "4.2.1":
+                assert "bgpFastConvergence" not in payload["management"]
+            backend["writes"].append((operation, deepcopy(payload)))
+            backend["response"] = deepcopy(payload)
+            if backend.get("omit_inactive_http") and not payload["management"]["nxapi"]:
+                backend["response"]["management"].pop("nxapiHttp", None)
+            return {}
+
+    rest = _rest_send()
+    rest.controller_product_version = version
+    machine = NDStateMachine(module=_module(state, [deepcopy(config)]), model_orchestrator=MemoryCampusOrchestrator(rest_send=rest))
+    machine.manage_state()
+    return machine
+
+
+@pytest.mark.parametrize("version", ("4.2.1", "4.3.1"))
+@pytest.mark.parametrize("state", ("merged", "replaced", "overridden"))
+def test_native_defaults_create_and_repeat_without_writes(version: str, state: str) -> None:
+    """Default materialization and release filtering apply before every create/exact comparison."""
+    backend = {"response": None, "writes": []}
+    config = _minimal_config()
+    created = _memory_run(backend, config, state, version)
+    assert created.output.format()["changed"] is True
+    assert [operation for operation, _ in backend["writes"]] == ["create"]
+    management = backend["response"]["management"]
+    assert management["fabricMtu"] == management["l2HostInterfaceMtu"] == 9198
+    assert management["nxapi"] is management["nxapiHttp"] is True
+    assert backend["response"]["telemetryCollectionType"] == "inBand"
+    assert _memory_run(backend, config, state, version).output.format()["changed"] is False
+    assert len(backend["writes"]) == 1
+
+
+@pytest.mark.parametrize("version", ("4.2.1", "4.3.1"))
+@pytest.mark.parametrize("state", ("merged", "replaced", "overridden"))
+def test_scoped_out_management_controls_survive_updates_and_repeated_exact_states(version: str, state: str) -> None:
+    """An unrelated managed update preserves opaque NetFlow and hidden IPv6 state on both releases."""
+    backend = {"response": None, "writes": []}
+    config = _minimal_config()
+    _memory_run(backend, config, state, version)
+    opaque = {
+        "netflowSettings": {"netflow": True, "netflowExporterCollection": [{"exporterName": "existing", "udpPort": 2055}]},
+        "perVrfLoopbackAutoProvisionIpv6": True,
+        "perVrfLoopbackIpv6Range": "2001:db8:5::/112",
+    }
+    backend["response"]["management"].update(deepcopy(opaque))
+    backend["writes"].clear()
+    assert _memory_run(backend, config, state, version).output.format()["changed"] is False
+    config["management"]["performance_monitoring"] = not backend["response"]["management"]["performanceMonitoring"]
+    updated = _memory_run(backend, config, state, version)
+    assert updated.output.format()["changed"] is True
+    assert [operation for operation, _ in backend["writes"]] == ["update"]
+    for alias, value in opaque.items():
+        assert backend["response"]["management"][alias] == value
+    assert _memory_run(backend, config, state, version).output.format()["changed"] is False
+    assert len(backend["writes"]) == 1
+
+    gathered = FabricCampusIbgpVxlanModel.from_response(backend["response"]).to_gathered_config()
+    for name in ("netflow_settings", "per_vrf_loopback_auto_provision_ipv6", "per_vrf_loopback_ipv6_range"):
+        assert name not in gathered["management"]
+    checked = ModuleArgumentSpecValidator(FabricCampusIbgpVxlanModel.get_argument_spec()).validate({"state": state, "config": [gathered]})
+    assert checked.error_messages == []
+    assert _memory_run(backend, checked.validated_parameters["config"][0], state, version).output.format()["changed"] is False
+
+
+@pytest.mark.parametrize("version", ("4.2.1", "4.3.1"))
+@pytest.mark.parametrize("state", ("merged", "replaced", "overridden"))
+def test_native_defaults_preserve_merge_omission_and_reset_exact_state(version: str, state: str) -> None:
+    """The default correction keeps existing merged semantics and ordinary exact-state reset behavior."""
+    backend = {"response": None, "writes": []}
+    config = _minimal_config()
+    _memory_run(backend, config, "merged", version)
+    backend["response"]["management"].update({"nxapi": False, "nxapiHttp": False, "fabricMtu": 9000, "l2HostInterfaceMtu": 9000})
+    backend["writes"].clear()
+    changed = _memory_run(backend, config, state, version).output.format()["changed"]
+    assert changed is (state != "merged")
+    expected = False if state == "merged" else True
+    assert backend["response"]["management"]["nxapi"] is expected
+    assert backend["response"]["management"]["nxapiHttp"] is expected
+    assert backend["response"]["management"]["fabricMtu"] == (9000 if state == "merged" else 9198)
+    assert backend["response"]["management"]["l2HostInterfaceMtu"] == (9000 if state == "merged" else 9198)
+    assert _memory_run(backend, config, state, version).output.format()["changed"] is False
+
+
+@pytest.mark.parametrize("state", ("merged", "replaced", "overridden"))
+@pytest.mark.parametrize("bgp_asn", ("70000", "1.1"))
+def test_expanded_asn_fails_before_any_callback_on_4_2_and_repeats_cleanly_on_4_3(state: str, bgp_asn: str) -> None:
+    """Release-specific ASN constraints reject unsupported writes without gating the whole field."""
+    config = _minimal_config()
+    config["management"]["bgp_asn"] = bgp_asn
+    older = {"response": None, "writes": []}
+    with pytest.raises(NDStateMachineError, match=r"management\.bgp_asn.*ND release-specific format"):
+        _memory_run(older, config, state, "4.2.1")
+    assert older["writes"] == []
+    assert older["response"] is None
+
+    newer = {"response": None, "writes": []}
+    assert _memory_run(newer, config, state, "4.3.1").output.format()["changed"] is True
+    assert newer["response"]["management"]["bgpAsn"] == bgp_asn
+    assert _memory_run(newer, config, state, "4.3.1").output.format()["changed"] is False
+    assert [operation for operation, _ in newer["writes"]] == ["create"]
+
+
+@pytest.mark.parametrize("version", ("4.2.1", "4.3.1"))
+@pytest.mark.parametrize("state", ("merged", "replaced", "overridden"))
+def test_disabled_nxapi_http_controller_omission_does_not_repeat_writes(version, state):
+    backend = {"response": None, "writes": [], "omit_inactive_http": True}
+    config = _minimal_config()
+    _memory_run(backend, config, state, version)
+    backend["writes"].clear()
+    config["management"].update(nxapi=False, nxapi_http=False)
+    assert _memory_run(backend, config, state, version).output.format()["changed"] is True
+    assert "nxapiHttp" not in backend["response"]["management"]
+    assert backend["writes"][0][1]["management"]["nxapiHttp"] is False
+    assert _memory_run(backend, config, state, version).output.format()["changed"] is False
+    assert len(backend["writes"]) == 1
+
+    # A merged input omitting the parent must use existing disabled state.
+    partial = {"fabric_name": "campus1", "management": {"nxapi_http": False}}
+    assert _memory_run(backend, partial, "merged", version).output.format()["changed"] is False
+
+    config["management"]["nxapi"] = True
+    assert _memory_run(backend, config, state, version).output.format()["changed"] is True
+    assert backend["response"]["management"]["nxapiHttp"] is False
+    assert _memory_run(backend, config, state, version).output.format()["changed"] is False
+    config["management"]["nxapi_http"] = True
+    assert _memory_run(backend, config, state, version).output.format()["changed"] is True
+    assert backend["response"]["management"]["nxapiHttp"] is True
+    assert _memory_run(backend, config, state, version).output.format()["changed"] is False
+    assert len(backend["writes"]) == 3

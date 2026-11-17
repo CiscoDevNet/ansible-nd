@@ -64,19 +64,15 @@ FABRIC_FAMILIES = (
     (FabricCampusIbgpVxlanModel, ManageCampusIbgpVxlanFabricOrchestrator),
 )
 
-SITE_ID_FAMILIES = tuple(
-    family
-    for family in FABRIC_FAMILIES
-    if family[0] is not FabricExternalConnectivityModel
-)
+SITE_ID_FAMILIES = tuple(family for family in FABRIC_FAMILIES if family[0] is not FabricExternalConnectivityModel)
 BASELINE_IPV6_FAMILIES = (
     (FabricIbgpModel, ManageIbgpFabricOrchestrator),
     (FabricAiIbgpVxlanModel, ManageAiIbgpVxlanFabricOrchestrator),
     (FabricEbgpModel, ManageEbgpFabricOrchestrator),
     (FabricAiEbgpVxlanModel, ManageAiEbgpVxlanFabricOrchestrator),
     (FabricExternalConnectivityModel, ManageExternalFabricOrchestrator),
+    (FabricCampusIbgpVxlanModel, ManageCampusIbgpVxlanFabricOrchestrator),
 )
-DHCP_VERSION_GATED_FAMILIES = tuple(family for family in FABRIC_FAMILIES if family not in BASELINE_IPV6_FAMILIES)
 
 DHCP_IPV6_FIELDS = (
     ("dhcp_start_address", "2001:db8::10"),
@@ -134,9 +130,7 @@ def _orchestrator(orchestrator_class, state: str, version: str | None = None):
 
 
 @pytest.mark.parametrize(("model_class", "orchestrator_class"), FABRIC_FAMILIES)
-def test_partial_merged_proposal_may_omit_bgp_asn(
-    model_class, orchestrator_class
-) -> None:
+def test_partial_merged_proposal_may_omit_bgp_asn(model_class, orchestrator_class) -> None:
     model = model_class.from_config(
         {"fabric_name": "fabric1", "management": {"performance_monitoring": True}},
         context={"state": "merged"},
@@ -151,28 +145,18 @@ def test_partial_merged_proposal_may_omit_bgp_asn(
 
 @pytest.mark.parametrize(("model_class", "orchestrator_class"), FABRIC_FAMILIES)
 def test_create_requires_bgp_asn(model_class, orchestrator_class) -> None:
-    model = model_class.from_config(
-        {"fabric_name": "fabric1", "management": {}}, context={"state": "merged"}
-    )
+    model = model_class.from_config({"fabric_name": "fabric1", "management": {}}, context={"state": "merged"})
 
-    with pytest.raises(
-        RuntimeError, match=r"management\.bgp_asn is required when creating.*fabric1"
-    ):
+    with pytest.raises(RuntimeError, match=r"management\.bgp_asn is required when creating.*fabric1"):
         _orchestrator(orchestrator_class, "merged").preflight_create([model])
 
 
 @pytest.mark.parametrize("state", ("replaced", "overridden"))
 @pytest.mark.parametrize(("model_class", "orchestrator_class"), FABRIC_FAMILIES)
-def test_exact_states_require_bgp_asn(
-    model_class, orchestrator_class, state: str
-) -> None:
-    model = model_class.from_config(
-        {"fabric_name": "fabric1", "management": {}}, context={"state": state}
-    )
+def test_exact_states_require_bgp_asn(model_class, orchestrator_class, state: str) -> None:
+    model = model_class.from_config({"fabric_name": "fabric1", "management": {}}, context={"state": state})
 
-    with pytest.raises(
-        RuntimeError, match=rf"management\.bgp_asn is required when state is '{state}'"
-    ):
+    with pytest.raises(RuntimeError, match=rf"management\.bgp_asn is required when state is '{state}'"):
         _orchestrator(orchestrator_class, state).preflight([model])
 
 
@@ -198,9 +182,7 @@ def test_parse_controller_product_version(value, expected) -> None:
 
 @pytest.mark.parametrize("version", (None, "4.2.1", "4.2(1)"))
 def test_all_new_ibgp_defaults_are_omitted_before_their_minimum_release(version) -> None:
-    model = FabricIbgpModel.from_config(
-        {"fabric_name": "fabric1", "management": {"bgp_asn": "65001"}}
-    )
+    model = FabricIbgpModel.from_config({"fabric_name": "fabric1", "management": {"bgp_asn": "65001"}})
     management = model.management
     assert management is not None
     _orchestrator(ManageIbgpFabricOrchestrator, "merged", version).preflight([model])
@@ -212,9 +194,7 @@ def test_all_new_ibgp_defaults_are_omitted_before_their_minimum_release(version)
 
 @pytest.mark.parametrize("version", ("4.3.1", "4.3.1a", "4.4.1"))
 def test_new_ibgp_defaults_match_the_supported_native_template(version) -> None:
-    model = FabricIbgpModel.from_config(
-        {"fabric_name": "fabric1", "management": {"bgp_asn": "65001"}}
-    )
+    model = FabricIbgpModel.from_config({"fabric_name": "fabric1", "management": {"bgp_asn": "65001"}})
     _orchestrator(ManageIbgpFabricOrchestrator, "merged", version).preflight([model])
     payload = model.to_payload()["management"]
     options = FabricIbgpModel.get_argument_spec()["config"]["options"]["management"]["options"]
@@ -229,9 +209,7 @@ def test_new_ibgp_defaults_match_the_supported_native_template(version) -> None:
 @pytest.mark.parametrize(("field", "value"), IBGP_RELEASE_INPUT_CASES.items())
 def test_every_new_ibgp_field_rejects_explicit_input_on_nd_4_2(field, value) -> None:
     validated = ModuleArgumentSpecValidator(FabricIbgpModel.get_argument_spec()).validate(
-        {"state": "merged", "config": [
-            {"fabric_name": "fabric1", "management": {"bgp_asn": "65001", field: value}}
-        ]}
+        {"state": "merged", "config": [{"fabric_name": "fabric1", "management": {"bgp_asn": "65001", field: value}}]}
     )
     assert validated.error_messages == []
     model = FabricIbgpModel.from_config(validated.validated_parameters["config"][0])
@@ -242,19 +220,19 @@ def test_every_new_ibgp_field_rejects_explicit_input_on_nd_4_2(field, value) -> 
 
 @pytest.mark.parametrize("version", ("4.2.1", "4.2(1)", "4.3.1"))
 def test_connectivity_domain_name_is_supported_on_both_releases(version) -> None:
-    model = FabricIbgpModel.from_config(
-        {"fabric_name": "fabric1", "management": {"bgp_asn": "65001", "connectivity_domain_name": "example.com"}}
-    )
+    model = FabricIbgpModel.from_config({"fabric_name": "fabric1", "management": {"bgp_asn": "65001", "connectivity_domain_name": "example.com"}})
     _orchestrator(ManageIbgpFabricOrchestrator, "merged", version).preflight([model])
     assert model.to_payload()["management"]["connectivityDomainName"] == "example.com"
 
 
 @pytest.mark.parametrize("field", ("isis_keys", "ospf_keys", "pim_keys"))
 def test_ibgp_keychain_material_defaults_and_release_gate(field) -> None:
-    model = FabricIbgpModel.from_config({
-        "fabric_name": "fabric1",
-        "management": {"bgp_asn": "65001", field: [{"key_id": 1, "key_string": "auditKey"}]},
-    })
+    model = FabricIbgpModel.from_config(
+        {
+            "fabric_name": "fabric1",
+            "management": {"bgp_asn": "65001", field: [{"key_id": 1, "key_string": "auditKey"}]},
+        }
+    )
     with pytest.raises(RuntimeError, match=rf"{field} \(requires ND 4\.3\.1 or later\)"):
         _orchestrator(ManageIbgpFabricOrchestrator, "merged", "4.2(1)").preflight([model])
     _orchestrator(ManageIbgpFabricOrchestrator, "merged", "4.3.1").preflight([model])
@@ -272,22 +250,20 @@ def test_ibgp_secret_constraints_reject_invalid_plaintext_without_type_error(fie
     for value in ("bad key", "x" * (maximum + 1)):
         supplied = value if field == "ntp_auth_key" else [{"key_id": 1, "key_string": value}]
         with pytest.raises(ValueError):
-            FabricIbgpModel.from_config({
-                "fabric_name": "fabric1",
-                "management": {"bgp_asn": "65001", field: supplied},
-            })
+            FabricIbgpModel.from_config(
+                {
+                    "fabric_name": "fabric1",
+                    "management": {"bgp_asn": "65001", field: supplied},
+                }
+            )
 
 
 @pytest.mark.parametrize(
     ("older", "newer"),
     (("4.3.1", "4.3.1a"), ("4.3.1a", "4.3.1b")),
 )
-def test_parse_controller_product_version_orders_lettered_bug_fixes(
-    older, newer
-) -> None:
-    assert parse_controller_product_version(older) < parse_controller_product_version(
-        newer
-    )
+def test_parse_controller_product_version_orders_lettered_bug_fixes(older, newer) -> None:
+    assert parse_controller_product_version(older) < parse_controller_product_version(newer)
 
 
 @pytest.mark.parametrize(
@@ -297,43 +273,31 @@ def test_parse_controller_product_version_orders_lettered_bug_fixes(
         (FabricAiIbgpVxlanModel, ManageAiIbgpVxlanFabricOrchestrator),
     ),
 )
-def test_ibgp_release_gate_rejects_explicit_false_and_empty_values_at_boundary(
-    model_class, orchestrator_class
-) -> None:
+def test_ibgp_release_gate_rejects_explicit_false_and_empty_values_at_boundary(model_class, orchestrator_class) -> None:
     for field, value in IBGP_RELEASE_GATE_PRESENCE_CASES:
         management_class = next(
-            item
-            for item in get_args(model_class.model_fields["management"].annotation)
-            if isinstance(item, type) and hasattr(item, "model_fields")
+            item for item in get_args(model_class.model_fields["management"].annotation) if isinstance(item, type) and hasattr(item, "model_fields")
         )
         field_info = management_class.model_fields[field]
         assert NDMinimumVersion("4.3.1") in field_info.metadata
         assert "NDMinimumVersion" not in str(management_class.model_json_schema())
-        model = model_class.from_config(
-            {"fabric_name": "fabric1", "management": {"bgp_asn": "65001", field: value}}
-        )
+        model = model_class.from_config({"fabric_name": "fabric1", "management": {"bgp_asn": "65001", field: value}})
         assert model.management is not None
         assert field in model.management.model_fields_set
-        with pytest.raises(
-            RuntimeError, match=rf"{field} \(requires ND 4\.3\.1 or later\)"
-        ):
+        with pytest.raises(RuntimeError, match=rf"{field} \(requires ND 4\.3\.1 or later\)"):
             _orchestrator(orchestrator_class, "merged", "4.2.1").preflight([model])
         _orchestrator(orchestrator_class, "merged", "4.3.1").preflight([model])
 
 
 @pytest.mark.parametrize(("model_class", "orchestrator_class"), FABRIC_FAMILIES[:-1])
-def test_metadata_release_gate_covers_each_non_campus_fabric_family(
-    model_class, orchestrator_class
-) -> None:
+def test_metadata_release_gate_covers_each_non_campus_fabric_family(model_class, orchestrator_class) -> None:
     model = model_class.from_config(
         {
             "fabric_name": "fabric1",
             "management": {"bgp_asn": "65001", "allow_smart_switch_ha": False},
         }
     )
-    with pytest.raises(
-        RuntimeError, match=r"allow_smart_switch_ha \(requires ND 4\.3\.1 or later\)"
-    ):
+    with pytest.raises(RuntimeError, match=r"allow_smart_switch_ha \(requires ND 4\.3\.1 or later\)"):
         _orchestrator(orchestrator_class, "merged", "4.2.1").preflight([model])
     _orchestrator(orchestrator_class, "merged", "4.3.1").preflight([model])
 
@@ -349,15 +313,11 @@ def test_ibgp_field_minimum_can_be_a_lettered_bug_fix_release(monkeypatch) -> No
     field_info = type(model.management).model_fields["allow_smart_switch_ha"]
     monkeypatch.setattr(field_info, "metadata", [NDMinimumVersion("4.3.1a")])
     with pytest.raises(RuntimeError, match=r"requires ND 4\.3\.1a or later"):
-        _orchestrator(ManageIbgpFabricOrchestrator, "merged", "4.3.1").preflight(
-            [model]
-        )
+        _orchestrator(ManageIbgpFabricOrchestrator, "merged", "4.3.1").preflight([model])
     _orchestrator(ManageIbgpFabricOrchestrator, "merged", "4.3.1a").preflight([model])
 
 
-@pytest.mark.parametrize(
-    "record_template", ("netflowIpv4Record", "netflowLayer2Record")
-)
+@pytest.mark.parametrize("record_template", ("netflowIpv4Record", "netflowLayer2Record"))
 def test_netflow_record_template_enum_is_enforced_through_nd_4_2(
     record_template,
 ) -> None:
@@ -368,9 +328,7 @@ def test_netflow_record_template_enum_is_enforced_through_nd_4_2(
                 "bgp_asn": "65001",
                 "netflow_settings": {
                     "netflow": True,
-                    "netflow_record_collection": [
-                        {"record_name": "record1", "record_template": record_template}
-                    ],
+                    "netflow_record_collection": [{"record_name": "record1", "record_template": record_template}],
                 },
             },
         }
@@ -386,17 +344,13 @@ def test_netflow_record_template_rejects_non_enum_value_on_nd_4_2() -> None:
                 "bgp_asn": "65001",
                 "netflow_settings": {
                     "netflow": True,
-                    "netflow_record_collection": [
-                        {"record_name": "record1", "record_template": "customRecord"}
-                    ],
+                    "netflow_record_collection": [{"record_name": "record1", "record_template": "customRecord"}],
                 },
             },
         }
     )
     with pytest.raises(RuntimeError, match="record_template must be one of"):
-        _orchestrator(ManageIbgpFabricOrchestrator, "merged", "4.2.1").preflight(
-            [model]
-        )
+        _orchestrator(ManageIbgpFabricOrchestrator, "merged", "4.2.1").preflight([model])
 
 
 @pytest.mark.parametrize("version", ("4.3.1", "4.3.1a"))
@@ -408,9 +362,7 @@ def test_netflow_record_template_is_string_for_nd_4_3_and_later(version) -> None
                 "bgp_asn": "65001",
                 "netflow_settings": {
                     "netflow": True,
-                    "netflow_record_collection": [
-                        {"record_name": "record1", "record_template": "customRecord"}
-                    ],
+                    "netflow_record_collection": [{"record_name": "record1", "record_template": "customRecord"}],
                 },
             },
         }
@@ -430,9 +382,7 @@ def test_ibgp_secret_pattern_is_enforced_from_nd_4_3(version) -> None:
         }
     )
     with pytest.raises(RuntimeError, match="bgp_authentication_key does not match"):
-        _orchestrator(ManageIbgpFabricOrchestrator, "merged", version).preflight(
-            [model]
-        )
+        _orchestrator(ManageIbgpFabricOrchestrator, "merged", version).preflight([model])
 
 
 def test_ibgp_secret_pattern_is_not_applied_before_nd_4_3() -> None:
@@ -473,9 +423,7 @@ def test_ospf_max_metric_startup_wait_default_is_release_aware() -> None:
     assert proposed.management.ospf_max_metric_startup_wait == 600
     assert "ospf_max_metric_startup_wait" not in proposed.management.model_fields_set
 
-    _orchestrator(ManageIbgpFabricOrchestrator, "replaced", "4.2.1").preflight(
-        [proposed]
-    )
+    _orchestrator(ManageIbgpFabricOrchestrator, "replaced", "4.2.1").preflight([proposed])
     assert proposed.management.ospf_max_metric_startup_wait is None
     assert "ospf_max_metric_startup_wait" not in proposed.management.model_fields_set
     assert "ospfMaxMetricStartupWait" not in proposed.to_payload().get("management", {})
@@ -486,9 +434,7 @@ def test_ospf_max_metric_startup_wait_default_is_release_aware() -> None:
             "management": {"bgp_asn": "65002"},
         }
     )
-    _orchestrator(ManageIbgpFabricOrchestrator, "replaced", "4.3.1").preflight(
-        [newer_release]
-    )
+    _orchestrator(ManageIbgpFabricOrchestrator, "replaced", "4.3.1").preflight([newer_release])
     assert newer_release.to_payload()["management"]["ospfMaxMetricStartupWait"] == 600
 
 
@@ -504,9 +450,7 @@ def test_explicit_ospf_max_metric_startup_wait_is_rejected_before_nd_4_3() -> No
     )
 
     with pytest.raises(RuntimeError, match="ospf_max_metric_startup_wait.*requires ND 4.3.1"):
-        _orchestrator(ManageIbgpFabricOrchestrator, "merged", "4.2.1").preflight(
-            [proposed]
-        )
+        _orchestrator(ManageIbgpFabricOrchestrator, "merged", "4.2.1").preflight([proposed])
 
 
 @pytest.mark.parametrize(("model_class", "orchestrator_class"), SITE_ID_FAMILIES)
@@ -530,9 +474,7 @@ def test_extended_site_id_is_release_aware(model_class, orchestrator_class) -> N
 
 @pytest.mark.parametrize("value", (True, False))
 @pytest.mark.parametrize("version", (None, "4.2.1"))
-def test_campus_bgp_fast_convergence_rejects_supplied_value_before_4_3_1(
-    value: bool, version: str | None
-) -> None:
+def test_campus_bgp_fast_convergence_rejects_supplied_value_before_4_3_1(value: bool, version: str | None) -> None:
     model = FabricCampusIbgpVxlanModel.from_config(
         {
             "fabric_name": "fabric1",
@@ -540,18 +482,12 @@ def test_campus_bgp_fast_convergence_rejects_supplied_value_before_4_3_1(
         }
     )
 
-    with pytest.raises(
-        RuntimeError, match=r"bgp_fast_convergence \(requires ND 4.3.1 or later\)"
-    ):
-        _orchestrator(
-            ManageCampusIbgpVxlanFabricOrchestrator, "merged", version
-        ).preflight([model])
+    with pytest.raises(RuntimeError, match=r"bgp_fast_convergence \(requires ND 4.3.1 or later\)"):
+        _orchestrator(ManageCampusIbgpVxlanFabricOrchestrator, "merged", version).preflight([model])
 
 
 def test_campus_bgp_fast_convergence_is_allowed_when_omitted_or_supported() -> None:
-    omitted = FabricCampusIbgpVxlanModel.from_config(
-        {"fabric_name": "fabric1", "management": {"bgp_asn": "65001"}}
-    )
+    omitted = FabricCampusIbgpVxlanModel.from_config({"fabric_name": "fabric1", "management": {"bgp_asn": "65001"}})
     supplied = FabricCampusIbgpVxlanModel.from_config(
         {
             "fabric_name": "fabric1",
@@ -559,36 +495,17 @@ def test_campus_bgp_fast_convergence_is_allowed_when_omitted_or_supported() -> N
         }
     )
 
-    _orchestrator(ManageCampusIbgpVxlanFabricOrchestrator, "merged", "4.2.1").preflight(
-        [omitted]
-    )
-    _orchestrator(
-        ManageCampusIbgpVxlanFabricOrchestrator, "merged", "4.3.1a"
-    ).preflight([supplied])
-
-
-@pytest.mark.parametrize(("model_class", "orchestrator_class"), DHCP_VERSION_GATED_FAMILIES)
-@pytest.mark.parametrize(("field", "value"), DHCP_IPV6_FIELDS)
-@pytest.mark.parametrize("version", (None, "4.2.1", "4.3.0"))
-def test_explicit_ipv6_dhcp_and_gateway_fields_fail_closed_before_4_3_1(
-    model_class, orchestrator_class, field, value, version
-) -> None:
-    management = {"bgp_asn": "65001", field: value}
-    if field != "management_gateway":
-        management["dhcp_protocol_version"] = "dhcpv6"
-    model = model_class.from_config(
-        {"fabric_name": "fabric1", "management": management}
-    )
-
-    with pytest.raises(RuntimeError, match="require ND 4.3.1 or later"):
-        _orchestrator(orchestrator_class, "merged", version).preflight([model])
+    _orchestrator(ManageCampusIbgpVxlanFabricOrchestrator, "merged", "4.2.1").preflight([omitted])
+    _orchestrator(ManageCampusIbgpVxlanFabricOrchestrator, "merged", "4.3.1a").preflight([supplied])
 
 
 @pytest.mark.parametrize(("model_class", "orchestrator_class"), BASELINE_IPV6_FAMILIES)
 @pytest.mark.parametrize(("field", "value"), DHCP_IPV6_FIELDS)
 @pytest.mark.parametrize("version", (None, "4.2.1", "4.2(1)"))
 def test_ipv6_management_addresses_follow_baseline_native_template(model_class, orchestrator_class, field, value, version) -> None:
-    management = {"bgp_asn": "65001", field: value, "dhcp_protocol_version": "dhcpv6"}
+    # Isolate DHCP/address release policy from the separate Campus ASN value
+    # contract, which requires a known product version when explicitly supplied.
+    management = {field: value, "dhcp_protocol_version": "dhcpv6"}
     model = model_class.from_config({"fabric_name": "fabric1", "management": management})
     _orchestrator(orchestrator_class, "merged", version).preflight([model])
     alias = type(model.management).model_fields[field].alias
@@ -598,15 +515,11 @@ def test_ipv6_management_addresses_follow_baseline_native_template(model_class, 
 @pytest.mark.parametrize(("model_class", "orchestrator_class"), FABRIC_FAMILIES)
 @pytest.mark.parametrize(("field", "value"), DHCP_IPV6_FIELDS)
 @pytest.mark.parametrize("version", ("4.3.1", "4.3.1a", "4.4.0"))
-def test_explicit_ipv6_dhcp_and_gateway_fields_pass_release_preflight_on_4_3_1_plus(
-    model_class, orchestrator_class, field, value, version
-) -> None:
+def test_explicit_ipv6_dhcp_and_gateway_fields_pass_release_preflight_on_4_3_1_plus(model_class, orchestrator_class, field, value, version) -> None:
     management = {"bgp_asn": "65001", field: value}
     if field != "management_gateway":
         management["dhcp_protocol_version"] = "dhcpv6"
-    model = model_class.from_config(
-        {"fabric_name": "fabric1", "management": management}
-    )
+    model = model_class.from_config({"fabric_name": "fabric1", "management": management})
 
     # This is a local schema/release check, not evidence that a particular
     # controller installation accepts DHCPv6 writes.
@@ -616,24 +529,18 @@ def test_explicit_ipv6_dhcp_and_gateway_fields_pass_release_preflight_on_4_3_1_p
 @pytest.mark.parametrize(("model_class", "orchestrator_class"), FABRIC_FAMILIES)
 @pytest.mark.parametrize("field", ("dhcp_start_address", "dhcp_end_address"))
 @pytest.mark.parametrize("protocol", (None, "dhcpv4"))
-def test_ipv6_dhcp_scope_requires_explicit_dhcpv6_protocol(
-    model_class, orchestrator_class, field, protocol
-) -> None:
+def test_ipv6_dhcp_scope_requires_explicit_dhcpv6_protocol(model_class, orchestrator_class, field, protocol) -> None:
     management = {"bgp_asn": "65001", field: "2001:db8::10"}
     if protocol is not None:
         management["dhcp_protocol_version"] = protocol
-    model = model_class.from_config(
-        {"fabric_name": "fabric1", "management": management}
-    )
+    model = model_class.from_config({"fabric_name": "fabric1", "management": management})
 
     with pytest.raises(RuntimeError, match="dhcp_protocol_version.*dhcpv6"):
         _orchestrator(orchestrator_class, "merged", "4.3.1a").preflight([model])
 
 
 @pytest.mark.parametrize(("model_class", "orchestrator_class"), FABRIC_FAMILIES)
-def test_ipv6_gateway_requires_dhcpv6_only_with_local_dhcp(
-    model_class, orchestrator_class
-) -> None:
+def test_ipv6_gateway_requires_dhcpv6_only_with_local_dhcp(model_class, orchestrator_class) -> None:
     config = {
         "fabric_name": "fabric1",
         "management": {
@@ -644,21 +551,15 @@ def test_ipv6_gateway_requires_dhcpv6_only_with_local_dhcp(
         },
     }
     with pytest.raises(RuntimeError, match="dhcp_protocol_version.*dhcpv6"):
-        _orchestrator(orchestrator_class, "merged", "4.3.1a").preflight(
-            [model_class.from_config(config)]
-        )
+        _orchestrator(orchestrator_class, "merged", "4.3.1a").preflight([model_class.from_config(config)])
 
     config["management"]["local_dhcp_server"] = False
-    _orchestrator(orchestrator_class, "merged", "4.3.1a").preflight(
-        [model_class.from_config(config)]
-    )
+    _orchestrator(orchestrator_class, "merged", "4.3.1a").preflight([model_class.from_config(config)])
 
 
 @pytest.mark.parametrize(("model_class", "orchestrator_class"), FABRIC_FAMILIES)
 @pytest.mark.parametrize("state", ("replaced", "overridden"))
-def test_exact_state_ipv6_dhcp_scope_requires_explicit_dhcpv6_protocol(
-    model_class, orchestrator_class, state
-) -> None:
+def test_exact_state_ipv6_dhcp_scope_requires_explicit_dhcpv6_protocol(model_class, orchestrator_class, state) -> None:
     config = {
         "fabric_name": "fabric1",
         "management": {"bgp_asn": "65001", "dhcp_start_address": "2001:db8::10"},
@@ -675,14 +576,11 @@ def test_exact_state_ipv6_dhcp_scope_requires_explicit_dhcpv6_protocol(
 
 @pytest.mark.parametrize(("model_class", "orchestrator_class"), FABRIC_FAMILIES)
 @pytest.mark.parametrize("version", (None, "4.2.1"))
-def test_ipv4_dhcp_fields_do_not_trigger_ipv6_release_preflight(
-    model_class, orchestrator_class, version
-) -> None:
+def test_ipv4_dhcp_fields_do_not_trigger_ipv6_release_preflight(model_class, orchestrator_class, version) -> None:
     model = model_class.from_config(
         {
             "fabric_name": "fabric1",
             "management": {
-                "bgp_asn": "65001",
                 "dhcp_protocol_version": "dhcpv4",
                 "dhcp_start_address": "192.0.2.10",
                 "dhcp_end_address": "192.0.2.20",
@@ -695,9 +593,7 @@ def test_ipv4_dhcp_fields_do_not_trigger_ipv6_release_preflight(
 
 
 @pytest.mark.parametrize(("model_class", "orchestrator_class"), FABRIC_FAMILIES)
-def test_response_origin_ipv6_config_replay_obeys_each_family_release_policy(
-    model_class, orchestrator_class
-) -> None:
+def test_response_origin_ipv6_config_replay_obeys_each_family_release_policy(model_class, orchestrator_class) -> None:
     response = {
         "name": "fabric1",
         "category": "fabric",
@@ -712,9 +608,7 @@ def test_response_origin_ipv6_config_replay_obeys_each_family_release_policy(
     }
     gathered = model_class.from_response(response).to_gathered_config()
     assert "ospf_max_metric_startup_wait" not in gathered["management"]
-    result = ModuleArgumentSpecValidator(model_class.get_argument_spec()).validate(
-        {"state": "merged", "config": [gathered]}
-    )
+    result = ModuleArgumentSpecValidator(model_class.get_argument_spec()).validate({"state": "merged", "config": [gathered]})
     assert result.error_messages == []
     replayed = model_class.from_config(result.validated_parameters["config"][0])
 

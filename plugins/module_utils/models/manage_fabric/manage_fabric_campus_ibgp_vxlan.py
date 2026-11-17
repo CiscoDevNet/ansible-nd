@@ -8,15 +8,20 @@ from __future__ import annotations
 
 import re
 from enum import Enum
-from typing import Annotated, ClassVar, Literal
+from ipaddress import IPv4Interface
+from typing import Annotated, Any, ClassVar, Literal
 
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.release_metadata import NDMinimumVersion
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
+    StringConstraints,
+    ValidationInfo,
     field_validator,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
     DhcpProtocolVersionEnum,
@@ -24,6 +29,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
     GreenfieldDebugFlagEnum,
     RendezvousPointCountEnum,
     RouteReflectorCountEnum,
+    TelemetryCollectionTypeEnum,
     UnderlayMulticastGroupAddressLimitEnum,
     VpcPeerKeepAliveOptionEnum,
     VrfLiteAutoConfigEnum,
@@ -37,14 +43,19 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     FabricIPv4Address,
     FabricIPv4CIDR,
     FabricInterfaceName,
-    MulticastGroupSubnet,
+    RequiredFabricIPv4CIDR,
     ScheduledBackupTime,
+    TelemetrySettingsModel,
     default_site_id_from_bgp_asn,
     normalize_anycast_gateway_mac,
-    validate_bgp_asn_value,
+    validate_bgp_asn_template_value,
+    validate_bounded_integer_range,
+    validate_secret_string_constraints,
     validate_site_id_value,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import FabricBaseModel
+
+FabricCliText = Annotated[str, StringConstraints(strip_whitespace=False)]
 
 
 class CampusReplicationModeEnum(str, Enum):
@@ -109,6 +120,18 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     )
 
     _argspec_exclude_fields: ClassVar[set[str]] = {"name"}
+    ipv6_management_minimum_nd_version: ClassVar[str | None] = None
+
+    # NetFlow is API-declared but absent from this family's native template.
+    # The two native hidden IPv6 controls are excluded by explicit scope policy.
+    # Preserve their writable response state without exposing public input.
+    _opaque_replacement_fields: ClassVar[set[str]] = {
+        "netflowSettings",
+        "perVrfLoopbackAutoProvisionIpv6",
+        "perVrfLoopbackIpv6Range",
+    }
+    replacement_preserve_fields: ClassVar[set[str]] = _opaque_replacement_fields
+    config_exclude_fields: ClassVar[set[str]] = _opaque_replacement_fields
 
     empty_string_means_unset: ClassVar[bool] = True
 
@@ -126,8 +149,20 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     # Core Configuration (from vxlanProperties)
     bgp_asn: str | None = Field(
         alias="bgpAsn",
-        description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]",
+        description="Autonomous system number: 1-65535 on ND 4.2.1; decimal 1-4294967295 or unsigned asdot on ND 4.3.1+.",
+        min_length=1,
+        max_length=11,
         default=None,
+        json_schema_extra={
+            "nd_release_constraints": [
+                {
+                    "maximum_exclusive_version": "4.3.1",
+                    "min_length": 1,
+                    "max_length": 5,
+                    "pattern": r"^(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$",
+                }
+            ]
+        },
     )
 
     # Internal wire field propagated from FabricCampusIbgpVxlanModel.fabric_name.
@@ -160,9 +195,9 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         description="Campus replication mode for BUM traffic; the native template fixes this to multicast.",
         default=CampusReplicationModeEnum.MULTICAST,
     )
-    multicast_group_subnet: MulticastGroupSubnet = Field(
+    multicast_group_subnet: FabricIPv4CIDR = Field(
         alias="multicastGroupSubnet",
-        description="Multicast pool prefix (8-30), CIDR v4 format",
+        description="Multicast pool prefix (16-30), CIDR v4 format",
         default="239.1.1.0/25",
     )
     auto_generate_multicast_group_address: bool = Field(
@@ -198,6 +233,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         alias="vpcPeerLinkVlan",
         description="VLAN range (2-4094) for vPC Peer Link SVI",
         default="3600",
+        json_schema_extra={"nd_integer_range": {"minimum": 2, "maximum": 4094}},
     )
     vpc_peer_link_enable_native_vlan: bool = Field(
         alias="vpcPeerLinkEnableNativeVlan",
@@ -227,6 +263,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         alias="vpcPeerLinkPortChannelId",
         description="vPC Peer Link Port Channel ID (1-4096)",
         default="500",
+        json_schema_extra={"nd_integer_range": {"minimum": 1, "maximum": 4096}},
     )
     vpc_ipv6_neighbor_discovery_sync: bool = Field(
         alias="vpcIpv6NeighborDiscoverySync",
@@ -242,6 +279,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         alias="vpcDomainIdRange",
         description="vPC Domain Id range (1-1000)",
         default="1-1000",
+        json_schema_extra={"nd_integer_range": {"minimum": 1, "maximum": 1000}},
     )
 
     # Loopback IDs
@@ -295,17 +333,17 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     )
     fabric_mtu: int = Field(
         alias="fabricMtu",
-        description="Intra Fabric Interface MTU (must be even)",
-        ge=576,
+        description="Intra Fabric Interface MTU",
+        ge=1500,
         le=9216,
-        default=9216,
+        default=9198,
     )
     l2_host_interface_mtu: int = Field(
         alias="l2HostInterfaceMtu",
-        description="Layer 2 host interface MTU (must be even)",
+        description="Layer 2 host interface MTU",
         ge=1500,
         le=9216,
-        default=9216,
+        default=9198,
     )
 
     # Tenant / NX-API / SNMP
@@ -314,7 +352,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         description="Enable Tenant DHCP",
         default=True,
     )
-    nxapi: bool = Field(description="Enable NX-API over HTTPS", default=False)
+    nxapi: bool = Field(description="Enable NX-API over HTTPS", default=True)
     nxapi_https_port: int = Field(
         alias="nxapiHttpsPort",
         description="HTTPS port for NX-API",
@@ -322,7 +360,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         le=65535,
         default=443,
     )
-    nxapi_http: bool = Field(alias="nxapiHttp", description="Enable NX-API over HTTP", default=False)
+    nxapi_http: bool = Field(alias="nxapiHttp", description="Enable NX-API over HTTP", default=True)
     nxapi_http_port: int = Field(
         alias="nxapiHttpPort",
         description="HTTP port for NX-API",
@@ -366,22 +404,22 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     )
 
     # IP Ranges
-    bgp_loopback_ip_range: str = Field(
+    bgp_loopback_ip_range: RequiredFabricIPv4CIDR = Field(
         alias="bgpLoopbackIpRange",
         description="Typically Loopback0 IP Address Range",
         default="10.2.0.0/22",
     )
-    nve_loopback_ip_range: str = Field(
+    nve_loopback_ip_range: RequiredFabricIPv4CIDR = Field(
         alias="nveLoopbackIpRange",
         description="Typically Loopback1 IP Address Range",
         default="10.3.0.0/22",
     )
-    anycast_rendezvous_point_ip_range: str = Field(
+    anycast_rendezvous_point_ip_range: RequiredFabricIPv4CIDR = Field(
         alias="anycastRendezvousPointIpRange",
         description="Anycast or Phantom RP IP Address Range",
         default="10.254.254.0/24",
     )
-    intra_fabric_subnet_range: str = Field(
+    intra_fabric_subnet_range: RequiredFabricIPv4CIDR = Field(
         alias="intraFabricSubnetRange",
         description="Address range for numbered and peer link SVI IPs",
         default="10.4.0.0/16",
@@ -392,28 +430,33 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         alias="l2VniRange",
         description="Overlay network identifier range (1-16777214)",
         default="30000-49000",
+        json_schema_extra={"nd_integer_range": {"minimum": 1, "maximum": 16777214}},
     )
     l3_vni_range: str = Field(
         alias="l3VniRange",
         description="Overlay VRF identifier range (1-16777214)",
         default="50000-59000",
+        json_schema_extra={"nd_integer_range": {"minimum": 1, "maximum": 16777214}},
     )
     network_vlan_range: str = Field(
         alias="networkVlanRange",
         description="Per Switch Overlay Network VLAN Range (2-4094)",
         default="2300-2999",
+        json_schema_extra={"nd_integer_range": {"minimum": 2, "maximum": 4094}},
     )
     vrf_vlan_range: str = Field(
         alias="vrfVlanRange",
         description="Per Switch Overlay VRF VLAN Range (2-4094)",
         default="2000-2299",
+        json_schema_extra={"nd_integer_range": {"minimum": 2, "maximum": 4094}},
     )
 
     # VRF Lite
     sub_interface_dot1q_range: str = Field(
         alias="subInterfaceDot1qRange",
-        description="Per aggregation dot1q range for VRF-Lite (2-4093)",
+        description="Per aggregation dot1q range for VRF-Lite (2-4094)",
         default="2-511",
+        json_schema_extra={"nd_integer_range": {"minimum": 2, "maximum": 4094}},
     )
     vrf_lite_auto_config: VrfLiteAutoConfigEnum = Field(
         alias="vrfLiteAutoConfig",
@@ -444,24 +487,13 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         description="Auto provision IPv4 loopback on VTEP on VRF attachment",
         default=False,
     )
-    per_vrf_loopback_ip_range: str = Field(
+    per_vrf_loopback_ip_range: RequiredFabricIPv4CIDR = Field(
         alias="perVrfLoopbackIpRange",
         description="Prefix pool for IPv4 loopback addresses on VTEPs per VRF",
         default="10.5.0.0/22",
     )
-    per_vrf_loopback_auto_provision_ipv6: bool = Field(
-        alias="perVrfLoopbackAutoProvisionIpv6",
-        description="Auto provision IPv6 loopback on VTEP on VRF attachment",
-        default=False,
-    )
-    per_vrf_loopback_ipv6_range: str = Field(
-        alias="perVrfLoopbackIpv6Range",
-        description="Prefix pool for IPv6 loopback addresses on VTEPs per VRF",
-        default="fd00::a05:0/112",
-    )
-
     # Banner
-    banner: str = Field(
+    banner: FabricCliText = Field(
         description="MOTD banner (delimiter char + message + delimiter)",
         default="",
     )
@@ -555,7 +587,7 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     bgp_fast_convergence: Annotated[bool | None, NDMinimumVersion("4.3.1")] = Field(
         alias="bgpFastConvergence",
         description="Enable immediate BGP failure detection and undampened next-hop updates (ND 4.3.1+)",
-        default=None,
+        default=False,
     )
     auto_bgp_neighbor_description: bool = Field(
         alias="autoBgpNeighborDescription",
@@ -609,24 +641,24 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         le=1073741824,
         default=131072,
     )
-    ios_xe_banner: str = Field(
+    ios_xe_banner: FabricCliText = Field(
         alias="iosXeBanner",
         description="MOTD banner for IOS XE (delimiter + message + delimiter)",
         default="",
     )
 
     # Extra Config (IOS-XE / NX-OS)
-    ios_xe_leaf_freeform: str | None = Field(
+    ios_xe_leaf_freeform: FabricCliText | None = Field(
         alias="iosXeLeafFreeform",
         description="Additional CLIs for all leafs (from show run)",
         default=None,
     )
-    extra_config_xe_spine: str = Field(
+    extra_config_xe_spine: FabricCliText = Field(
         alias="extraConfigXeSpine",
         description="Additional CLIs for all spines (from show run)",
         default="",
     )
-    extra_config_xe_intra_fabric_links: str = Field(
+    extra_config_xe_intra_fabric_links: FabricCliText = Field(
         alias="extraConfigXeIntraFabricLinks",
         description="Additional CLIs for all intra-fabric links",
         default="",
@@ -659,6 +691,12 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         alias="domainName",
         description="Domain name for DHCP server PnP block",
         default="",
+        json_schema_extra={
+            "nd_string_constraints": {
+                "allow_empty": True,
+                "pattern": r"^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,6}$",
+            }
+        },
     )
     inband_management: bool = Field(
         alias="inbandManagement",
@@ -672,26 +710,73 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     )
 
     # Bootstrap Extra Config
-    extra_config_xe_bootstrap: str = Field(
+    extra_config_xe_bootstrap: FabricCliText = Field(
         alias="extraConfigXeBootstrap",
         description="Additional CLIs during device bootup/login (IOS-XE, e.g. AAA/Radius)",
         default="",
     )
-    extra_config_bootstrap_nxos_border_gateway: str = Field(
+    extra_config_bootstrap_nxos_border_gateway: FabricCliText = Field(
         alias="extraConfigBootstrapNxosBorderGateway",
         description="Additional CLIs during device bootup/login for NX-OS border gateways",
         default="",
     )
-    extra_config_nxos_border_gateway: str = Field(
+    extra_config_nxos_border_gateway: FabricCliText = Field(
         alias="extraConfigNxosBorderGateway",
         description="Additional CLIs for all Border Gateways (from show run)",
         default="",
     )
-    extra_config_nxos_intra_fabric_links: str = Field(
+    extra_config_nxos_intra_fabric_links: FabricCliText = Field(
         alias="extraConfigNxosIntraFabricLinks",
         description="Additional CLIs for all NX-OS intra-fabric links",
         default="",
     )
+
+    @field_validator(
+        "vpc_peer_link_vlan",
+        "vpc_peer_link_port_channel_id",
+        "vpc_domain_id_range",
+        "l2_vni_range",
+        "l3_vni_range",
+        "network_vlan_range",
+        "vrf_vlan_range",
+        "sub_interface_dot1q_range",
+    )
+    @classmethod
+    def validate_native_integer_ranges(cls, value: str, info: ValidationInfo) -> str:
+        """Enforce exact Campus integer-range syntax and native bounds."""
+        bounds = cls.model_fields[info.field_name].json_schema_extra["nd_integer_range"]
+        return validate_bounded_integer_range(value, bounds["minimum"], bounds["maximum"], info.field_name)
+
+    @field_validator("domain_name")
+    @classmethod
+    def validate_native_domain_name(cls, value: str, info: ValidationInfo) -> str:
+        """Keep an empty domain clear while validating nonempty native names."""
+        constraints = cls.model_fields[info.field_name].json_schema_extra["nd_string_constraints"]
+        return validate_secret_string_constraints(value, info.field_name, constraints)
+
+    @field_validator("multicast_group_subnet")
+    @classmethod
+    def validate_native_multicast_prefix(cls, value: str | None) -> str | None:
+        """Enforce the Campus prefix bounds confirmed by both native controllers."""
+        if value is not None and not 16 <= IPv4Interface(value).network.prefixlen <= 30:
+            raise ValueError("Campus multicast group subnet prefix must be between 16 and 30")
+        return value
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def reject_unsupported_public_management(cls, data: Any, handler: Any, info: ValidationInfo) -> Any:
+        """Keep unsupported controller state opaque rather than writable public input."""
+        if not isinstance(data, dict) or (info.context or {}).get("mode") == "response":
+            return handler(data)
+        excluded = cls._opaque_replacement_fields | {
+            "netflow_settings",
+            "per_vrf_loopback_auto_provision_ipv6",
+            "per_vrf_loopback_ipv6_range",
+        }
+        supplied = {key for key in excluded.intersection(data) if data[key] is not None}
+        if supplied:
+            raise ValueError("Campus fields are not managed as public fabric parameters: " + ", ".join(sorted(supplied)))
+        return handler(data)
 
     @field_validator("bgp_asn")
     @classmethod
@@ -699,13 +784,16 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
         """
         # Summary
 
-        Validate BGP ASN format and range.
+        Validate native decimal/asdot ASN syntax and normalize a decimal plus sign.
 
         ## Raises
 
         - `ValueError` - If the value does not match the expected ASN format
         """
-        return validate_bgp_asn_value(value)
+        if value is not None and value.startswith("+") and not value[1:].isdigit():
+            raise ValueError("A leading plus sign is only supported for decimal BGP ASNs")
+        validate_bgp_asn_template_value(value)
+        return value[1:] if value is not None and value.startswith("+") else value
 
     @field_validator("site_id")
     @classmethod
@@ -718,6 +806,28 @@ class CampusIbgpVxlanManagementModel(NDNestedModel):
     def validate_mac_address(cls, value: str) -> str:
         """Validate and normalize the anycast gateway MAC address."""
         return normalize_anycast_gateway_mac(value)
+
+
+class CampusTelemetrySettingsModel(TelemetrySettingsModel):
+    """Campus telemetry controls managed through fabric CRUD."""
+
+    _argspec_exclude_fields: ClassVar[set[str]] = {"energy_management"}
+    energy_management: ClassVar[None] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def exclude_unmanaged_energy_settings(cls, data: Any, info: ValidationInfo) -> Any:
+        """Discard dedicated-action response state and reject it as user configuration."""
+        if not isinstance(data, dict):
+            return data
+        keys = {"energy_management", "energyManagement"}.intersection(data)
+        if not keys:
+            return data
+        if (info.context or {}).get("mode") != "response":
+            if any(data[key] is not None for key in keys):
+                raise ValueError("energy_management is not managed by the Campus fabric module")
+            return data
+        return {key: value for key, value in data.items() if key not in keys}
 
 
 class FabricCampusIbgpVxlanModel(FabricBaseModel):
@@ -736,9 +846,62 @@ class FabricCampusIbgpVxlanModel(FabricBaseModel):
     """
 
     _fabric_type: ClassVar[FabricTypeEnum] = FabricTypeEnum.CAMPUS_IBGP_VXLAN
+    _argspec_exclude_fields: ClassVar[set[str]] = {"alert_suspend"}
+
+    alert_suspend: ClassVar[None] = None
+    telemetry_collection_type: TelemetryCollectionTypeEnum = Field(
+        alias="telemetryCollectionType", description="Telemetry collection method.", default=TelemetryCollectionTypeEnum.IN_BAND
+    )
+    telemetry_settings: CampusTelemetrySettingsModel | None = Field(alias="telemetrySettings", description="Telemetry configuration", default=None)
 
     # Core Management Configuration
     management: CampusIbgpVxlanManagementModel | None = Field(description="Campus iBGP VXLAN management configuration", default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def exclude_unmanaged_alert_state(cls, data: Any, info: ValidationInfo) -> Any:
+        """Keep dedicated alert actions outside public Campus fabric configuration."""
+        if not isinstance(data, dict):
+            return data
+        keys = {"alert_suspend", "alertSuspend"}.intersection(data)
+        if not keys:
+            return data
+        if (info.context or {}).get("mode") != "response":
+            if any(data[key] is not None for key in keys):
+                raise ValueError("alert_suspend is not managed by the Campus fabric module")
+            return data
+        return {key: value for key, value in data.items() if key not in keys}
+
+    @field_validator("telemetry_settings", mode="before")
+    @classmethod
+    def use_campus_telemetry_settings(cls, value: Any, info: ValidationInfo) -> Any:
+        """Narrow automatic shared settings without introducing an energy default."""
+        if isinstance(value, dict) and value and set(value) <= {"energy_management", "energyManagement"} and (info.context or {}).get("mode") == "response":
+            return None
+        if isinstance(value, TelemetrySettingsModel) and not isinstance(value, CampusTelemetrySettingsModel):
+            if "energy_management" in value.model_fields_set and (info.context or {}).get("mode") != "response":
+                raise ValueError("energy_management is not managed by the Campus fabric module")
+            return value.model_dump(exclude={"energy_management"}, exclude_unset=True)
+        return value
+
+    def get_diff(self, other: NDBaseModel, exclude_unset: bool = False) -> bool:
+        """Ignore the inactive HTTP toggle only while effective NX-API is disabled."""
+        if not isinstance(other, type(self)) or self.management is None or other.management is None:
+            return super().get_diff(other, exclude_unset=exclude_unset)
+        effective_nxapi = other.management.nxapi
+        if exclude_unset and "nxapi" not in other.management.model_fields_set:
+            effective_nxapi = self.management.nxapi
+        if effective_nxapi is not False:
+            return super().get_diff(other, exclude_unset=exclude_unset)
+
+        comparison_existing = self.model_copy()
+        comparison_proposed = other.model_copy()
+        for comparison in (comparison_existing, comparison_proposed):
+            management = comparison.management.model_copy()
+            object.__setattr__(management, "nxapi_http", None)
+            management.model_fields_set.discard("nxapi_http")
+            object.__setattr__(comparison, "management", management)
+        return super(FabricCampusIbgpVxlanModel, comparison_existing).get_diff(comparison_proposed, exclude_unset=exclude_unset)
 
     def _post_validate_consistency(self) -> None:
         """Default the Campus site ID to the fabric BGP ASN."""
