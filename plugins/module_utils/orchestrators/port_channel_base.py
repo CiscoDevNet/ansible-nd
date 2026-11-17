@@ -992,6 +992,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         allowed_member_command = (
             r"no (?:storm-control (?:action .+|(?:broadcast|multicast|unicast) level .+)"
             r"|switchport (?:access vlan|trunk native vlan) [0-9]+|switchport monitor"
+            r"|switchport trunk allowed vlan [0-9][0-9,-]*|switchport mode (?:access|trunk)"
             r"|lacp (?:rate fast|port-priority [0-9]+)|description .+"
             r"|duplex (?:full|half|auto)|speed [0-9]+"
             r"|spanning-tree (?:bpdufilter|bpduguard) (?:enable|disable)"
@@ -1000,8 +1001,13 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         touched_members: set[str] = set()
         detached_members: set[str] = set()
         current_member = None
-        for index, line in enumerate(pending_lines[1:], 1):
-            if line == "configure terminal" and index == len(pending_lines) - 1:
+        for line in pending_lines[1:]:
+            if line == "configure terminal":
+                # ND can delimit generated member-reset stanzas with a fresh
+                # configuration context, not only end the preview with one.
+                # Require a new proven member header before accepting any
+                # following member commands.
+                current_member = None
                 continue
             if (header := re.fullmatch(r"interface (ethernet[0-9/]+)", line)) is not None:
                 current_member = header.group(1)
@@ -1026,7 +1032,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 re.fullmatch(allowed_member_command, line)
                 or re.fullmatch(r"switchport(?: mode trunk| trunk allowed vlan none)?", line)
                 or re.fullmatch(r"mtu [0-9]+", line)
-                or line in {"spanning-tree port type edge trunk", "no shutdown", "cdp enable"}
+                or line in {"spanning-tree port type edge trunk", "no shutdown", "cdp enable", "no switchport"}
             ):
                 raise RuntimeError(f"Absent port-channel delete preview includes an unproven member command {line!r}.")
         if touched_members != detached_members:
