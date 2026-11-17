@@ -69,13 +69,17 @@
     - name: Validate broken-family selectors without sending mutation requests
       ansible.builtin.include_tasks: ../tasks/validate_broken_inputs.yaml
 
-    - name: MERGED - Repeat creation using the switch serial number
+    - name: MERGED - Repeat creation using the switch serial and custom timeouts
       cisco.nd.nd_manage_breakout_interfaces:
         <<: *breakout_create_a
         config:
           - switch_id: "{{ test_switch_serial }}"
             interface_names: "{{ [breakout_control_parent] }}"
             breakout_map: "{{ breakout_map_a }}"
+        verify:
+          enabled: true
+          wait_timeout: 1
+          discovery_timeout: 1
       register: breakout_result
 
     - name: MERGED - Require immediate first-repeat idempotency

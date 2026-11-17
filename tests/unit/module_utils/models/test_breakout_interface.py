@@ -8,7 +8,11 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_breakout_interfaces.breakout_interface import BreakoutInterfaceModel, expand_config
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_breakout_interfaces.breakout_interface import (
+    BreakoutInterfaceModel,
+    expand_config,
+    validate_module_params,
+)
 
 
 def _group(**changes):
@@ -290,3 +294,24 @@ def test_argument_spec_has_grouped_dual_identifier_contract_and_no_map_choices()
     assert "choices" not in spec["config"]["options"]["breakout_map"]
     assert spec["verify"]["apply_defaults"] is True
     assert spec["verify"]["options"]["enabled"]["default"] is True
+    assert spec["verify"]["options"]["wait_timeout"] == {"type": "int", "default": 30}
+    assert spec["verify"]["options"]["discovery_timeout"] == {"type": "int", "default": 90}
+
+
+@pytest.mark.parametrize("option", ["wait_timeout", "discovery_timeout"])
+@pytest.mark.parametrize("value", [0, -1, 1.5, "30", True, False, None, [], {}])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_verification_waits_require_positive_integers_even_when_verification_is_disabled(option, value, enabled):
+    params = {"fabric_name": "fab1", "state": "merged", "config": [_group()], "verify": {"enabled": enabled, option: value}}
+    with pytest.raises(ValueError, match=rf"verify\.{option} must be a positive integer"):
+        validate_module_params(params)
+
+
+@pytest.mark.parametrize("option", ["wait_timeout", "discovery_timeout"])
+@pytest.mark.parametrize("value", [1, 30, 90, 180])
+def test_verification_wait_settings_are_validated_without_mutating_input(option, value):
+    params = {"fabric_name": "fab1", "state": "merged", "config": [_group()], "verify": {option: value}}
+    original = deepcopy(params)
+    models = validate_module_params(params)
+    assert len(models) == 1
+    assert params == original

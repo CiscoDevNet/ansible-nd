@@ -45,7 +45,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import Res
 _PAGE_SIZE = 1000
 _MAX_PAGES = 100
 _DISCOVERY_WAIT_SECONDS = 90
-_DISCOVERY_POLL_INTERVAL = 2
+_DISCOVERY_POLL_INTERVAL = 5
 _VERIFICATION_WAIT_SECONDS = 30
 _VERIFICATION_POLL_INTERVAL = 5
 _PARENT = re.compile(r"^Ethernet(?P<slot>[1-9]\d*)/(?P<port>[1-9]\d*)$", re.IGNORECASE)
@@ -126,6 +126,16 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
     def fabric_name(self) -> str:
         """Return the caller's standalone fabric name."""
         return self.rest_send.params["fabric_name"]
+
+    @property
+    def _verification_wait_timeout(self) -> int:
+        """Return the validated post-action budget, retaining its default."""
+        return (self.rest_send.params.get("verify") or {}).get("wait_timeout", _VERIFICATION_WAIT_SECONDS)
+
+    @property
+    def _discovery_wait_timeout(self) -> int:
+        """Return the validated budget for each unbreakout/inverse readiness wait."""
+        return (self.rest_send.params.get("verify") or {}).get("discovery_timeout", _DISCOVERY_WAIT_SECONDS)
 
     @property
     def fabric_context(self) -> BreakoutFabricContext:
@@ -248,7 +258,9 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
     ):
         """Keep standard transport behavior and trace only completed responses."""
         if verb == HttpVerbEnum.GET and self._verification_deadline is not None and time.monotonic() >= self._verification_deadline:
-            raise RuntimeError(f"The {_VERIFICATION_WAIT_SECONDS}-second verification budget expired before a complete topology snapshot could be obtained.")
+            raise RuntimeError(
+                f"The {self._verification_wait_timeout}-second verification budget expired before a complete topology snapshot could be obtained."
+            )
         response_count = self.rest_send.response_count
         registered_before = self.results.task_sequence_number if self.results is not None else None
         started = time.monotonic()
@@ -751,14 +763,14 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
     def _observe_action_guard(self, before, submitted, phase, requested_state, settle):
         """Reuse complete observations and retry only unresolved action switches.
 
-        One deadline covers the first guard read, all subsequent pages and
-        five-second gaps. In-flight GETs retain the connection's own timeout.
+        The configured deadline covers the first guard read, all subsequent
+        pages and five-second gaps. In-flight GETs retain the connection's timeout.
         Observed collateral exits immediately into the existing compensation
         path; inverse requests and their acknowledgement are never polled here.
         """
         serials = list(dict.fromkeys(item["switch_id"] for item in submitted))
         mutated_switches = set(serials)
-        deadline = time.monotonic() + _VERIFICATION_WAIT_SECONDS
+        deadline = time.monotonic() + self._verification_wait_timeout
         writer = self.rest_send
         saved_deadline, saved_attempts = self._verification_deadline, writer.max_attempts
         if settle:
@@ -795,13 +807,15 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
         """Reuse observed readiness, polling only unresolved families with GETs.
 
         Unbreakout needs a discovered physical child. Breakout needs an explicit
-        parent record, including an intent-only one. No mutation is retried and
-        the returned snapshot is not a post-recovery verification.
+        parent record, including an intent-only one. Each wait uses the configured
+        discovery budget. No mutation is retried and the returned snapshot is not
+        a post-recovery verification.
         """
         observed = dict(snapshot)
         pending = {(item["switch_id"], item["interface_name"]): item for item in submitted}
         ready = {}
-        deadline = time.monotonic() + _DISCOVERY_WAIT_SECONDS
+        timeout = self._discovery_wait_timeout
+        deadline = time.monotonic() + timeout
         while pending:
             for key, item in list(pending.items()):
                 resource = observed.get(key)
@@ -849,7 +863,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
                     )
                 )
                 raise RuntimeError(
-                    f"Discovery did not provide {prerequisite} for {names} within {_DISCOVERY_WAIT_SECONDS} seconds; "
+                    f"Discovery did not provide {prerequisite} for {names} within {timeout} seconds; "
                     "no inverse or unbreakout request was sent for these targets."
                 )
             time.sleep(min(_DISCOVERY_POLL_INTERVAL, remaining))
@@ -1217,7 +1231,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
                         if not report["topology_matches"] and not report["collateral"]:
                             errors.append(
                                 f"API reported success, but requested {report['phase']} topology on '{report['switch_id']}' was not confirmed "
-                                f"within the {_VERIFICATION_WAIT_SECONDS}-second verification budget."
+                                f"within the {self._verification_wait_timeout}-second verification budget."
                                 if verification_expired
                                 else f"Requested {report['phase']} topology was not observed on '{report['switch_id']}'."
                             )

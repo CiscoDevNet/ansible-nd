@@ -96,9 +96,10 @@ options:
     - Check for unintended breakout changes after each operation. Enabled by default.
     - Checks compare the breakout parent and child interface names reported by Nexus Dashboard on each affected switch.
       Unexpected changes fail the task and may trigger an attempt to undo the affected operation.
-    - If all API results succeed but the expected changes are not yet visible, the module checks again every five seconds for up to 30 seconds,
+    - If all API results succeed but the expected changes are not yet visible, the module checks again every five seconds until O(verify.wait_timeout),
       provided no unintended changes are found. Checks stop when the expected changes appear, unintended changes are found,
       an interface read fails, or time runs out. An interface read already in progress may finish after this limit.
+    - The wait settings control interface checks; they do not retry breakout or unbreakout requests.
     - When disabled, the module skips post-change interface checks, discovery waiting and automatic recovery.
       It still reads current state, validates inputs and platforms, skips operations already satisfied and checks API results.
     - No post-change verification runs when no changes are needed or in check mode.
@@ -110,6 +111,24 @@ options:
           When disabled, hardware-coupled changes are not checked.
         type: bool
         default: true
+      wait_timeout:
+        description:
+        - Maximum time, in seconds, for post-action interface checks in each breakout or unbreakout phase.
+        - Checks run immediately and then every five seconds while the expected changes remain unresolved.
+          The module stops waiting as soon as the checks resolve.
+        - Must be a positive integer. Ignored when O(verify.enabled=false), in check mode or when no changes are needed.
+        - This limit does not include the preceding breakout or unbreakout request or the total task runtime.
+        type: int
+        default: 30
+      discovery_timeout:
+        description:
+        - Maximum time, in seconds, for each readiness wait before an unbreakout or recovery request.
+        - The module checks every five seconds and proceeds as soon as the required interfaces are available.
+          A longer wait does not guarantee that discovery will complete.
+        - Must be a positive integer. Ignored when O(verify.enabled=false), in check mode or when no changes are needed.
+        - Each readiness wait has its own limit; this is not a limit on the total task runtime.
+        type: int
+        default: 90
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -134,7 +153,7 @@ notes:
   If the original breakout map cannot be determined, the task fails before unbreakout.
 - Recovery results report whether Nexus Dashboard accepted the recovery request.
   Recovery is not independently verified; the module does not re-read interfaces to confirm restoration.
-- With verification enabled, an unbreakout or recovery action may wait up to 90 seconds for the required interfaces to become available.
+- With verification enabled, an unbreakout or recovery action may wait up to O(verify.discovery_timeout) for the required interfaces to become available.
   An interface read already in progress may take longer. If the interfaces remain unavailable or an interface read fails,
   that action is not submitted and the task fails. These checks occur before the action and do not verify recovery.
 - If a breakout or unbreakout request times out or returns HTTP 500, no recovery request is submitted,
@@ -216,13 +235,17 @@ EXAMPLES = r"""
     fabric_name: fab1
     state: overridden
 
-- name: Unbreak a family using its parent name
+- name: Unbreak a family using its parent name and longer waits
   cisco.nd.nd_manage_breakout_interfaces:
     fabric_name: fab1
     state: deleted
     config:
       - switch_id: FDO222425SE
         interface_names: [Ethernet1/50]
+    verify:
+      enabled: true
+      wait_timeout: 120
+      discovery_timeout: 180
 
 - name: Explicitly unbreak the family before changing its map
   cisco.nd.nd_manage_breakout_interfaces:

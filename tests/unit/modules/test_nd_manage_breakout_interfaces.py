@@ -56,12 +56,23 @@ def test_raw_config_actions_are_rejected_even_when_params_omit_them():
 
 
 @pytest.mark.parametrize("verify", [True, False, "true", {"enabled": "false"}, {"attempts": 1}, {"enabled": True, "timeout": 5}])
-def test_verify_has_only_the_enabled_contract(verify):
+def test_verify_rejects_invalid_structure_enabled_values_and_unknown_controls(verify):
     with pytest.raises(ValueError, match="verify"):
         module_under_test.validate_module_params(_params(verify=verify))
 
 
-@pytest.mark.parametrize("verify", [None, {}, {"enabled": False}, {"enabled": True}])
+@pytest.mark.parametrize(
+    "verify",
+    [
+        None,
+        {},
+        {"enabled": False},
+        {"enabled": True},
+        {"wait_timeout": 120},
+        {"discovery_timeout": 180},
+        {"enabled": False, "wait_timeout": 1, "discovery_timeout": 1},
+    ],
+)
 def test_valid_optional_verification_settings(verify):
     params = _params(verify=verify)
     original = deepcopy(params)
@@ -433,6 +444,9 @@ def test_public_spec_matches_documented_defaults(monkeypatch):
     assert "config_actions" not in spec
     assert "config_actions" not in doc
     assert spec["verify"]["options"]["enabled"]["default"] is doc["verify"]["suboptions"]["enabled"]["default"] is True
+    for option, default in (("wait_timeout", 30), ("discovery_timeout", 90)):
+        assert spec["verify"]["options"][option]["type"] == doc["verify"]["suboptions"][option]["type"] == "int"
+        assert spec["verify"]["options"][option]["default"] == doc["verify"]["suboptions"][option]["default"] == default
     assert spec["verify"]["apply_defaults"] is True
     assert "ticket_id" not in spec
     assert "cluster_name" not in spec
@@ -440,15 +454,15 @@ def test_public_spec_matches_documented_defaults(monkeypatch):
     assert "requested_child" not in doc["config"]["suboptions"]
 
 
-@pytest.mark.parametrize("verify", [None, {}, {"enabled": False}, {"enabled": True}])
-def test_argument_defaults_enable_verification_when_dict_is_omitted_or_empty(verify):
+@pytest.mark.parametrize("verify", [None, {}, {"enabled": False}, {"enabled": True}, {"wait_timeout": 120}, {"discovery_timeout": 180}])
+def test_argument_defaults_preserve_optional_verification_settings(verify):
     params = {"fabric_name": "fab1", "state": "overridden"}
     if verify is not None:
         params["verify"] = verify
     result = ArgumentSpecValidator(module_under_test.BreakoutInterfaceModel.get_argument_spec()).validate(params)
     assert result.error_messages == []
     assert result.validated_parameters["config"] == []
-    assert result.validated_parameters["verify"] == {"enabled": verify.get("enabled", True) if verify is not None else True}
+    assert result.validated_parameters["verify"] == {"enabled": True, "wait_timeout": 30, "discovery_timeout": 90, **(verify or {})}
 
 
 def test_documentation_describes_verification_boundary_coupled_parent_scope_and_response_only_recovery():
