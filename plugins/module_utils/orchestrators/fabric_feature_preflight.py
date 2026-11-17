@@ -1,0 +1,293 @@
+# Copyright: (c) 2026, Akshayanat C S (@achengam) <achengam@cisco.com>
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+"""Fabric-setting prerequisites for actionable VRF and Network writes."""
+
+from __future__ import annotations
+
+from typing import Any, Callable
+
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import (
+    NetworkChildConfigModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
+    VlanNetworkType,
+)
+
+_DC_VXLAN_TYPES = frozenset({"vxlanIbgp", "vxlanEbgp"})
+_CAMPUS_TYPE = "vxlanCampus"
+_PVLAN_TYPES = frozenset(
+    {
+        VlanNetworkType.PRIVATE_PRIMARY.value,
+        VlanNetworkType.PRIVATE_SECONDARY_COMMUNITY.value,
+        VlanNetworkType.PRIVATE_SECONDARY_ISOLATED.value,
+        "primary",
+        "community",
+        "isolated",
+    }
+)
+
+
+def validate_fabric_features(
+    details: dict[str, Any],
+    config: dict[str, Any],
+    resource: str,
+    index: int,
+    fabric_name: str,
+    *,
+    standalone_vrf: bool = False,
+) -> None:
+    """
+    # Summary
+
+    Validate proven fabric prerequisites for one actionable resource write.
+
+    ## Raises
+
+    ### ValueError
+
+    - If a requested PVLAN, IPv4 TRM, or NetFlow feature cannot be used on the fabric.
+    """
+    management = details.get("management") if isinstance(details, dict) else None
+    if not isinstance(management, dict):
+        raise ValueError(f"Cannot validate {resource} features for fabric '{fabric_name}': full fabric management details are unavailable.")
+
+    fabric_type = management.get("type") or details.get("type")
+    prefix = f"config[{index}] on fabric '{fabric_name}'"
+    vlan_type = config.get("vlan_network_type")
+    if resource == "Network" and vlan_type in _PVLAN_TYPES:
+        if fabric_type not in _DC_VXLAN_TYPES:
+            raise ValueError(f"{prefix}: vlan_network_type '{vlan_type}' is supported only on Data Center VXLAN fabrics.")
+        if "privateVlan" not in management:
+            raise ValueError(f"{prefix}: cannot verify private VLAN support because the fabric setting is absent.")
+        if management.get("privateVlan") is not True:
+            raise ValueError(f"{prefix}: vlan_network_type '{vlan_type}' requires private VLAN to be enabled in fabric settings.")
+
+    if fabric_type in _DC_VXLAN_TYPES | {_CAMPUS_TYPE}:
+        if (
+            standalone_vrf
+            and resource == "VRF"
+            and config.get("default_security_action")
+            in (
+                "enforcedPermit",
+                "enforcedDeny",
+            )
+        ):
+            if "securityGroupTag" not in management:
+                raise ValueError(f"{prefix}: cannot verify security group support because the fabric setting is absent.")
+            if management["securityGroupTag"] is not True:
+                raise ValueError(f"{prefix}: enforced default_security_action requires security groups to be enabled in fabric settings.")
+        if config.get("trm_enable") is True:
+            if "tenantRoutedMulticast" not in management:
+                raise ValueError(f"{prefix}: cannot verify IPv4 TRM support because the fabric setting is absent.")
+            if management["tenantRoutedMulticast"] is not True:
+                raise ValueError(f"{prefix}: trm_enable=true requires IPv4 Tenant Routed Multicast to be enabled in fabric settings.")
+        if resource == "VRF" and config.get("ipv6_trm") is True:
+            if "tenantRoutedMulticastIpv6" not in management:
+                raise ValueError(f"{prefix}: cannot verify IPv6 TRM support because the fabric setting is absent.")
+            if management["tenantRoutedMulticastIpv6"] is not True:
+                raise ValueError(f"{prefix}: ipv6_trm=true requires IPv6 Tenant Routed Multicast to be enabled in fabric settings.")
+        netflow = management.get("netflowSettings")
+        if config.get("netflow_enable") is True:
+            if not isinstance(netflow, dict) or "netflow" not in netflow:
+                raise ValueError(f"{prefix}: cannot verify NetFlow support because the fabric setting is absent.")
+            if netflow["netflow"] is not True:
+                raise ValueError(f"{prefix}: netflow_enable=true requires NetFlow to be enabled in fabric settings.")
+
+
+def validate_standalone_vrf_trm_requirements(config: dict[str, Any], index: int, fabric_name: str) -> None:
+    """Validate conditional TRM controls against the effective standalone VRF."""
+    ipv4 = config.get("trm_enable") is True
+    ipv6 = config.get("ipv6_trm") is True
+    if not (ipv4 or ipv6):
+        return
+    prefix = f"config[{index}] on fabric '{fabric_name}'"
+    missing = []
+    if not config.get("underlay_mcast_ip"):
+        missing.append("underlay_mcast_ip")
+    if ipv4 and not config.get("no_rp"):
+        if not config.get("rp_address"):
+            missing.append("rp_address")
+        if not config.get("rp_external") and config.get("rp_loopback_id") is None:
+            missing.append("rp_loopback_id")
+    if ipv6 and not config.get("v6_no_rp"):
+        if not config.get("v6_rp_address"):
+            missing.append("v6_rp_address")
+        if not config.get("v6_rp_external") and config.get("rp_loopback_id") is None:
+            missing.append("rp_loopback_id")
+    if missing:
+        raise ValueError(f"{prefix}: TRM requires {', '.join(dict.fromkeys(missing))} for the selected RP mode.")
+
+
+def validate_standalone_vrf_svi_requirements(config: dict[str, Any], requested: dict[str, Any], index: int, fabric_name: str) -> None:
+    """Reject SVI options explicitly requested for an effective no-VLAN VRF."""
+    if config.get("l3vni_wo_vlan") is not True:
+        return
+    svi_fields = (
+        "vlan_id",
+        "vrf_vlan_name",
+        "vrf_intf_desc",
+        "vrf_int_mtu",
+        "ipv6_linklocal_enable",
+    )
+    invalid = [field for field in svi_fields if requested.get(field) is not None]
+    if invalid:
+        raise ValueError(f"config[{index}] on fabric '{fabric_name}': {', '.join(invalid)} not applicable when l3vni_wo_vlan=true.")
+
+
+def preflight_feature_changes(
+    sm: Any,
+    state: str,
+    get_details: Callable[[], dict[str, Any]],
+    resource: str,
+    fabric_name: str,
+    *,
+    attachment_names: set[str] | None = None,
+    standalone_vrf: bool = False,
+    child_network: bool = False,
+    requested_config: list[dict[str, Any]] | None = None,
+) -> None:
+    """
+    # Summary
+
+    Check effective feature dependencies and fabric settings using the state machine's inventory snapshot.
+
+    Parsed requested entries follow proposal order, preserving intent when an
+    operational-only proposal has been resolved to an existing definition.
+
+    ## Raises
+
+    ### ValueError
+
+    - If an actionable definition has an invalid dependency or requests a feature unavailable on its fabric.
+    """
+    if state in ("gathered", "deleted"):
+        return
+    for index, proposed in enumerate(sm.proposed):
+        name = getattr(proposed, "network_name", None) if resource == "Network" else getattr(proposed, "vrf_name", None)
+        unchanged = sm.existing.get_diff_config(proposed, exclude_unset=state == "merged") == "no_diff" and name not in (attachment_names or ())
+        if unchanged and resource != "Network":
+            continue
+        current = sm.existing.get(proposed.get_identifier_value())
+        if unchanged:
+            effective = current
+        else:
+            effective = current.model_copy(deep=True).merge(proposed) if current is not None and state == "merged" else proposed
+        config = effective.to_gathered_config()
+        if resource == "Network":
+            requested = requested_config[index] if requested_config is not None else proposed.to_gathered_config(exclude_unset=True)
+            try:
+                NetworkChildConfigModel.validate_feature_dependencies(requested, config)
+            except ValueError as exc:
+                prefix = f"child_fabric_config[{fabric_name}]" if child_network else f"config[{index}] on fabric '{fabric_name}'"
+                raise ValueError(f"{prefix}: {exc}") from exc
+        if unchanged:
+            continue
+        if standalone_vrf and resource == "VRF":
+            validate_standalone_vrf_trm_requirements(config, index, fabric_name)
+            validate_standalone_vrf_svi_requirements(config, proposed.to_gathered_config(), index, fabric_name)
+        if (
+            (resource == "Network" and config.get("vlan_network_type") in _PVLAN_TYPES)
+            or config.get("trm_enable") is True
+            or (resource == "VRF" and config.get("ipv6_trm") is True)
+            or config.get("netflow_enable") is True
+            or (standalone_vrf and resource == "VRF" and config.get("default_security_action") in ("enforcedPermit", "enforcedDeny"))
+        ):
+            validate_fabric_features(
+                get_details(),
+                config,
+                resource,
+                index,
+                fabric_name,
+                standalone_vrf=standalone_vrf,
+            )
+
+
+def preflight_workflow_features(
+    coordinator: Any,
+    sm: Any,
+    module_args: dict[str, Any],
+    strategy: Any,
+    resource: str,
+    *,
+    current_attachments: dict | None = None,
+    desired_attachments: dict | None = None,
+) -> None:
+    """
+    # Summary
+
+    Validate actionable resource and attachment writes on the effective fabric.
+
+    ## Raises
+
+    ### ValueError
+
+    - If a requested feature is unavailable on the owning fabric.
+    """
+    target_key = "networkName" if resource == "Network" else "vrfName"
+    attach_names = {payload[target_key] for payload in coordinator.attachments.planned_attach_payloads(current_attachments or {}, desired_attachments or {})}
+    resolver = getattr(coordinator, "_fabric_resolver", None)
+    state = module_args.get("state", "merged")
+
+    def details_for(name: str, fabric_data: dict[str, Any]) -> dict[str, Any]:
+        cached = fabric_data.get("manageFabricDetails")
+        if cached:
+            return cached
+        return resolver.get_fabric_details(name, fabric_data.get("clusterName")) if resolver else {}
+
+    if strategy.is_parent and strategy.child_fabric_members():
+        members = {item["fabricName"]: item for item in strategy.fabric_data.get("members", []) if item.get("fabricName")}
+        for child_name in strategy.child_fabric_members():
+            child_data = members.get(child_name, {})
+            preflight_feature_changes(
+                sm,
+                state,
+                lambda name=child_name, data=child_data: details_for(name, data),
+                resource,
+                child_name,
+                attachment_names=attach_names,
+                requested_config=module_args.get("config"),
+            )
+    else:
+        preflight_feature_changes(
+            sm,
+            state,
+            lambda: details_for(strategy.fabric_name, strategy.fabric_data),
+            resource,
+            strategy.fabric_name,
+            attachment_names=attach_names,
+            standalone_vrf=resource == "VRF",
+            child_network=resource == "Network" and strategy.is_child,
+            requested_config=module_args.get("config"),
+        )
+
+
+def preflight_child_feature_tasks(
+    child_tasks: dict[str, dict],
+    state: str,
+    new_state_machine: Callable[[dict, Any], tuple[Any, Any, Any]],
+    preflight: Callable[[Any, dict, Any], None],
+    restore_params: Callable[[Any, Any], None],
+) -> None:
+    """
+    # Summary
+
+    Check child writes before parent mutation and retain their inventory snapshot for reuse.
+
+    ## Raises
+
+    ### ValueError
+
+    - If a child feature requires a disabled fabric setting.
+    """
+    if state in ("gathered", "deleted"):
+        return
+    for child_task in child_tasks.values():
+        child_args = child_task["module_args"]
+        child_strategy = child_task["strategy"]
+        sm, original_config, original_state = new_state_machine(child_args, child_strategy)
+        try:
+            preflight(sm, child_args, child_strategy)
+            child_task["preflight_state_machine"] = sm
+        finally:
+            restore_params(original_config, original_state)

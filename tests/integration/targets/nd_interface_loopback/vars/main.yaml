@@ -21,7 +21,7 @@ loopback_200:
         ip: "10.100.200.1"
         description: "Ansible integration test loopback200"
         vrf: default
-        route_map_tag: "12345"
+        route_map_tag: 12345
 
 loopback_201:
   switch_ip: "{{ test_switch_ip }}"
@@ -60,6 +60,7 @@ loopback_200_updated:
         ip: "10.100.200.2"
         description: "Updated loopback200 description"
         vrf: default
+        # Keep the legacy numeric-string input in the update path; ND must still receive an integer.
         route_map_tag: "54321"
 
 loopback_201_updated:

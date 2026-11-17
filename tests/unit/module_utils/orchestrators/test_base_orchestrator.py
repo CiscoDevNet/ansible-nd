@@ -441,6 +441,33 @@ class TestRequestErrorHandlingWithResults:
         assert result == {}
         assert len(results._tasks) == 1
 
+    @pytest.mark.parametrize("not_found_ok", [False, True])
+    def test_get_204_fails_even_when_not_found_is_optional(self, not_found_ok):
+        """No-content GET never proves a complete inventory or empty list."""
+        response = _success_response()
+        response["RETURN_CODE"] = 204
+        rest_send = _make_rest_send([response])
+        orch = _make_orchestrator(rest_send)
+
+        with pytest.raises(RuntimeError, match="Request failed"):
+            orch._request("/api/v1/stub", HttpVerbEnum.GET, not_found_ok=not_found_ok)
+
+    def test_get_404_fails_when_not_explicitly_optional(self):
+        rest_send = _make_rest_send([_not_found_response()])
+        orch = _make_orchestrator(rest_send)
+
+        with pytest.raises(RuntimeError, match="Request failed"):
+            orch._request("/api/v1/stub", HttpVerbEnum.GET)
+
+    def test_non_get_204_remains_successful(self):
+        response = _success_response()
+        response["RETURN_CODE"] = 204
+        response["METHOD"] = "POST"
+        rest_send = _make_rest_send([response])
+        orch = _make_orchestrator(rest_send)
+
+        assert orch._request("/api/v1/stub", HttpVerbEnum.POST, data={}) == {}
+
 
 # =============================================================================
 # Test: CRUD methods pass correct operation_type
@@ -708,3 +735,21 @@ class TestModelClassIsClassVar:
         keeps the collision guard for genuinely dangerous names like `model_dump_mode`.
         """
         assert NDBaseOrchestrator.model_config.get("protected_namespaces") == ("model_validate", "model_dump")
+
+
+class TestAcceptanceHooks:
+    """Issue #597: the base orchestrator's acceptance hooks are conservative no-ops."""
+
+    def test_accepted_mutations_default_is_empty(self):
+        """`accepted_mutations` reports nothing accepted from a failed bulk create by default."""
+        orch = _make_orchestrator(_make_rest_send([]))
+        items = [StubModel(name="a"), StubModel(name="b")]
+
+        assert not orch.accepted_mutations(items)
+
+    def test_unaccepted_removals_default_is_empty(self):
+        """`unaccepted_removals` reports every recorded removal as accepted by default (today's delete-path behavior)."""
+        orch = _make_orchestrator(_make_rest_send([]))
+        items = [StubModel(name="a"), StubModel(name="b")]
+
+        assert not orch.unaccepted_removals(items)

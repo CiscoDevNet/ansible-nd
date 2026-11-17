@@ -1,0 +1,54 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Interface workflow cleanup | Select reserved resources
+  ansible.builtin.set_fact:
+    nd_iw_active_switches: "{{ nd_iw_current_fabric.switches }}"
+    nd_iw_active_resources: "{{ nd_iw_reserved_resources[nd_iw_current_fabric.reserved_set] }}"
+
+- name: Interface workflow cleanup | Reset supported cleanup resources
+  ansible.builtin.set_fact:
+    nd_iw_supported_cleanup_resources: []
+
+- name: Interface workflow cleanup | Select only declared supported cleanup resources
+  ansible.builtin.set_fact:
+    nd_iw_supported_cleanup_resources: "{{ nd_iw_supported_cleanup_resources + [item] }}"
+  loop: "{{ nd_iw_cleanup_resources }}"
+  loop_control:
+    label: "{{ item.type }}"
+  when:
+    - nd_iw_selected_families | length == 0 or item.type in nd_iw_selected_families
+    - item.type in (nd_iw_current_fabric.candidate_families | default(nd_iw_property_matrix.keys() | list))
+    - item.type not in (nd_iw_current_fabric.unsupported_families | default([]))
+    - item.type in (nd_iw_current_fabric.supported_families | default(nd_iw_property_matrix.keys() | list))
+    - nd_iw_current_fabric.discriminator in (nd_iw_property_matrix[item.type].supported_fabric_types | default(nd_iw_supported_fabric_types))
+
+- name: Interface workflow cleanup | Delete all test identities in one workflow call
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+    resources: "{{ nd_iw_supported_cleanup_resources }}"
+    config_actions:
+      deploy: >-
+        {{ nd_iw_enable_deploy | bool
+           or nd_iw_deployment_exercised | default(false) | bool }}
+    output_level: "{{ nd_iw_output_level }}"
+  register: nd_iw_cleanup_result
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+  ignore_errors: true
+
+- name: Interface workflow cleanup | Track cleanup failures
+  ansible.builtin.set_fact:
+    nd_iw_cleanup_failures: >-
+      {{ nd_iw_cleanup_failures
+         + [nd_iw_current_fabric.discriminator ~ ':' ~ nd_iw_current_fabric.fabric_name] }}
+  when: nd_iw_cleanup_result.failed | default(false) | bool
+
+- name: Interface workflow cleanup | Require a clean setup baseline
+  ansible.builtin.assert:
+    that:
+      - not (nd_iw_cleanup_result.failed | default(false) | bool)
+    fail_msg: >-
+      Pre-test cleanup failed for {{ nd_iw_current_fabric.fabric_name }}. The suite stopped before
+      creating any new test intent: {{ nd_iw_cleanup_result.msg | default('unknown controller error') }}
+  when: nd_iw_cleanup_phase == 'setup'

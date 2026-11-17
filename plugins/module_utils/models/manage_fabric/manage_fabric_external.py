@@ -599,6 +599,8 @@ class FabricExternalConnectivityModel(FabricBaseModel):
     - `TypeError` - If field types don't match expected types
     """
 
+    supports_gathered_filtering: ClassVar[bool] = True
+
     _fabric_type: ClassVar[FabricTypeEnum] = FabricTypeEnum.EXTERNAL_CONNECTIVITY
     _argspec_exclude_fields: ClassVar[set[str]] = {"alert_suspend"}
 

@@ -1,0 +1,32 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# This verifier deliberately uses nd_rest and its own page accounting instead
+# of the workflow's InterfaceStateSnapshot counters or paginator.
+- name: Reset independent raw inventory pagination evidence
+  ansible.builtin.set_fact:
+    nd_iw_raw_interfaces: []
+    nd_iw_raw_seen_keys: []
+    nd_iw_raw_page_counts: {}
+    nd_iw_raw_next_offsets: {}
+    nd_iw_raw_totals: {}
+
+- name: Collect every raw interface page for each target switch
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/controller_collect_inventory_page.yaml"
+  loop: "{{ nd_iw_raw_target_switch_ids | unique | list }}"
+  loop_control:
+    loop_var: nd_iw_raw_switch_id
+    label: "{{ nd_iw_raw_switch_id }}"
+
+- name: Calculate the independent expected interface GET count
+  ansible.builtin.set_fact:
+    nd_iw_raw_total_inventory_pages: "{{ nd_iw_raw_page_counts.values() | list | sum }}"
+
+- name: Verify every target has one complete independent page sequence
+  ansible.builtin.assert:
+    that:
+      - nd_iw_raw_page_counts | length == nd_iw_raw_target_switch_ids | unique | list | length
+      - nd_iw_raw_total_inventory_pages | int >= nd_iw_raw_page_counts | length
+    fail_msg: >-
+      Independent inventory pagination did not cover every targeted switch.

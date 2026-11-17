@@ -553,7 +553,8 @@ def test_vpc_trunk_host_interface_00300_identifier():
 
     Verify the identifier is the composite (`switch_ip`, `interface_name`), matching the other interface modules. Two vPC pairs in one
     fabric may legally reuse the same vPC id (ND's `vpcId` resource pool is devicePair-scoped; issue #356), so name-only identity cannot
-    represent them. The dual-peer GET echo is deduped in `VpcInterfaceBaseOrchestrator.query_all` (pair-set key), not via the identity.
+    represent them. Standalone and aggregate consumers dedupe the dual-peer GET echo by authoritative peer-pair identity before
+    collection construction; the identity itself does not collapse the echoes.
 
     ## Test
 

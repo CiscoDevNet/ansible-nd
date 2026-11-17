@@ -1,0 +1,27 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Verify indexed resource metadata for {{ nd_iw_assert_case.family | default(nd_iw_assert_case.type | default('unknown')) }}
+  ansible.builtin.assert:
+    that:
+      - nd_iw_assert_resource_result.type == (nd_iw_assert_case.family | default(nd_iw_assert_case.type | default('')))
+      - nd_iw_assert_resource_result.state == nd_iw_assert_state
+      - >-
+        nd_iw_assert_resource_result.after_verified
+        == (nd_iw_assert_after_verified | default(true) | bool)
+      - nd_iw_assert_resource_result.module == nd_iw_assert_case.module
+      - nd_iw_assert_resource_result.after is sequence
+      - nd_iw_assert_resource_result.operations is sequence
+
+- name: Verify configured items for {{ nd_iw_assert_case.family | default(nd_iw_assert_case.type | default('unknown')) }}
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/assert_config_item.yaml"
+  loop: "{{ nd_iw_assert_expected_config }}"
+  loop_control:
+    loop_var: nd_iw_expected_config_item
+    label: >-
+      {{
+        nd_iw_expected_config_item.interface_name
+        | default(nd_iw_expected_config_item.interface_names | default(['unknown']) | first)
+      }}

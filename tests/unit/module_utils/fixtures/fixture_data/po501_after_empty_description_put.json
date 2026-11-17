@@ -1,0 +1,57 @@
+{
+  "read_only": true,
+  "mutation_requests": 0,
+  "scope": "exactleaf1NDinventorycomplete",
+  "row": {
+    "configData": {
+      "mode": "trunk",
+      "networkOS": {
+        "networkOSType": "nx-os",
+        "policy": {
+          "adminState": true,
+          "allowedVlans": "none",
+          "bpduFilter": "default",
+          "bpduGuard": "enable",
+          "cdp": true,
+          "copyDescription": false,
+          "duplexMode": "auto",
+          "lacpPortPriority": 32768,
+          "lacpRate": "normal",
+          "lacpSuspend": false,
+          "linkType": "auto",
+          "monitor": false,
+          "mtu": "jumbo",
+          "nativeVlan": 1,
+          "negotiateAuto": true,
+          "netflow": false,
+          "orphanPort": false,
+          "pfc": false,
+          "policyType": "trunkPoHost",
+          "portChannelId": "port-channel501",
+          "portChannelMode": "active",
+          "portTypeEdgeTrunk": true,
+          "ptp": "false",
+          "qos": false,
+          "speed": "auto",
+          "stormControl": false,
+          "stormControlAction": "default",
+          "vlanMapping": false
+        }
+      }
+    },
+    "interfaceName": "port-channel501",
+    "interfaceType": "portChannel",
+    "operData": {
+      "adminStatus": "up",
+      "mode": "trunk",
+      "mtu": 9216,
+      "operationalDescription": "No operational members",
+      "operationalStatus": "down",
+      "portChannelId": -1,
+      "speed": "100Mb",
+      "switchName": "nac-msd-fabric1-leaf1",
+      "vlanRange": "-1"
+    },
+    "switchId": "99TRB2TMZYJ"
+  }
+}

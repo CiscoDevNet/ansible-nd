@@ -26,6 +26,7 @@ Uses the file-based `Sender` from `tests/unit/module_utils/sender_file.py` as th
 
 from __future__ import annotations
 
+from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
@@ -100,6 +101,14 @@ def _build_access_model(policy_kwargs: dict, interface_name: str = "Ethernet1/1"
     )
 
 
+def _seed_inventory(orchestrator, switch_id: str, inventory: dict) -> None:
+    """Preload the shared snapshot used by current-state safety checks."""
+    snapshot = orchestrator.state_snapshot
+    snapshot._interfaces_by_switch[switch_id] = deepcopy(inventory)
+    snapshot._original_interfaces_by_switch[switch_id] = deepcopy(inventory)
+    snapshot._revisions_by_switch[switch_id] = 1
+
+
 @pytest.mark.parametrize("policy_overrides", [{"description": "foreign trunk"}, {"adminState": False}, {"ptp": "true"}, {"unrecognizedField": 1}])
 def test_absent_access_delete_cannot_replay_configured_foreign_trunk(monkeypatch, policy_overrides: dict) -> None:
     """The access module cannot deploy pending intent owned by a configured trunk policy."""
@@ -119,6 +128,7 @@ def test_absent_access_delete_cannot_replay_configured_foreign_trunk(monkeypatch
             },
         }
     }
+    _seed_inventory(orchestrator, "FDO12345ABC", orchestrator._switch_interfaces_cache["FDO12345ABC"])
 
     absent_access = SimpleNamespace(switch_ip="192.0.2.10", interface_name="Ethernet1/13")
     assert orchestrator.reconcile_absent_deletes([absent_access]) is False
@@ -168,6 +178,7 @@ def test_absent_access_delete_can_replay_exact_reset_target(monkeypatch) -> None
             },
         }
     }
+    _seed_inventory(orchestrator, "FDO12345ABC", orchestrator._switch_interfaces_cache["FDO12345ABC"])
 
     absent_access = SimpleNamespace(switch_ip="192.0.2.10", interface_name="Ethernet1/13")
     assert orchestrator.reconcile_absent_deletes([absent_access]) is True
@@ -579,6 +590,74 @@ def test_ethernet_access_orchestrator_00520() -> None:
     with does_not_raise():
         instance.create(model)
 
+    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
+
+
+def test_ethernet_access_orchestrator_00525(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify update accepts a routed-host wire record supplied by the workflow and sends one exact
+    access-host replacement PUT without first normalizing or creating the interface.
+
+    ## Test
+
+    - Existing data has policyType=routedHost and is not a port-channel member
+    - The destination model requests policyType=accessHost, VLAN 100, and a description
+    - The complete inventory is read for the ownership guard, then exactly one PUT is issued
+    - The body is exactly the destination model payload plus the resolved switch ID
+    - One deployment target is queued for the workflow's consolidated deploy phase
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.update()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    instance = _build_orchestrator(gen_responses)
+    model = _build_access_model({"access_vlan": 100, "description": "workflow transition"})
+    current = {
+        "switchId": "FDO11111AAA",
+        "interfaceName": "Ethernet1/1",
+        "interfaceType": "ethernet",
+        "configData": {
+            "mode": "routed",
+            "networkOS": {
+                "networkOSType": "nx-os",
+                "policy": {"policyType": "routedHost", "ip": "198.51.100.1", "prefix": 31},
+            },
+        },
+        "operData": {"portChannelId": -1},
+    }
+    requests = []
+
+    def request(**kwargs):
+        requests.append(kwargs)
+        if kwargs["verb"] == HttpVerbEnum.GET:
+            return {"interfaces": [deepcopy(current)]}
+        return {"ok": True}
+
+    monkeypatch.setattr(instance, "_resolve_switch_id", lambda _switch_ip: "FDO11111AAA")
+    monkeypatch.setattr(instance, "_request", request)
+
+    result = instance.update(model, existing_data=current)
+
+    expected_payload = model.to_payload()
+    expected_payload["switchId"] = "FDO11111AAA"
+    assert result == {"ok": True}
+    assert requests[0]["verb"] == HttpVerbEnum.GET
+    assert "/interfaces?" in requests[0]["path"]
+    assert requests[1:] == [
+        {
+            "path": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/Ethernet1%2F1",
+            "verb": HttpVerbEnum.PUT,
+            "data": expected_payload,
+        }
+    ]
+    assert requests[1]["data"]["configData"]["networkOS"]["policy"]["policyType"] == "accessHost"
     assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
 
 
@@ -998,6 +1077,23 @@ def test_ethernet_access_orchestrator_00610() -> None:
     assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
 
 
+def test_ethernet_access_orchestrator_00592() -> None:
+    """Verify public Ethernet queue transfer APIs de-duplicate targets and expose immutable views."""
+
+    def responses():
+        yield {}
+
+    instance = EthernetAccessInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    normalize_targets = [("Ethernet1/1", "FDO11111AAA"), ("Ethernet1/2", "FDO22222BBB")]
+    reset_targets = [("Ethernet1/3", "FDO11111AAA")]
+
+    instance.queue_normalize_targets([*normalize_targets, normalize_targets[0]])
+    instance.queue_reset_targets([*reset_targets, reset_targets[0]])
+
+    assert instance.pending_normalizes == tuple(normalize_targets)
+    assert instance.pending_resets == tuple(reset_targets)
+
+
 def test_ethernet_access_orchestrator_00595() -> None:
     """
     # Summary
@@ -1093,7 +1189,7 @@ def test_ethernet_access_orchestrator_00630() -> None:
     - `_pending_resets` carries three (interface, switch) pairs
     - First PUT returns 200 (Ethernet1/1 reset), second PUT returns 500 (Ethernet1/2 fails)
     - `remove_pending` raises RuntimeError naming the failed interface, the one reset before it, and the one not attempted
-    - The third interface is never requested (fail-fast: only two responses are consumed)
+    - One inventory GET precedes the two PUT responses; the third interface is never reset
 
     ## Classes and Methods
 
@@ -1102,6 +1198,7 @@ def test_ethernet_access_orchestrator_00630() -> None:
     """
 
     def responses():
+        yield responses_access("test_reset_partial_failure_00630_inventory")
         yield responses_access("test_reset_partial_failure_00630a")
         yield responses_access("test_reset_partial_failure_00630b")
 

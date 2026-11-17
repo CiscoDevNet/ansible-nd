@@ -246,16 +246,12 @@ class VrfValidators:
             raise ValueError(f"Invalid overlay multicast group address: {v}") from exc
 
     @staticmethod
-    def validate_bgp_passwd_encrypt(v: int | None) -> int | None:
-        """
-        Validate BGP password key type.
-
-        Accepted values: 3 (3DES) or 7 (Cisco Type-7).
-        """
+    def validate_bgp_passwd_encrypt(v: str | None) -> str | None:
+        """Validate the Manage API BGP password key type."""
         if v is None:
             return None
-        if v not in (3, 7):
-            raise ValueError(f"bgp_passwd_encrypt must be 3 (3DES) or 7 (Cisco Type-7), got: {v}")
+        if v not in ("3des", "type6", "type7"):
+            raise ValueError(f"bgp_passwd_encrypt must be 3des, type6, or type7, got: {v}")
         return v
 
     @staticmethod
@@ -266,6 +262,7 @@ class VrfValidators:
         Accepts:
         - ``None``                    → ``None``
         - ``""``                      → ``None``
+        - ``[]``                      → ``[]`` (explicit clear)
         - ``"65001:100"``             → ``["65001:100"]``
         - ``"65001:100, 65001:200"``  → ``["65001:100", "65001:200"]``
         - ``["65001:100", "65001:200"]`` → ``["65001:100", "65001:200"]``
@@ -288,7 +285,7 @@ class VrfValidators:
             validated = VrfValidators.validate_route_target(rt)
             if validated is not None:
                 result.append(validated)
-        return result if result else None
+        return result
 
     # ------------------------------------------------------------------
     # Require wrappers

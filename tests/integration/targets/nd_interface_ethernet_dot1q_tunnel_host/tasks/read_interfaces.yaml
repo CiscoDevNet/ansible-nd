@@ -1,0 +1,20 @@
+---
+# Readback is deliberately independent of the module's planned before/after.
+- name: READ | Query each exact test interface from ND
+  cisco.nd.nd_rest:
+    method: get
+    path: "{{ dot1q_interfaces_path }}{{ dot1q_read_name | replace('/', '%2F') }}"
+  loop: "{{ test_interface_names }}"
+  loop_control:
+    loop_var: dot1q_read_name
+  register: dot1q_readback
+
+- name: READ | Require successful responses for the exact identities
+  ansible.builtin.assert:
+    that:
+      - item.status | int == 200
+      - item.current.switchId == test_switch_id
+      - item.current.interfaceName == item.dot1q_read_name
+  loop: "{{ dot1q_readback.results }}"
+  loop_control:
+    label: "{{ item.dot1q_read_name }}"

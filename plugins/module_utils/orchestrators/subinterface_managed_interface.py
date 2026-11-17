@@ -62,7 +62,8 @@ class SubinterfaceManagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Subin
 
     ### RuntimeError
 
-    - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
+    - Via `validate_prerequisites` if the fabric does not exist, or is in deployment-freeze mode for a state
+      that mutates configuration.
     - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `create` if the create API request fails.
     - Via `update` if the update API request fails.
@@ -73,7 +74,14 @@ class SubinterfaceManagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Subin
     """
 
     model_class: ClassVar[type[NDBaseModel]] = SubinterfaceManagedInterfaceModel
+    # TODO(4.2.1) staged-subinterface-delete-echo
+    # ND 4.2.1 and 4.3.1 can retype a removed subinterface as structural `ethernet` while it keeps the `userDefined` /
+    # `interface_delete` row, so the staged-delete tombstone is accepted under either type. The lookup is by the exact subinterface
+    # name and the replay still requires a preview with pending lines for that name.
+    staged_delete_echo_interface_types: ClassVar[frozenset[str]] = frozenset({"subInterface", "ethernet"})
     supports_bulk_create: ClassVar[bool] = True
+    supports_bulk_full_modify: ClassVar[bool] = True
+    supports_bulk_modify_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
     xe_removal_requires_discovery: ClassVar[bool] = True
 
@@ -276,7 +284,7 @@ class SubinterfaceManagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Subin
         ### RuntimeError
 
         - If the fabric does not exist on the target ND node.
-        - If the fabric is in deployment-freeze mode.
+        - If the fabric is in deployment-freeze mode and the state mutates configuration.
         - If the query API request fails.
         """
         managed_policy_types = self._managed_policy_types()

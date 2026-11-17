@@ -1,0 +1,31 @@
+---
+- name: VERIFY | Wait for the expected exact-interface intent
+  vars:
+    # Older Ansible/Jinja combinations retain scalar interpolation as strings.
+    # Compare the numeric wire field numerically in both supported environments.
+    dot1q_expected_policy: >-
+      {{ dot1q_expected_item.policy
+         | combine({'accessVlan': dot1q_expected_item.policy.accessVlan | int}
+                   if 'accessVlan' in dot1q_expected_item.policy else {}) }}
+  cisco.nd.nd_rest:
+    method: get
+    path: "{{ dot1q_interfaces_path }}{{ dot1q_expected_item.name | replace('/', '%2F') }}"
+  register: dot1q_verified
+  until:
+    - dot1q_verified.status | int == 200
+    - dot1q_verified.current.configData.networkOS.policy.policyType == dot1q_expected_item.policy_type
+    - >-
+      (dot1q_read_defaults | combine(dot1q_verified.current.configData.networkOS.policy)
+       | dict2items | selectattr('key', 'in', dot1q_expected_policy.keys() | list)
+       | items2dict) == dot1q_expected_policy
+  retries: 5
+  delay: 2
+
+- name: VERIFY | Assert identity and structural discriminators
+  ansible.builtin.assert:
+    that:
+      - dot1q_verified.current.switchId == test_switch_id
+      - dot1q_verified.current.interfaceName == dot1q_expected_item.name
+      - dot1q_verified.current.interfaceType == 'ethernet'
+      - dot1q_verified.current.configData.networkOS.networkOSType == 'nx-os'
+      - dot1q_verified.current.configData.mode == ('dot1qTunnel' if dot1q_expected_item.policy_type == 'dot1qTunnelHost' else 'trunk')

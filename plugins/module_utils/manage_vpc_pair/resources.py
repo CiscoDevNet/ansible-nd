@@ -327,7 +327,7 @@ class VpcPairStateMachine(NDStateMachine):
         if state in ["merged", "replaced", "overridden"]:
             self._manage_create_update_state(state, unwanted_keys)
             if state == "overridden":
-                self._manage_override_deletions(override_exceptions)
+                self._manage_vpc_override_deletions(override_exceptions)
         elif state == "deleted":
             self._manage_delete_state()
         else:
@@ -445,7 +445,7 @@ class VpcPairStateMachine(NDStateMachine):
                         error=str(e),
                     )
 
-    def _manage_override_deletions(self, override_exceptions: list[Any]) -> None:
+    def _manage_vpc_override_deletions(self, override_exceptions: list[Any]) -> None:
         """
         Delete pairs that exist on controller but are not in proposed config.
 

@@ -25,7 +25,9 @@ __metaclass__ = type  # pylint: disable=invalid-name
 
 import inspect
 import logging
+from copy import deepcopy
 from types import SimpleNamespace
+from unittest.mock import Mock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -45,6 +47,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import (
     FabricContext,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
     BulkCreateGroupKey,
     BulkCreateItem,
@@ -135,6 +138,26 @@ def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabri
     return rest_send
 
 
+_SWITCH_IDS = {"192.168.12.151": "FDO12345ABC", "192.168.12.152": "FDO67890DEF"}
+
+
+def _patch_switch_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve the two lab IPs in `_SWITCH_IDS` without a FabricContext request; any other IP raises like FabricContext does."""
+
+    def _resolve(self, switch_ip: str) -> str:  # pylint: disable=unused-argument
+        try:
+            return _SWITCH_IDS[switch_ip]
+        except KeyError as error:
+            raise RuntimeError(f"No switch found with fabricManagementIp '{switch_ip}' in fabric 'fabric_1'.") from error
+
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "_resolve_switch_id", _resolve)
+
+
+def _loopback_item(interface_name: str, switch_ip: str = "192.168.12.151") -> LoopbackInterfaceModel:
+    """Identifier-only loopback model, the shape the state machine hands to the acceptance hooks."""
+    return LoopbackInterfaceModel.from_config({"switch_ip": switch_ip, "interface_name": interface_name})
+
+
 # =============================================================================
 # Test: initialization
 # =============================================================================
@@ -216,7 +239,7 @@ def test_switch_interfaces_paginates_then_publishes_one_cache() -> None:
 
     def request(*, path, verb, not_found_ok=False, **_kwargs):
         assert verb == HttpVerbEnum.GET
-        assert not_found_ok is True
+        assert not_found_ok is False
         calls.append(path)
         offset = int(parse_qs(urlsplit(path).query)["offset"][0])
         return pages[offset]
@@ -226,7 +249,9 @@ def test_switch_interfaces_paginates_then_publishes_one_cache() -> None:
     inventory = instance._switch_interfaces("SERIAL1")
 
     assert list(inventory) == ["ethernet1/1", "ethernet1/2"]
+    assert instance._switch_interfaces("SERIAL1") == inventory
     assert instance._switch_interfaces("SERIAL1") is inventory
+    assert instance.state_snapshot.cached_switch("SERIAL1") is not inventory
     assert len(calls) == 2
     for expected_offset, path in enumerate(calls):
         assert "/switches/SERIAL1/interfaces?" in path
@@ -277,7 +302,7 @@ def test_switch_interfaces_never_publishes_an_invalid_second_page(second_page, m
     with pytest.raises(InterfacePaginationError, match=match):
         instance._switch_interfaces("SERIAL1")
 
-    assert "SERIAL1" not in instance._switch_interfaces_cache
+    assert not instance.state_snapshot.has_switch("SERIAL1")
 
 
 def test_switch_interfaces_retries_complete_snapshot_after_identity_mismatch(
@@ -380,7 +405,7 @@ def test_switch_interfaces_page_two_transport_failure_publishes_no_cache() -> No
     with pytest.raises(RuntimeError, match="page two unavailable"):
         instance._switch_interfaces("SERIAL1")
 
-    assert "SERIAL1" not in instance._switch_interfaces_cache
+    assert not instance.state_snapshot.has_switch("SERIAL1")
 
 
 # =============================================================================
@@ -577,6 +602,48 @@ def test_base_interface_00320() -> None:
         instance.validate_prerequisites()
 
 
+@pytest.mark.parametrize(
+    "state, expected_method",
+    [
+        ("gathered", "read"),
+        ("merged", "mutation"),
+        ("replaced", "mutation"),
+        ("overridden", "mutation"),
+        ("deleted", "mutation"),
+    ],
+)
+def test_base_interface_00330(
+    state,
+    expected_method,
+) -> None:
+    """
+    Verify only gathered state uses read validation; all write states use
+    mutation validation.
+    """
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(ResponseGenerator(responses()))
+    rest_send.params["state"] = state
+
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+    fabric_context = SimpleNamespace(
+        validate_for_read=Mock(),
+        validate_for_mutation=Mock(),
+    )
+    instance._fabric_context = fabric_context
+
+    instance.validate_prerequisites()
+
+    if expected_method == "read":
+        fabric_context.validate_for_read.assert_called_once_with()
+        fabric_context.validate_for_mutation.assert_not_called()
+    else:
+        fabric_context.validate_for_read.assert_not_called()
+        fabric_context.validate_for_mutation.assert_called_once_with()
+
+
 # =============================================================================
 # Test: _configure_endpoint
 # =============================================================================
@@ -742,6 +809,22 @@ def test_base_interface_00530() -> None:
     instance._queue_remove("loopback10", "FDO12345ABC")
 
     assert instance._pending_removes == [("loopback10", "FDO12345ABC")]
+
+
+def test_base_interface_00540() -> None:
+    """Verify public queue transfer APIs de-duplicate targets and expose immutable views."""
+
+    def responses():
+        yield {}
+
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    targets = [("loopback10", "FDO12345ABC"), ("loopback20", "FDO12345ABD")]
+
+    instance.queue_deploy_targets([*targets, targets[0]])
+    instance.queue_remove_targets([*targets, targets[0]])
+
+    assert instance.pending_deploys == tuple(targets)
+    assert instance.pending_removes == tuple(targets)
 
 
 # =============================================================================
@@ -1110,6 +1193,16 @@ def test_reconcile_no_diff_contradictory_preview_fails_without_deploy(monkeypatc
     assert instance._pending_deploys == []
 
 
+def _seed_shared_inventory(instance, switch_id: str, inventory: dict) -> None:
+    """Seed the authoritative snapshot and its orchestrator-local read cache together."""
+    snapshot = instance.state_snapshot
+    snapshot._interfaces_by_switch[switch_id] = deepcopy(inventory)
+    snapshot._original_interfaces_by_switch[switch_id] = deepcopy(inventory)
+    snapshot._revisions_by_switch[switch_id] = 1
+    instance._switch_interfaces_cache[switch_id] = deepcopy(inventory)
+    instance._switch_interfaces_cache_revisions[switch_id] = 1
+
+
 @pytest.mark.parametrize("check_mode", [False, True])
 def test_reconcile_absent_delete_recovers_pending_deploy(monkeypatch, check_mode: bool) -> None:
     """An explicit absent delete remains actionable while preview shows pending CLI."""
@@ -1125,7 +1218,7 @@ def test_reconcile_absent_delete_recovers_pending_deploy(monkeypatch, check_mode
     instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     instance.rest_send.check_mode = check_mode
     instance.deploy = True
-    instance._switch_interfaces_cache["FDO12345ABC"] = {}
+    _seed_shared_inventory(instance, "FDO12345ABC", {})
     deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
 
     assert instance.reconcile_absent_deletes([deleted]) is True
@@ -1149,7 +1242,7 @@ def test_reconcile_absent_delete_empty_preview_is_idempotent(monkeypatch, check_
     instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     instance.rest_send.check_mode = check_mode
     instance.deploy = True
-    instance._switch_interfaces_cache["FDO12345ABC"] = {}
+    _seed_shared_inventory(instance, "FDO12345ABC", {})
     deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
 
     assert instance.reconcile_absent_deletes([deleted]) is False
@@ -1157,6 +1250,164 @@ def test_reconcile_absent_delete_empty_preview_is_idempotent(monkeypatch, check_
     assert instance.rest_send.return_code == 207
     assert instance.rest_send.check_mode is check_mode
     assert instance._pending_deploys == []
+
+
+def _staged_delete_tombstone(name: str, interface_type: str, network_os_type: str = "ios-xe") -> dict:
+    """Return the raw record ND lists after an accepted, undeployed `interfaceActions/remove` (lab 2026-11-10, 4.2.1.10)."""
+    return {
+        "interfaceName": name,
+        "interfaceType": interface_type,
+        "switchId": "FDO12345ABC",
+        "configData": {
+            "networkOS": {
+                "networkOSType": network_os_type,
+                "policy": {"policyType": "userDefined", "templateConfig": {"ReadOnlyOnEdit": True}, "templateName": "interface_delete"},
+            }
+        },
+    }
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("network_os_type", ["ios-xe", "nx-os"])
+def test_reconcile_absent_delete_replays_staged_delete_tombstone(monkeypatch, check_mode: bool, network_os_type: str) -> None:
+    """A delete staged with `deploy: false` is deployed by a later `deploy: true` delete of the same interface."""
+
+    def responses():
+        yield _preview_multistatus([_preview_row("loopback10", "FDO12345ABC", pending_lines=1)])
+
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "staged_delete_echo_interface_types", frozenset({"loopback"}))
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    instance.rest_send.check_mode = check_mode
+    instance.deploy = True
+    _seed_shared_inventory(instance, "FDO12345ABC", {"loopback10": _staged_delete_tombstone("Loopback10", "loopback", network_os_type)})
+    deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
+
+    assert instance.reconcile_absent_deletes([deleted]) is True
+    assert instance._pending_deploys == ([] if check_mode else [("loopback10", "FDO12345ABC")])
+
+
+def test_reconcile_absent_delete_ignores_tombstone_of_another_interface_type(monkeypatch) -> None:
+    """A delete tombstone of a type this orchestrator does not manage is not a replay target and costs no preview."""
+
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "staged_delete_echo_interface_types", frozenset({"loopback"}))
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    instance.deploy = True
+    _seed_shared_inventory(instance, "FDO12345ABC", {"vlan10": _staged_delete_tombstone("Vlan10", "svi")})
+    deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="vlan10")
+
+    assert instance.reconcile_absent_deletes([deleted]) is False
+    assert instance._pending_deploys == []
+    assert instance.rest_send.response_count == 0
+
+
+def _policyless_row(name: str, interface_type: str, network_os_type: str = "nx-os") -> dict:
+    """Return the raw record ND lists for a removal staged seconds after the create deploy (lab 2026-11-10, 4.2.1.10 and 4.3.1.175)."""
+    return {
+        "configData": {"mode": "unknown", "networkOS": {"networkOSType": network_os_type}},
+        "interfaceName": name,
+        "interfaceType": interface_type,
+        "operData": {"adminStatus": "up", "ipAddress": "10.100.206.1/32", "operationalStatus": "up", "portChannelId": -1},
+        "switchId": "FDO12345ABC",
+    }
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_reconcile_absent_delete_replays_policyless_row_with_pending_removal(monkeypatch, check_mode: bool) -> None:
+    """
+    # Summary
+
+    Verify a delete staged seconds after the create deploy is still deployed by a later `deploy: true` delete. ND lists that interface as a
+    row without a policy instead of the `interface_delete` tombstone, while its preview keeps `no interface` pending.
+
+    ## Test
+
+    - The raw inventory holds a policy-less `loopback` row for the requested name
+    - The one-interface preview reports pending lines
+    - `reconcile_absent_deletes()` returns True and queues the deploy outside check mode
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.reconcile_absent_deletes()
+    - NDBaseInterfaceOrchestrator._can_replay_absent_delete()
+    """
+
+    def responses():
+        yield _preview_multistatus([_preview_row("loopback10", "FDO12345ABC", pending_lines=2)])
+
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "staged_delete_echo_interface_types", frozenset({"loopback"}))
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    instance.rest_send.check_mode = check_mode
+    instance.deploy = True
+    _seed_shared_inventory(instance, "FDO12345ABC", {"loopback10": _policyless_row("Loopback10", "loopback")})
+    deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
+
+    assert instance.reconcile_absent_deletes([deleted]) is True
+    assert instance._pending_deploys == ([] if check_mode else [("loopback10", "FDO12345ABC")])
+
+
+def test_reconcile_absent_delete_policyless_row_with_nothing_pending_is_converged(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify the stale policy-less row ND keeps after a deployed removal, or lists for an interface it does not manage, queues no deploy.
+
+    ## Test
+
+    - The raw inventory holds a policy-less `loopback` row for the requested name
+    - The one-interface preview reports zero pending lines
+    - `reconcile_absent_deletes()` returns False and queues nothing
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.reconcile_absent_deletes()
+    - NDBaseInterfaceOrchestrator._can_replay_absent_delete()
+    """
+
+    def responses():
+        yield _preview_multistatus([_preview_row("loopback10", "FDO12345ABC", pending_lines=0)])
+
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "staged_delete_echo_interface_types", frozenset({"loopback"}))
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
+    instance.deploy = True
+    _seed_shared_inventory(instance, "FDO12345ABC", {"loopback10": _policyless_row("Loopback10", "loopback")})
+    deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
+
+    assert instance.reconcile_absent_deletes([deleted]) is False
+    assert instance._pending_deploys == []
+
+
+@pytest.mark.parametrize("opted_in", [frozenset(), frozenset({"loopback"})])
+def test_reconcile_absent_delete_ignores_policyless_row_of_another_interface_type(monkeypatch, opted_in) -> None:
+    """
+    # Summary
+
+    Verify a policy-less row is a replay target only for a family that opted in with that row's `interfaceType`.
+
+    ## Test
+
+    - The raw inventory holds a policy-less `svi` row
+    - The orchestrator opts in for no type, then for `loopback` only
+    - `reconcile_absent_deletes()` returns False and sends no preview
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.reconcile_absent_deletes()
+    - NDBaseInterfaceOrchestrator._can_replay_absent_delete()
+    """
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "_resolve_switch_id", lambda self, switch_ip: "FDO12345ABC")
+    monkeypatch.setattr(_StubInterfaceOrchestrator, "staged_delete_echo_interface_types", opted_in)
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    instance.deploy = True
+    _seed_shared_inventory(instance, "FDO12345ABC", {"vlan10": _policyless_row("Vlan10", "svi")})
+    deleted = SimpleNamespace(switch_ip="192.0.2.10", interface_name="vlan10")
+
+    assert instance.reconcile_absent_deletes([deleted]) is False
+    assert instance._pending_deploys == []
+    assert instance.rest_send.response_count == 0
 
 
 @pytest.mark.parametrize("check_mode", [False, True])
@@ -1170,9 +1421,9 @@ def test_reconcile_absent_delete_skips_foreign_policy_and_previews_only_absent_t
     instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(responses())))
     instance.rest_send.check_mode = check_mode
     instance.deploy = True
-    instance._switch_interfaces_cache["FDO12345ABC"] = {
-        "loopback10": {"interfaceName": "loopback10", "configData": {"networkOS": {"policy": {"policyType": "otherPolicy"}}}}
-    }
+    _seed_shared_inventory(
+        instance, "FDO12345ABC", {"loopback10": {"interfaceName": "loopback10", "configData": {"networkOS": {"policy": {"policyType": "otherPolicy"}}}}}
+    )
     foreign = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback10")
     truly_absent = SimpleNamespace(switch_ip="192.0.2.10", interface_name="loopback11")
 
@@ -1228,6 +1479,50 @@ def test_deploy_207_accepts_only_registered_derived_identity_for_preview() -> No
     }
 
     assert instance._classify_deploy_results(result, [("port-channel501", "FDO12345ABC")]) == (False, None)
+
+
+def test_consolidated_deploy_absorbs_only_registered_child_context() -> None:
+    """A workflow may deploy a port-channel through another family's orchestrator."""
+
+    source = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    target = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    source._register_deploy_derived_identities("port-channel501", "FDO12345ABC", [("Ethernet1/1", "FDO12345ABC")])
+    source._queue_preview_derived_discovery("port-channel501", "FDO12345ABC")
+
+    target.absorb_deploy_context_from(source)
+
+    assert target._allowed_derived_deploy_pairs([("port-channel501", "FDO12345ABC")]) == {("ethernet1/1", "FDO12345ABC")}
+    assert ("port-channel501", "FDO12345ABC") in target._pending_preview_derived_discovery
+    assert target._allowed_derived_deploy_pairs([("port-channel999", "FDO12345ABC")]) == set()
+
+
+def test_consolidated_deploy_absorbs_proven_vpc_peer_scope_and_verifies_both_parents() -> None:
+    """A non-vPC deploy target must not reject a proven peer child or verify one side only."""
+
+    source = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    target = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    source._absorbed_preview_scoped_child_switches[("vpc951", "FDO11111AAA")] = {"FDO11111AAA", "FDO22222BBB"}
+    pairs = [("Ethernet1/41", "FDO11111AAA"), ("vpc951", "FDO11111AAA")]
+
+    target.absorb_deploy_context_from(source)
+
+    assert target._preview_verification_pairs(pairs) == [
+        ("Ethernet1/41", "FDO11111AAA"),
+        ("vpc951", "FDO11111AAA"),
+        ("vpc951", "FDO22222BBB"),
+    ]
+    result = {
+        "results": [
+            {"interfaceName": "Ethernet1/41", "switchId": "FDO11111AAA", "status": "success"},
+            {"interfaceName": "vpc951", "switchId": "FDO11111AAA", "status": "success"},
+            {"interfaceName": "Ethernet1/5", "switchId": "FDO11111AAA", "status": "success"},
+            {"interfaceName": "port-channel951", "switchId": "FDO22222BBB", "status": "success"},
+        ]
+    }
+    assert target._classify_deploy_results(result, pairs) == (False, None)
+
+    result["results"][-1]["switchId"] = "FDO33333CCC"
+    assert "unexpected identity" in target._classify_deploy_results(result, pairs)[1]
 
 
 def test_pending_parent_preview_registers_only_inventory_backed_ethernet_children() -> None:
@@ -1371,6 +1666,7 @@ def test_deploy_207_incomplete_results_require_exact_converged_preview(
     assert rest_send.response_count == 2
     assert rest_send.path.endswith("/interfaceActions/preview")
     assert instance._pending_deploys == []
+    assert instance.verified_deploy_targets == (("loopback10", "FDO12345ABC"), ("loopback20", "FDO12345ABD"))
 
 
 @pytest.mark.parametrize(
@@ -1437,6 +1733,7 @@ def test_deploy_207_contradictory_results_fail_without_preview(deploy_data, erro
     with pytest.raises(RuntimeError, match=error):
         instance.deploy_pending()
 
+    assert instance.verified_deploy_targets == ()
     assert rest_send.response_count == 1
     assert rest_send.path.endswith("/interfaceActions/deploy")
     assert instance._pending_deploys == [
@@ -2422,7 +2719,7 @@ def _bulk_orchestrator_with_inventory(gen_responses: ResponseGenerator, names: l
     """Return a bulk-create stub whose cached inventory for FDO12345ABC holds `names` (no cache entry at all when `None`)."""
     instance = _StubBulkCreateOrchestrator(rest_send=_build_rest_send(gen_responses))
     if names is not None:
-        instance._switch_interfaces_cache["FDO12345ABC"] = {name: {"interfaceName": name} for name in names}
+        instance.state_snapshot._interfaces_by_switch["FDO12345ABC"] = {name: {"interfaceName": name} for name in names}
     return instance
 
 
@@ -2566,7 +2863,7 @@ def test_base_interface_00799() -> None:
 
     assert "inventory unavailable" not in str(exc_info.value)
     assert instance._pending_deploys == []
-    assert "FDO12345ABC" not in instance._switch_interfaces_cache
+    assert not instance.state_snapshot.has_switch("FDO12345ABC")
 
 
 def test_base_interface_00795() -> None:
@@ -3442,7 +3739,7 @@ def _xe_record(name: str, status: str | None, network_os_type: str = "ios-xe") -
 def _seeded_orchestrator(gen_responses: ResponseGenerator, records: list[dict]) -> _StubInterfaceOrchestrator:
     """Return a stub orchestrator whose inventory cache for CAT9KV1701 already holds `records` (no interface-list GET needed)."""
     instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(gen_responses))
-    instance._switch_interfaces_cache["CAT9KV1701"] = {record["interfaceName"].lower(): record for record in records}
+    instance.state_snapshot._interfaces_by_switch["CAT9KV1701"] = {record["interfaceName"].lower(): record for record in records}
     return instance
 
 
@@ -3501,6 +3798,33 @@ def test_base_interface_01110() -> None:
 
     with does_not_raise():
         instance._check_xe_removal_discovered([("port-channel501", "CAT9KV1701")])
+
+    assert len(instance.rest_send.responses) == 0
+
+
+def test_base_interface_01115() -> None:
+    """
+    # Summary
+
+    Verify `_check_xe_removal_discovered` skips ND's staged-delete tombstone (`userDefined` / `interface_delete`). ND flips a
+    tombstone's `operationalStatus` to `unknown` for several seconds after any deploy on the switch (lab 2026-11-10, 4.2.1.10), and
+    its deployment history still ends with the create push, so the guard would refuse a removal ND has already accepted.
+
+    ## Test
+
+    - Candidate vlan983 is an `ios-xe` tombstone with `operationalStatus: unknown`
+    - No exception; no deployment-history request is made
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator._check_xe_removal_discovered()
+    """
+    tombstone = _staged_delete_tombstone("Vlan983", "svi")
+    tombstone["operData"] = {"operationalStatus": "unknown"}
+    instance = _seeded_orchestrator(ResponseGenerator(iter(())), [tombstone])
+
+    with does_not_raise():
+        instance._check_xe_removal_discovered([("vlan983", "CAT9KV1701")])
 
     assert len(instance.rest_send.responses) == 0
 
@@ -3684,3 +4008,96 @@ def test_base_interface_01140() -> None:
 
     assert "port-channel120" not in str(exc_info.value)
     assert len(instance.rest_send.responses) == 2
+
+
+# =============================================================================
+# Issue #597: acceptance hooks read the deploy queue and the delete-side queues
+# =============================================================================
+
+
+def test_base_interface_01200(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify `accepted_mutations` keeps exactly the submitted items whose `(interface_name, switch_id)` pair is deploy-queued, matching
+    names case-insensitively and distinguishing switches with the same interface name (issue #597).
+
+    ## Test
+
+    - Deploy queue holds `("Loopback10", FDO12345ABC)` and `("loopback11", FDO67890DEF)`
+    - Submitted: loopback10 on .151, loopback11 on .151, loopback11 on .152, loopback12 on .151
+    - Returned: loopback10/.151 and loopback11/.152, in submission order
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.accepted_mutations()
+    """
+    _patch_switch_resolution(monkeypatch)
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    instance._queue_deploy("Loopback10", "FDO12345ABC")
+    instance._queue_deploy("loopback11", "FDO67890DEF")
+    submitted = [_loopback_item("loopback10"), _loopback_item("loopback11"), _loopback_item("loopback11", "192.168.12.152"), _loopback_item("loopback12")]
+
+    with does_not_raise():
+        accepted = instance.accepted_mutations(submitted)
+
+    assert [(item.interface_name, item.switch_ip) for item in accepted] == [("loopback10", "192.168.12.151"), ("loopback11", "192.168.12.152")]
+
+
+def test_base_interface_01210(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify `accepted_mutations` treats an item whose `switch_ip` cannot be resolved as not accepted and never raises on the
+    failure path (issue #597).
+
+    ## Test
+
+    - Deploy queue holds `("loopback10", FDO12345ABC)`
+    - Submitted: loopback10 on .151 and loopback10 on an unknown IP
+    - Returned: loopback10/.151 only; no exception
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.accepted_mutations()
+    """
+    _patch_switch_resolution(monkeypatch)
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    instance._queue_deploy("loopback10", "FDO12345ABC")
+    submitted = [_loopback_item("loopback10"), _loopback_item("loopback10", "10.0.0.9")]
+
+    with does_not_raise():
+        accepted = instance.accepted_mutations(submitted)
+
+    assert [(item.interface_name, item.switch_ip) for item in accepted] == [("loopback10", "192.168.12.151")]
+
+
+def test_base_interface_01220(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    Verify `unaccepted_removals` keeps exactly the items whose pair is still in a delete-side queue (`_unsent_delete_pairs`), so a
+    removal the controller accepted (dequeued) is not restored to `after` (issue #597 delete side).
+
+    ## Test
+
+    - Remove queue holds `("loopback11", FDO12345ABC)` only (loopback10's removal was accepted and dequeued)
+    - Submitted (the state machine's `removed`): loopback10 and loopback11 on .151
+    - Returned: loopback11 only; an empty queue returns []
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.unaccepted_removals()
+    - NDBaseInterfaceOrchestrator._unsent_delete_pairs()
+    """
+    _patch_switch_resolution(monkeypatch)
+    instance = _StubInterfaceOrchestrator(rest_send=_build_rest_send(ResponseGenerator(iter(()))))
+    instance._queue_remove("loopback11", "FDO12345ABC")
+    removed = [_loopback_item("loopback10"), _loopback_item("loopback11")]
+
+    with does_not_raise():
+        unaccepted = instance.unaccepted_removals(removed)
+    assert [item.interface_name for item in unaccepted] == ["loopback11"]
+
+    instance._pending_removes.clear()
+    assert instance.unaccepted_removals(removed) == []

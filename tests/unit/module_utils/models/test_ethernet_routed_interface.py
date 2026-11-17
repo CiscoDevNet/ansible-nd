@@ -34,6 +34,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
 from pydantic import ValidationError
 
 # pylint: disable=unused-variable
+# pylint: disable=too-many-lines
 
 
 @contextmanager
@@ -180,7 +181,7 @@ def test_ethernet_routed_interface_00030():
     """
     with does_not_raise():
         omitted = NexusEthernetRoutedPolicyModel()
-        none_valued = NexusEthernetRoutedPolicyModel(policy_type=None, ip="10.1.1.1")
+        none_valued = NexusEthernetRoutedPolicyModel(policy_type=None, ip="10.1.1.1", prefix=30)
         wire = NexusEthernetRoutedPolicyModel.model_validate({"ip": "10.1.1.1", "prefix": 30})
     for instance in (omitted, none_valued, wire):
         assert instance.policy_type == "routedHost"
@@ -254,20 +255,23 @@ def test_ethernet_routed_interface_00050():
     """
     # Summary
 
-    Verify CIDR `ip` input is normalized to bare IPv4 host form (issue #401 behavior via `IPv4Host`).
+    Verify CIDR `ip` input is normalized to bare IPv4 host form (issue #401 behavior via `IPv4Host`) and its mask is kept: it fills
+    `prefix` instead of being dropped (issue #584).
 
     ## Test
 
-    - Construct with `ip="10.99.99.1/30"`
-    - `ip` is stored as "10.99.99.1"
+    - Construct with `ip="10.99.99.1/30"` and no `prefix`
+    - `ip` is stored as "10.99.99.1" and `prefix` as 30
 
     ## Classes and Methods
 
     - NexusEthernetRoutedPolicyModel.__init__()
+    - NexusEthernetRoutedPolicyModel.reconcile_cidr_input()
     """
     with does_not_raise():
         instance = NexusEthernetRoutedPolicyModel(policy_type="routedHost", ip="10.99.99.1/30")
     assert instance.ip == "10.99.99.1"
+    assert instance.prefix == 30
 
 
 def test_ethernet_routed_interface_00060():
@@ -370,7 +374,7 @@ def test_ethernet_routed_interface_00081():
     """
     with does_not_raise():
         omitted = XeEthernetRoutedPolicyModel()
-        none_valued = XeEthernetRoutedPolicyModel(policy_type=None, ip="10.1.1.1")
+        none_valued = XeEthernetRoutedPolicyModel(policy_type=None, ip="10.1.1.1", prefix=30)
         wire = XeEthernetRoutedPolicyModel.model_validate({"ip": "10.1.1.1", "prefix": 30})
     for instance in (omitted, none_valued, wire):
         assert instance.policy_type == "iosXeRoutedHost"
@@ -688,7 +692,9 @@ def test_ethernet_routed_interface_00160():
     - NexusEthernetRoutedNetworkOSModel.model_validate()
     """
     with pytest.raises(ValidationError):
-        result = NexusEthernetRoutedNetworkOSModel.model_validate({"networkOSType": "nx-os", "policy": {"policyType": "iosXeRoutedHost", "ip": "10.1.1.1"}})
+        result = NexusEthernetRoutedNetworkOSModel.model_validate(
+            {"networkOSType": "nx-os", "policy": {"policyType": "iosXeRoutedHost", "ip": "10.1.1.1", "prefix": 30}}
+        )
 
 
 def test_ethernet_routed_interface_00165():
@@ -1003,3 +1009,349 @@ def test_ethernet_routed_interface_00230() -> None:
     explicit_config["config_data"]["network_os"]["policy"]["mtu"] = 8000
     explicit = EthernetRoutedInterfaceModel.from_config(explicit_config)
     assert explicit.to_payload()["configData"]["networkOS"]["policy"]["mtu"] == 8000
+
+
+@pytest.mark.parametrize(
+    "model_cls, policy, expected",
+    [
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1/24"}, {"ip": "10.1.1.1", "prefix": 24}),
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1/24", "prefix": 24}, {"ip": "10.1.1.1", "prefix": 24}),
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1", "prefix": 30}, {"ip": "10.1.1.1", "prefix": 30}),
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1/31"}, {"ip": "10.1.1.1", "prefix": 31}),
+        (XeEthernetRoutedPolicyModel, {"ip": "10.1.1.1/24"}, {"ip": "10.1.1.1", "prefix": 24}),
+        (XeEthernetRoutedPolicyModel, {"ip": "10.1.1.1/24", "prefix": 24}, {"ip": "10.1.1.1", "prefix": 24}),
+        (XeEthernetRoutedPolicyModel, {"ip": "10.1.1.1", "prefix": 30}, {"ip": "10.1.1.1", "prefix": 30}),
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1/30", "prefix": "30.0"}, {"ip": "10.1.1.1", "prefix": 30}),
+        (XeEthernetRoutedPolicyModel, {"ip": "10.1.1.1/30", "prefix": " 30 "}, {"ip": "10.1.1.1", "prefix": 30}),
+    ],
+)
+def test_ethernet_routed_interface_00240(model_cls, policy, expected) -> None:
+    """
+    # Summary
+
+    Verify CIDR input never loses its mask (issue #584): the mask fills `prefix` when that field is absent, an agreeing explicit
+    `prefix` is accepted, the address is serialized in bare host form, and a plain address / prefix pair is unchanged, on both OS
+    branches.
+
+    ## Test
+
+    - `ip: 10.1.1.1/24` with no `prefix` yields `ip: 10.1.1.1`, `prefix: 24` on both models
+    - CIDR input with an agreeing explicit `prefix`, and a bare address with a `prefix`, are accepted as given
+    - `/31` (the top of the field's range) derives `prefix: 31`
+
+    ## Classes and Methods
+
+    - NexusEthernetRoutedPolicyModel.reconcile_cidr_input()
+    - XeEthernetRoutedPolicyModel.reconcile_cidr_input()
+    - reconcile_cidr_prefix()
+    """
+    with does_not_raise():
+        dumped = model_cls(**policy).model_dump(by_alias=True, exclude_none=True)
+    for key, value in expected.items():
+        assert dumped[key] == value
+
+
+@pytest.mark.parametrize(
+    "model_cls, policy, match",
+    [
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1/24", "prefix": 30}, r"ip.*/24.*prefix.*30"),
+        (XeEthernetRoutedPolicyModel, {"ip": "10.1.1.1/24", "prefix": 16}, r"ip.*/24.*prefix.*16"),
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1"}, r"ip and prefix are required together"),
+        (NexusEthernetRoutedPolicyModel, {"prefix": 24}, r"ip and prefix are required together"),
+        (XeEthernetRoutedPolicyModel, {"ip": "10.1.1.1"}, r"ip and prefix are required together"),
+        (XeEthernetRoutedPolicyModel, {"prefix": 24}, r"ip and prefix are required together"),
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1/32"}, r"prefix"),
+        (XeEthernetRoutedPolicyModel, {"ip": "10.1.1.1/0"}, r"prefix"),
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1/30", "prefix": "24.0"}, r"ip.*/30.*prefix.*24"),
+        (XeEthernetRoutedPolicyModel, {"ip": "10.1.1.1/30", "prefix": "24.0"}, r"ip.*/30.*prefix.*24"),
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1/30", "prefix": 24.0}, r"ip.*/30.*prefix.*24"),
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1/30", "prefix": "24.5"}, r"prefix.*not an integer"),
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1/30", "prefix": "abc"}, r"prefix.*not an integer"),
+        (NexusEthernetRoutedPolicyModel, {"ip": "10.1.1.1/30", "prefix": True}, r"prefix.*not an integer"),
+    ],
+)
+def test_ethernet_routed_interface_00250(model_cls, policy, match) -> None:
+    """
+    # Summary
+
+    Verify both routed ethernet policies reject a CIDR mask that contradicts the explicit `prefix`, half of an `ip` / `prefix` pair,
+    and a derived prefix outside the field's 1-31 range, all before any controller call (issue #584). ND itself rejects an `ip`
+    without `prefix` (HTTP 400 "Validation failed for following fields: [prefix]") but silently stores a `prefix` without `ip`;
+    both halves are rejected here (lab-verified on ND 4.2.1.10 and 4.3.1.175, 2026-10-16). The pair check runs on config input only,
+    so the policies are validated with the `mode="config"` context that `NDBaseModel.from_config` supplies.
+
+    ## Test
+
+    - A CIDR mask that differs from the sibling `prefix` raises, naming both values
+    - An `ip` without its `prefix`, or a `prefix` without its `ip`, raises on both models
+    - `/32` and `/0` derive a prefix outside 1-31 and raise on the `prefix` field
+    - A quoted-decimal (`"24.0"`) or float `prefix` is compared after the same integer normalization pydantic applies, so it cannot slip a
+      conflicting mask past the check (PR #636 review)
+    - A `prefix` that is not an integer at all is rejected before the CIDR mask is stripped from `ip`
+
+    ## Classes and Methods
+
+    - NexusEthernetRoutedPolicyModel.reconcile_cidr_input()
+    - NexusEthernetRoutedPolicyModel._validate_address_prefix_paired()
+    - XeEthernetRoutedPolicyModel.reconcile_cidr_input()
+    - XeEthernetRoutedPolicyModel._validate_address_prefix_paired()
+    - reconcile_cidr_prefix()
+    - require_address_prefix_pair()
+    """
+    with pytest.raises(ValidationError, match=match):
+        result = model_cls.model_validate(policy, context={"mode": "config"})
+
+
+@pytest.mark.parametrize(
+    "network_os_type, policy, match",
+    [
+        ("nx-os", {"ip": "10.1.1.1"}, r"ip and prefix are required together"),
+        ("nx-os", {"prefix": 24}, r"ip and prefix are required together"),
+        ("ios-xe", {"ip": "10.1.1.1"}, r"ip and prefix are required together"),
+        ("ios-xe", {"prefix": 24}, r"ip and prefix are required together"),
+        ("nx-os", {"ip": "10.1.1.1/30", "prefix": "24.0"}, r"ip.*/30.*prefix.*24"),
+        ("ios-xe", {"ip": "10.1.1.1/30", "prefix": "24.0"}, r"ip.*/30.*prefix.*24"),
+    ],
+)
+def test_ethernet_routed_interface_00260(network_os_type, policy, match) -> None:
+    """
+    # Summary
+
+    Verify half of an `ip` / `prefix` pair is rejected when the policy is validated as `config_data.network_os.policy` of the outer
+    interface model via `from_config`, which is the only path the module and the interfaces workflow adapter use. Pydantic sets
+    `info.field_name` to the parent field (`policy`) while validating a nested model, so a pair check that skips on any `field_name` is
+    dead on this path (PR #636 review); the check is gated on the `mode="config"` validation context instead.
+
+    ## Test
+
+    - An `ip` without its `prefix`, nested under the outer model, raises on both network OS types
+    - A `prefix` without its `ip`, nested under the outer model, raises on both network OS types
+    - A quoted-decimal `prefix` that contradicts the CIDR mask on `ip`, nested under the outer model, raises on both network OS types
+
+    ## Classes and Methods
+
+    - NDBaseModel.from_config()
+    - NexusEthernetRoutedPolicyModel.reconcile_cidr_input()
+    - XeEthernetRoutedPolicyModel.reconcile_cidr_input()
+    - reconcile_cidr_prefix()
+    - NexusEthernetRoutedPolicyModel._validate_address_prefix_paired()
+    - XeEthernetRoutedPolicyModel._validate_address_prefix_paired()
+    - require_address_prefix_pair()
+    """
+    with pytest.raises(ValidationError, match=match):
+        result = EthernetRoutedInterfaceModel.from_config(
+            {
+                "switch_ip": "192.168.12.131",
+                "interface_name": "Ethernet1/12",
+                "config_data": {"network_os": {"network_os_type": network_os_type, "policy": policy}},
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "network_os_type, policy_type",
+    [
+        ("nx-os", "routedHost"),
+        ("ios-xe", "iosXeRoutedHost"),
+    ],
+)
+def test_ethernet_routed_interface_00270(network_os_type, policy_type) -> None:
+    """
+    # Summary
+
+    Verify `NDBaseModel.merge()` can add a complete `ip` / `prefix` pair to a routed ethernet policy that had neither. `merge()` assigns one
+    field at a time under `validate_assignment`, so the policy passes through a transient half pair between the two assignments; the pair
+    check must tolerate that single-field assignment while still firing on config input (issue #584, PR #636 review). `mtu` is declared
+    between `ip` and `prefix`, so proposing all three also assigns an unrelated field while the pair is still half.
+
+    ## Test
+
+    - An existing policy with neither `ip` nor `prefix` merges a proposed `ip` + `mtu` + `prefix` without raising
+    - The merged policy carries all three values and keeps its untouched fields
+
+    ## Classes and Methods
+
+    - NDBaseModel.merge()
+    - NexusEthernetRoutedPolicyModel._validate_address_prefix_paired()
+    - XeEthernetRoutedPolicyModel._validate_address_prefix_paired()
+    - require_address_prefix_pair()
+    """
+    existing = EthernetRoutedInterfaceModel.from_response(
+        {
+            "switchIp": "192.168.12.131",
+            "interfaceName": "Ethernet1/12",
+            "interfaceType": "ethernet",
+            "configData": {
+                "mode": "routed",
+                "networkOS": {"networkOSType": network_os_type, "policy": {"policyType": policy_type, "adminState": True, "mtu": 9216}},
+            },
+        }
+    )
+    proposed = EthernetRoutedInterfaceModel.model_validate(
+        {
+            "switch_ip": "192.168.12.131",
+            "interface_name": "Ethernet1/12",
+            "config_data": {
+                "network_os": {"network_os_type": network_os_type, "policy": {"policy_type": policy_type, "ip": "10.1.1.1", "mtu": 1500, "prefix": 30}}
+            },
+        }
+    )
+    with does_not_raise():
+        existing.merge(proposed)
+    merged = existing.config_data.network_os.policy
+    assert merged.ip == "10.1.1.1"
+    assert merged.prefix == 30
+    assert merged.mtu == 1500
+    assert merged.admin_state is True
+
+
+@pytest.mark.parametrize(
+    "network_os_type, policy_type",
+    [
+        ("nx-os", "routedHost"),
+        ("ios-xe", "iosXeRoutedHost"),
+    ],
+)
+def test_ethernet_routed_interface_00280(network_os_type, policy_type) -> None:
+    """
+    # Summary
+
+    Verify a prefix-only policy in an ND response is read truthfully. ND silently stores a `prefix` without `ip` (issue #584), so the
+    pair check must not fire on `from_response`, or `query` and the pre-write read of every state would fail on an interface already in
+    that condition instead of reporting or remediating it (PR #636 review).
+
+    ## Test
+
+    - `from_response` accepts a policy carrying `prefix` and no `ip` on both network OS types
+    - The parsed policy exposes the prefix as stored
+
+    ## Classes and Methods
+
+    - NDBaseModel.from_response()
+    - NexusEthernetRoutedPolicyModel._validate_address_prefix_paired()
+    - XeEthernetRoutedPolicyModel._validate_address_prefix_paired()
+    - require_address_prefix_pair()
+    """
+    with does_not_raise():
+        instance = EthernetRoutedInterfaceModel.from_response(
+            {
+                "switchIp": "192.168.12.131",
+                "interfaceName": "Ethernet1/12",
+                "interfaceType": "ethernet",
+                "configData": {
+                    "mode": "routed",
+                    "networkOS": {"networkOSType": network_os_type, "policy": {"policyType": policy_type, "prefix": 24}},
+                },
+            }
+        )
+    policy = instance.config_data.network_os.policy
+    assert policy.ip is None
+    assert policy.prefix == 24
+
+
+@pytest.mark.parametrize(
+    "network_os_type, policy_type, stored_half, match",
+    [
+        ("nx-os", "routedHost", {"prefix": 24}, r"prefix without ip"),
+        ("nx-os", "routedHost", {"ip": "10.1.1.1"}, r"ip without prefix"),
+        ("ios-xe", "iosXeRoutedHost", {"prefix": 24}, r"prefix without ip"),
+        ("ios-xe", "iosXeRoutedHost", {"ip": "10.1.1.1"}, r"ip without prefix"),
+    ],
+)
+def test_ethernet_routed_interface_00290(network_os_type, policy_type, stored_half, match) -> None:
+    """
+    # Summary
+
+    Verify `NDBaseModel.merge()` refuses to carry a half `ip` / `prefix` pair the controller already stores into a merged update that does not
+    touch the pair. ND accepts and echoes a `prefix` without `ip` (issue #584), `from_response` reads it tolerantly, and an unrelated merged
+    change (a description) would otherwise send the half pair back in the full policy body (PR #636 review).
+
+    ## Test
+
+    - `existing` built from a wire response whose policy holds one half of the pair
+    - `proposed` sets only `description`
+    - `merge()` raises, naming the half that is present and the one that is missing
+
+    ## Classes and Methods
+
+    - NDBaseModel.merge()
+    - AddressPrefixPairMixin.merge()
+    - NexusEthernetRoutedPolicyModel
+    - XeEthernetRoutedPolicyModel
+    """
+    existing = EthernetRoutedInterfaceModel.from_response(
+        {
+            "switchIp": "192.168.12.131",
+            "interfaceName": "Ethernet1/12",
+            "interfaceType": "ethernet",
+            "configData": {
+                "mode": "routed",
+                "networkOS": {"networkOSType": network_os_type, "policy": {"policyType": policy_type, "adminState": True, **stored_half}},
+            },
+        }
+    )
+    proposed = EthernetRoutedInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.12.131",
+            "interface_name": "Ethernet1/12",
+            "config_data": {"network_os": {"network_os_type": network_os_type, "policy": {"policy_type": policy_type, "description": "New uplink"}}},
+        }
+    )
+    with pytest.raises(ValueError, match=match):
+        existing.merge(proposed)
+
+
+@pytest.mark.parametrize(
+    "network_os_type, policy_type",
+    [
+        ("nx-os", "routedHost"),
+        ("ios-xe", "iosXeRoutedHost"),
+    ],
+)
+def test_ethernet_routed_interface_00300(network_os_type, policy_type) -> None:
+    """
+    # Summary
+
+    Verify a merged update that supplies both `ip` and `prefix` completes a half pair the controller already stores. The merge-boundary pair
+    check (test 00290) must only reject a merge whose result is still half, so the task that repairs the stored state is accepted.
+
+    ## Test
+
+    - `existing` built from a wire response whose policy holds `prefix` without `ip`
+    - `proposed` sets `ip`, `prefix` and `description`
+    - `merge()` succeeds and the merged policy holds the complete pair
+
+    ## Classes and Methods
+
+    - NDBaseModel.merge()
+    - AddressPrefixPairMixin.merge()
+    """
+    existing = EthernetRoutedInterfaceModel.from_response(
+        {
+            "switchIp": "192.168.12.131",
+            "interfaceName": "Ethernet1/12",
+            "interfaceType": "ethernet",
+            "configData": {
+                "mode": "routed",
+                "networkOS": {"networkOSType": network_os_type, "policy": {"policyType": policy_type, "adminState": True, "prefix": 24}},
+            },
+        }
+    )
+    proposed = EthernetRoutedInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.12.131",
+            "interface_name": "Ethernet1/12",
+            "config_data": {
+                "network_os": {
+                    "network_os_type": network_os_type,
+                    "policy": {"policy_type": policy_type, "ip": "10.1.1.1", "prefix": 30, "description": "New uplink"},
+                }
+            },
+        }
+    )
+    with does_not_raise():
+        existing.merge(proposed)
+    merged = existing.config_data.network_os.policy
+    assert merged.ip == "10.1.1.1"
+    assert merged.prefix == 30
+    assert merged.description == "New uplink"

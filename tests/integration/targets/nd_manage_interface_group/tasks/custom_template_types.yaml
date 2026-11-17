@@ -1,0 +1,241 @@
+---
+# Exercise the native controller's full template response and typed Boolean
+# echoes using the controller's accepted lowercase Boolean strings. This does
+# not synthesize a modified:false parameter-metadata shape.
+# The starting template value is restored before later suite cases run.
+
+- name: Read the custom template's declared parameter types
+  cisco.nd.nd_rest:
+    method: get
+    path: "/api/v1/manage/configTemplates/{{ test_custom_template | urlencode }}"
+  register: interface_group_typed_template_definition
+  changed_when: false
+
+- name: Select the configured Boolean parameter
+  ansible.builtin.set_fact:
+    interface_group_typed_boolean_parameters: >-
+      {{
+        interface_group_typed_template_definition.current.parameters
+        | selectattr('name', 'equalto', test_custom_boolean_key)
+        | list
+      }}
+
+- name: Require a declared Boolean parameter for typed echo coverage
+  ansible.builtin.assert:
+    that:
+      - interface_group_typed_boolean_parameters | length == 1
+      - >-
+        interface_group_typed_boolean_parameters[0].parameterType
+        | trim | lower == 'boolean'
+      - test_custom_boolean_key != test_custom_extra_config_key
+    fail_msg: >-
+      Configure nd_test_interface_group_custom_boolean_key with an existing
+      Boolean input on the reserved custom template. It must differ from the
+      extra-configuration input used by the suite.
+
+- name: Snapshot all groups before the typed template update
+  cisco.nd.nd_manage_interface_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+  register: interface_group_typed_scope_before
+  changed_when: false
+
+- name: Snapshot the custom group's exact controller template inputs
+  cisco.nd.nd_rest:
+    method: get
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+      interface_group_names.ethernet_custom }}
+  register: interface_group_typed_template_before
+  changed_when: false
+
+- name: Require a Boolean baseline before the reversible update
+  ansible.builtin.assert:
+    that:
+      - >-
+        test_custom_boolean_key in
+        interface_group_typed_template_before.current.policyDetails.templateConfig
+      - >-
+        interface_group_typed_template_before.current.policyDetails.templateConfig[
+          test_custom_boolean_key] | string | lower in ['true', 'false']
+
+- name: Build quoted Boolean inputs without changing other template fields
+  ansible.builtin.set_fact:
+    interface_group_typed_boolean_update: >-
+      {{
+        {test_custom_boolean_key:
+          ('false' if
+            interface_group_typed_template_before.current.policyDetails.templateConfig[
+              test_custom_boolean_key] | string | lower == 'true'
+           else 'true')}
+      }}
+    interface_group_typed_boolean_restore: >-
+      {{
+        {test_custom_boolean_key:
+          (interface_group_typed_template_before.current.policyDetails.templateConfig[
+            test_custom_boolean_key] | string | lower)}
+      }}
+
+- name: Confirm the test supplies quoted Boolean strings
+  ansible.builtin.assert:
+    that:
+      - >-
+        interface_group_typed_boolean_update[test_custom_boolean_key]
+        | type_debug == 'str'
+      - >-
+        interface_group_typed_boolean_restore[test_custom_boolean_key]
+        | type_debug == 'str'
+
+- name: Change one quoted Boolean through sparse merged input
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config:
+      - interface_group_name: "{{ interface_group_names.ethernet_custom }}"
+        template_config: "{{ interface_group_typed_boolean_update }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Read the custom group after the quoted Boolean update
+        method: get
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+          interface_group_names.ethernet_custom }}
+        expected_status: 200
+  register: interface_group_typed_boolean_result
+
+- name: Confirm check mode left the actual starting configuration unchanged
+  ansible.builtin.assert:
+    that:
+      - >-
+        (interface_group_typed_boolean_result.check_mode_result.before
+         | sort(attribute='interface_group_name'))
+        ==
+        (interface_group_typed_boolean_result.first_run_result.before
+         | sort(attribute='interface_group_name'))
+  when: not ansible_check_mode
+
+- name: Validate the Boolean readback and preserve every other template input
+  ansible.builtin.assert:
+    that:
+      - >-
+        interface_group_typed_after.policyDetails.templateConfig[
+          test_custom_boolean_key] | string | lower
+        == interface_group_typed_boolean_update[test_custom_boolean_key] | lower
+      - >-
+        (interface_group_typed_after.policyDetails.templateConfig | dict2items
+         | rejectattr('key', 'equalto', test_custom_boolean_key) | items2dict)
+        ==
+        (interface_group_typed_template_before.current.policyDetails.templateConfig
+         | dict2items | rejectattr('key', 'equalto', test_custom_boolean_key)
+         | items2dict)
+      - >-
+        interface_group_typed_after.switchInterfaces
+        == interface_group_typed_template_before.current.switchInterfaces
+      - >-
+        interface_group_typed_after.networkNames
+        == interface_group_typed_template_before.current.networkNames
+      - >-
+        interface_group_typed_after.policyDetails.templateName
+        == interface_group_typed_template_before.current.policyDetails.templateName
+    fail_msg: >-
+      A sparse typed-template change must update only its Boolean input and
+      preserve all other template inputs, members, and network associations.
+  vars:
+    interface_group_typed_after: >-
+      {{ interface_group_typed_boolean_result.nd_query_results[0].result.current }}
+  when: not ansible_check_mode
+
+- name: Confirm the custom member has no pending deployment
+  ansible.builtin.include_tasks: preview.yaml
+  vars:
+    preview_name: "QUOTED BOOLEAN CUSTOM TEMPLATE UPDATE"
+    preview_request_interfaces:
+      - switchId: "{{ test_switch_id }}"
+        interfaceName: "{{ test_ethernet_custom }}"
+    preview_test_data:
+      - switch_id: "{{ test_switch_id }}"
+        interface_name: "{{ test_ethernet_custom }}"
+        pending: clean
+
+- name: Restore the starting Boolean through the same sparse merged path
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_interface_group
+    state: merged
+    common_args:
+      output_level: "{{ nd_info.output_level }}"
+      fabric_name: "{{ test_fabric_name }}"
+    module_args:
+      config_actions:
+        deploy: true
+        type: resource
+    config:
+      - interface_group_name: "{{ interface_group_names.ethernet_custom }}"
+        template_config: "{{ interface_group_typed_boolean_restore }}"
+    expected:
+      check_mode:
+        changed: true
+        failed: false
+      apply:
+        changed: true
+        failed: false
+      idempotency:
+        changed: false
+        failed: false
+    nd_queries:
+      - name: Read the restored custom group
+        method: get
+        path: >-
+          /api/v1/manage/fabrics/{{ test_fabric_name }}/interfaceGroups/{{
+          interface_group_names.ethernet_custom }}
+        expected_status: 200
+  register: interface_group_typed_boolean_restored
+
+- name: Confirm the original template policy and associations are restored
+  ansible.builtin.assert:
+    that:
+      - >-
+        interface_group_typed_boolean_restored.nd_query_results[0].result.current.policyDetails
+        == interface_group_typed_template_before.current.policyDetails
+      - >-
+        interface_group_typed_boolean_restored.nd_query_results[0].result.current.switchInterfaces
+        == interface_group_typed_template_before.current.switchInterfaces
+      - >-
+        interface_group_typed_boolean_restored.nd_query_results[0].result.current.networkNames
+        == interface_group_typed_template_before.current.networkNames
+  when: not ansible_check_mode
+
+- name: Snapshot all groups after typed template restoration
+  cisco.nd.nd_manage_interface_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+  register: interface_group_typed_scope_after
+  changed_when: false
+
+- name: Confirm the complete group configuration matches the starting scope
+  ansible.builtin.assert:
+    that:
+      - >-
+        (interface_group_typed_scope_after.gathered
+         | sort(attribute='interface_group_name'))
+        ==
+        (interface_group_typed_scope_before.gathered
+         | sort(attribute='interface_group_name'))
+  when: not ansible_check_mode

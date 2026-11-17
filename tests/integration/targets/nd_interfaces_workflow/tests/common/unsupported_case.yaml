@@ -1,0 +1,54 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Require the expected unsupported combination to reject in check mode
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: "{{ nd_iw_current_fabric.fabric_name }}"
+    resources:
+      - type: "{{ nd_iw_unsupported_case.family }}"
+        state: merged
+        config: "{{ nd_iw_unsupported_case.create_config }}"
+    config_actions:
+      deploy: true
+    output_level: debug
+  check_mode: true
+  register: nd_iw_unsupported_result
+  delegate_to: "{{ nd_iw_current_fabric.inventory_host }}"
+  ignore_errors: true
+
+- name: Verify unsupported combination failed before mutation
+  vars:
+    nd_iw_fabric_error_spec: >-
+      {{ (nd_iw_current_fabric.unsupported_expected_error | default({})).get(
+           nd_iw_unsupported_case.family, {}
+         ) }}
+    nd_iw_family_error_spec: >-
+      {{ nd_iw_unsupported_case.unsupported_expected_error | default({}) }}
+    nd_iw_unsupported_error_spec: >-
+      {{ nd_iw_fabric_error_spec
+         if ((nd_iw_fabric_error_spec is string and nd_iw_fabric_error_spec | length > 0)
+             or (nd_iw_fabric_error_spec is mapping and nd_iw_fabric_error_spec | length > 0))
+         else nd_iw_family_error_spec }}
+    nd_iw_unsupported_expected_error: >-
+      {% if nd_iw_unsupported_error_spec is string %}
+      {{ nd_iw_unsupported_error_spec }}
+      {% elif nd_iw_unsupported_error_spec is mapping %}
+      {{ nd_iw_unsupported_error_spec.get(
+           nd_iw_current_fabric.discriminator,
+           nd_iw_unsupported_error_spec.get('default', '')
+         ) }}
+      {% else %}
+      {{ '' }}
+      {% endif %}
+  ansible.builtin.assert:
+    that:
+      - nd_iw_unsupported_result.failed | default(false) | bool
+      - not (nd_iw_unsupported_result.changed | default(false) | bool)
+      - nd_iw_unsupported_result.msg is string
+      - nd_iw_unsupported_expected_error | length == 0 or nd_iw_unsupported_result.msg is search(nd_iw_unsupported_expected_error)
+    fail_msg: >-
+      {{ nd_iw_unsupported_case.family }} unexpectedly planned successfully on
+      {{ nd_iw_current_fabric.discriminator }}. Update the capability matrix only after confirming
+      that this controller and switch role now support the combination.

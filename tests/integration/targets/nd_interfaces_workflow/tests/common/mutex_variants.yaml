@@ -1,0 +1,11 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Run {{ nd_iw_current_case.family }} mutually exclusive variants
+  ansible.builtin.include_tasks: "{{ role_path }}/tests/common/mutex_variant.yaml"
+  loop: "{{ nd_iw_current_case.mutex_variants | default([]) }}"
+  loop_control:
+    loop_var: nd_iw_mutex_variant
+    label: "{{ nd_iw_mutex_variant.name }}"

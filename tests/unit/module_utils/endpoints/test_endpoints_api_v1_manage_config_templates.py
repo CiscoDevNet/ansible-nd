@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_config_templates import (
     ConfigTemplateEndpointParams,
+    EpManageConfigTemplateGet,
     EpManageConfigTemplateParametersGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
@@ -98,6 +99,31 @@ def test_manage_config_templates_00040():
     """
     with pytest.raises(ValueError):
         ConfigTemplateEndpointParams(bogus="bad")
+
+
+# =============================================================================
+# Test: EpManageConfigTemplateGet
+# =============================================================================
+
+
+def test_manage_config_templates_00050():
+    """Build the GET-one path, encode its name, and expose the GET verb."""
+    instance = EpManageConfigTemplateGet(template_name="custom/template")
+
+    assert instance.class_name == "EpManageConfigTemplateGet"
+    assert instance.verb == HttpVerbEnum.GET
+    assert instance.path == "/api/v1/manage/configTemplates/custom%2Ftemplate"
+
+
+def test_manage_config_templates_00060():
+    """Require a template name and include the supported cluster query."""
+    instance = EpManageConfigTemplateGet()
+    with pytest.raises(ValueError, match="template_name"):
+        instance.path
+
+    instance.template_name = "custom-template"
+    instance.endpoint_params.cluster_name = "cluster1"
+    assert instance.path == ("/api/v1/manage/configTemplates/custom-template?clusterName=cluster1")
 
 
 # =============================================================================
@@ -228,3 +254,9 @@ def test_manage_config_templates_00150():
     """
     with pytest.raises(ValueError):
         EpManageConfigTemplateParametersGet(template_name="")
+
+
+def test_manage_config_templates_00160():
+    """Encode template names before appending the parameters segment."""
+    instance = EpManageConfigTemplateParametersGet(template_name="custom/template")
+    assert instance.path == ("/api/v1/manage/configTemplates/custom%2Ftemplate/parameters")

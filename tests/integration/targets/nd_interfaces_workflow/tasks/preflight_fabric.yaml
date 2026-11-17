@@ -1,0 +1,100 @@
+---
+# Copyright: (c) 2026, Mike Wiebe (@mikewiebe) mwiebe@cisco.com
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Interface workflow preflight | Validate explicit mapping fields
+  ansible.builtin.assert:
+    that:
+      - nd_iw_preflight_fabric.discriminator in nd_iw_supported_fabric_types
+      - nd_iw_preflight_fabric.fabric_name is string
+      - nd_iw_preflight_fabric.fabric_name | length > 0
+      - nd_iw_preflight_fabric.inventory_host is string
+      - nd_iw_preflight_fabric.inventory_host | length > 0
+      - nd_iw_preflight_fabric.inventory_host in hostvars
+      - nd_iw_preflight_fabric.reserved_set is string
+      - nd_iw_preflight_fabric.reserved_set in nd_iw_reserved_resources
+      - nd_iw_preflight_fabric.switches is mapping
+      - nd_iw_preflight_fabric.switches.primary | default('') | length > 0
+    fail_msg: >-
+      The {{ nd_iw_preflight_fabric.discriminator }} mapping is incomplete. Supply a real inventory host,
+      fabric name, nonempty primary switch IP, and a valid reserved_set; operators must verify reservation ownership.
+
+- name: Interface workflow preflight | Validate declared family capabilities
+  vars:
+    nd_iw_known_families: "{{ nd_iw_family_order }}"
+    nd_iw_candidate_families: >-
+      {{ nd_iw_preflight_fabric.candidate_families | default(nd_iw_known_families) }}
+    nd_iw_declared_unsupported_families: >-
+      {{ nd_iw_preflight_fabric.unsupported_families | default([]) }}
+    nd_iw_selected_candidate_families: >-
+      {{ (nd_iw_candidate_families | intersect(nd_iw_selected_families))
+         if nd_iw_selected_families | length > 0 else nd_iw_candidate_families }}
+    nd_iw_selected_vpc_families: >-
+      {{ nd_iw_selected_candidate_families
+         | intersect(nd_iw_preflight_fabric.vpc_families | default([]))
+         | difference(nd_iw_declared_unsupported_families) }}
+  ansible.builtin.assert:
+    that:
+      - nd_iw_preflight_fabric.capability_mode | default("declared") == "declared"
+      - nd_iw_candidate_families is sequence
+      - nd_iw_candidate_families is not string
+      - nd_iw_candidate_families | length > 0
+      - nd_iw_declared_unsupported_families is sequence
+      - nd_iw_declared_unsupported_families is not string
+      - nd_iw_candidate_families | difference(nd_iw_known_families) | length == 0
+      - nd_iw_declared_unsupported_families | difference(nd_iw_candidate_families) | length == 0
+      - >-
+        nd_iw_selected_vpc_families | length == 0
+        or (nd_iw_preflight_fabric.switches.vpc_peer1 | default("") | length > 0
+            and nd_iw_preflight_fabric.switches.vpc_peer2 | default("") | length > 0)
+    fail_msg: >-
+      The {{ nd_iw_preflight_fabric.discriminator }} family capability declaration is inconsistent.
+      Candidate and unsupported names must be known, unsupported must be a candidate subset, and selected
+      vPC families require both vpc_peer1 and vpc_peer2 switch mappings.
+
+- name: Interface workflow preflight | Validate delegated ND credentials
+  ansible.builtin.assert:
+    that:
+      - hostvars[nd_iw_preflight_fabric.inventory_host].ansible_host is defined
+      - hostvars[nd_iw_preflight_fabric.inventory_host].ansible_host | string | length > 0
+      - hostvars[nd_iw_preflight_fabric.inventory_host].ansible_user is defined
+      - hostvars[nd_iw_preflight_fabric.inventory_host].ansible_user | string | length > 0
+      - hostvars[nd_iw_preflight_fabric.inventory_host].ansible_password is defined
+      - hostvars[nd_iw_preflight_fabric.inventory_host].ansible_password | string | length > 0
+    fail_msg: >-
+      Inventory host '{{ nd_iw_preflight_fabric.inventory_host }}' must define ansible_host,
+      ansible_user, and ansible_password for the live ND connection.
+  no_log: true
+
+- name: Interface workflow preflight | Read mapped fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ nd_iw_preflight_fabric.fabric_name | urlencode }}"
+    method: get
+  register: nd_iw_fabric_query
+  delegate_to: "{{ nd_iw_preflight_fabric.inventory_host }}"
+  when: nd_iw_verify_fabric_type | bool
+
+- name: Interface workflow preflight | Verify mapped fabric discriminator
+  vars:
+    nd_iw_fabric_current: "{{ nd_iw_fabric_query.current | default({}) }}"
+    nd_iw_fabric_management: "{{ nd_iw_fabric_current.get('management', {}) }}"
+    nd_iw_observed_fabric_type: >-
+      {{ nd_iw_fabric_management.get(
+           'type',
+           nd_iw_fabric_current.get(
+             'type',
+             nd_iw_fabric_current.get(
+               'fabricType',
+               nd_iw_fabric_current.get('unifiedNDFabricType', '')
+             )
+           )
+         ) }}
+  ansible.builtin.assert:
+    that:
+      - nd_iw_fabric_query.status | int == 200
+      - nd_iw_observed_fabric_type == nd_iw_preflight_fabric.discriminator
+    fail_msg: >-
+      Fabric '{{ nd_iw_preflight_fabric.fabric_name }}' was not found on
+      '{{ nd_iw_preflight_fabric.inventory_host }}' or its controller discriminator did not equal
+      '{{ nd_iw_preflight_fabric.discriminator }}'. No test mutation was attempted.
+  when: nd_iw_verify_fabric_type | bool

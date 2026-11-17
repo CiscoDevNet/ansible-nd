@@ -37,24 +37,32 @@ options:
     - Each item specifies the target switch, a list of interface names, and a shared configuration.
     - Multiple switches can be configured in a single task.
     - The structure mirrors the ND Manage Interfaces API payload.
+    - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+    - Not required for O(state=gathered).
+    - For O(state=gathered), supported supplied fields are filter criteria. Criteria within one list item use AND semantics,
+      while multiple list items use OR semantics. Supported properties are O(config.switch_ip), O(config.interface_names),
+      O(config.config_data.network_os.policy.admin_state), O(config.config_data.network_os.policy.allowed_vlans), and
+      O(config.config_data.network_os.policy.native_vlan). Other configuration properties are rejected when used as gathered filters.
     type: list
     elements: dict
-    required: true
+    required: false
     suboptions:
       switch_ip:
         description:
         - The management IP address of the switch on which to manage the ethernet interfaces.
         - This is resolved to the switch serial number (switchId) internally.
+        - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
         type: str
-        required: true
+        required: false
       interface_names:
         description:
         - The list of ethernet interface names to configure with the same settings.
         - Each name should be in the format C(Ethernet1/1), C(Ethernet1/2), etc. for NX-OS and C(GigabitEthernet1/0/1),
           C(TenGigabitEthernet1/1/1), etc. for IOS-XE.
+        - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
         type: list
         elements: str
-        required: true
+        required: false
       config_data:
         description:
         - The configuration data shared by all interfaces in O(config[].interface_names), following the ND API structure.
@@ -70,8 +78,8 @@ options:
                 - The network OS (platform) type of the target switch. This is a discriminator that determines which
                   policy templates are applicable.
                 - Use V(nx-os) for Nexus switches and V(ios-xe) for Catalyst IOS-XE switches.
+                - When omitted for configuration states, V(nx-os) is selected for backward compatibility.
                 type: str
-                default: nx-os
                 choices: [ nx-os, ios-xe ]
               policy:
                 description:
@@ -417,9 +425,11 @@ options:
       C(interfaceActions/normalize) API, the equivalent of the NX-OS C(default interface) CLI command; IOS-XE
       interfaces reset to a default trunk configuration with all policy fields cleared. An explicitly named
       C(poMember), C(iosXeTrunkPoMember), or C(vpcMember) is rejected because resetting it would change its membership.
+    - Use O(state=gathered) to read all user-managed trunkHost interfaces in the fabric without making changes.
+      The result is returned under C(gathered) in a format that can be reused as O(config).
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -667,6 +677,43 @@ EXAMPLES = r"""
     config_actions:
       deploy: false
     state: merged
+
+- name: Gather all user-managed trunkHost interfaces in a fabric
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    fabric_name: my_fabric
+    state: gathered
+  register: gathered_trunks
+
+- name: Gather trunkHost interfaces from a specific switch
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    fabric_name: my_fabric
+    state: gathered
+    config:
+      - switch_ip: 192.168.1.1
+  register: gathered_trunks_switch1
+
+- name: Gather trunkHost interfaces with admin_state filter
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    fabric_name: my_fabric
+    state: gathered
+    config:
+      - config_data:
+          network_os:
+            policy:
+              admin_state: false
+  register: shutdown_trunks
+
+- name: Gather trunkHost interfaces with a specific allowed_vlans on a switch
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    fabric_name: my_fabric
+    state: gathered
+    config:
+      - switch_ip: 192.168.1.1
+        config_data:
+          network_os:
+            policy:
+              allowed_vlans: "100-200"
+  register: vlan_100_200_trunks
 """
 
 RETURN = r"""
@@ -691,6 +738,7 @@ before:
     planning/reporting projection containing the member identity and safe fields. It uses C(trunkHost) for NX-OS or
     C(iosXeTrunkHost) for IOS-XE as the reporting policy and omits the authentic member discriminator, owning identifier,
     and membership metadata. It does not represent a policy conversion.
+  - For O(state=gathered), this is an empty list because gathered resources are returned under C(gathered).
   returned: always
   type: list
   elements: dict
@@ -711,6 +759,7 @@ after:
     scope and is absent from this list.
   - For a supported member update, the entry is the resulting host-shaped safe-field projection. The authentic member
     policy and parent membership remain unchanged on the controller but are not included in this output projection.
+  - For O(state=gathered), this is an empty list because no reconciliation is performed.
   returned: always
   type: list
   elements: dict
@@ -726,13 +775,13 @@ diff:
   description:
   - Reserved for the per-interface difference between C(before) and C(after).
   - Currently always an empty list for this module family; compare C(before) and C(after) directly.
-  returned: always
+  returned: when O(state) is not V(gathered)
   type: list
   elements: dict
   sample: []
 proposed:
   description: The configuration the module proposed to apply, before reconciliation with the controller.
-  returned: when O(output_level) is V(info) or V(debug)
+  returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
   sample:
@@ -759,14 +808,28 @@ msg:
   returned: on failure
   type: str
   sample: "Configuration error: ..."
+gathered:
+  description:
+  - User-managed trunk-host interfaces matching the supplied O(config) filters.
+  - Returned in reusable Ansible configuration format.
+  returned: when O(state=gathered)
+  type: list
+  elements: dict
 """
 
-import copy
 import logging
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import get_raw_module_args
+from ansible_collections.cisco.nd.plugins.module_utils.interface_config_normalizer import (
+    expand_ethernet_config as _expand_ethernet_config,
+    expand_ethernet_gathered_filters as _expand_ethernet_gathered_filters,
+    validate_ethernet_across_item_duplicates as _validate_ethernet_across_item_duplicates,
+    validate_ethernet_interface_names as _validate_ethernet_interface_names,
+    validate_ethernet_within_item_duplicates as _validate_ethernet_within_item_duplicates,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import EthernetTrunkHostInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.module_failure import fail_from_exception
 from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import config_actions_spec, nd_argument_spec
@@ -775,130 +838,32 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interf
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_trunk_host_interface import EthernetTrunkHostInterfaceOrchestrator
 
 
-# TODO: When all interface modules using `interface_names: list` are merged, lift
-# `validate_interface_names`, `validate_within_item_duplicates`,
-# `validate_across_item_duplicates`, and `expand_config` into a shared helper module
-# (e.g. `plugins/module_utils/interfaces/config_expansion.py`) and import from there.
 def validate_interface_names(config_list: list[dict]) -> None:
-    """
-    # Summary
-
-    Raise `ValueError` if any element of any `interface_names` list is `None`, an empty string, or not a
-    string. Ansible's `elements="str"` argspec does not reject these (a Jinja loop can easily produce a list
-    with null/empty entries, and a templated value may arrive as a non-string), and downstream `name.lower()`
-    would otherwise raise `AttributeError` / silently insert a blank interface — neither of which is the
-    friendly fail_json the user expects.
-
-    ## Raises
-
-    ### ValueError
-
-    - If any element of `interface_names` is `None`, an empty string, or not a string.
-    """
-    for item_index, group in enumerate(config_list):
-        switch_ip = group.get("switch_ip")
-        interface_names = group.get("interface_names") or []
-        for entry_index, name in enumerate(interface_names):
-            if not isinstance(name, str) or not name:
-                if name is None:
-                    reason = "null"
-                elif not isinstance(name, str):
-                    reason = f"not a string (got {type(name).__name__})"
-                else:
-                    reason = "empty"
-                raise ValueError(
-                    f"interface_names[{entry_index}] for switch '{switch_ip}' (config item {item_index}) is "
-                    f"{reason}. Every entry must be a non-empty interface name."
-                )
+    """Delegate grouped-name validation to the shared workflow normalizer."""
+    _validate_ethernet_interface_names(config_list)
 
 
 def validate_within_item_duplicates(config_list: list[dict]) -> None:
-    """
-    # Summary
-
-    Raise `ValueError` if any single config item lists the same interface name more than once
-    in its `interface_names` list. Comparison is case-insensitive.
-
-    ## Raises
-
-    ### ValueError
-
-    - If an interface name appears more than once within a single config item's `interface_names` list
-    """
-    for item_index, group in enumerate(config_list):
-        switch_ip = group.get("switch_ip")
-        interface_names = group.get("interface_names") or []
-        seen: set[str] = set()
-        for name in interface_names:
-            key = name.lower()
-            if key in seen:
-                raise ValueError(
-                    f"Duplicate interface '{name}' in interface_names for switch '{switch_ip}' "
-                    f"(config item {item_index}). Each interface may appear only once per config item."
-                )
-            seen.add(key)
+    """Delegate within-group duplicate validation to the shared normalizer."""
+    _validate_ethernet_within_item_duplicates(config_list)
 
 
-# TODO: See note above `validate_within_item_duplicates`.
 def validate_across_item_duplicates(config_list: list[dict]) -> None:
-    """
-    # Summary
-
-    Raise `ValueError` if the same `(switch_ip, interface_name)` pair appears in more than one
-    config item. Comparison of interface names is case-insensitive. The error message identifies
-    both offending config item indices so the user can locate them in the playbook.
-
-    ## Raises
-
-    ### ValueError
-
-    - If the same `(switch_ip, interface_name)` pair appears in more than one config item
-    """
-    seen: dict[tuple, int] = {}
-    for item_index, group in enumerate(config_list):
-        switch_ip = group.get("switch_ip")
-        interface_names = group.get("interface_names") or []
-        for name in interface_names:
-            key = (switch_ip, name.lower())
-            if key in seen:
-                raise ValueError(
-                    f"Interface '{name}' on switch '{switch_ip}' is specified in multiple config items "
-                    f"({seen[key]} and {item_index}). Each switch/interface pair may appear only once."
-                )
-            seen[key] = item_index
+    """Delegate cross-group duplicate validation to the shared normalizer."""
+    _validate_ethernet_across_item_duplicates(config_list)
 
 
 def expand_config(config_list: list[dict]) -> list[dict]:
-    """
-    # Summary
+    """Delegate grouped Ethernet expansion to the shared workflow normalizer."""
+    return _expand_ethernet_config(config_list)
 
-    Validate then expand grouped config items (with `interface_names` list) into flat config items
-    (with singular `interface_name`). Each group produces one flat item per interface name, all
-    sharing the same `config_data` and `switch_ip`.
 
-    ## Raises
-
-    ### ValueError
-
-    - If any `interface_names` entry is `None` or an empty string
-    - If an interface name appears more than once within a single config item's `interface_names` list
-    - If the same `(switch_ip, interface_name)` pair appears in more than one config item
-    """
-    validate_interface_names(config_list)
-    validate_within_item_duplicates(config_list)
-    validate_across_item_duplicates(config_list)
-
-    expanded = []
-    for group in config_list:
-        # `or []` (not a `.get` default) so an explicit `interface_names: ~` in YAML,
-        # which yields None, is treated as empty -- consistent with the validators above.
-        interface_names = group.get("interface_names") or []
-        for name in interface_names:
-            item = copy.deepcopy(group)
-            item.pop("interface_names", None)
-            item["interface_name"] = name
-            expanded.append(item)
-    return expanded
+def expand_gathered_filters(config_list, raw_config_list=None):
+    """Delegate gathered Ethernet filter normalization and expansion."""
+    return _expand_ethernet_gathered_filters(
+        config_list,
+        raw_config_list=raw_config_list,
+    )
 
 
 def main() -> None:
@@ -920,21 +885,33 @@ def main() -> None:
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
     )
     require_pydantic(module)
     setup_logging(module)
     module_log = logging.getLogger("nd.nd_interface_ethernet_trunk_host")
 
     # Expand grouped config (interface_names list) into flat config items (interface_name singular)
-    try:
-        module.params["config"] = expand_config(module.params["config"])
-    except ValueError as e:
-        module.fail_json(msg=f"Configuration error: {e}")
-    module_log.debug(
-        "expand_config done items=%d switches=%d",
-        len(module.params["config"]),
-        len({item.get("switch_ip") for item in module.params["config"]}),
-    )
+    if module.params["state"] != "gathered":
+        try:
+            module.params["config"] = expand_config(module.params["config"])
+        except ValueError as e:
+            module.fail_json(msg=f"Configuration error: {e}")
+        module_log.debug(
+            "expand_config done items=%d switches=%d",
+            len(module.params["config"]),
+            len({item.get("switch_ip") for item in module.params["config"]}),
+        )
+    else:
+        try:
+            module.params["config"] = expand_gathered_filters(module.params.get("config"), get_raw_module_args().get("config"))
+        except (ValueError, TypeError) as e:
+            module.fail_json(msg=f"Gathered filter error: {e}")
 
     nd_state_machine = None
 
@@ -961,7 +938,7 @@ def main() -> None:
         module_log.debug("manage_state end")
 
         # Execute all queued bulk operations
-        if not module.check_mode:
+        if not module.check_mode and module.params["state"] != "gathered":
             nd_state_machine.model_orchestrator.remove_pending()
             nd_state_machine.model_orchestrator.deploy_pending()
 

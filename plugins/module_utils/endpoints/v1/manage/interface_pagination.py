@@ -68,6 +68,7 @@ class InterfaceOffsetPaginator:
         identity: Callable[[Mapping[str, Any]], Hashable],
         collection_key: str = "interfaces",
         context: str = "interface collection",
+        require_collection_wrapper: bool = False,
     ) -> list[dict[str, Any]]:
         """Return every interface row or raise instead of returning partial state."""
 
@@ -81,7 +82,7 @@ class InterfaceOffsetPaginator:
 
         for page_number in range(1, self.max_pages + 1):
             response = fetch_page(offset, self.page_size)
-            page, metadata = self._parse_response(response, collection_key, context, offset, page_number, len(records))
+            page, metadata = self._parse_response(response, collection_key, context, offset, page_number, len(records), require_collection_wrapper)
             page_identities = self._page_identities(page, identity, context, offset, page_number, len(records))
             signature = tuple(page_identities)
             if signature and signature in signatures:
@@ -152,6 +153,7 @@ class InterfaceOffsetPaginator:
         offset: int,
         page_number: int,
         record_count: int,
+        require_collection_wrapper: bool,
     ) -> tuple[list[dict[str, Any]], _PageMetadata]:
         """Validate one response and normalize its rows and page metadata."""
 
@@ -165,7 +167,7 @@ class InterfaceOffsetPaginator:
                 None,
             )
         if collection_key not in response:
-            if response:
+            if response or require_collection_wrapper:
                 self._raise(
                     context,
                     f"response lacks required {collection_key!r} wrapper",

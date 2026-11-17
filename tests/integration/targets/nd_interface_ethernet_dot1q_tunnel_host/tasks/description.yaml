@@ -1,0 +1,62 @@
+---
+# Exercise both real release paths; do not skip 4.2.1 or accept an HTTP error.
+- name: DESCRIPTION | Capture controller intent before the clear preview
+  ansible.builtin.include_tasks: read_interfaces.yaml
+
+- name: DESCRIPTION | Record the clear checkpoint
+  ansible.builtin.set_fact:
+    dot1q_checkpoint: "{{ dot1q_readback.results | map(attribute='current.configData') | list }}"
+
+- name: DESCRIPTION | Preview clearing a nonempty description
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: &dot1q_clear_description
+    fabric_name: "{{ test_fabric_name }}"
+    state: merged
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names: ["{{ test_interface_names[0] }}"]
+        config_data:
+          network_os:
+            policy:
+              description: ''
+  check_mode: true
+  register: cm_dot1q_clear
+
+- name: DESCRIPTION | Prove check mode did not clear the controller description
+  ansible.builtin.include_tasks: assert_unchanged.yaml
+
+- name: DESCRIPTION | Clear the description through the module
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_clear_description
+  register: nm_dot1q_clear
+
+- name: DESCRIPTION | Require a planned and applied clear
+  ansible.builtin.assert:
+    that:
+      - cm_dot1q_clear is changed
+      - nm_dot1q_clear is changed
+
+- name: DESCRIPTION | Verify actual clearing and preservation of other fields
+  ansible.builtin.include_tasks: verify.yaml
+  vars:
+    dot1q_expected:
+      - name: "{{ test_interface_names[0] }}"
+        policy_type: dot1qTunnelHost
+        policy:
+          description: ''
+          accessVlan: "{{ test_access_vlan }}"
+          cdp: false
+          bpduGuard: disable
+
+- name: DESCRIPTION | Replay the clear in check mode
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_clear_description
+  check_mode: true
+  register: cm_dot1q_clear_replay
+
+- name: DESCRIPTION | Replay the clear normally
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host: *dot1q_clear_description
+  register: nm_dot1q_clear_replay
+
+- name: DESCRIPTION | Require empty or omitted controller echo to replay without change
+  ansible.builtin.assert:
+    that:
+      - cm_dot1q_clear_replay is not changed
+      - nm_dot1q_clear_replay is not changed

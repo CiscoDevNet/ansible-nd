@@ -600,6 +600,7 @@ def test_port_channel_routed_interface_00300():
         (PortChannelRoutedPolicyModel, {"ipv6": "2001:db8::1/64", "ipv6Prefix": 64}, {"ipv6": "2001:db8::1", "ipv6Prefix": 64}),
         (PortChannelRoutedPolicyModel, {"ipv6": "2001:db8::1", "ipv6_prefix": 126}, {"ipv6": "2001:db8::1", "ipv6Prefix": 126}),
         (XePortChannelRoutedPolicyModel, {"ip": "10.1.1.1/24"}, {"ip": "10.1.1.1", "prefix": 24}),
+        (PortChannelRoutedPolicyModel, {"ipv6": "2001:db8::1/64", "ipv6_prefix": "64.0"}, {"ipv6": "2001:db8::1", "ipv6Prefix": 64}),
     ],
 )
 def test_port_channel_routed_interface_00400(model_cls, policy, expected):
@@ -643,6 +644,10 @@ def test_port_channel_routed_interface_00400(model_cls, policy, expected):
         (PortChannelRoutedPolicyModel, {"ipv6": "not-an-ipv6", "ipv6_prefix": 64}, r"not a valid IPv6 address"),
         (PortChannelRoutedPolicyModel, {"ipv6": "10.1.1.1", "ipv6_prefix": 64}, r"not a valid IPv6 address"),
         (XePortChannelRoutedPolicyModel, {"ip": "10.1.1.1/4"}, r"prefix"),
+        (PortChannelRoutedPolicyModel, {"ip": "10.1.1.1/30", "prefix": "24.0"}, r"ip.*/30.*prefix.*24"),
+        (PortChannelRoutedPolicyModel, {"ipv6": "2001:db8::1/64", "ipv6_prefix": "126.0"}, r"ipv6.*/64.*ipv6_prefix.*126"),
+        (XePortChannelRoutedPolicyModel, {"ip": "10.1.1.1/30", "prefix": "24.0"}, r"ip.*/30.*prefix.*24"),
+        (PortChannelRoutedPolicyModel, {"ipv6": "2001:db8::1/64", "ipv6_prefix": "abc"}, r"ipv6_prefix.*not an integer"),
     ],
 )
 def test_port_channel_routed_interface_00410(model_cls, policy, match):
@@ -650,7 +655,8 @@ def test_port_channel_routed_interface_00410(model_cls, policy, match):
     # Summary
 
     Verify the routed port-channel policies reject a CIDR mask that contradicts the explicit prefix, half of an address / prefix pair,
-    a malformed or wrong-family IPv6 address, and a derived prefix outside the field's range, all before any controller call.
+    a malformed or wrong-family IPv6 address, and a derived prefix outside the field's range, all before any controller call. The pair
+    check runs on config input only, so the policies are validated with the `mode="config"` context that `NDBaseModel.from_config` supplies.
 
     ## Test
 
@@ -666,4 +672,151 @@ def test_port_channel_routed_interface_00410(model_cls, policy, match):
     - reconcile_cidr_prefix()
     """
     with pytest.raises(ValidationError, match=match):
-        model_cls(**policy)
+        model_cls.model_validate(policy, context={"mode": "config"})
+
+
+@pytest.mark.parametrize(
+    "network_os_type, policy_type, interface_name, policy",
+    [
+        ("nx-os", "l3Po", "port-channel501", {"ip": "10.99.31.5", "prefix": 30}),
+        ("nx-os", "l3Po", "port-channel501", {"ipv6": "2001:db8:501::1", "ipv6_prefix": 64}),
+        ("ios-xe", "iosXeL3PortChannel", "Port-channel501", {"ip": "10.99.31.9", "prefix": 30}),
+    ],
+)
+def test_port_channel_routed_interface_00420(network_os_type, policy_type, interface_name, policy) -> None:
+    """
+    # Summary
+
+    Verify a merged update can add an address / prefix pair to an existing routed port-channel that has neither. `NDBaseModel.merge()`
+    assigns one field at a time under `validate_assignment`, so the pair rule must not fire on the transient half pair between the two
+    assignments (issue #584 follow-on; the ethernet routed model hit the same failure in its merge regression test).
+
+    ## Test
+
+    - `existing` built from a wire response whose policy sets only adminState/mtu
+    - `proposed` sets the address and its prefix (IPv4 on both OS branches, IPv6 on NX-OS)
+    - `merge()` succeeds and both halves land
+
+    ## Classes and Methods
+
+    - NDBaseModel.merge()
+    - PortChannelRoutedPolicyModel._validate_address_prefix_paired()
+    - XePortChannelRoutedPolicyModel._validate_address_prefix_paired()
+    """
+    existing = PortChannelRoutedInterfaceModel.from_response(
+        {
+            "switchIp": "192.168.12.131",
+            "interfaceName": interface_name,
+            "interfaceType": "portChannel",
+            "configData": {
+                "mode": "routed",
+                "networkOS": {"networkOSType": network_os_type, "policy": {"policyType": policy_type, "adminState": True, "mtu": 9216}},
+            },
+        }
+    )
+    proposed = PortChannelRoutedInterfaceModel.model_validate(
+        {
+            "switch_ip": "192.168.12.131",
+            "interface_name": interface_name,
+            "config_data": {"network_os": {"network_os_type": network_os_type, "policy": {"policy_type": policy_type, **policy}}},
+        }
+    )
+    with does_not_raise():
+        existing.merge(proposed)
+    merged = existing.config_data.network_os.policy
+    for key, value in policy.items():
+        assert getattr(merged, key) == value
+    assert merged.mtu == 9216
+
+
+@pytest.mark.parametrize(
+    "network_os_type, policy, match",
+    [
+        ("nx-os", {"ip": "10.1.1.1"}, r"ip and prefix are required together"),
+        ("nx-os", {"prefix": 24}, r"ip and prefix are required together"),
+        ("nx-os", {"ipv6": "2001:db8::1"}, r"ipv6 and ipv6_prefix are required together"),
+        ("nx-os", {"ipv6_prefix": 64}, r"ipv6 and ipv6_prefix are required together"),
+        ("ios-xe", {"ip": "10.1.1.1"}, r"ip and prefix are required together"),
+        ("ios-xe", {"prefix": 24}, r"ip and prefix are required together"),
+    ],
+)
+def test_port_channel_routed_interface_00430(network_os_type, policy, match) -> None:
+    """
+    # Summary
+
+    Verify half of an address / prefix pair is rejected when the policy is validated as `config_data.network_os.policy` of the outer
+    interface model via `from_config`, which is the only path the module and the interfaces workflow adapter use. Pydantic sets
+    `info.field_name` to the parent field (`policy`) while validating a nested model, so a pair check that skips on any `field_name` is
+    dead on this path (PR #636 review); the check is gated on the `mode="config"` validation context instead.
+
+    ## Test
+
+    - An `ip` or `ipv6` without its prefix, nested under the outer model, raises
+    - A `prefix` or `ipv6_prefix` without its address, nested under the outer model, raises
+
+    ## Classes and Methods
+
+    - NDBaseModel.from_config()
+    - PortChannelRoutedPolicyModel._validate_address_prefix_paired()
+    - XePortChannelRoutedPolicyModel._validate_address_prefix_paired()
+    - require_address_prefix_pair()
+    """
+    with pytest.raises(ValidationError, match=match):
+        PortChannelRoutedInterfaceModel.from_config(
+            {
+                "switch_ip": "192.168.12.131",
+                "interface_name": "Port-channel10",
+                "config_data": {"network_os": {"network_os_type": network_os_type, "policy": policy}},
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "network_os_type, policy_type, interface_name, stored_half, match",
+    [
+        ("nx-os", "l3Po", "port-channel501", {"prefix": 30}, r"prefix without ip"),
+        ("nx-os", "l3Po", "port-channel501", {"ipv6Prefix": 64}, r"ipv6_prefix without ipv6"),
+        ("ios-xe", "iosXeL3PortChannel", "Port-channel501", {"prefix": 30}, r"prefix without ip"),
+    ],
+)
+def test_port_channel_routed_interface_00440(network_os_type, policy_type, interface_name, stored_half, match) -> None:
+    """
+    # Summary
+
+    Verify `NDBaseModel.merge()` refuses to carry a half address / prefix pair the controller already stores into a merged update that does
+    not touch the pair. `from_response` reads the half pair tolerantly, and an unrelated merged change (a description) would otherwise send it
+    back in the full policy body (PR #636 review).
+
+    ## Test
+
+    - `existing` built from a wire response whose policy holds one half of a pair (IPv4 on both OS branches, IPv6 on NX-OS)
+    - `proposed` sets only `description`
+    - `merge()` raises, naming the half that is present and the one that is missing
+
+    ## Classes and Methods
+
+    - NDBaseModel.merge()
+    - AddressPrefixPairMixin.merge()
+    - PortChannelRoutedPolicyModel
+    - XePortChannelRoutedPolicyModel
+    """
+    existing = PortChannelRoutedInterfaceModel.from_response(
+        {
+            "switchIp": "192.168.12.131",
+            "interfaceName": interface_name,
+            "interfaceType": "portChannel",
+            "configData": {
+                "mode": "routed",
+                "networkOS": {"networkOSType": network_os_type, "policy": {"policyType": policy_type, "adminState": True, **stored_half}},
+            },
+        }
+    )
+    proposed = PortChannelRoutedInterfaceModel.from_config(
+        {
+            "switch_ip": "192.168.12.131",
+            "interface_name": interface_name,
+            "config_data": {"network_os": {"network_os_type": network_os_type, "policy": {"policy_type": policy_type, "description": "New uplink"}}},
+        }
+    )
+    with pytest.raises(ValueError, match=match):
+        existing.merge(proposed)

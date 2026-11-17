@@ -56,7 +56,7 @@ class DpuInstanceValuesModel(NDNestedModel):
 
     identifiers: ClassVar[list[str]] = []
     dpu_secure: bool | None = Field(
-        default=False,
+        default=None,
         alias="dpuSecure",
         description=("Enable DPU secure mode for communication between the DPU " "and the host switch"),
     )
@@ -78,7 +78,7 @@ class VrfAttachmentInstanceValuesModel(NDNestedModel):
     identifiers: ClassVar[list[str]] = []
     # dpuInstanceValues fields
     dpu_secure: bool | None = Field(
-        default=False,
+        default=None,
         alias="dpuSecure",
         description=("Enable DPU secure mode for communication between the DPU " "and the host switch"),
     )

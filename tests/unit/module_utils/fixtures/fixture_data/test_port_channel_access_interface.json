@@ -2835,6 +2835,46 @@
         "DATA": {
             "interfaces": [
                 {
+                    "interfaceName": "GigabitEthernet1/0/2",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "operData": {
+                        "portChannelId": -1
+                    },
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "iosXeAccessPoMember",
+                                "portChannelId": "Port-channel101",
+                                "portChannelMode": "active"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "GigabitEthernet1/0/3",
+                    "interfaceType": "ethernet",
+                    "switchId": "FDO11111AAA",
+                    "operData": {
+                        "portChannelId": -1
+                    },
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "ios-xe",
+                            "policy": {
+                                "adminState": true,
+                                "policyType": "iosXeAccessPoMember",
+                                "portChannelId": "Port-channel102",
+                                "portChannelMode": "active"
+                            }
+                        }
+                    }
+                },
+                {
                     "interfaceName": "port-channel101",
                     "interfaceType": "portChannel",
                     "operData": {

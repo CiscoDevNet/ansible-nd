@@ -393,11 +393,12 @@ class AccessVpcHostInterfaceModel(NDBaseModel):
     # --- Identifier Configuration ---
     # TODO(4.2.1) vpc-interface-dual-peer-duplicate
     # A vPC interface is a single fabric-level resource, but ND echoes it from BOTH peer switches in the per-switch
-    # `/interfaces` GET (identical `configData`; only `switchId` / `peerSwitchId` swap). That echo is deduped in
-    # `VpcInterfaceBaseOrchestrator.query_all`, keyed on `interfaceName` + the unordered `{switchId, peerSwitchId}` pair
-    # set, so the composite identifier below stays safe: two vPC pairs in one fabric may legally reuse the same vPC id
-    # (ND's `vpcId` resource pool is devicePair-scoped; issue #356), which a name-only identity cannot represent.
-    # `switch_ip` remains excluded from payload and diff (routing-only on the wire).
+    # `/interfaces` GET (identical `configData`; only `switchId` / `peerSwitchId` swap). Standalone reads dedupe that
+    # echo in `VpcInterfaceBaseOrchestrator.query_all`; the aggregate workflow selects one echo using its authoritative
+    # unordered peer-pair inventory. Both key on `interfaceName` plus the pair set, so the composite identifier below
+    # stays safe: two vPC pairs in one fabric may legally reuse the same vPC id (ND's `vpcId` resource pool is
+    # devicePair-scoped; issue #356), which a name-only identity cannot represent. `switch_ip` remains excluded from
+    # payload and diff because it is routing-only on the wire.
 
     identifiers: ClassVar[list[str] | None] = ["switch_ip", "interface_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
