@@ -153,9 +153,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         "vrfLiteIpv6SubnetRange",
         "vrfLiteIpv6SubnetTargetMask",
     }
-    replacement_preserve_fields: ClassVar[set[str]] = _opaque_replacement_fields | {
-        "bgpAsnRange"
-    }
+    replacement_preserve_fields: ClassVar[set[str]] = _opaque_replacement_fields | {"bgpAsnRange"}
     replacement_preserve_secret_fields: ClassVar[set[str]] = set()
     config_exclude_fields: ClassVar[set[str]] = _opaque_replacement_fields
 
@@ -168,9 +166,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         if not isinstance(data, dict):
             return data
         normalized = dict(data)
-        mode = normalized.get(
-            "bgpAsMode", normalized.get("bgp_as_mode", BgpAsModeEnum.MULTI_AS)
-        )
+        mode = normalized.get("bgpAsMode", normalized.get("bgp_as_mode", BgpAsModeEnum.MULTI_AS))
         if mode in (BgpAsModeEnum.SAME_TIER_AS, BgpAsModeEnum.SAME_TIER_AS.value):
             if "bgpAsnAutoAllocation" in normalized:
                 normalized["bgpAsnAutoAllocation"] = None
@@ -179,9 +175,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         return normalized
 
     # Fabric Type (required for discriminated union)
-    type: Literal[FabricTypeEnum.VXLAN_EBGP] = Field(
-        description="Type of the fabric", default=FabricTypeEnum.VXLAN_EBGP
-    )
+    type: Literal[FabricTypeEnum.VXLAN_EBGP] = Field(description="Type of the fabric", default=FabricTypeEnum.VXLAN_EBGP)
 
     # Core eBGP Configuration
     bgp_asn: str | None = Field(
@@ -204,16 +198,12 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     )
     bgp_asn_auto_allocation: bool | None = Field(
         alias="bgpAsnAutoAllocation",
-        description=(
-            "Automatically allocate and track BGP ASN for leafs, borders and border gateways. Applies only in Multi-AS mode."
-        ),
+        description=("Automatically allocate and track BGP ASN for leafs, borders and border gateways. Applies only in Multi-AS mode."),
         default=True,
     )
     bgp_asn_range: str | None = Field(
         alias="bgpAsnRange",
-        description=(
-            "BGP ASN range for auto-allocation (minimum: 1 or 1.0, maximum: 4294967295 or 65535.65535)"
-        ),
+        description=("BGP ASN range for auto-allocation (minimum: 1 or 1.0, maximum: 4294967295 or 65535.65535)"),
         default=None,
         min_length=3,
         max_length=23,
@@ -225,9 +215,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         le=10,
         default=1,
     )
-    bgp_max_path: int = Field(
-        alias="bgpMaxPath", description="BGP Maximum Paths", ge=1, le=64, default=64
-    )
+    bgp_max_path: int = Field(alias="bgpMaxPath", description="BGP Maximum Paths", ge=1, le=64, default=64)
     bgp_underlay_failure_protect: bool = Field(
         alias="bgpUnderlayFailureProtect",
         description="Enable BGP underlay failure protection",
@@ -235,9 +223,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     )
     auto_configure_ebgp_evpn_peering: bool = Field(
         alias="autoConfigureEbgpEvpnPeering",
-        description=(
-            "Automatically configure eBGP EVPN overlay peering between leaf and spine switches"
-        ),
+        description=("Automatically configure eBGP EVPN overlay peering between leaf and spine switches"),
         default=True,
     )
     allow_leaf_same_as: bool = Field(
@@ -292,9 +278,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     )
 
     # Propagated from FabricEbgpModel.fabric_name during validation
-    name: str | None = Field(
-        description="Fabric name", min_length=1, max_length=64, default=None
-    )
+    name: str | None = Field(description="Fabric name", min_length=1, max_length=64, default=None)
 
     # Network Addressing
     bgp_loopback_id: int = Field(
@@ -316,9 +300,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     )
     nve_loopback_id: int = Field(
         alias="nveLoopbackId",
-        description=(
-            "Underlay VTEP loopback Id associated with the Network Virtualization Edge (nve) interface"
-        ),
+        description=("Underlay VTEP loopback Id associated with the Network Virtualization Edge (nve) interface"),
         ge=0,
         le=1023,
         default=1,
@@ -401,26 +383,18 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     )
     multicast_group_subnet: MulticastGroupSubnet = Field(
         alias="multicastGroupSubnet",
-        description=(
-            "Multicast pool prefix between 8 to 30. A multicast group ipv4 from this pool is used for BUM traffic for each overlay network."
-        ),
+        description=("Multicast pool prefix between 8 to 30. A multicast group ipv4 from this pool is used for BUM traffic for each overlay network."),
         default="239.1.1.0/25",
     )
     auto_generate_multicast_group_address: bool = Field(
         alias="autoGenerateMulticastGroupAddress",
-        description=(
-            "Generate a new multicast group address from the multicast pool using a round-robin approach"
-        ),
+        description=("Generate a new multicast group address from the multicast pool using a round-robin approach"),
         default=False,
     )
-    underlay_multicast_group_address_limit: UnderlayMulticastGroupAddressLimitEnum = (
-        Field(
-            alias="underlayMulticastGroupAddressLimit",
-            description=(
-                "The maximum supported value is 128 for NX-OS version 10.2(1) or earlier and 512 for versions above 10.2(1)"
-            ),
-            default=UnderlayMulticastGroupAddressLimitEnum.V_128,
-        )
+    underlay_multicast_group_address_limit: UnderlayMulticastGroupAddressLimitEnum = Field(
+        alias="underlayMulticastGroupAddressLimit",
+        description=("The maximum supported value is 128 for NX-OS version 10.2(1) or earlier and 512 for versions above 10.2(1)"),
+        default=UnderlayMulticastGroupAddressLimitEnum.V_128,
     )
     tenant_routed_multicast: bool = Field(
         alias="tenantRoutedMulticast",
@@ -564,9 +538,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     )
     anycast_border_gateway_advertise_physical_ip: bool = Field(
         alias="anycastBorderGatewayAdvertisePhysicalIp",
-        description=(
-            "To advertise Anycast Border Gateway PIP as VTEP. Effective on MSD fabric 'Recalculate Config'"
-        ),
+        description=("To advertise Anycast Border Gateway PIP as VTEP. Effective on MSD fabric 'Recalculate Config'"),
         default=False,
     )
 
@@ -712,14 +684,10 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     # Optional Advanced Settings
     performance_monitoring: bool = Field(
         alias="performanceMonitoring",
-        description=(
-            "If enabled, switch metrics are collected through periodic SNMP polling. Alternative to real-time telemetry"
-        ),
+        description=("If enabled, switch metrics are collected through periodic SNMP polling. Alternative to real-time telemetry"),
         default=False,
     )
-    tenant_dhcp: bool = Field(
-        alias="tenantDhcp", description="Enable tenant DHCP", default=True
-    )
+    tenant_dhcp: bool = Field(alias="tenantDhcp", description="Enable tenant DHCP", default=True)
     advertise_physical_ip: bool = Field(
         alias="advertisePhysicalIp",
         description="For Primary VTEP IP Advertisement As Next-Hop Of Prefix Routes",
@@ -727,9 +695,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     )
     advertise_physical_ip_on_border: bool = Field(
         alias="advertisePhysicalIpOnBorder",
-        description=(
-            "Enable advertise-pip on vPC borders and border gateways only. Applicable only when vPC advertise-pip is not enabled"
-        ),
+        description=("Enable advertise-pip on vPC borders and border gateways only. Applicable only when vPC advertise-pip is not enabled"),
         default=True,
     )
 
@@ -751,19 +717,13 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         json_schema_extra={
             "secret": True,
             "nd_string_constraints": {"min_length": 1, "max_length": 256},
-            "nd_release_constraints": [
-                {"minimum_version": "4.3.1", "pattern": "^\\S+$"}
-            ],
+            "nd_release_constraints": [{"minimum_version": "4.3.1", "pattern": "^\\S+$"}],
         },
     )
 
     # Protocol Settings — BFD
-    bfd: bool = Field(
-        description="Enable BFD.  Valid for IPv4 Underlay only", default=False
-    )
-    bfd_ibgp: bool = Field(
-        alias="bfdIbgp", description="Enable BFD For iBGP", default=False
-    )
+    bfd: bool = Field(description="Enable BFD.  Valid for IPv4 Underlay only", default=False)
+    bfd_ibgp: bool = Field(alias="bfdIbgp", description="Enable BFD For iBGP", default=False)
     bfd_authentication: bool = Field(
         alias="bfdAuthentication",
         description="Enable BFD Authentication.  Valid for P2P Interfaces only",
@@ -783,9 +743,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         json_schema_extra={
             "secret": True,
             "nd_string_constraints": {"min_length": 1, "max_length": 40},
-            "nd_release_constraints": [
-                {"minimum_version": "4.3.1", "pattern": "^\\S+$"}
-            ],
+            "nd_release_constraints": [{"minimum_version": "4.3.1", "pattern": "^\\S+$"}],
         },
     )
 
@@ -802,9 +760,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         json_schema_extra={
             "secret": True,
             "nd_string_constraints": {"min_length": 1, "max_length": 256},
-            "nd_release_constraints": [
-                {"minimum_version": "4.3.1", "pattern": "^\\S+$"}
-            ],
+            "nd_release_constraints": [{"minimum_version": "4.3.1", "pattern": "^\\S+$"}],
         },
     )
 
@@ -968,9 +924,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     ntp_server_vrf_collection: list[str] = Field(
         default_factory=list,
         alias="ntpServerVrfCollection",
-        description=(
-            "NTP Server VRFs. One VRF for all NTP servers or a list of VRFs, one per NTP server"
-        ),
+        description=("NTP Server VRFs. One VRF for all NTP servers or a list of VRFs, one per NTP server"),
     )
     dns_collection: list[Annotated[RequiredFabricIPAddress, Field(min_length=3, max_length=40)]] = Field(
         default_factory=list,
@@ -990,9 +944,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     syslog_server_vrf_collection: list[str] = Field(
         default_factory=list,
         alias="syslogServerVrfCollection",
-        description=(
-            "Syslog Server VRFs. One VRF for all Syslog servers or a list of VRFs, one per Syslog server"
-        ),
+        description=("Syslog Server VRFs. One VRF for all Syslog servers or a list of VRFs, one per Syslog server"),
     )
     syslog_severity_collection: list[Annotated[int, Field(ge=0, le=7)]] = Field(
         default_factory=list,
@@ -1064,9 +1016,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     # System / Compliance / OAM / Misc
     greenfield_debug_flag: GreenfieldDebugFlagEnum = Field(
         alias="greenfieldDebugFlag",
-        description=(
-            "Allow switch configuration to be cleared without a reload when preserveConfig is set to false"
-        ),
+        description=("Allow switch configuration to be cleared without a reload when preserveConfig is set to false"),
         default=GreenfieldDebugFlagEnum.DISABLE,
     )
     interface_statistics_load_interval: int = Field(
@@ -1085,9 +1035,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     )
     next_generation_oam: bool = Field(
         alias="nextGenerationOAM",
-        description=(
-            "Enable the Next Generation (NG) OAM feature for all switches in the fabric to aid in trouble-shooting VXLAN EVPN fabrics"
-        ),
+        description=("Enable the Next Generation (NG) OAM feature for all switches in the fabric to aid in trouble-shooting VXLAN EVPN fabrics"),
         default=True,
     )
     ngoam_south_bound_loop_detect: bool = Field(
@@ -1111,23 +1059,17 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     )
     strict_config_compliance_mode: bool = Field(
         alias="strictConfigComplianceMode",
-        description=(
-            "Enable bi-directional compliance checks to flag additional configs in the running config that are not in the intent/expected config"
-        ),
+        description=("Enable bi-directional compliance checks to flag additional configs in the running config that are not in the intent/expected config"),
         default=False,
     )
     advanced_ssh_option: bool = Field(
         alias="advancedSshOption",
-        description=(
-            "Enable AAA IP Authorization. Enable only, when IP Authorization is enabled in the AAA Server"
-        ),
+        description=("Enable AAA IP Authorization. Enable only, when IP Authorization is enabled in the AAA Server"),
         default=False,
     )
     copp_policy: CoppPolicyEnum = Field(
         alias="coppPolicy",
-        description=(
-            "Fabric wide CoPP policy. Customized CoPP policy should be provided when 'manual' is selected."
-        ),
+        description=("Fabric wide CoPP policy. Customized CoPP policy should be provided when 'manual' is selected."),
         default=CoppPolicyEnum.STRICT,
     )
     power_redundancy_mode: PowerRedundancyModeEnum = Field(
@@ -1155,9 +1097,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     )
     tcam_allocation: bool = Field(
         alias="tcamAllocation",
-        description=(
-            "TCAM commands are automatically generated for VxLAN and vPC Fabric Peering when Enabled"
-        ),
+        description=("TCAM commands are automatically generated for VxLAN and vPC Fabric Peering when Enabled"),
         default=True,
     )
 
@@ -1169,9 +1109,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     )
     default_queuing_policy_cloudscale: str = Field(
         alias="defaultQueuingPolicyCloudscale",
-        description=(
-            "Queuing Policy for all 92xx, -EX, -FX, -FX2, -FX3, -GX series switches in the fabric"
-        ),
+        description=("Queuing Policy for all 92xx, -EX, -FX, -FX2, -FX3, -GX series switches in the fabric"),
         default="queuing_policy_default_8q_cloudscale",
     )
     default_queuing_policy_r_series: str = Field(
@@ -1186,16 +1124,12 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     )
     aiml_qos: bool = Field(
         alias="aimlQos",
-        description=(
-            "Configures QoS and Queuing Policies specific to N9K Cloud Scale (CS) & Silicon One (S1) switch fabric for AI network workloads"
-        ),
+        description=("Configures QoS and Queuing Policies specific to N9K Cloud Scale (CS) & Silicon One (S1) switch fabric for AI network workloads"),
         default=False,
     )
     aiml_qos_policy: AimlQosPolicyEnum = Field(
         alias="aimlQosPolicy",
-        description=(
-            "Queuing Policy based on predominant fabric link speed: 800G / 400G / 100G / 25G. User-defined allows for custom configuration."
-        ),
+        description=("Queuing Policy based on predominant fabric link speed: 800G / 400G / 100G / 25G. User-defined allows for custom configuration."),
         default=AimlQosPolicyEnum.V_400G,
     )
     # Omitted when unset so ND applies its own release-specific default; the declared
@@ -1247,9 +1181,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         default=50,
     )
     dlb: bool = Field(
-        description=(
-            "Enables fabric-level Dynamic Load Balancing (DLB) configuration. Note: Inter-Switch-Links (ISL) will be configured as DLB Interfaces"
-        ),
+        description=("Enables fabric-level Dynamic Load Balancing (DLB) configuration. Note: Inter-Switch-Links (ISL) will be configured as DLB Interfaces"),
         default=False,
     )
     dlb_mode: DlbModeEnum = Field(
@@ -1286,9 +1218,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
     )
     ai_load_sharing: bool = Field(
         alias="aiLoadSharing",
-        description=(
-            "Enable IP load sharing using source and destination address for AI workloads"
-        ),
+        description=("Enable IP load sharing using source and destination address for AI workloads"),
         default=False,
     )
     priority_flow_control_watch_interval: int | None = Field(
@@ -1604,9 +1534,9 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         description="Use a PIM authentication keychain.",
         default=False,
     )
-    pim_keys: Annotated[
-        list[KeychainKeyEntryModel] | None, NDMinimumVersion("4.3.1")
-    ] = Field(alias="pimKeys", description="PIM keychain entries.", default=None)
+    pim_keys: Annotated[list[KeychainKeyEntryModel] | None, NDMinimumVersion("4.3.1")] = Field(
+        alias="pimKeys", description="PIM keychain entries.", default=None
+    )
 
     @field_validator("overlay_mode", mode="before")
     @classmethod
@@ -1617,14 +1547,10 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         return value
 
     @field_serializer("overlay_mode")
-    def serialize_overlay_mode(
-        self, value: OverlayModeEnum | str, info: FieldSerializationInfo
-    ) -> str:
+    def serialize_overlay_mode(self, value: OverlayModeEnum | str, info: FieldSerializationInfo) -> str:
         """Use the ND spelling in payloads and the public spelling elsewhere."""
         public_value = value.value if isinstance(value, OverlayModeEnum) else value
-        if (info.context or {}).get(
-            "mode"
-        ) == "payload" and public_value == OverlayModeEnum.CONFIG_PROFILE.value:
+        if (info.context or {}).get("mode") == "payload" and public_value == OverlayModeEnum.CONFIG_PROFILE.value:
             return "configProfile"
         return public_value
 
@@ -1690,9 +1616,7 @@ class VxlanEbgpManagementModel(FabricManagementModel):
         "macsec_fallback_key_string",
         "ntp_auth_key",
     )
-    def _serialize_secret_keys(
-        self, value: SecretStr | None, info: FieldSerializationInfo
-    ) -> str | None:
+    def _serialize_secret_keys(self, value: SecretStr | None, info: FieldSerializationInfo) -> str | None:
         """Real value only for the API payload; masked in config/diff/gathered/error output."""
         return serialize_secret_value(value, info)
 
@@ -1744,9 +1668,7 @@ class FabricEbgpModel(FabricBaseModel):
     )
 
     # Core Management Configuration
-    management: VxlanEbgpManagementModel | None = Field(
-        description="eBGP VXLAN management configuration", default=None
-    )
+    management: VxlanEbgpManagementModel | None = Field(description="eBGP VXLAN management configuration", default=None)
 
     @model_validator(mode="before")
     @classmethod

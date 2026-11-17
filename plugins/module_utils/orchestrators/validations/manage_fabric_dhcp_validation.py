@@ -63,7 +63,8 @@ class ManageFabricDhcpValidationMixin:
             raw_version = self.rest_send.controller_product_version
             version = parse_controller_product_version(raw_version)
             unsupported = {
-                name: fields for name, fields in ipv6_fields_by_fabric.items()
+                name: fields
+                for name, fields in ipv6_fields_by_fabric.items()
                 if version is None or version < parse_controller_product_version(minimum_versions[name])
             }
             if unsupported:

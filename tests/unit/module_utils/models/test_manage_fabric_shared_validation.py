@@ -120,17 +120,20 @@ def test_ibgp_management_template_constraints_accept_valid_values(management) ->
 
 
 @pytest.mark.parametrize("model_class", UNNUMBERED_IBGP_FAMILIES)
-@pytest.mark.parametrize(("field", "value"), (
-    ("dns_collection", ["not-an-ip"]),
-    ("dns_vrf_collection", [""]),
-    ("dns_vrf_collection", ["x" * 81]),
-    ("ntp_server_collection", [""]),
-    ("ntp_server_collection", ["x" * 81]),
-    ("syslog_server_collection", [""]),
-    ("syslog_server_collection", ["x" * 200]),
-    ("syslog_severity_collection", [-1]),
-    ("syslog_severity_collection", [8]),
-))
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("dns_collection", ["not-an-ip"]),
+        ("dns_vrf_collection", [""]),
+        ("dns_vrf_collection", ["x" * 81]),
+        ("ntp_server_collection", [""]),
+        ("ntp_server_collection", ["x" * 81]),
+        ("syslog_server_collection", [""]),
+        ("syslog_server_collection", ["x" * 200]),
+        ("syslog_severity_collection", [-1]),
+        ("syslog_severity_collection", [8]),
+    ),
+)
 def test_ibgp_scalar_collection_items_enforce_both_release_api_contracts(model_class, field, value) -> None:
     with pytest.raises(ValidationError):
         model_class.from_config(_config(**{field: value}))
@@ -138,13 +141,15 @@ def test_ibgp_scalar_collection_items_enforce_both_release_api_contracts(model_c
 
 @pytest.mark.parametrize("model_class", UNNUMBERED_IBGP_FAMILIES)
 def test_ibgp_scalar_collection_boundaries_and_argument_spec_types(model_class) -> None:
-    model = model_class.from_config(_config(
-        dns_collection=["192.0.2.1", "2001:db8::1"],
-        dns_vrf_collection=["x", "v" * 80],
-        ntp_server_collection=["n", "n" * 80],
-        syslog_server_collection=["s", "s" * 199],
-        syslog_severity_collection=[0, 7],
-    ))
+    model = model_class.from_config(
+        _config(
+            dns_collection=["192.0.2.1", "2001:db8::1"],
+            dns_vrf_collection=["x", "v" * 80],
+            ntp_server_collection=["n", "n" * 80],
+            syslog_server_collection=["s", "s" * 199],
+            syslog_severity_collection=[0, 7],
+        )
+    )
     spec = model_class.get_argument_spec()["config"]["options"]["management"]["options"]
     assert spec["syslog_severity_collection"]["elements"] == "int"
     assert spec["dns_collection"]["elements"] == "str"
@@ -152,13 +157,9 @@ def test_ibgp_scalar_collection_boundaries_and_argument_spec_types(model_class) 
 
 
 def test_key_management_entity_server_ip_requires_ipv4() -> None:
-    FabricIbgpModel.from_config(
-        _config(key_management_entity_server_ip="192.0.2.10")
-    )
+    FabricIbgpModel.from_config(_config(key_management_entity_server_ip="192.0.2.10"))
     with pytest.raises(ValidationError):
-        FabricIbgpModel.from_config(
-            _config(key_management_entity_server_ip="2001:db8::10")
-        )
+        FabricIbgpModel.from_config(_config(key_management_entity_server_ip="2001:db8::10"))
 
 
 @pytest.mark.parametrize("value", ("-example.com", "example-.com", "example", "a" * 57 + ".domain"))
@@ -216,22 +217,22 @@ def test_telemetry_traffic_analytics_default_satisfies_api_required_value() -> N
         }
     )
 
-    assert (
-        model.to_payload()["telemetrySettings"]["flowCollection"][
-            "trafficAnalytics"
-        ]
-        == "disabled"
-    )
+    assert model.to_payload()["telemetrySettings"]["flowCollection"]["trafficAnalytics"] == "disabled"
 
 
 def test_public_ibgp_response_secrets_are_registered_for_output_masking() -> None:
-    model = FabricIbgpModel.from_response({
-        "name": "fabric1", "category": "fabric",
-        "management": {
-            "type": "vxlanIbgp", "bgpAsn": "65001", "ntpAuthKey": "responseNtpKey",
-            "ospfKeys": [{"keyId": 1, "keyString": "responseOspfKey"}],
-        },
-    })
+    model = FabricIbgpModel.from_response(
+        {
+            "name": "fabric1",
+            "category": "fabric",
+            "management": {
+                "type": "vxlanIbgp",
+                "bgpAsn": "65001",
+                "ntpAuthKey": "responseNtpKey",
+                "ospfKeys": [{"keyId": 1, "keyString": "responseOspfKey"}],
+            },
+        }
+    )
     assert model.collect_replacement_secret_values() == {"responseNtpKey", "responseOspfKey"}
     config = model.to_config()["management"]
     assert config["ntp_auth_key"] != "responseNtpKey"
@@ -239,9 +240,7 @@ def test_public_ibgp_response_secrets_are_registered_for_output_masking() -> Non
 
 
 def test_omitted_ospf_default_does_not_change_merged_value() -> None:
-    existing = FabricIbgpModel.from_config(
-        _config(ospf_max_metric_startup_wait=450)
-    )
+    existing = FabricIbgpModel.from_config(_config(ospf_max_metric_startup_wait=450))
     proposed = FabricIbgpModel.from_config(_config())
 
     existing.merge(proposed)
@@ -354,9 +353,7 @@ def test_hypershield_subnet_fields_require_ipv4_cidr(model_class) -> None:
         )
     )
     with pytest.raises(ValidationError):
-        model_class.from_config(
-            _config(hypershield_ha_peer_link_subnet="2001:db8::/64")
-        )
+        model_class.from_config(_config(hypershield_ha_peer_link_subnet="2001:db8::/64"))
 
 
 @pytest.mark.parametrize(
@@ -382,12 +379,8 @@ def test_ebgp_template_asn_range_rejects_invalid_values(value: str) -> None:
 
 
 @pytest.mark.parametrize("model_class,fabric_type", ANYCAST_MAC_FAMILIES)
-@pytest.mark.parametrize(
-    "mac", ("2020.0000.00aa", "20:20:00:00:00:aa", "20-20-00-00-00-aa", "2020000000aa")
-)
-def test_anycast_mac_normalizes_across_vxlan_families(
-    model_class, fabric_type: str, mac: str
-) -> None:
+@pytest.mark.parametrize("mac", ("2020.0000.00aa", "20:20:00:00:00:aa", "20-20-00-00-00-aa", "2020000000aa"))
+def test_anycast_mac_normalizes_across_vxlan_families(model_class, fabric_type: str, mac: str) -> None:
     """Every VXLAN fabric family emits equivalent anycast MAC inputs identically."""
     model = model_class.from_config(_config(anycast_gateway_mac=mac))
     response = model_class.from_response(
@@ -413,9 +406,7 @@ def test_anycast_mac_normalizes_across_vxlan_families(
     "invalid",
     ("20:20:00:00:00:zz", "2020.0000.00a", "2020.0000.00aa.0000", "20:20-00:00:00:aa"),
 )
-def test_anycast_mac_rejects_invalid_formats(
-    model_class, _fabric_type: str, invalid: str
-) -> None:
+def test_anycast_mac_rejects_invalid_formats(model_class, _fabric_type: str, invalid: str) -> None:
     """MAC normalization rejects malformed, mixed-separator, and incomplete values."""
     with pytest.raises(ValidationError, match="MAC address"):
         model_class.from_config(_config(anycast_gateway_mac=invalid))
@@ -440,9 +431,7 @@ def test_ipv4_and_ipv6_bootstrap_subnets_are_supported_by_every_family(
         },
     ]
 
-    payload = model_class.from_config(
-        _config(bootstrap_subnet_collection=collection)
-    ).to_payload()
+    payload = model_class.from_config(_config(bootstrap_subnet_collection=collection)).to_payload()
 
     assert payload["management"]["bootstrapSubnetCollection"] == [
         {
@@ -504,9 +493,7 @@ def test_bootstrap_subnet_rejects_invalid_addresses_families_and_prefixes(
 
 @pytest.mark.parametrize("model_class", FABRIC_FAMILIES)
 @pytest.mark.parametrize(("field", "wire_field", "value"), DHCP_IPV4_FIELDS)
-def test_dhcp_address_fields_accept_ipv4_for_every_family(
-    model_class, field: str, wire_field: str, value: str
-) -> None:
+def test_dhcp_address_fields_accept_ipv4_for_every_family(model_class, field: str, wire_field: str, value: str) -> None:
     payload = model_class.from_config(_config(**{field: value})).to_payload()
 
     assert payload["management"][wire_field] == value
@@ -514,12 +501,8 @@ def test_dhcp_address_fields_accept_ipv4_for_every_family(
 
 @pytest.mark.parametrize("model_class", FABRIC_FAMILIES)
 @pytest.mark.parametrize(("field", "wire_field", "value"), DHCP_IPV6_FIELDS)
-def test_dhcp_address_fields_accept_bare_ipv6_for_every_family(
-    model_class, field: str, wire_field: str, value: str
-) -> None:
-    model = model_class.from_config(
-        _config(dhcp_protocol_version="dhcpv6", **{field: value})
-    )
+def test_dhcp_address_fields_accept_bare_ipv6_for_every_family(model_class, field: str, wire_field: str, value: str) -> None:
+    model = model_class.from_config(_config(dhcp_protocol_version="dhcpv6", **{field: value}))
 
     assert getattr(model.management, field) == value
     assert model.to_payload()["management"][wire_field] == value
@@ -527,9 +510,7 @@ def test_dhcp_address_fields_accept_bare_ipv6_for_every_family(
 
 @pytest.mark.parametrize("model_class", FABRIC_FAMILIES)
 @pytest.mark.parametrize(("field", "wire_field", "value"), DHCP_IPV6_FIELDS)
-def test_dhcp_address_fields_allow_ipv6_assignment_and_merge(
-    model_class, field: str, wire_field: str, value: str
-) -> None:
+def test_dhcp_address_fields_allow_ipv6_assignment_and_merge(model_class, field: str, wire_field: str, value: str) -> None:
     existing = model_class.from_config(_config(**{field: "192.0.2.10"}))
     setattr(existing.management, field, value)
     assert existing.to_payload()["management"][wire_field] == value
@@ -548,9 +529,7 @@ def test_dhcp_address_fields_allow_ipv6_assignment_and_merge(
     ("field", "wire_field", "value"),
     DHCP_IPV6_FIELDS,
 )
-def test_dhcp_address_fields_accept_ipv6_in_controller_responses(
-    model_class, field: str, wire_field: str, value: str
-) -> None:
+def test_dhcp_address_fields_accept_ipv6_in_controller_responses(model_class, field: str, wire_field: str, value: str) -> None:
     model = model_class.from_response(
         {
             "name": "fabric1",
@@ -570,9 +549,7 @@ def test_dhcp_address_fields_accept_ipv6_in_controller_responses(
 @pytest.mark.parametrize("model_class", FABRIC_FAMILIES)
 @pytest.mark.parametrize(("_field", "wire_field", "_ipv4"), DHCP_IPV4_FIELDS)
 @pytest.mark.parametrize("invalid", ("not-an-ip", "192.0.2.1/24", "2001:db8::1/64"))
-def test_dhcp_address_fields_reject_invalid_controller_responses(
-    model_class, _field: str, wire_field: str, _ipv4: str, invalid: str
-) -> None:
+def test_dhcp_address_fields_reject_invalid_controller_responses(model_class, _field: str, wire_field: str, _ipv4: str, invalid: str) -> None:
     response = {
         "name": "fabric1",
         "category": "fabric",
@@ -601,9 +578,7 @@ def test_dhcp_address_fields_reject_invalid_controller_responses(
         ("scheduled_backup_time", "9:00"),
     ),
 )
-def test_shared_address_and_backup_time_constraints_apply_to_every_family(
-    model_class, field: str, value: str
-) -> None:
+def test_shared_address_and_backup_time_constraints_apply_to_every_family(model_class, field: str, value: str) -> None:
     with pytest.raises(ValidationError):
         model_class.from_config(_config(**{field: value}))
 
@@ -629,26 +604,19 @@ def test_controller_empty_optional_addresses_are_normalized_on_response(
     assert model.management.dhcp_start_address is None
     assert model.management.dhcp_end_address is None
     assert model.management.management_gateway is None
-    assert (
-        not {"dhcpStartAddress", "dhcpEndAddress", "managementGateway"}
-        & model.to_payload()["management"].keys()
-    )
+    assert not {"dhcpStartAddress", "dhcpEndAddress", "managementGateway"} & model.to_payload()["management"].keys()
 
 
 @pytest.mark.parametrize("model_class", UNNUMBERED_IBGP_FAMILIES)
 @pytest.mark.parametrize(("field", "wire_field", "value"), UNNUMBERED_DHCP_IPV4_FIELDS)
-def test_unnumbered_dhcp_fields_accept_ipv4(
-    model_class, field: str, wire_field: str, value: str
-) -> None:
+def test_unnumbered_dhcp_fields_accept_ipv4(model_class, field: str, wire_field: str, value: str) -> None:
     payload = model_class.from_config(_config(**{field: value})).to_payload()
 
     assert payload["management"][wire_field] == value
 
 
 @pytest.mark.parametrize("model_class", UNNUMBERED_IBGP_FAMILIES)
-@pytest.mark.parametrize(
-    "field", (field for field, _wire_field, _value in UNNUMBERED_DHCP_IPV4_FIELDS)
-)
+@pytest.mark.parametrize("field", (field for field, _wire_field, _value in UNNUMBERED_DHCP_IPV4_FIELDS))
 def test_unnumbered_dhcp_fields_reject_ipv6(model_class, field: str) -> None:
     with pytest.raises(ValidationError, match="valid IPv4 address"):
         model_class.from_config(_config(**{field: "2001:db8::10"}))
@@ -673,10 +641,7 @@ def test_controller_empty_unnumbered_dhcp_addresses_are_normalized_on_response(
 
     assert model.management.unnumbered_dhcp_start_address is None
     assert model.management.unnumbered_dhcp_end_address is None
-    assert (
-        not {"unNumberedDhcpStartAddress", "unNumberedDhcpEndAddress"}
-        & model.to_payload()["management"].keys()
-    )
+    assert not {"unNumberedDhcpStartAddress", "unNumberedDhcpEndAddress"} & model.to_payload()["management"].keys()
 
 
 @pytest.mark.parametrize("model_class", UNNUMBERED_IBGP_FAMILIES)
@@ -697,9 +662,7 @@ def test_inband_dhcp_servers_accept_at_most_three_ipv4_addresses(model_class) ->
         ["192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.4"],
     ),
 )
-def test_inband_dhcp_servers_reject_invalid_addresses_and_more_than_three_entries(
-    model_class, servers: list[str]
-) -> None:
+def test_inband_dhcp_servers_reject_invalid_addresses_and_more_than_three_entries(model_class, servers: list[str]) -> None:
     with pytest.raises(ValidationError):
         model_class.from_config(_config(inband_dhcp_servers=servers))
 
@@ -714,9 +677,7 @@ def test_inband_dhcp_servers_reject_invalid_addresses_and_more_than_three_entrie
         ("vrf_lite_subnet_range", "10.33.0.0"),
     ),
 )
-def test_shared_vxlan_cidr_constraints_apply_to_every_family(
-    model_class, field: str, value: str
-) -> None:
+def test_shared_vxlan_cidr_constraints_apply_to_every_family(model_class, field: str, value: str) -> None:
     with pytest.raises(ValidationError):
         model_class.from_config(_config(**{field: value}))
 
@@ -729,9 +690,7 @@ def test_shared_vxlan_cidr_constraints_apply_to_every_family(
         ("seed_switch_core_interfaces", ["not an interface"]),
     ),
 )
-def test_shared_ibgp_ospf_and_interface_constraints_apply_to_every_family(
-    model_class, field: str, value
-) -> None:
+def test_shared_ibgp_ospf_and_interface_constraints_apply_to_every_family(model_class, field: str, value) -> None:
     with pytest.raises(ValidationError):
         model_class.from_config(_config(**{field: value}))
 
@@ -739,9 +698,7 @@ def test_shared_ibgp_ospf_and_interface_constraints_apply_to_every_family(
 @pytest.mark.parametrize("model_class", VXLAN_FAMILIES)
 @pytest.mark.parametrize("state", ("merged", "replaced", "overridden"))
 @pytest.mark.parametrize("site_id_input", (None, ""))
-def test_omitted_site_id_is_derived_for_payload_but_not_marked_explicit(
-    model_class, state: str, site_id_input: str | None
-) -> None:
+def test_omitted_site_id_is_derived_for_payload_but_not_marked_explicit(model_class, state: str, site_id_input: str | None) -> None:
     management = {"bgp_asn": "65001"}
     if site_id_input is not None:
         management["site_id"] = site_id_input
@@ -754,10 +711,7 @@ def test_omitted_site_id_is_derived_for_payload_but_not_marked_explicit(
     assert model.management.site_id == "65001"
     assert "site_id" not in model.management.model_fields_set
     assert model.to_payload()["management"]["siteId"] == "65001"
-    assert (
-        "siteId"
-        not in model.model_dump(by_alias=True, exclude_unset=True)["management"]
-    )
+    assert "siteId" not in model.model_dump(by_alias=True, exclude_unset=True)["management"]
 
 
 @pytest.mark.parametrize("model_class", VXLAN_FAMILIES)
@@ -769,7 +723,4 @@ def test_explicit_site_id_remains_explicit_for_merged(model_class) -> None:
 
     assert model.management.site_id == "12345"
     assert "site_id" in model.management.model_fields_set
-    assert (
-        model.model_dump(by_alias=True, exclude_unset=True)["management"]["siteId"]
-        == "12345"
-    )
+    assert model.model_dump(by_alias=True, exclude_unset=True)["management"]["siteId"] == "12345"

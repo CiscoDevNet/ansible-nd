@@ -162,13 +162,18 @@ def _module(
 
 @pytest.mark.parametrize("state", ("merged", "replaced", "overridden"))
 @pytest.mark.parametrize("version", ("4.2.1", "4.2(1)", "4.3.1"))
-@pytest.mark.parametrize(("orchestrator", "fabric_type"), (
-    (ManageIbgpFabricOrchestrator, "vxlanIbgp"),
-    (ManageAiIbgpVxlanFabricOrchestrator, "aimlVxlanIbgp"),
-))
+@pytest.mark.parametrize(
+    ("orchestrator", "fabric_type"),
+    (
+        (ManageIbgpFabricOrchestrator, "vxlanIbgp"),
+        (ManageAiIbgpVxlanFabricOrchestrator, "aimlVxlanIbgp"),
+    ),
+)
 def test_ibgp_absent_newer_release_defaults_remain_idempotent(state, version, orchestrator, fabric_type) -> None:
     response = {
-        "name": "fabric1", "category": "fabric", "licenseTier": "essentials",
+        "name": "fabric1",
+        "category": "fabric",
+        "licenseTier": "essentials",
         "management": {"type": fabric_type, "bgpAsn": "65001"},
     }
     rest = _rest_send()
@@ -183,7 +188,9 @@ def test_ibgp_absent_newer_release_defaults_remain_idempotent(state, version, or
 @pytest.mark.parametrize("state", ("merged", "replaced", "overridden"))
 def test_ibgp_explicit_newer_default_changes_a_nondefault_setting(state) -> None:
     response = {
-        "name": "fabric1", "category": "fabric", "licenseTier": "essentials",
+        "name": "fabric1",
+        "category": "fabric",
+        "licenseTier": "essentials",
         "management": {"type": "vxlanIbgp", "bgpAsn": "65001", "bfdMinRxInterval": 60},
     }
     rest = _rest_send()
@@ -200,7 +207,9 @@ def test_ibgp_explicit_newer_default_changes_a_nondefault_setting(state) -> None
 @pytest.mark.parametrize("state", ("merged", "replaced", "overridden"))
 def test_ibgp_omitted_newer_default_keeps_existing_merge_and_resets_exact_states(state) -> None:
     response = {
-        "name": "fabric1", "category": "fabric", "licenseTier": "essentials",
+        "name": "fabric1",
+        "category": "fabric",
+        "licenseTier": "essentials",
         "management": {"type": "vxlanIbgp", "bgpAsn": "65001", "bfdMinRxInterval": 60},
     }
     rest = _rest_send()
@@ -214,13 +223,18 @@ def test_ibgp_omitted_newer_default_keeps_existing_merge_and_resets_exact_states
 
 
 @pytest.mark.parametrize("version", (None, "4.2.1", "4.2(1)", "4.3.1"))
-@pytest.mark.parametrize(("orchestrator", "fabric_type"), (
-    (ManageIbgpFabricOrchestrator, "vxlanIbgp"),
-    (ManageAiIbgpVxlanFabricOrchestrator, "aimlVxlanIbgp"),
-))
+@pytest.mark.parametrize(
+    ("orchestrator", "fabric_type"),
+    (
+        (ManageIbgpFabricOrchestrator, "vxlanIbgp"),
+        (ManageAiIbgpVxlanFabricOrchestrator, "aimlVxlanIbgp"),
+    ),
+)
 def test_ibgp_real_merged_update_does_not_replay_unreported_release_defaults(version, orchestrator, fabric_type) -> None:
     response = {
-        "name": "fabric1", "category": "fabric", "licenseTier": "essentials",
+        "name": "fabric1",
+        "category": "fabric",
+        "licenseTier": "essentials",
         "management": {"type": fabric_type, "bgpAsn": "65001"},
     }
     rest = _rest_send()
@@ -339,9 +353,7 @@ def test_nd_state_machine_fabric_replacement_00020(
 def test_external_public_sampler_omission_preserves_merge_and_resets_exact_states(version, state):
     """Public sampler omission follows normal state semantics on both API releases."""
     response = FabricExternalConnectivityModel.from_config(_module(state).params["config"][0]).to_payload()
-    response["management"]["netflowSettings"]["netflowSamplerCollection"] = [
-        {"samplerName": "sampler-1", "numSamples": 10, "samplingRate": 1000}
-    ]
+    response["management"]["netflowSettings"]["netflowSamplerCollection"] = [{"samplerName": "sampler-1", "numSamples": 10, "samplingRate": 1000}]
     rest = _rest_send()
     rest.controller_product_version = version
     spy = _replacement_spy(ManageExternalFabricOrchestrator, response)(rest_send=rest)
@@ -411,10 +423,19 @@ def test_external_real_merge_does_not_replay_unreported_newer_defaults(version):
     payload = spy._updated[0].to_payload()
     assert payload["licenseTier"] == "premier"
     for alias in (
-        "aiMonitoring", "allowSmartSwitchHA", "autoSmartSwitchVpcPairHA", "enableRemoteSwitchBackup",
-        "hypershieldHAPeerLinkSubnet", "hypershieldHAPeerLinkSubnetGranularity", "hypershieldHASourceIntf",
-        "hypershieldHASourceSubnet", "hypershieldHAVlan", "iosXeTorBootstrapVlan",
-        "softwareUpdateInMonitoredMode", "strictConfigComplianceMode", "useHypershieldSourceLoopbackForHA",
+        "aiMonitoring",
+        "allowSmartSwitchHA",
+        "autoSmartSwitchVpcPairHA",
+        "enableRemoteSwitchBackup",
+        "hypershieldHAPeerLinkSubnet",
+        "hypershieldHAPeerLinkSubnetGranularity",
+        "hypershieldHASourceIntf",
+        "hypershieldHASourceSubnet",
+        "hypershieldHAVlan",
+        "iosXeTorBootstrapVlan",
+        "softwareUpdateInMonitoredMode",
+        "strictConfigComplianceMode",
+        "useHypershieldSourceLoopbackForHA",
     ):
         assert alias not in payload["management"]
 

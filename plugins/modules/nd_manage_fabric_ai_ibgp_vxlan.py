@@ -2690,31 +2690,15 @@ def main():
                 )
 
         verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
-        module.exit_json(
-            **nd_state_machine.output.format_with_verbosity(
-                verbosity, nd_state_machine.results
-            )
-        )
+        module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))
 
     except NDStateMachineError as e:
         verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
-        output = (
-            nd_state_machine.output.format_with_verbosity(
-                verbosity, nd_state_machine.results
-            )
-            if nd_state_machine
-            else {}
-        )
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
         module.fail_json(msg=str(e), **output)
     except Exception as e:
         verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
-        output = (
-            nd_state_machine.output.format_with_verbosity(
-                verbosity, nd_state_machine.results
-            )
-            if nd_state_machine
-            else {}
-        )
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
         module.fail_json(msg=f"Module execution failed: {str(e)}", **output)
 
 
