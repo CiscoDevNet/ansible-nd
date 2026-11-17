@@ -566,6 +566,135 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+  description: Whether the task reports a change, or predicts one in check mode.
+  returned: always
+  type: bool
+  sample: true
+output_level:
+  description: The selected output detail level.
+  returned: when available
+  type: str
+  sample: normal
+before:
+  description: Original known policy configurations for the matched targets, using controller field names.
+  returned: when available
+  type: list
+  elements: dict
+  sample:
+  - policyId: POLICY-101
+    switchId: FDO25031SY4
+    templateName: feature_enable
+    description: Enable LACP
+    priority: 500
+    templateInputs: {featureName: lacp}
+after:
+  description:
+  - Accepted policy configurations, or predicted configurations in check mode.
+  - After a partial failure, accepted changes are retained; rejected or unattempted updates keep their original values.
+  - Creation previews omit controller-assigned policy IDs.
+  returned: when available
+  type: list
+  elements: dict
+  sample:
+  - policyId: POLICY-101
+    switchId: FDO25031SY4
+    templateName: feature_enable
+    description: Enable LACP
+    priority: 600
+    templateInputs: {featureName: lacp}
+gathered:
+  description:
+  - Active matching policies in O(config) format. An empty list when no policies match.
+  - C(before) and C(after) are empty lists in this state.
+  returned: when available with O(state) set to V(gathered)
+  type: list
+  elements: dict
+  sample:
+  - name: feature_enable
+    policy_id: POLICY-101
+    description: Enable LACP
+    priority: 500
+    template_inputs: {featureName: lacp}
+    create_additional_policy: false
+    switch:
+    - serial_number: FDO25031SY4
+diff:
+  description: Configuration difference list. Currently empty; compare C(before) and C(after) for changes.
+  returned: when available
+  type: list
+  elements: dict
+  sample: []
+proposed:
+  description: The requested policy configurations before reconciliation with existing policies.
+  returned: when available with O(output_level) set to V(info) or V(debug)
+  type: list
+  elements: dict
+  sample:
+  - switchId: FDO25031SY4
+    templateName: feature_enable
+    templateInputs: {featureName: lacp}
+logs:
+  description: Diagnostic log list. Currently empty.
+  returned: when O(output_level) is V(debug) and result details are available
+  type: list
+  elements: str
+  sample: []
+warnings_nd:
+  description: Controller warning messages reported during policy operations.
+  returned: when controller warnings are reported
+  type: list
+  elements: str
+  sample:
+  - 'pushConfig: ND warning for POLICY-101: Policy already in sync'
+api_paths:
+  description: Endpoint paths for reported operations, including planned requests in check mode.
+  returned: when request diagnostics are available at Ansible verbosity 2 (C(-vv)) or higher
+  type: list
+  elements: str
+api_verbs:
+  description: HTTP methods corresponding to C(api_paths).
+  returned: when request diagnostics are available at Ansible verbosity 2 (C(-vv)) or higher
+  type: list
+  elements: str
+api_response:
+  description: Reported operation responses, including check-mode previews.
+  returned: when request diagnostics are available at Ansible verbosity 3 (C(-vvv)) or higher
+  type: list
+  elements: dict
+api_result:
+  description: Reported per-operation outcomes.
+  returned: when request diagnostics are available at Ansible verbosity 3 (C(-vvv)) or higher
+  type: list
+  elements: dict
+api_diff:
+  description: Reported per-operation differences.
+  returned: when request diagnostics are available at Ansible verbosity 3 (C(-vvv)) or higher
+  type: list
+  elements: dict
+api_metadata:
+  description: Per-operation labels and check-mode information.
+  returned: when request diagnostics are available at Ansible verbosity 3 (C(-vvv)) or higher
+  type: list
+  elements: dict
+api_payload:
+  description: Reported request payloads. Entries can be dictionaries, lists or null.
+  returned: when request diagnostics are available at Ansible verbosity 3 (C(-vvv)) or higher
+  type: list
+  elements: raw
+error_details:
+  description: Structured details for a handled policy error.
+  returned: when available on failure and O(output_level) is V(debug)
+  type: dict
+traceback:
+  description: Diagnostic traceback for an unexpected error.
+  returned: on an unexpected error when O(output_level) is V(debug)
+  type: str
+msg:
+  description: The error message when the task fails.
+  returned: on failure
+  type: str
+  sample: Policy operation failed. See task results for details.
 """
 
 # pylint: disable=logging-fstring-interpolation
@@ -642,6 +771,27 @@ def _format_module_result(
     """
     output = NDOutput(output_level=output_level or "normal")
     return output.format_with_verbosity(_module_verbosity(module), results, **kwargs)
+
+
+def _format_failure_result(
+    module: AnsibleModule,
+    output_level: str | None,
+    results: Results,
+    policy_module: NDPolicyModule | None,
+    log: logging.Logger,
+    **kwargs,
+) -> dict:
+    """Preserve local accepted state without replacing the original error."""
+    try:
+        if policy_module is not None:
+            kwargs = {**policy_module.result_kwargs(failed=True), **kwargs}
+        return _format_module_result(module, output_level, results, **kwargs)
+    except Exception as error:  # Last-resort reporting must not hide the failure.
+        log.error("Failed to format error result: %s", error)
+        changed = True in results.changed
+        if policy_module is not None:
+            changed = policy_module._module_changed() or policy_module._accepted_config_change
+        return {**kwargs, "changed": changed}
 
 
 def _record_failed_result(
@@ -765,6 +915,7 @@ def main():
     results.state = state
     results.check_mode = module.check_mode
     results.action = f"policy_{state}"
+    policy_module = None
 
     try:
         log.info("Starting nd_manage_policy module: state=%s", state)
@@ -787,7 +938,10 @@ def main():
     except NDModuleError as error:
         log.error("NDModule error: %s", error.msg)
 
-        _record_nd_module_error_result(results, nd, error, log)
+        try:
+            _record_nd_module_error_result(results, nd, error, log)
+        except Exception as reporting_error:
+            log.error("Failed to register error result: %s", reporting_error)
 
         # ``error_details`` is debug-only; everything else flows through
         # the standard NDOutput shape so the failure looks like a normal
@@ -796,7 +950,7 @@ def main():
         if output_level == "debug":
             extra_kwargs["error_details"] = error.to_dict()
 
-        final_result = _format_module_result(module, output_level, results, **extra_kwargs)
+        final_result = _format_failure_result(module, output_level, results, policy_module, log, **extra_kwargs)
         log.error("Module failed: %s", final_result)
         module.fail_json(msg=error.msg, **final_result)
 
@@ -813,15 +967,12 @@ def main():
                 results,
                 message=f"Unexpected error: {str(error)}",
             )
-            extra_kwargs: dict = {}
-            if output_level == "debug":
-                extra_kwargs["traceback"] = tb_str
-            fail_kwargs = _format_module_result(module, output_level, results, **extra_kwargs)
-        except Exception as fmt_error:  # pragma: no cover — last-resort safety net
-            log.error("Failed to format error result: %s", fmt_error)
-            fail_kwargs = {}
-            if output_level == "debug":
-                fail_kwargs["traceback"] = tb_str
+        except Exception as reporting_error:  # pragma: no cover — last-resort safety net
+            log.error("Failed to register error result: %s", reporting_error)
+        extra_kwargs: dict = {}
+        if output_level == "debug":
+            extra_kwargs["traceback"] = tb_str
+        fail_kwargs = _format_failure_result(module, output_level, results, policy_module, log, **extra_kwargs)
 
         module.fail_json(msg=f"{error.__class__.__name__}: {str(error)}", **fail_kwargs)
 

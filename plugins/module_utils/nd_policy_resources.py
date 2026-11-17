@@ -215,6 +215,12 @@ class NDPolicyModule:
         self._after: list[dict] = []
         self._proposed: list[dict] = []
         self._gathered: list[dict] = []
+        # Keep accepted mutation snapshots local so a later failure cannot
+        # erase earlier progress, including replacement removals.
+        self._accepted_config_change = False
+        self._reporting_started = False
+        self._reporting_before: dict[str, dict] = {}
+        self._reporting_after: dict[object, dict] = {}
 
         # Accumulator for ND "warning"-status messages surfaced from 207
         # Multi-Status responses (markDelete, pushConfig, bulk create).
@@ -264,6 +270,34 @@ class NDPolicyModule:
 
         self.log.info(f"Initialized NDPolicyModule for fabric: {self.fabric_name}, state: {self.state}")
 
+    def _module_changed(self) -> bool:
+        """
+        # Summary
+
+        Return the top-level `changed` value for this run.
+
+        `Results._determine_if_changed()` reports every check-mode task as unchanged, so in check mode the would-be value is re-derived
+        from the registered tasks the way `Results` derives it for real runs: an explicit `changed` flag in the task result wins, otherwise
+        any diff content beyond `sequence_number` counts as a change (issue #630).
+
+        ## Raises
+
+        None
+        """
+        if True in self.results.changed:
+            return True
+        if not self.check_mode:
+            return False
+        for task_result, task_diff in zip(self.results.results, self.results.diffs):
+            explicit_changed = task_result.get("changed")
+            if explicit_changed is not None:
+                if explicit_changed:
+                    return True
+                continue
+            if any(key != "sequence_number" for key in task_diff):
+                return True
+        return False
+
     def exit_module(self) -> None:
         """Build final result via :class:`NDOutput` and exit.
 
@@ -274,16 +308,14 @@ class NDPolicyModule:
 
         Output shape contract:
 
-        - ``changed`` is derived from :attr:`Results.changed` (same
-          semantics as the previous ``exit_json``).
+        - ``changed`` uses :meth:`_module_changed` and includes accepted
+          configuration changes even if a later step fails.
         - ``before`` / ``after`` are the policy snapshot lists this
           module already maintains in ``self._before`` / ``self._after``.
         - ``diff`` defaults to ``[]`` at all verbosities; the per-API-call
           diff list moves to ``api_diff`` and is only surfaced at
           ``-vvv`` via NDOutput's verbosity gating.
-        - ``gathered`` is added only when populated, matching the
-          previous "omit when empty" semantics so playbooks that read
-          ``result.gathered | length`` keep their shape.
+        - ``gathered`` is always a list in gathered state, including when empty.
         - ``proposed`` is only attached at ``output_level``
           ``info`` / ``debug``.
         - ``warnings_nd`` is surfaced via ``module.warn()`` plus a
@@ -298,31 +330,11 @@ class NDPolicyModule:
             None.
         """
         verbosity = self.module._verbosity if hasattr(self.module, "_verbosity") else 0
-        output_level = self.module.params.get("output_level", "normal") or "normal"
 
-        # Always-on keys.  ``changed`` is taken from Results so that the
-        # per-task ``_determine_if_changed()`` logic continues to drive
-        # the top-level value (same behaviour as the previous exit_json).
         # We deliberately do NOT pass ``diff=`` — NDOutput.format()
         # defaults it to [] and the per-call list is exposed via
         # ``api_diff`` at -vvv.
-        kwargs: dict = {
-            "changed": True in self.results.changed,
-            "before": self._before,
-            "after": self._after,
-        }
-
-        # Attach gathered output only when gathered state produced
-        # results, mirroring the previous "omit when empty" semantics.
-        if self._gathered:
-            kwargs["gathered"] = self._gathered
-
-        # Only expose proposed at info/debug output levels (matches the
-        # previous gating; NDOutput's own gating for proposed only fires
-        # when assign() is used with an NDConfigCollection, so we gate
-        # here too to keep parity with the kwargs-based code path).
-        if output_level in ("debug", "info"):
-            kwargs["proposed"] = self._proposed
+        kwargs = self.result_kwargs(failed=True in self.results.failed)
 
         # Surface ND-side warnings (status="warning" entries from 207
         # responses) to the operator. Each message is emitted as an
@@ -353,6 +365,50 @@ class NDPolicyModule:
                 **final,
             )
         self.module.exit_json(**final)
+
+    def result_kwargs(self, *, failed: bool = False) -> dict:
+        """Return local snapshots for both normal exit and top-level errors.
+
+        Failure snapshots start with all known targets and overlay accepted
+        steps. Rejected and unattempted updates therefore retain their original
+        values; a removal accepted before a later failure remains visible.
+        """
+        before, after = self._before, self._after
+        if failed and self._reporting_started:
+            before = list(self._reporting_before.values())
+            after = list(self._reporting_after.values())
+        kwargs = {
+            "changed": self._module_changed() or self._accepted_config_change,
+            "before": before,
+            "after": after,
+        }
+        if self.state == "gathered":
+            kwargs["gathered"] = self._gathered
+        if self.module.params.get("output_level") in ("info", "debug"):
+            kwargs["proposed"] = self._proposed
+        return kwargs
+
+    def _capture_reporting_baseline(self, policies: list[dict]) -> None:
+        """Freeze known targets before any mutation, without another GET."""
+        self._reporting_started = True
+        for policy in policies:
+            policy_id = policy.get("policyId")
+            if policy_id and policy_id not in self._reporting_before:
+                snapshot = copy.deepcopy(self._strip_internal(policy))
+                self._reporting_before[policy_id] = snapshot
+                self._reporting_after[policy_id] = copy.deepcopy(snapshot)
+
+    def _accept_policy_snapshot(self, policy: dict) -> None:
+        """Record an accepted create or update independently of later steps."""
+        self._accepted_config_change = True
+        self._reporting_after[policy["policyId"]] = copy.deepcopy(self._strip_internal(policy))
+
+    def _accept_policy_removals(self, policy_ids: list[str]) -> None:
+        """Record accepted removal intent even if replacement/deploy later fails."""
+        if policy_ids:
+            self._accepted_config_change = True
+        for policy_id in policy_ids:
+            self._reporting_after.pop(policy_id, None)
 
     def exit_json(self) -> None:
         """Backward-compatible alias for :meth:`exit_module`.
@@ -986,6 +1042,18 @@ class NDPolicyModule:
 
             # Phase 2: Compute diff
             diff_entry = self._get_diff_merged_single(want, have_list)
+            if diff_entry.get("action") == "update" and want.get("policyId") and template_inputs and diff_entry.get("have"):
+                # ID resolution supplies the real template only after the
+                # template-name validation above. Validate the effective PUT
+                # inputs so sparse updates retain existing required values.
+                payload = self._update_policy_payload(want, diff_entry["have"])
+                template_name = payload["templateName"]
+                effective_inputs = self._clean_template_inputs(template_name, payload.get("templateInputs") or {})
+                validation_errors = self._validate_template_inputs(template_name, effective_inputs)
+                if validation_errors:
+                    error_msg = f"Template input validation failed for '{template_name}': " + "; ".join(validation_errors)
+                    self.log.error(error_msg)
+                    diff_entry.update(action="fail", error_msg=error_msg)
             self.log.debug(f"Diff result for {want.get('templateName', want.get('policyId', 'unknown'))}: " f"action={diff_entry['action']}")
             diff_results.append(diff_entry)
 
@@ -998,7 +1066,7 @@ class NDPolicyModule:
         if self.deploy and policy_ids_to_deploy:
             # Determine if any actual changes occurred (create/update)
             # vs only no-diff deploys.  No-diff deploys should not mark changed.
-            has_actual_changes = any(dr.get("action") not in ("skip", None) for dr in diff_results)
+            has_actual_changes = self._accepted_config_change or True in self.results.changed
             self.log.info(f"Deploying {len(policy_ids_to_deploy)} policies (has_actual_changes={has_actual_changes})")
             deploy_success = self._deploy_policies(policy_ids_to_deploy, changed=has_actual_changes)
             if not deploy_success:
@@ -2088,6 +2156,7 @@ class NDPolicyModule:
         self.log.debug("ENTER: _execute_merged()")
         self.log.debug(f"Processing {len(diff_results)} diff entries")
         policy_ids_to_deploy = []
+        self._capture_reporting_baseline([entry["have"] for entry in diff_results if entry.get("have")])
 
         # Batches for bulk execution
         # Each item is (diff_entry_index, diff_entry) to preserve ordering
@@ -2164,9 +2233,10 @@ class NDPolicyModule:
         if self.check_mode:
             for diff_entry in create_batch:
                 want = diff_entry["want"]
-                create_after = self._want_with_create_defaults(want)
+                create_after = self._create_policy_model(want).to_request_dict()
                 self._proposed.append(want)
                 self._after.append(self._strip_internal(create_after))
+                self._reporting_after[object()] = copy.deepcopy(self._strip_internal(create_after))
                 self._record_call(
                     self._wouldbe_create_ep(),
                     {"policies": [self._strip_internal(create_after)]},
@@ -2185,9 +2255,11 @@ class NDPolicyModule:
                 want, have = diff_entry["want"], diff_entry["have"]
                 self._proposed.append(want)
                 self._before.append(have)
-                after_proj = self._strip_internal({**have, **want})
+                update_payload = self._update_policy_payload(want, have)
+                after_proj = self._strip_internal({**have, **update_payload, "policyId": diff_entry["policy_id"]})
                 self._after.append(after_proj)
-                self._record_call(self._wouldbe_update_ep(diff_entry["policy_id"]), after_proj)
+                self._reporting_after[diff_entry["policy_id"]] = copy.deepcopy(after_proj)
+                self._record_call(self._wouldbe_update_ep(diff_entry["policy_id"]), update_payload)
                 self._register_result(
                     action="policy_update",
                     operation_type=OperationType.UPDATE,
@@ -2208,11 +2280,13 @@ class NDPolicyModule:
 
             for diff_entry in delete_and_create_batch:
                 want, have = diff_entry["want"], diff_entry["have"]
-                create_after = self._want_with_create_defaults(want)
+                create_after = self._create_policy_model(want).to_request_dict()
                 self._proposed.append(want)
                 self._before.append(have)
                 after_proj = self._strip_internal(create_after)
                 self._after.append(after_proj)
+                self._reporting_after.pop(diff_entry["policy_id"], None)
+                self._reporting_after[object()] = copy.deepcopy(after_proj)
                 self._record_call(self._wouldbe_create_ep(), {"policies": [after_proj]})
                 self._register_result(
                     action="policy_replace",
@@ -2304,6 +2378,7 @@ class NDPolicyModule:
                 self._proposed.append(want)
                 if d.get("have"):
                     self._before.append(d["have"])
+                    self._after.append(d["have"])
                 self._clear_call()
                 self._register_result(
                     action="policy_replace",
@@ -2397,7 +2472,7 @@ class NDPolicyModule:
                     continue
 
                 policy_ids_to_deploy.append(created_id)
-                after_proj = self._strip_internal({**self._want_with_create_defaults(want), "policyId": created_id})
+                after_proj = {**self._create_policy_model(want).to_request_dict(), "policyId": created_id}
                 self._after.append(after_proj)
 
                 if is_replace:
@@ -2451,6 +2526,7 @@ class NDPolicyModule:
                 self._api_update_policy(want, have, policy_id)
             except NDModuleError as update_err:
                 self.log.error(f"Update failed for {policy_id}: {update_err.msg}")
+                self._after.append(have)
                 self._register_result(
                     action="policy_update",
                     operation_type=OperationType.UPDATE,
@@ -2472,7 +2548,7 @@ class NDPolicyModule:
 
             policy_ids_to_deploy.append(policy_id)
 
-            after_merged = self._strip_internal({**have, **want, "policyId": policy_id})
+            after_merged = self._strip_internal({**have, **self._update_policy_payload(want, have), "policyId": policy_id})
             self._after.append(after_merged)
 
             self._register_result(
@@ -2634,6 +2710,7 @@ class NDPolicyModule:
         """
         self.log.debug("ENTER: _execute_deleted()")
         self.log.debug(f"Processing {len(diff_results)} delete entries")
+        self._capture_reporting_baseline([policy for entry in diff_results for policy in entry.get("policies", [])])
 
         # Phase A: Register per-entry results and collect all policy IDs
         all_policy_ids_to_delete = []
@@ -2745,6 +2822,8 @@ class NDPolicyModule:
 
                 if self.check_mode:
                     self.log.info(f"Check mode: would delete {len(policy_ids)} policy(ies)")
+                    for policy_id in policy_ids:
+                        self._reporting_after.pop(policy_id, None)
                     diff_payload = {
                         "action": action,
                         "want": want,
@@ -2875,7 +2954,9 @@ class NDPolicyModule:
                 "MESSAGE": "OK (check_mode)",
                 "DATA": {},
             }
-            self.results.result_current = {"success": True, "found": True}
+            # Carry the caller's intent so a no-diff deploy stays
+            # ``changed: false`` under ``_module_changed()`` (issue #630).
+            self.results.result_current = {"success": True, "found": True, "changed": changed}
             self.results.diff_current = {
                 "action": "deploy",
                 "policy_ids": policy_ids,
@@ -3021,6 +3102,19 @@ class NDPolicyModule:
     # API Helpers (low-level CRUD)
     # =========================================================================
 
+    def _create_policy_model(self, want: dict) -> PolicyCreate:
+        """Use the same validated create defaults for wire and preview output."""
+        return PolicyCreate(
+            switch_id=want["switchId"],
+            template_name=want["templateName"],
+            entity_type="switch",
+            entity_name="SWITCH",
+            description=want.get("description", ""),
+            priority=self._want_with_create_defaults(want)["priority"],
+            source=want.get("source", ""),
+            template_inputs=want.get("templateInputs"),
+        )
+
     def _api_bulk_create_policies(self, want_list: list[dict]) -> list[dict]:
         """Create multiple policies via a single bulk POST.
 
@@ -3049,20 +3143,7 @@ class NDPolicyModule:
 
         self.log.info(f"Bulk creating {len(want_list)} policies")
 
-        policy_models = []
-        for want in want_list:
-            policy_models.append(
-                PolicyCreate(
-                    switch_id=want["switchId"],
-                    template_name=want["templateName"],
-                    entity_type="switch",
-                    entity_name="SWITCH",
-                    description=want.get("description", ""),
-                    priority=self._want_with_create_defaults(want)["priority"],
-                    source=want.get("source", ""),
-                    template_inputs=want.get("templateInputs"),
-                )
-            )
+        policy_models = [self._create_policy_model(want) for want in want_list]
 
         bulk = PolicyCreateBulk(policies=policy_models)
         payload = bulk.to_request_dict()
@@ -3115,6 +3196,8 @@ class NDPolicyModule:
                 else:
                     self.log.info(f"Bulk create: policy {idx} created — {pid}")
                     results.append({"policy_id": pid, "nd_error": None})
+                if results[-1]["policy_id"]:
+                    self._accept_policy_snapshot({**payload["policies"][idx], "policyId": results[-1]["policy_id"]})
             else:
                 self.log.warning(f"Bulk create: no response entry for policy {idx}")
                 results.append({"policy_id": None, "nd_error": "No response entry from ND"})
@@ -3149,11 +3232,26 @@ class NDPolicyModule:
             None.
         """
         self.log.info(f"Updating policy: {policy_id}")
+        payload = self._update_policy_payload(want, have)
+
+        ep = EpManagePoliciesPut()
+        ep.fabric_name = self.fabric_name
+        ep.policy_id = policy_id
+        if self.cluster_name:
+            ep.endpoint_params.cluster_name = self.cluster_name
+        if self.ticket_id:
+            ep.endpoint_params.ticket_id = self.ticket_id
+
+        self._record_call(ep, payload)
+        self.nd.request(ep.path, ep.verb, payload)
+        self._accept_policy_snapshot({**have, **payload, "policyId": policy_id})
+
+    def _update_policy_payload(self, want: dict, have: dict) -> dict:
+        """Build one effective PUT body for execution and local prediction."""
         merged_inputs = dict(have.get("templateInputs") or {})
         for k, v in (want.get("templateInputs") or {}).items():
             merged_inputs[k] = v
         self.log.debug(f"Merged templateInputs: {len(merged_inputs)} keys")
-        self.log.info(f"Update payload templateInputs for {policy_id}: {merged_inputs}")
         description = want["description"] if "description" in want else have.get("description", "")
 
         update_model = PolicyUpdate(
@@ -3166,18 +3264,7 @@ class NDPolicyModule:
             source=want.get("source", have.get("source", "")),
             template_inputs=merged_inputs,
         )
-        payload = update_model.to_request_dict()
-
-        ep = EpManagePoliciesPut()
-        ep.fabric_name = self.fabric_name
-        ep.policy_id = policy_id
-        if self.cluster_name:
-            ep.endpoint_params.cluster_name = self.cluster_name
-        if self.ticket_id:
-            ep.endpoint_params.ticket_id = self.ticket_id
-
-        self._record_call(ep, payload)
-        self.nd.request(ep.path, ep.verb, payload)
+        return update_model.to_request_dict()
 
     def _api_mark_delete(self, policy_ids: list[str]) -> dict:
         """Mark policies for deletion via POST /policyActions/markDelete.
@@ -3239,6 +3326,7 @@ class NDPolicyModule:
 
         self._record_call(ep, None)
         self.nd.request(ep.path, ep.verb)
+        self._accept_policy_removals([policy_id])
 
     def _api_deploy_switches(self, switch_ids: list[str]) -> dict:
         """Deploy fabric config to specific switches.
@@ -3325,89 +3413,96 @@ class NDPolicyModule:
         requested_ids: list[str],
         *,
         context_label: str,
-    ) -> tuple[list[str], list[str], list[str]]:
-        """Classify a markDelete 207 response into success / python-fallback / other-fail.
+    ) -> tuple[list[str], list[str], list[str], list[str]]:
+        """Classify complete, identified markDelete outcomes before follow-up writes.
 
-        Centralises the per-entry classification logic that was previously
-        duplicated between ``_execute_merged`` Phase 3 (``delete_and_create``
-        removals) and ``_execute_deleted`` Phase B.
+        Only explicitly acknowledged requested IDs can be accepted. Existing
+        ``warning`` outcomes remain soft successes and are surfaced to the
+        operator. Consistent repeated outcomes are processed once; success and
+        warning both mean accepted. Conflicting, unknown, foreign, malformed or
+        missing outcomes invalidate the batch, without discarding distinct
+        unambiguous successes needed for accepted-progress reporting.
 
-        Behaviour preserved from the duplicated implementations:
-
-        - **Non-dict response** → log warning, treat ALL ``requested_ids``
-          as succeeded (returns ``(list(requested_ids), [], [])``).  This
-          matches ND's known behaviour of occasionally returning a non-dict
-          body on success.
-        - **Empty ``policies`` list in the dict** → log warning, treat ALL
-          ``requested_ids`` as succeeded.  Same rationale.
-        - **status == ``"warning"``** → emit a warning message via
-          ``self.log.warning`` and ``self._warnings``, but DO NOT add the
-          policy to any failure bucket.  Warning entries are soft-successes
-          (the policy is in the desired ND state).
-        - **status == ``"success"``** → succeeded bucket (implicitly: not in
-          ``failed_ids`` set).
-        - **Other non-success status** with message containing
-          ``"content type PYTHON"`` → ``mark_failed_python`` bucket
-          (caller should retry these via direct DELETE).
-        - **Other non-success status** otherwise → ``mark_failed_other``
-          bucket (terminal failure).
-
-        ``mark_succeeded`` is derived as ``[pid for pid in requested_ids
-        if pid not in failed_ids]`` so request order is preserved.
+        A validated ``failed`` outcome containing ``content type PYTHON`` uses
+        the existing direct-DELETE fallback. Other explicit failures remain
+        terminal failures. Classification is linear in requests plus responses
+        and preserves unique request order in all result buckets.
 
         Args:
-            mark_delete_data: Raw response DATA from ``_api_mark_delete``
-                (may be ``None``, a non-dict, an empty dict, or a dict
-                with a ``policies`` list).
-            requested_ids: The exact list of policy IDs that was sent.
-                Used to derive ``mark_succeeded`` and for the
-                ambiguous-response fallback.
-            context_label: Short label included in the warning-message
-                prefix so each caller's warnings are distinguishable
-                (e.g. ``"markDelete"`` vs.
-                ``"markDelete (delete_and_create)"``).
+            mark_delete_data: Raw response DATA containing a ``policies`` list.
+            requested_ids: The exact policy IDs submitted to markDelete.
+            context_label: Label used for surfaced controller warnings.
 
         Returns:
             Tuple of ``(mark_succeeded, mark_failed_python,
-            mark_failed_other)``.
+            mark_failed_other, validation_errors)``. Callers retain confirmed
+            successes, then stop before fallback, deployment or replacement
+            creation when validation errors are present.
         """
-        mark_failed_python: list[str] = []
-        mark_failed_other: list[str] = []
+        requested = dict.fromkeys(requested_ids)
+        outcomes: dict[str, str | None] = {}
+        messages: dict[str, str] = {}
+        warning_messages: dict[str, str] = {}
+        validation_errors: list[str] = []
+        if not isinstance(mark_delete_data, dict) or not isinstance(mark_delete_data.get("policies"), list):
+            validation_errors.append("expected an object containing a policies list")
+            policies_response = []
+        else:
+            policies_response = mark_delete_data["policies"]
 
-        if not isinstance(mark_delete_data, dict):
-            self.log.warning("markDelete returned non-dict response — " "treating all as succeeded")
-            return list(requested_ids), mark_failed_python, mark_failed_other
+        for index, item in enumerate(policies_response):
+            if not isinstance(item, dict):
+                validation_errors.append(f"policies[{index}] must be an object")
+                continue
+            pid = item.get("policyId")
+            if not isinstance(pid, str) or not pid.strip():
+                validation_errors.append(f"policies[{index}] has no usable policyId")
+                continue
+            if pid not in requested:
+                validation_errors.append(f"policies[{index}] contains unrequested policyId {pid!r}")
+                continue
+            raw_status = item.get("status")
+            status = raw_status.strip().lower() if isinstance(raw_status, str) else None
+            if status not in ("success", "warning", "failed"):
+                outcomes[pid] = None
+                validation_errors.append(f"policies[{index}] has unrecognized status {raw_status!r} for {pid!r}")
+                continue
 
-        policies_response = mark_delete_data.get("policies", [])
+            raw_message = item.get("message")
+            message = str(raw_message or "")
+            if status in ("success", "warning"):
+                outcome = "accepted"
+                if status == "warning":
+                    warning_messages.setdefault(pid, message)
+            else:
+                outcome = "failed_python" if isinstance(raw_message, str) and "content type PYTHON" in raw_message else "failed_other"
+            if pid not in outcomes:
+                outcomes[pid] = outcome
+                messages[pid] = message
+            elif outcomes[pid] is not None and outcomes[pid] != outcome:
+                outcomes[pid] = None
+                validation_errors.append(f"conflicting outcomes for policyId {pid!r}")
 
-        if not policies_response and requested_ids:
-            self.log.warning(
-                "markDelete returned empty 'policies' list for " f"{len(requested_ids)} policy IDs — " "treating all as succeeded (ambiguous response)"
-            )
-            return list(requested_ids), mark_failed_python, mark_failed_other
+        missing = [pid for pid in requested if pid not in outcomes]
+        if missing:
+            validation_errors.append(f"missing acknowledgements for policy IDs {missing!r}")
+        unconfirmed = [pid for pid in requested if outcomes.get(pid) is None]
+        if unconfirmed:
+            validation_errors.append(f"unconfirmed policy IDs {unconfirmed!r}")
 
-        failed_ids: set = set()
-        for p in policies_response:
-            pid = p.get("policyId", "")
-            status = str(p.get("status", "")).lower()
-            msg = p.get("message", "")
-            if status == "warning":
-                # Non-fatal: treat as success (pid stays out of
-                # failed_ids set) and surface for operator audit.
-                wmsg = f"{context_label}: ND warning for {pid}: {msg}"
+        mark_succeeded = [pid for pid in requested if outcomes.get(pid) == "accepted"]
+        mark_failed_python = [pid for pid in requested if outcomes.get(pid) == "failed_python"]
+        mark_failed_other = [pid for pid in requested if outcomes.get(pid) == "failed_other"]
+        for pid in mark_succeeded:
+            if pid in warning_messages:
+                wmsg = f"{context_label}: ND warning for {pid}: {warning_messages[pid]}"
                 self.log.warning(wmsg)
                 self._warnings.append(wmsg)
-            elif status != "success":
-                failed_ids.add(pid)
-                if "content type PYTHON" in msg:
-                    mark_failed_python.append(pid)
-                    self.log.info(f"markDelete failed for {pid} (PYTHON content type) " "— will retry via direct DELETE")
-                else:
-                    mark_failed_other.append(pid)
-                    self.log.error(f"markDelete failed for {pid} " f"(status={p.get('status')!r}): {msg}")
-
-        mark_succeeded = [pid for pid in requested_ids if pid not in failed_ids]
-        return mark_succeeded, mark_failed_python, mark_failed_other
+        for pid in mark_failed_python:
+            self.log.info(f"markDelete failed for {pid} (PYTHON content type) " "— will retry via direct DELETE")
+        for pid in mark_failed_other:
+            self.log.error(f"markDelete failed for {pid}: {messages[pid]}")
+        return mark_succeeded, mark_failed_python, mark_failed_other, validation_errors
 
     def _direct_delete_policies(
         self,
@@ -3510,9 +3605,11 @@ class NDPolicyModule:
         Steps:
 
         1. ``markDelete`` all ``policy_ids`` via ``_api_mark_delete``.
-        2. Classify the 207 response into succeeded /
-           failed-PYTHON / failed-other buckets via
-           ``_parse_mark_delete_response``.
+        2. Validate complete per-request-ID outcomes and classify the response
+           into succeeded / failed-PYTHON / failed-other buckets via
+           ``_parse_mark_delete_response``. Retain explicit accepted outcomes,
+           but stop before further writes when any acknowledgement is invalid
+           or missing.
         3. If any failed-PYTHON: direct ``DELETE /policies/<id>``
            via ``_direct_delete_policies``.
         4. If ``self.deploy`` and any markDelete-succeeded, direct-deleted,
@@ -3592,11 +3689,24 @@ class NDPolicyModule:
         self.log.info(f"{context_label}: Step 1 - markDelete for {len(policy_ids)} policy(ies)")
         mark_delete_data = self._api_mark_delete(policy_ids)
 
-        mark_succeeded, mark_failed_python, mark_failed_other = self._parse_mark_delete_response(
+        mark_succeeded, mark_failed_python, mark_failed_other, validation_errors = self._parse_mark_delete_response(
             mark_delete_data,
             policy_ids,
             context_label=context_label,
         )
+        self._accept_policy_removals(mark_succeeded)
+        if validation_errors:
+            raise NDModuleError(
+                msg=(
+                    "Invalid markDelete response: "
+                    + "; ".join(validation_errors)
+                    + ". Outcomes are unconfirmed except for explicitly acknowledged requested successes; "
+                    "the controller may have applied the request. No fallback, deployment or replacement creation was sent for this batch."
+                ),
+                status=207,
+                response_payload=mark_delete_data if isinstance(mark_delete_data, dict) else None,
+                raw=mark_delete_data if not isinstance(mark_delete_data, dict) else None,
+            )
 
         self.log.info(
             f"{context_label}: markDelete results: {len(mark_succeeded)} succeeded, "
