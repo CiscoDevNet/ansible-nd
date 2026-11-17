@@ -114,7 +114,10 @@
 - name: BASE - Probe vPC fabric peering support for this fabric/switch
   cisco.nd.nd_rest:
     method: GET
-    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPairSupport?componentType=checkFabricPeeringSupport"
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ item }}/vpcPairSupport?componentType=checkFabricPeeringSupport"
+  loop:
+    - "{{ test_switch1 }}"
+    - "{{ test_switch2 }}"
   register: fabric_peering_support
   failed_when: false
   ignore_errors: true
@@ -123,17 +126,23 @@
   ansible.builtin.set_fact:
     supports_vpc_fabric_peering: >-
       {{
-        (
-          fabric_peering_support.current.isVpcFabricPeeringSupported
-          | default(true)
-        ) | bool
+        (fabric_peering_support.results | default([]) | length == 2)
+        and
+        (fabric_peering_support.results
+          | selectattr('current.isVpcFabricPeeringSupported', 'defined')
+          | list | length == 2)
+        and
+        (fabric_peering_support.results
+          | map(attribute='current.isVpcFabricPeeringSupported')
+          | map('bool') | list
+          | select('equalto', true) | list | length == 2)
       }}
 
 - name: BASE - Warn when fabric peering toggle is unsupported
   ansible.builtin.debug:
     msg: >-
       Skipping use_virtual_peer_link mutation checks because fabric peering
-      support is false for switch {{ test_switch1 }} in fabric {{ test_fabric }}.
+      support is not confirmed on both peers in fabric {{ test_fabric }}.
   when: not supports_vpc_fabric_peering | bool
 
 # ------------------------------------------

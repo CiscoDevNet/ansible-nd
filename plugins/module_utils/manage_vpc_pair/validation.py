@@ -90,8 +90,9 @@ def _validate_fabric_peering_support(
     """
     Validate fabric peering support when virtual peer link is requested.
 
-    If API explicitly reports unsupported fabric peering, logs warning and
-    continues. If support API is unavailable, logs warning and continues.
+    If the API explicitly reports unsupported fabric peering, stop before
+    sending the pair request. If the support API is unavailable, log a warning
+    and continue because support could not be determined.
 
     Args:
         nrm: VpcPairStateMachine instance for logging warnings
@@ -122,11 +123,19 @@ def _validate_fabric_peering_support(
             is_supported = _get_api_field_value(support_details, "isVpcFabricPeeringSupported", None)
             if is_supported is False:
                 status = _get_api_field_value(support_details, "status", "Fabric peering not supported")
-                nrm.module.warn(
-                    f"VPC fabric peering is not supported for switch {support_switch_id}: {status}. "
-                    f"Continuing, but config save/deploy may report a platform limitation. "
-                    f"Consider setting use_virtual_peer_link=false for this platform."
+                _raise_vpc_error(
+                    msg=(
+                        f"VPC fabric peering is not supported for switch {support_switch_id}: {status}. "
+                        "Set use_virtual_peer_link=false and ensure a physical peer link is available."
+                    ),
+                    fabric=fabric_name,
+                    switch_id=switch_id,
+                    peer_switch_id=peer_switch_id,
+                    unsupported_switch_id=support_switch_id,
+                    support_details=support_details,
                 )
+        except VpcPairResourceError:
+            raise
         except Exception as support_error:
             nrm.module.warn(
                 f"Fabric peering support check failed for switch {support_switch_id}: "
