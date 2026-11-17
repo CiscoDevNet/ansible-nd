@@ -114,8 +114,8 @@ def test_unresolved_removed_family_preserves_changes_without_guessing_inverse(cl
         assert call["payload"] is None
     assert report.get("after", []) == [] and report["after_status"] == "unknown"
     if failure == "timeout":
-        assert "90" in report["recovery"][0]["msg"]
-        assert clock.now == 90
+        assert "180 seconds" in report["recovery"][0]["msg"]
+        assert clock.now == 180
     else:
         assert len(summary_calls(calls)) == 3
         assert "Transition GET" in report["recovery"][0]["msg"] or "interfaces array" in report["recovery"][0]["msg"]

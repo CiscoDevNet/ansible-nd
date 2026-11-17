@@ -119,7 +119,7 @@ options:
         - Must be a positive integer. Ignored when O(verify.enabled=false), in check mode or when no changes are needed.
         - This limit does not include the preceding breakout or unbreakout request or the total task runtime.
         type: int
-        default: 30
+        default: 180
       discovery_timeout:
         description:
         - Maximum time, in seconds, for each readiness wait before an unbreakout or recovery request.
@@ -128,7 +128,7 @@ options:
         - Must be a positive integer. Ignored when O(verify.enabled=false), in check mode or when no changes are needed.
         - Each readiness wait has its own limit; this is not a limit on the total task runtime.
         type: int
-        default: 90
+        default: 180
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -244,8 +244,8 @@ EXAMPLES = r"""
         interface_names: [Ethernet1/50]
     verify:
       enabled: true
-      wait_timeout: 120
-      discovery_timeout: 180
+      wait_timeout: 300
+      discovery_timeout: 300
 
 - name: Explicitly unbreak the family before changing its map
   cisco.nd.nd_manage_breakout_interfaces:

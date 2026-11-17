@@ -444,7 +444,7 @@ def test_public_spec_matches_documented_defaults(monkeypatch):
     assert "config_actions" not in spec
     assert "config_actions" not in doc
     assert spec["verify"]["options"]["enabled"]["default"] is doc["verify"]["suboptions"]["enabled"]["default"] is True
-    for option, default in (("wait_timeout", 30), ("discovery_timeout", 90)):
+    for option, default in (("wait_timeout", 180), ("discovery_timeout", 180)):
         assert spec["verify"]["options"][option]["type"] == doc["verify"]["suboptions"][option]["type"] == "int"
         assert spec["verify"]["options"][option]["default"] == doc["verify"]["suboptions"][option]["default"] == default
     assert spec["verify"]["apply_defaults"] is True
@@ -462,7 +462,7 @@ def test_argument_defaults_preserve_optional_verification_settings(verify):
     result = ArgumentSpecValidator(module_under_test.BreakoutInterfaceModel.get_argument_spec()).validate(params)
     assert result.error_messages == []
     assert result.validated_parameters["config"] == []
-    assert result.validated_parameters["verify"] == {"enabled": True, "wait_timeout": 30, "discovery_timeout": 90, **(verify or {})}
+    assert result.validated_parameters["verify"] == {"enabled": True, "wait_timeout": 180, "discovery_timeout": 180, **(verify or {})}
 
 
 def test_documentation_describes_verification_boundary_coupled_parent_scope_and_response_only_recovery():

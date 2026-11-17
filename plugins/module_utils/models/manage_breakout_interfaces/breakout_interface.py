@@ -101,8 +101,8 @@ class BreakoutInterfaceModel(NDBaseModel):
                 "apply_defaults": True,
                 "options": {
                     "enabled": {"type": "bool", "default": True},
-                    "wait_timeout": {"type": "int", "default": 30},
-                    "discovery_timeout": {"type": "int", "default": 90},
+                    "wait_timeout": {"type": "int", "default": 180},
+                    "discovery_timeout": {"type": "int", "default": 180},
                 },
             },
         }

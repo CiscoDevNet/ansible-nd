@@ -171,7 +171,7 @@ def test_requested_creation_absence_fails_without_collateral_compensation(verifi
     report, calls = run(
         [topology(native=(P21,)), action(item(P21)), *[topology(native=(P21,)) for _unused_attempt in range(6)]],
         config=[group(P21)],
-        verify=VERIFY,
+        verify={**VERIFY, "wait_timeout": 30},
     )
     assert report["failed"] is True
     assert len(writes(calls)) == 1
@@ -679,7 +679,7 @@ def test_unbreakout_missing_children_and_missing_native_parent_is_not_success_or
         [topology(P21, native=(P49,)), action(item(P21 + "/1")), *[topology(native=(P49,)) for _unused_attempt in range(6)]],
         state="deleted",
         config=[group(P21, breakout_map=None)],
-        verify=VERIFY,
+        verify={**VERIFY, "wait_timeout": 30},
     )
     assert report["failed"] is True
     assert len(writes(calls)) == 1
