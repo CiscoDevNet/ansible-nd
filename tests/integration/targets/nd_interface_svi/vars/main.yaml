@@ -7,6 +7,24 @@
 test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
 test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
 
+# ND 4.x harness safety controls. The overridden module operation is
+# fabric-wide, so it is enabled only explicitly and only after the preflight
+# proves that the fabric contains no managed SVIs outside this reserved scope.
+nd4x_svi_destructive_tests_enabled: >-
+  {{
+    nd_svi_destructive_tests_enabled
+    | default(false)
+    | bool
+  }}
+
+nd4x_svi_overridden_allowed_interfaces:
+  - vlan333
+  - vlan334
+  - vlan335
+  - vlan336
+  - vlan337
+  - vlan338
+
 # Each SVI is L3 and gets its own config item with its own IP. The interface_name
 # is `vlan<id>`. These VLANs must NOT have SVIs already configured at the start
 # of the test run (cleanup_config below is run first to ensure this).

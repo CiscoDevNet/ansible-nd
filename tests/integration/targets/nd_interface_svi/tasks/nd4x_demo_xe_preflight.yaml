@@ -1,0 +1,126 @@
+---
+- name: "ND4X XE PREFLIGHT: Query Nexus Dashboard version"
+  cisco.nd.nd_version:
+    output_level: "{{ nd_info.output_level }}"
+  register: nd4x_xe_version
+  when: test_xe_switch_ip | default('') | length > 0
+
+- name: "ND4X XE PREFLIGHT: Record ND 4.x support"
+  ansible.builtin.set_fact:
+    nd4x_xe_supported: >-
+      {{
+        nd4x_xe_version.current.platformVersion
+        is version('4.0.0', '>=')
+      }}
+  when: test_xe_switch_ip | default('') | length > 0
+
+- name: "ND4X XE PREFLIGHT: Explain unsupported controller skip"
+  ansible.builtin.debug:
+    msg: >-
+      Skipping IOS-XE ND 4.x harness scenarios because controller version
+      {{ nd4x_xe_version.current.platformVersion }} is older than 4.0.0.
+  when:
+    - test_xe_switch_ip | default('') | length > 0
+    - not nd4x_xe_supported | bool
+
+- name: "ND4X XE PREFLIGHT: Query all switch pages in the IOS-XE test fabric"
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_collect_switches.yaml
+  vars:
+    nd4x_switch_fabric_name: "{{ test_xe_fabric_name }}"
+  when: nd4x_xe_supported | default(false) | bool
+
+- name: "ND4X XE PREFLIGHT: Store complete switch inventory"
+  ansible.builtin.set_fact:
+    nd4x_xe_switch_inventory: "{{ nd4x_paginated_switch_inventory[0] }}"
+  when: nd4x_xe_supported | default(false) | bool
+
+- name: "ND4X XE PREFLIGHT: Select switch by management IP"
+  ansible.builtin.set_fact:
+    nd4x_xe_switch_matches: >-
+      {{
+        nd4x_xe_switch_inventory.current.switches
+        | default([])
+        | selectattr(
+            'fabricManagementIp',
+            'equalto',
+            test_xe_switch_ip
+          )
+        | list
+      }}
+  when: nd4x_xe_supported | default(false) | bool
+
+- name: "ND4X XE PREFLIGHT: Require exactly one matching switch"
+  ansible.builtin.assert:
+    that:
+      - nd4x_xe_switch_matches | length == 1
+    fail_msg: >-
+      Expected exactly one IOS-XE switch with fabricManagementIp
+      {{ test_xe_switch_ip }} in fabric {{ test_xe_fabric_name }}, but found
+      {{ nd4x_xe_switch_matches | length }}.
+  when: nd4x_xe_supported | default(false) | bool
+
+- name: "ND4X XE PREFLIGHT: Record current switch ID"
+  ansible.builtin.set_fact:
+    xe_switch_id: "{{ nd4x_xe_switch_matches[0].switchId }}"
+  when: nd4x_xe_supported | default(false) | bool
+
+- name: "ND4X XE PREFLIGHT: Initialize fabric snapshot queries"
+  ansible.builtin.set_fact:
+    nd4x_xe_fabric_check_mode_queries: []
+  when: nd4x_xe_supported | default(false) | bool
+
+- name: "ND4X XE PREFLIGHT: Build fabric snapshot queries"
+  ansible.builtin.set_fact:
+    nd4x_xe_fabric_check_mode_queries: >-
+      {{
+        nd4x_xe_fabric_check_mode_queries
+        + [
+            {
+              'name':
+                'Snapshot IOS-XE interfaces on switch '
+                ~ (
+                    item.fabricManagementIp
+                    | default(item.switchId)
+                  ),
+              'path': (
+                '/api/v1/manage/fabrics/'
+                ~ test_xe_fabric_name
+                ~ '/switches/'
+                ~ item.switchId
+                ~ '/interfaces'
+              ),
+              'expected_status': 200,
+              'pagination': {
+                'page_size': 100,
+                'collection_key': 'interfaces',
+                'max_pages': 10000
+              },
+              'unordered_paths': ['/interfaces'],
+              'ignore_keys': ['operData']
+            }
+          ]
+      }}
+  loop: "{{ nd4x_xe_switch_inventory.current.switches | default([]) }}"
+  loop_control:
+    label: >-
+      {{
+        item.fabricManagementIp
+        | default(item.switchId)
+      }}
+  when: nd4x_xe_supported | default(false) | bool
+
+- name: "ND4X XE PREFLIGHT: Verify fabric snapshot coverage"
+  ansible.builtin.assert:
+    that:
+      - nd4x_xe_fabric_check_mode_queries | length > 0
+      - >-
+        nd4x_xe_fabric_check_mode_queries | length
+        ==
+        nd4x_xe_switch_inventory.current.switches
+        | default([])
+        | length
+    fail_msg: >-
+      Could not prepare one predictive IOS-XE snapshot query for every switch
+      in the test fabric.
+  when: nd4x_xe_supported | default(false) | bool

@@ -1,0 +1,181 @@
+---
+- name: "REPLACED SAFETY: Refuse pre-existing reserved SVI state"
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_assert_reserved_absent.yaml
+  vars:
+    nd4x_reserved_fabric_name: "{{ test_fabric_name }}"
+    nd4x_reserved_switch_id: "{{ test_switch_id }}"
+    nd4x_reserved_interface_names: >-
+      {{ cleanup_config | map(attribute='interface_name') | list }}
+
+- name: Run nd_interface_svi replaced harness tests
+  block:
+    - name: "REPLACED SETUP: Remove reserved SVI test interfaces"
+      cisco.nd.nd_interface_svi:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ cleanup_config }}"
+        state: deleted
+
+    - name: "REPLACED SETUP: Recreate the managed SVI pre-state"
+      cisco.nd.nd_interface_svi:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ svi_333_updated }}"
+          - "{{ svi_334_updated }}"
+          - "{{ svi_335_updated }}"
+          - "{{ svi_336 }}"
+          - "{{ svi_337 }}"
+          - "{{ svi_338 }}"
+        state: merged
+
+    - name: "REPLACED: Replace vlan333 configuration entirely"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan333
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  description: Replaced vlan333
+                  ip: 10.99.150.1
+                  prefix: 24
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate replaced vlan333 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan333
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.99.150.1"
+              - jsonpath: "$.current.configData.networkOS.policy.description"
+                equals: Replaced vlan333
+      register: replaced_333
+
+    - name: "REPLACED: Verify vlan333 replacement"
+      vars:
+        vlan333_after: >-
+          {{
+            replaced_333.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan333')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - replaced_333.check_mode_result.changed | bool
+          - replaced_333.first_run_result.changed | bool
+          - vlan333_after.config_data.network_os.policy.description
+            == "Replaced vlan333"
+          - vlan333_after.config_data.network_os.policy.ip == "10.99.150.1"
+          - not replaced_333.second_run_result.changed | bool
+
+    - name: "REPLACED MULTI: Replace vlan334 and vlan335 together"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan334
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  description: Replaced vlan334
+                  ip: 10.99.151.1
+                  prefix: 24
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan335
+            config_data:
+              network_os:
+                policy:
+                  admin_state: true
+                  description: Replaced vlan335
+                  ip: 10.99.152.1
+                  prefix: 24
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate replaced vlan334 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan334
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.99.151.1"
+          - name: Validate replaced vlan335 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan335
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.99.152.1"
+      register: replaced_334_335
+
+    - name: "REPLACED MULTI: Verify both replacements and idempotency"
+      vars:
+        vlan334_after: >-
+          {{
+            replaced_334_335.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan334')
+            | first
+          }}
+        vlan335_after: >-
+          {{
+            replaced_334_335.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan335')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - replaced_334_335.first_run_result.changed | bool
+          - vlan334_after.config_data.network_os.policy.description
+            == "Replaced vlan334"
+          - vlan334_after.config_data.network_os.policy.ip == "10.99.151.1"
+          - vlan335_after.config_data.network_os.policy.description
+            == "Replaced vlan335"
+          - vlan335_after.config_data.network_os.policy.ip == "10.99.152.1"
+          - not replaced_334_335.second_run_result.changed | bool
+
+  always:
+    - name: "REPLACED CLEANUP: Remove reserved SVI test interfaces"
+      cisco.nd.nd_interface_svi:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ cleanup_config }}"
+        state: deleted
