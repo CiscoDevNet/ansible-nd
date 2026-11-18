@@ -1,0 +1,59 @@
+---
+- name: Run nd_manage_extended_community_list deleted harness tests
+  block:
+    - name: "DELETED SETUP: Create standard and expanded lists"
+      cisco.nd.nd_manage_extended_community_list:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ extended_community_list_standard }}"
+          - "{{ extended_community_list_expanded }}"
+        state: merged
+
+    - name: "DELETED: Delete extended community lists with name-only config"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_extended_community_list
+        state: deleted
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - name: "{{ extended_community_list_standard.name }}"
+          - name: "{{ extended_community_list_expanded.name }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_extended_community_list_check_mode_queries }}"
+        nd_queries:
+          - name: Verify standard extended community list is absent
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/extendedCommunityLists/{{ extended_community_list_standard.name }}
+            method: get
+            expected_status: 404
+            expected_failed: true
+          - name: Verify expanded extended community list is absent
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/extendedCommunityLists/{{ extended_community_list_expanded.name }}
+            method: get
+            expected_status: 404
+            expected_failed: true
+      register: deleted_lists
+
+    - name: "DELETED: Verify returned state is empty"
+      ansible.builtin.assert:
+        that:
+          - deleted_lists.first_run_result.after | selectattr('name', 'in', [extended_community_list_standard.name, extended_community_list_expanded.name]) | list | length == 0
+          - deleted_lists.nd_query_results | length == 2
+
+  always:
+    - name: "DELETED CLEANUP: Remove reserved extended community lists"
+      ansible.builtin.include_tasks: setup.yaml

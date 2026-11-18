@@ -1,0 +1,56 @@
+---
+- name: Run nd_manage_extended_community_list replaced harness tests
+  block:
+    - name: "REPLACED SETUP: Create the original standard list"
+      cisco.nd.nd_manage_extended_community_list:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ extended_community_list_standard }}"
+        state: merged
+
+    - name: "REPLACED UPDATE: Replace standard extended community list entries"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_extended_community_list
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ extended_community_list_standard_updated }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_extended_community_list_check_mode_queries }}"
+        nd_queries:
+          - name: Validate replaced standard extended community list
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/extendedCommunityLists/{{ extended_community_list_standard_updated.name }}
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.type"
+                equals: standard
+              - jsonpath: "$.current.entries[0].routeTargetCollection[0]"
+                equals: "65001:200"
+              - jsonpath: "$.current.entries[1].transitiveGenericExtendedCollection[0]"
+                equals: "65000:123"
+      register: replaced_standard
+
+    - name: "REPLACED UPDATE: Verify replaced returned state"
+      ansible.builtin.assert:
+        that:
+          - replaced_standard.first_run_result.after | selectattr('name', 'equalto', extended_community_list_standard_updated.name) | list | length == 1
+          - replaced_standard.nd_query_results | length == 1
+
+  always:
+    - name: "REPLACED CLEANUP: Remove reserved extended community lists"
+      ansible.builtin.include_tasks: setup.yaml

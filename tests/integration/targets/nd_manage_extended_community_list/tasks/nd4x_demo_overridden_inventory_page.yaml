@@ -1,0 +1,72 @@
+---
+- name: "OVERRIDDEN PREFLIGHT: Fetch extended community list inventory page {{ nd4x_extended_community_list_inventory_offset }}"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ test_fabric_name }}/extendedCommunityLists?max={{ nd4x_extended_community_list_inventory_page_size }}&offset={{ nd4x_extended_community_list_inventory_offset }}
+    method: get
+  register: nd4x_extended_community_list_inventory_page
+  changed_when: false
+
+- name: "OVERRIDDEN PREFLIGHT: Validate extended community list inventory page"
+  ansible.builtin.assert:
+    that:
+      - nd4x_extended_community_list_inventory_page.status | int == 200
+      - nd4x_extended_community_list_inventory_page.current is mapping
+      - nd4x_extended_community_list_inventory_page.current.extendedCommunityLists is defined
+      - nd4x_extended_community_list_inventory_page.current.extendedCommunityLists is sequence
+      - nd4x_extended_community_list_inventory_page.current.extendedCommunityLists is not string
+      - >-
+        nd4x_extended_community_list_inventory_page.current.extendedCommunityLists
+        | length <= (nd4x_extended_community_list_inventory_page_size | int)
+    fail_msg: >-
+      Could not verify the extended community list inventory page at offset
+      {{ nd4x_extended_community_list_inventory_offset }}. Refusing the
+      destructive overridden test.
+
+- name: "OVERRIDDEN PREFLIGHT: Accumulate extended community list inventory page"
+  ansible.builtin.set_fact:
+    nd4x_extended_community_list_inventory: >-
+      {{
+        nd4x_extended_community_list_inventory
+        + nd4x_extended_community_list_inventory_page.current.extendedCommunityLists
+      }}
+    nd4x_extended_community_list_inventory_offset: >-
+      {{
+        (nd4x_extended_community_list_inventory_offset | int)
+        + (nd4x_extended_community_list_inventory_page_size | int)
+      }}
+    nd4x_extended_community_list_inventory_pages: >-
+      {{ (nd4x_extended_community_list_inventory_pages | int) + 1 }}
+
+- name: "OVERRIDDEN PREFLIGHT: Require a final extended community list inventory page"
+  ansible.builtin.assert:
+    that:
+      - >-
+        (nd4x_extended_community_list_inventory_pages | int)
+        < (nd4x_extended_community_list_inventory_max_pages | int)
+    fail_msg: >-
+      Extended community list inventory exceeded
+      {{ nd4x_extended_community_list_inventory_max_pages }} pages. Refusing
+      the destructive overridden test.
+  when: >-
+    nd4x_extended_community_list_inventory_page.current.extendedCommunityLists
+    | length == (nd4x_extended_community_list_inventory_page_size | int)
+
+- name: "OVERRIDDEN PREFLIGHT: Verify extended community list inventory count"
+  ansible.builtin.assert:
+    that:
+      - >-
+        nd4x_extended_community_list_inventory_page.current.extendedCommunityLists
+        | length < nd4x_extended_community_list_inventory_page_size
+    fail_msg: >-
+      The extended community list inventory did not return a final short page.
+      Refusing the destructive overridden test.
+  when: >-
+    (nd4x_extended_community_list_inventory_pages | int)
+    >= (nd4x_extended_community_list_inventory_max_pages | int)
+
+- name: "OVERRIDDEN PREFLIGHT: Fetch the next extended community list inventory page"
+  ansible.builtin.include_tasks: nd4x_demo_overridden_inventory_page.yaml
+  when: >-
+    nd4x_extended_community_list_inventory_page.current.extendedCommunityLists
+    | length == (nd4x_extended_community_list_inventory_page_size | int)
