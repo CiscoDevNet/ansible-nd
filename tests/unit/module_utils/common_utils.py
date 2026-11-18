@@ -29,8 +29,8 @@ params = {
 
 # See the following for explanation of why fixtures are explicitely named
 # https://pylint.pycqa.org/en/latest/user_guide/messages/warning/redefined-outer-name.html
-# @pytest.fixture(name="controller_version")
-# def controller_version_fixture():
+# @pytest.fixture(name="controller_build_version")
+# def controller_build_version_fixture():
 #     """
 #     return ControllerVersion instance.
 #     """

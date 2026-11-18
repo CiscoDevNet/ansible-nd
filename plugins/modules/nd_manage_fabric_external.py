@@ -68,13 +68,6 @@ options:
         type: str
         default: essentials
         choices: [ essentials, advantage, premier ]
-      alert_suspend:
-        description:
-        - Alert Suspend state configured on the fabric.
-        - Optional filter for O(state=gathered).
-        type: str
-        default: disabled
-        choices: [ enabled, disabled ]
       telemetry_collection:
         description:
         - Enable telemetry collection for the fabric.
@@ -86,7 +79,7 @@ options:
         - Telemetry collection method.
         - Applies when O(config.telemetry_collection=true).
         type: str
-        default: inBand
+        default: outOfBand
         choices: [ inBand, outOfBand ]
       telemetry_streaming_protocol:
         description:
@@ -118,15 +111,44 @@ options:
         - The External Connectivity management configuration for the fabric.
         type: dict
         suboptions:
+          # General
           bgp_asn:
             description:
             - Autonomous system number 1-4294967295 | 1-65535[.0-65535].
+            - An optional leading C(+) on a decimal ASN is removed before sending the value to ND.
             - Required when creating a fabric and when using O(state=replaced) or O(state=overridden).
             - May be omitted from a partial O(state=merged) update to an existing fabric.
             type: str
-          aaa:
+          ai_monitoring:
             description:
-            - Include AAA configs from Advanced tab during device bootup.
+            - Enable AI monitoring features.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: false
+          software_update_in_monitored_mode:
+            description:
+            - Allow image management while the fabric is in monitored mode.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: false
+          monitored_mode:
+            description:
+            - If enabled, fabric is only monitored.
+            - No configuration will be deployed.
+            type: bool
+            default: true
+          performance_monitoring:
+            description:
+            - If enabled, switch metrics are collected through periodic SNMP polling.
+            - Alternative to real-time telemetry.
+            type: bool
+            default: false
+
+          # Advanced
+          strict_config_compliance_mode:
+            description:
+            - Enable bidirectional configuration compliance checks.
+            - Available in ND 4.3.1 or later.
             type: bool
             default: false
           advanced_ssh_option:
@@ -134,15 +156,156 @@ options:
             - Enable only, when IP Authorization is enabled in the AAA Server.
             type: bool
             default: false
+          cdp:
+            description:
+            - Enable CDP on management interface.
+            type: bool
+            default: false
+          copp_policy:
+            description:
+            - Fabric wide CoPP policy.
+            - Customized CoPP policy should be provided when C(manual) is selected.
+            type: str
+            default: manual
+            choices: [ dense, lenient, moderate, strict, manual ]
+          create_bgp_config:
+            description:
+            - Generate BGP configuration for core and edge routers.
+            - Uses O(config.management.bgp_asn) when enabled.
+            type: bool
+            default: true
+          extra_config_fabric:
+            description:
+            - Additional CLIs for all switches.
+            type: str
+            default: ""
+          inband_management:
+            description:
+            - Import switches with reachability over the switch front-panel ports.
+            type: bool
+            default: false
+          interface_statistics_load_interval:
+            description:
+            - Interface Statistics Load Interval Time in seconds.
+            - Applies when O(config.management.real_time_interface_statistics_collection=true).
+            type: int
+            default: 10
+          mpls_handoff:
+            description:
+            - Enable MPLS Handoff.
+            type: bool
+            default: false
+          mpls_loopback_identifier:
+            description:
+            - Underlay MPLS Loopback Identifier.
+            - Applies when O(config.management.mpls_handoff=true).
+            type: int
+            default: 101
+          nxapi:
+            description:
+            - Enable NX-API over HTTPS.
+            type: bool
+            default: false
+          nxapi_http:
+            description:
+            - Enable NX-API over HTTP.
+            type: bool
+            default: false
+          nxapi_http_port:
+            description:
+            - HTTP port for NX-API (1-65535).
+            - Applies when O(config.management.nxapi_http=true).
+            type: int
+            default: 80
+          nxapi_https_port:
+            description:
+            - HTTPS port for NX-API (1-65535).
+            - Applies when O(config.management.nxapi=true).
+            type: int
+            default: 443
+          power_redundancy_mode:
+            description:
+            - Default Power Supply Mode for NX-OS Switches.
+            type: str
+            default: redundant
+            choices: [ redundant, combined, inputSrcRedundant ]
+          ptp:
+            description:
+            - Enable Precision Time Protocol (PTP).
+            type: bool
+            default: false
+          ptp_domain_id:
+            description:
+            - Multiple Independent PTP Clocking Subdomains on a Single Network.
+            - Applies when O(config.management.ptp=true).
+            type: int
+            default: 0
+          ptp_loopback_id:
+            description:
+            - Precision Time Protocol Source Loopback Id.
+            - Applies when O(config.management.ptp=true).
+            type: int
+            default: 0
+          real_time_interface_statistics_collection:
+            description:
+            - Enable Real Time Interface Statistics Collection.
+            - Valid for NX-OS only.
+            type: bool
+            default: false
+          snmp_trap:
+            description:
+            - Configure Nexus Dashboard as a receiver for SNMP traps.
+            type: bool
+            default: true
+
+          # Resources
           allow_same_loopback_ip_on_switches:
             description:
             - Allow the same loopback IP address to be configured on multiple switches (e.g. RP loopback IP).
             type: bool
             default: false
-          allow_smart_switch_onboarding:
+          mpls_loopback_ip_range:
             description:
-            - Enable onboarding of smart switches to Hypershield for firewall service.
-            - The Hypershield connectivity options below apply to onboarded smart switches.
+            - MPLS Loopback IP Address Range.
+            - Applies when O(config.management.mpls_handoff=true).
+            type: str
+            default: "10.102.0.0/25"
+          sub_interface_dot1q_range:
+            description:
+            - Per aggregation dot1q range for VRF-Lite connectivity (minimum 2, maximum 4093).
+            type: str
+            default: "2-511"
+
+          # Manageability
+          dns_collection:
+            description:
+            - List of IPv4 and IPv6 DNS addresses.
+            type: list
+            elements: str
+            default: []
+          dns_vrf_collection:
+            description:
+            - DNS Server VRFs.
+            - One VRF for all DNS servers or a list of VRFs, one per DNS server.
+            - Entries correspond to the addresses in O(config.management.dns_collection).
+            type: list
+            elements: str
+            default: []
+          extra_config_aaa:
+            description:
+            - Additional CLIs for AAA Configuration.
+            type: str
+            default: ""
+          connectivity_domain_name:
+            description:
+            - Domain name to connect to Hypershield.
+            - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
+            type: str
+
+          # Bootstrap
+          aaa:
+            description:
+            - Include AAA configs from Advanced tab during device bootup.
             type: bool
             default: false
           bootstrap_subnet_collection:
@@ -158,6 +321,7 @@ options:
             - When O(state=replaced), omitting this option resets the collection to its default empty value.
             type: list
             elements: dict
+            default: []
             suboptions:
               start_ip:
                 description:
@@ -179,24 +343,6 @@ options:
                 - Prefix length. Use C(8)-C(30) for IPv4 or C(64)-C(126) for IPv6.
                 type: int
                 required: true
-          cdp:
-            description:
-            - Enable CDP on management interface.
-            type: bool
-            default: false
-          copp_policy:
-            description:
-            - Fabric wide CoPP policy.
-            - Customized CoPP policy should be provided when C(manual) is selected.
-            type: str
-            default: manual
-            choices: [ dense, lenient, moderate, strict, manual ]
-          create_bgp_config:
-            description:
-            - Generate BGP configuration for core and edge routers.
-            - Uses O(config.management.bgp_asn) when enabled.
-            type: bool
-            default: true
           day0_bootstrap:
             description:
             - Support day 0 touchless switch bringup.
@@ -214,10 +360,9 @@ options:
             - DHCP Scope End Address For Switch POAP.
             - Applies when O(config.management.day0_bootstrap=true),
               O(config.management.local_dhcp_server=true).
-            - Use an IPv4 address without a prefix length with O(config.management.dhcp_protocol_version=dhcpv4) on ND 4.2 or later.
-            - An IPv6 address without a prefix length requires ND 4.3.1 or later,
-              O(config.management.dhcp_protocol_version=dhcpv6), and a V6 controller installation.
-            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject DHCPv6.
+            - The module accepts IPv4 and IPv6 addresses without a prefix length on ND 4.2.1 or later.
+            - Use O(config.management.dhcp_protocol_version=dhcpv4) for IPv4 or O(config.management.dhcp_protocol_version=dhcpv6) for IPv6.
+            - Local DHCPv6 requires a V6 controller installation.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           dhcp_protocol_version:
@@ -232,46 +377,15 @@ options:
             - DHCP Scope Start Address For Switch POAP.
             - Applies when O(config.management.day0_bootstrap=true),
               O(config.management.local_dhcp_server=true).
-            - Use an IPv4 address without a prefix length with O(config.management.dhcp_protocol_version=dhcpv4) on ND 4.2 or later.
-            - An IPv6 address without a prefix length requires ND 4.3.1 or later,
-              O(config.management.dhcp_protocol_version=dhcpv6), and a V6 controller installation.
-            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject DHCPv6.
+            - The module accepts IPv4 and IPv6 addresses without a prefix length on ND 4.2.1 or later.
+            - Use O(config.management.dhcp_protocol_version=dhcpv4) for IPv4 or O(config.management.dhcp_protocol_version=dhcpv6) for IPv6.
+            - Local DHCPv6 requires a V6 controller installation.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
-          dns_collection:
-            description:
-            - List of IPv4 and IPv6 DNS addresses.
-            type: list
-            elements: str
-            default: []
-          dns_vrf_collection:
-            description:
-            - DNS Server VRFs.
-            - One VRF for all DNS servers or a list of VRFs, one per DNS server.
-            - Entries correspond to the addresses in O(config.management.dns_collection).
-            type: list
-            elements: str
-            default: []
           domain_name:
             description:
             - Domain name for DHCP server PnP block.
             - Applies to the day 0 Plug and Play DHCP block when O(config.management.day0_plug_and_play=true).
-            type: str
-            default: ""
-          enable_dpu_pinning:
-            description:
-            - Enable pinning of VRFs and networks to specific DPUs on smart switches.
-            - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
-            type: bool
-            default: false
-          extra_config_aaa:
-            description:
-            - Additional CLIs for AAA Configuration.
-            type: str
-            default: ""
-          extra_config_fabric:
-            description:
-            - Additional CLIs for all switches.
             type: str
             default: ""
           extra_config_nxos_bootstrap:
@@ -290,17 +404,6 @@ options:
             - Applies to O(config.management.day0_bootstrap=true) using O(config.management.inband_management=true).
             type: bool
             default: false
-          inband_management:
-            description:
-            - Import switches with reachability over the switch front-panel ports.
-            type: bool
-            default: false
-          interface_statistics_load_interval:
-            description:
-            - Interface Statistics Load Interval Time in seconds.
-            - Applies when O(config.management.real_time_interface_statistics_collection=true).
-            type: int
-            default: 10
           local_dhcp_server:
             description:
             - Automatic IP Assignment For POAP from Local DHCP Server.
@@ -311,11 +414,9 @@ options:
             description:
             - Default Gateway For Management VRF On The Switch.
             - Applies to management addressing when O(config.management.day0_bootstrap=true).
-            - Use an IPv4 address without a prefix length on ND 4.2 or later.
-            - An IPv6 address without a prefix length is accepted as module config on ND 4.3.1 or later.
-            - With local DHCP, O(config.management.dhcp_protocol_version=dhcpv6) requires a V6 controller installation.
-            - With external DHCP, controller acceptance of an IPv6 gateway alone has not been verified.
-            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject local DHCPv6.
+            - The module accepts IPv4 and IPv6 addresses without a prefix length on ND 4.2.1 or later.
+            - With local DHCP and an IPv6 gateway, select O(config.management.dhcp_protocol_version=dhcpv6).
+            - Local DHCPv6 requires a V6 controller installation.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_ipv4_prefix:
@@ -328,29 +429,14 @@ options:
             - Switch Management IP Subnet Prefix if ipv6.
             type: int
             default: 64
-          monitored_mode:
+          ios_xe_tor_bootstrap_vlan:
             description:
-            - If enabled, fabric is only monitored.
-            - No configuration will be deployed.
-            type: bool
-            default: false
-          mpls_handoff:
-            description:
-            - Enable MPLS Handoff.
-            type: bool
-            default: false
-          mpls_loopback_identifier:
-            description:
-            - Underlay MPLS Loopback Identifier.
-            - Applies when O(config.management.mpls_handoff=true).
+            - Catalyst ToR bootstrap VLAN for inband PnP (1 to 4094).
+            - Available in ND 4.3.1 or later.
             type: int
-            default: 101
-          mpls_loopback_ip_range:
-            description:
-            - MPLS Loopback IP Address Range.
-            - Applies when O(config.management.mpls_handoff=true).
-            type: str
-            default: "10.102.0.0/25"
+            default: 1
+
+          # Flow Monitor
           netflow_settings:
             description:
             - Settings associated with netflow.
@@ -368,6 +454,7 @@ options:
                 - Used when O(config.management.netflow_settings.netflow=true); monitors reference exporters by name.
                 type: list
                 elements: dict
+                default: []
                 suboptions:
                   exporter_name:
                     description:
@@ -399,6 +486,7 @@ options:
                 - Used when O(config.management.netflow_settings.netflow=true); monitors reference records by name.
                 type: list
                 elements: dict
+                default: []
                 suboptions:
                   record_name:
                     description:
@@ -407,7 +495,8 @@ options:
                     required: true
                   record_template:
                     description:
-                    - Template type for the record.
+                    - In ND 4.2.1, one of `netflowIpv4Record` or `netflowLayer2Record`.
+                    - In ND 4.3.1 or later, a string value is accepted.
                     type: str
                     required: true
                   layer2_record:
@@ -422,6 +511,7 @@ options:
                 - Used when O(config.management.netflow_settings.netflow=true); each monitor names a record and at least one exporter.
                 type: list
                 elements: dict
+                default: []
                 suboptions:
                   monitor_name:
                     description:
@@ -446,67 +536,35 @@ options:
                     - When set, matches another entry in O(config.management.netflow_settings.netflow_exporter_collection).
                     type: str
                     default: ""
-          nxapi:
-            description:
-            - Enable NX-API over HTTPS.
-            type: bool
-            default: false
-          nxapi_http:
-            description:
-            - Enable NX-API over HTTP.
-            type: bool
-            default: false
-          nxapi_http_port:
-            description:
-            - HTTP port for NX-API (1-65535).
-            - Applies when O(config.management.nxapi_http=true).
-            type: int
-            default: 80
-          nxapi_https_port:
-            description:
-            - HTTPS port for NX-API (1-65535).
-            - Applies when O(config.management.nxapi=true).
-            type: int
-            default: 443
-          performance_monitoring:
-            description:
-            - If enabled, switch metrics are collected through periodic SNMP polling.
-            - Alternative to real-time telemetry.
-            type: bool
-            default: false
-          power_redundancy_mode:
-            description:
-            - Default Power Supply Mode for NX-OS Switches.
-            type: str
-            default: redundant
-            choices: [ redundant, combined, inputSrcRedundant ]
-          ptp:
-            description:
-            - Enable Precision Time Protocol (PTP).
-            type: bool
-            default: false
-          ptp_domain_id:
-            description:
-            - Multiple Independent PTP Clocking Subdomains on a Single Network.
-            - Applies when O(config.management.ptp=true).
-            type: int
-            default: 0
-          ptp_loopback_id:
-            description:
-            - Precision Time Protocol Source Loopback Id.
-            - Applies when O(config.management.ptp=true).
-            type: int
-            default: 0
+              # Flow Monitor
+              netflow_sampler_collection:
+                description:
+                - List of NetFlow samplers.
+                - Available in ND 4.2.1 and 4.3.1 native templates.
+                type: list
+                elements: dict
+                suboptions:
+                  sampler_name:
+                    description:
+                    - Name of the sampler.
+                    - Available in ND 4.2.1 and 4.3.1 native templates.
+                    type: str
+                  num_samples:
+                    description:
+                    - Samples per sampling operation (1 to 63).
+                    - Available in ND 4.2.1 and 4.3.1 native templates.
+                    type: int
+                  sampling_rate:
+                    description:
+                    - Packets per sampling operation (1 to 131071).
+                    - Available in ND 4.2.1 and 4.3.1 native templates.
+                    type: int
+
+          # Configuration Backup
           real_time_backup:
             description:
             - Hourly Fabric Backup only if there is any config deployment since last backup.
             type: bool
-          real_time_interface_statistics_collection:
-            description:
-            - Enable Real Time Interface Statistics Collection.
-            - Valid for NX-OS only.
-            type: bool
-            default: false
           scheduled_backup:
             description:
             - Enable backup at the specified time daily.
@@ -516,36 +574,86 @@ options:
             - Time (UTC) in 24-hour C(HH:MM) format to take a daily backup if enabled (C(00:00) to C(23:59)).
             - Applies when O(config.management.scheduled_backup=true).
             type: str
-          snmp_trap:
+          enable_remote_switch_backup:
             description:
-            - Configure Nexus Dashboard as a receiver for SNMP traps.
+            - Enable switch backup to remote storage.
+            - Available in ND 4.3.1 or later.
             type: bool
-            default: true
-          sub_interface_dot1q_range:
+            default: false
+          remote_storage_server:
             description:
-            - Per aggregation dot1q range for VRF-Lite connectivity (minimum 2, maximum 4093).
+            - Name of remote storage configured in Nexus Dashboard (maximum 63 characters).
+            - Available in ND 4.3.1 or later.
             type: str
-            default: "2-511"
-          connectivity_domain_name:
+
+          # Hypershield
+          allow_smart_switch_onboarding:
             description:
-            - Domain name to connect to Hypershield.
+            - Enable onboarding of smart switches to Hypershield for firewall service.
+            - The Hypershield connectivity options below apply to onboarded smart switches.
+            type: bool
+            default: false
+          enable_dpu_pinning:
+            description:
+            - Enable pinning of VRFs and networks to specific DPUs on smart switches.
             - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
-            type: str
-          hypershield_connectivity_proxy_server:
-            description:
-            - IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication.
-            - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
-            type: str
-          hypershield_connectivity_proxy_server_port:
-            description:
-            - Proxy port number for communication with Hypershield.
-            - Applies when O(config.management.hypershield_connectivity_proxy_server) is set.
-            type: int
+            type: bool
+            default: false
           hypershield_connectivity_source_intf:
             description:
             - Loopback interface on smart switch for communication with Hypershield.
             - Applies to smart switches onboarded with O(config.management.allow_smart_switch_onboarding=true).
             type: str
+          allow_smart_switch_ha:
+            description:
+            - Enable high availability configuration for smart switches.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: false
+          auto_smart_switch_vpc_pair_ha:
+            description:
+            - Enable automatic HA configuration for smart-switch vPC pairs.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: false
+          hypershield_ha_peer_link_subnet:
+            description:
+            - IPv4 subnet pool for HA peer-link connectivity.
+            - Available in ND 4.3.1 or later.
+            type: str
+            default: "10.12.0.0/22"
+          hypershield_ha_peer_link_subnet_granularity:
+            description:
+            - Subnet prefix size for HA peer-link allocations.
+            - Available in ND 4.3.1 or later.
+            type: str
+            default: "/30"
+            choices: [ "/30", "/31" ]
+          hypershield_ha_source_intf:
+            description:
+            - Loopback interface used as the HA source (3 to 40 characters).
+            - Available in ND 4.3.1 or later.
+            type: str
+            default: loopback1023
+          hypershield_ha_source_subnet:
+            description:
+            - IPv4 subnet pool for the HA source loopback.
+            - Available in ND 4.3.1 or later.
+            type: str
+            default: "10.11.0.0/23"
+          hypershield_ha_vlan:
+            description:
+            - VLAN used for smart-switch HA communication (2 to 4094).
+            - Available in ND 4.3.1 or later.
+            type: int
+            default: 3601
+          use_hypershield_source_loopback_for_ha:
+            description:
+            - Reuse the Hypershield source loopback for HA.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: false
+
       telemetry_settings:
         description:
         - Telemetry configuration for the fabric.
@@ -564,7 +672,7 @@ options:
                 - compatibility
                 - disabled
                 - enabled
-                default: enabled
+                default: disabled
               traffic_analytics_scope:
                 description:
                 - Traffic analytics scope.
@@ -583,7 +691,7 @@ options:
                 choices:
                 - disabled
                 - enabled
-                default: enabled
+                default: disabled
           microburst:
             description:
             - Microburst detection settings.
@@ -621,7 +729,7 @@ options:
             suboptions:
               server:
                 description:
-                - NAS server address.
+                - Name of the configured NAS server for flow collection.
                 type: str
                 default: ""
               export_settings:
@@ -647,16 +755,6 @@ options:
                     choices:
                     - json
                     default: json
-          energy_management:
-            description:
-            - Energy management settings.
-            type: dict
-            suboptions:
-              cost:
-                description:
-                - Energy cost per unit.
-                type: float
-                default: 1.2
       external_streaming_settings:
         description:
         - External streaming settings for the fabric.
@@ -736,7 +834,7 @@ extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 notes:
-- This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
+- This module is only supported on Nexus Dashboard having version 4.2.1 or higher.
 - Only External Connectivity fabric type (C(externalConnectivity)) is supported by this module.
 - With O(state=replaced) or O(state=overridden), omitted settings revert to their documented defaults except for identified
   dynamic or controller-owned values, which are preserved from an existing fabric.
@@ -754,7 +852,6 @@ EXAMPLES = r"""
           latitude: 37.7749
           longitude: -122.4194
         license_tier: premier
-        alert_suspend: disabled
         security_domain: all
         telemetry_collection: false
         management:
@@ -797,7 +894,6 @@ EXAMPLES = r"""
           latitude: 37.7749
           longitude: -122.4194
         license_tier: premier
-        alert_suspend: disabled
         security_domain: all
         telemetry_collection: false
         management:

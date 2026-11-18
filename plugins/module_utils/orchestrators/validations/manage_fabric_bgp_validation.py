@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -12,14 +11,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
     SITE_ID_MAX_ND_4_2,
 )
-
-
-def parse_controller_version(value: object) -> tuple[int, int, int] | None:
-    """Return the ND major/minor/patch tuple from a build-version value."""
-    match = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:\.|$)", str(value or ""))
-    if match is None:
-        return None
-    return tuple(int(part) for part in match.groups())
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_release_validation import (
+    ND_4_3_1,
+    parse_controller_product_version,
+)
 
 
 class ManageFabricBgpValidationMixin:
@@ -63,13 +58,13 @@ class ManageFabricBgpValidationMixin:
                 extended_site_fabrics.append(str(item.get_identifier_value()))
 
         if extended_site_fabrics:
-            raw_version = self.rest_send.controller_version
-            version = parse_controller_version(raw_version)
-            if version is None or version < (4, 3, 1):
+            raw_version = self.rest_send.controller_product_version
+            version = parse_controller_product_version(raw_version)
+            if version is None or version < ND_4_3_1:
                 reported = raw_version or "unknown"
                 raise RuntimeError(
                     f"site_id values above {SITE_ID_MAX_ND_4_2} require ND 4.3.1 or later; "
-                    f"controller version is {reported!r} for fabric(s): {', '.join(extended_site_fabrics)}"
+                    f"controller product version is {reported!r} for fabric(s): {', '.join(extended_site_fabrics)}"
                 )
 
         super().preflight(model_instances)

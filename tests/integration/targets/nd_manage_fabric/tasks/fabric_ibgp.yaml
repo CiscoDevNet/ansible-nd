@@ -75,7 +75,6 @@
           latitude: 37.7749
           longitude: -122.4194
         license_tier: premier
-        alert_suspend: disabled
         security_domain: all
         telemetry_collection: false
         management:
@@ -709,7 +708,6 @@
           latitude: 37.7749
           longitude: -122.4194
         license_tier: premier
-        alert_suspend: disabled
         security_domain: all
         telemetry_collection: false
         management:
@@ -802,7 +800,6 @@
           latitude: 37.7749
           longitude: -122.4194
         license_tier: premier
-        alert_suspend: disabled
         security_domain: all
         telemetry_collection: false
         management:
@@ -895,7 +892,6 @@
           latitude: 37.7749
           longitude: -122.4194
         license_tier: premier
-        alert_suspend: disabled
         security_domain: all
         telemetry_collection: false
         management:
@@ -1325,7 +1321,6 @@
           latitude: 37.7749
           longitude: -122.4194
         license_tier: premier
-        alert_suspend: disabled
         security_domain: all
         telemetry_collection: false
         management:
@@ -1401,7 +1396,6 @@
           latitude: 37.7749
           longitude: -122.4194
         license_tier: premier
-        alert_suspend: disabled
         security_domain: all
         telemetry_collection: false
         management:

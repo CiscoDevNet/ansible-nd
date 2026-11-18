@@ -145,7 +145,7 @@ class ManageTorOrchestrator(ConfigActionsMixin, NDBaseOrchestrator[ManageTorMode
         When the version cannot be determined, default to reserving (the current
         GA is 4.2.x and the extra call is harmless on 4.3).
         """
-        parsed = self._parse_major_minor(self.rest_send.controller_version)
+        parsed = self._parse_major_minor(self.rest_send.controller_build_version)
         if parsed is None:
             return True
         return parsed < _RESOURCE_RESERVATION_MAX_VERSION

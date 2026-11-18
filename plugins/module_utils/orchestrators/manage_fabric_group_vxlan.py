@@ -38,10 +38,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_acti
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric.collection_query import (
     ManageFabricCollectionQueryMixin,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.validations.manage_fabric_release_validation import (
+    ManageFabricReleaseValidationMixin,
+)
 
 
-class ManageFabricGroupVxlanOrchestrator(ManageFabricCollectionQueryMixin, ConfigActionsMixin, NDBaseOrchestrator):
+class ManageFabricGroupVxlanOrchestrator(ManageFabricReleaseValidationMixin, ManageFabricCollectionQueryMixin, ConfigActionsMixin, NDBaseOrchestrator):
     model_class: ClassVar[type[NDBaseModel]] = FabricGroupVxlanModel
+    release_gate_family: ClassVar[str] = "VXLAN fabric group"
     fabric_inventory_category: ClassVar[str] = "fabricGroup"
     fabric_inventory_management_type: ClassVar[str] = FabricGroupTypeEnum.VXLAN.value
 
