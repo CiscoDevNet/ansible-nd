@@ -98,7 +98,7 @@ assert !script.SKIPLIST_FILES_BUF.contains('progress')
 
 
 @pytest.mark.parametrize("valid", [True, False])
-def test_final_fold_only_marks_report_ready_after_numeric_validation(pipeline, valid):
+def test_final_fold_marks_report_ready_and_keeps_unknown_counts_on_their_row(pipeline, valid):
     pipeline("def validCounts = " + str(valid).lower() + "\n" + r'''
 script.metaClass.sh = { Object options -> '' }
 script.metaClass.readFile = { Map options ->
@@ -113,9 +113,10 @@ def caught = null
 try { script.foldStructuredResults() } catch (Exception failure) { caught = failure }
 def field = script.getClass().getDeclaredField('ND_CASE_REPORT_READY')
 field.setAccessible(true)
-assert field.get(script) == validCounts
-assert (caught == null) == validCounts
-if (!validCounts) { assert caught.message.contains('NDP_CASE_COUNTS_UNRECOVERABLE') }
+assert field.get(script) == true
+assert caught == null : caught
+def columns = script.TEST_RESULT_SUMMARY_BUF.readLines().find { it.contains('|fixture_module|') }.split('\\|', -1)
+assert columns[4..6] == (validCounts ? ['2', '0', '0'] : ['?', '?', '?'])
 ''')
 
 

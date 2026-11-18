@@ -119,17 +119,30 @@ DEFAULT_ROUTED_POLICY = {
     "fec": "auto", "pimDrPriority": 1, "pimSparse": False, "pfc": False,
 }
 REQUIRED_ROUTED_FIELDS = {"adminState", "policyType", "mtu", "netflow", "speed"}
+# configSyncStatus values from the lifecycle pre-delete gate. Busy switches are
+# only polled (never overlapped); drift may be recalculated and deployed.
+# Anything else, including notApplicable, stays a fail-closed readiness failure.
+SYNC_BUSY_STATUSES = {"deploymentInProgress", "inProgress", "previewInProgress"}
+SYNC_DRIFT_STATUSES = {"deployed", "failed", "outOfSync", "pending", "success"}
+SYNC_RECOVERY_ATTEMPTS = 3
+SYNC_ACTION_FAILURE = re.compile(
+    r"fail|error|denied|reject|unauthori|forbid|unsuccess|refus|cancel|abort|incomplete|cannot|unable", re.I)
 
 
 class BaselineBlocked(Exception):
     pass
 
 
+class TransientRejection(BaselineBlocked):
+    """HTTP 408/429/5xx. Keeps the existing reason text; only sync recovery retries it."""
+
+
 class InterfaceBaseline:
     def __init__(self, registry, fabrics, request, apply=False, timeout_seconds=900, call_timeout_seconds=30,
                  poll_seconds=5, clock=time.monotonic, sleep=time.sleep, switch_refs=None,
                  interfaces=None, journal_path=None, ensure_host_admin_down_default=False,
-                 idle_reserved_ports=False):
+                 idle_reserved_ports=False, recover_config_sync=False, sync_attempt_seconds=420,
+                 sync_settle_seconds=60):
         self.registry = registry
         self.protected = registry_reservations(registry)
         if (type(apply) is not bool or not isinstance(fabrics, list) or not fabrics or len(fabrics) > 16
@@ -176,6 +189,21 @@ class InterfaceBaseline:
                 or self.journal_path.is_symlink() or self.journal_path.parent.is_symlink()
                 or not self.journal_path.parent.is_dir()):
             raise ValueError("Invalid protected checkpoint path")
+        # Lifecycle-only Recalculate & Deploy of verified lab switches whose sole
+        # readiness gap is configSyncStatus. Independent of interface apply.
+        if type(recover_config_sync) is not bool:
+            raise ValueError("Invalid configuration sync recovery flag")
+        self.sync_attempt_seconds, self.sync_settle_seconds = map(float, (sync_attempt_seconds, sync_settle_seconds))
+        if (not all(math.isfinite(value) for value in (self.sync_attempt_seconds, self.sync_settle_seconds))
+                or not 0 < self.sync_attempt_seconds <= 900 or not 0 <= self.sync_settle_seconds <= self.sync_attempt_seconds):
+            raise ValueError("Invalid configuration sync recovery window")
+        if recover_config_sync:
+            owned_fabrics = {row.get("name") for row in registry["lab"].get("fabrics", {}).values()
+                            if isinstance(row, dict) and row.get("lifecycle") in {"retained", "preserved"}}
+            if not set(self.fabrics) <= owned_fabrics or switch_refs is None or self.journal_path is None:
+                raise ValueError("Configuration sync recovery outside the retained lab scope")
+        self.recover_config_sync = recover_config_sync
+        self.last_inventory_ids = set()
         self.clock, self.sleep = clock, sleep
         self.changed, self.candidates, self.verified, self.inspected = False, 0, 0, 0
         self.decisions = []
@@ -212,7 +240,7 @@ class InterfaceBaseline:
         except (OSError, TypeError, ValueError) as error:
             raise BaselineBlocked("CHECKPOINT_UNVERIFIED") from error
 
-    def call(self, method, path, content=None):
+    def call(self, method, path, content=None, sync_ids=None):
         remaining = self.deadline - self.clock()
         if remaining <= 0:
             raise BaselineBlocked("DEADLINE_EXCEEDED")
@@ -224,11 +252,13 @@ class InterfaceBaseline:
                              "reply": {key: reply[key] for key in ("status", "current", "jsondata", "response", "failed") if isinstance(reply, dict) and key in reply}})
         if self.clock() >= self.deadline:
             raise BaselineBlocked("DEADLINE_EXCEEDED")
+        http = reply.get("status") if isinstance(reply, dict) else None
+        blocked = TransientRejection if type(http) is int and (http in {408, 429} or http >= 500) else BaselineBlocked
         if not isinstance(reply, dict) or reply.get("failed") or type(reply.get("status")) is not int:
-            raise BaselineBlocked("API_RESPONSE_UNVERIFIED")
+            raise blocked("API_RESPONSE_UNVERIFIED")
         body = reply.get("jsondata", reply.get("current"))
         if reply["status"] not in ([200] if method == "get" else [200, 201, 202, 204, 207]):
-            raise BaselineBlocked("API_REQUEST_REJECTED")
+            raise blocked("API_REQUEST_REJECTED")
         if len(json.dumps(body)) > 4 * 1024 * 1024:
             raise BaselineBlocked("API_RESPONSE_TOO_LARGE")
 
@@ -250,6 +280,9 @@ class InterfaceBaseline:
                     validate(child, depth + 1)
 
         validate(body)
+        if sync_ids is not None:
+            self.verify_sync_action(reply["status"], body, sync_ids)
+            return body
         admin_update = path.endswith('/interfaceActions/updateAdminState')
         if method != "get" and (reply["status"] == 207 or admin_update):
             results = body.get("results", body.get("items")) if isinstance(body, dict) else None
@@ -270,6 +303,32 @@ class InterfaceBaseline:
                 observed.add(identity)
         return body
 
+    @staticmethod
+    def verify_sync_action(http, body, requested):
+        # Mirrors the lifecycle pre-delete contract: acceptance only permits
+        # polling; fresh inventory must still prove every roster switch inSync.
+        if body is None and http != 207:
+            return
+        if not isinstance(body, dict) or http == 207 and not body:
+            raise BaselineBlocked("SYNC_ACTION_RESPONSE_UNVERIFIED")
+        summary = body.get("status", "")
+        if (not isinstance(summary, str) or len(summary) > 1024
+                or SYNC_ACTION_FAILURE.search(re.sub(r"\[[^]]*\]", " ", summary))):
+            raise BaselineBlocked("SYNC_ACTION_RESPONSE_UNVERIFIED")
+        if "items" not in body:
+            return
+        items, observed = body["items"], set()
+        if not isinstance(items, list) or not items:
+            raise BaselineBlocked("SYNC_ACTION_RESPONSE_UNVERIFIED")
+        for row in items:
+            identity = row.get("switchId") if isinstance(row, dict) else None
+            status = row.get("status") if isinstance(row, dict) else None
+            if (not isinstance(identity, str) or identity not in requested or identity in observed
+                    or not isinstance(status, str) or not status or len(status) > 1024
+                    or SYNC_ACTION_FAILURE.search(status)):
+                raise BaselineBlocked("SYNC_ACTION_RESPONSE_UNVERIFIED")
+            observed.add(identity)
+
     def rows(self, body, key, limit=4096):
         rows = body.get(key) if isinstance(body, dict) else body
         if (not isinstance(rows, list) or len(rows) >= limit or any(not isinstance(row, dict) for row in rows)
@@ -286,12 +345,13 @@ class InterfaceBaseline:
                 raise BaselineBlocked("INVENTORY_INCOMPLETE")
         return rows
 
-    def ready_switches(self, fabric, allow_pending=False):
+    def ready_switches(self, fabric, allow_pending=False, sync_statuses=None):
         prefix = "/api/v1/manage/fabrics/" + quote(fabric, safe="")
         inventory = self.rows(self.call("get", prefix + "/switches"), "switches")
         identities = [row.get("switchId") for row in inventory]
         if any(not isinstance(serial, str) or not serial for serial in identities) or len(set(identities)) != len(identities):
             raise BaselineBlocked("SWITCH_IDENTITY_UNVERIFIED")
+        self.last_inventory_ids = set(identities)
         if not inventory:
             return prefix, []
         freeze = self.call("get", prefix + "/deploymentFreeze")
@@ -325,11 +385,18 @@ class InterfaceBaseline:
                    for key in ("systemMode", "intendedSystemMode", "discoveredSystemMode")},
             }
             identity_ready = all(checks.values())
+            if identity_ready and sync_statuses is not None:
+                sync_statuses[target["serial"]] = data.get("configSyncStatus")
             if identity_ready and data.get("configSyncStatus") == "inSync":
                 ready.append(target)
             elif allow_pending and identity_ready and data.get("configSyncStatus") == "pending":
                 # Only the verified fabric-default update uses this polling
                 # mode. Pending switches never become eligible for a write.
+                continue
+            elif (sync_statuses is not None and identity_ready
+                  and data.get("configSyncStatus") in SYNC_BUSY_STATUSES | SYNC_DRIFT_STATUSES):
+                # Lifecycle sync recovery only: identity, role and mode are
+                # verified; the switch is still excluded from interface writes.
                 continue
             else:
                 self.readiness_incomplete = True
@@ -349,6 +416,79 @@ class InterfaceBaseline:
                 return
             self.sleep(min(self.poll, max(0, self.deadline - self.clock())))
         raise BaselineBlocked('FABRIC_DEFAULT_SYNC_DEADLINE')
+
+    def sync_snapshot(self, fabric, roster=None):
+        # Judge only this fabric's snapshot. An earlier fabric's audit-only gap
+        # stays recorded for the final verdict but must not skip this recovery.
+        statuses, earlier_gap = {}, self.readiness_incomplete
+        self.readiness_incomplete = False
+        prefix, ready = self.ready_switches(fabric, sync_statuses=statuses)
+        if self.readiness_incomplete:
+            raise BaselineBlocked("SWITCH_READINESS_OR_IDENTITY_UNVERIFIED")
+        self.readiness_incomplete = earlier_gap
+        if roster is not None and set(statuses) != roster:
+            raise BaselineBlocked("FABRIC_SYNC_ROSTER_CHANGED")
+        return prefix, ready, statuses
+
+    def await_sync(self, fabric, roster, snapshot, settle_seconds):
+        # Busy switches are never redeployed. Drift must persist with nothing
+        # busy for settle_seconds so a just-accepted deploy is not misread.
+        interval = max(self.poll, 1.0)
+        window_end = min(self.deadline, self.clock() + self.sync_attempt_seconds)
+        drift_since = None
+        while True:
+            statuses = snapshot[2]
+            if all(status == "inSync" for status in statuses.values()):
+                return snapshot
+            busy = any(status in SYNC_BUSY_STATUSES for status in statuses.values())
+            now = self.clock()
+            drift_since = None if busy else (now if drift_since is None else drift_since)
+            if not busy and now - drift_since >= settle_seconds:
+                return snapshot
+            if window_end - now <= interval:
+                if busy:
+                    raise BaselineBlocked("FABRIC_SYNC_IN_PROGRESS_TIMEOUT")
+                return snapshot
+            self.sleep(interval)
+            snapshot = self.sync_snapshot(fabric, roster)
+
+    def reconcile_fabric_sync(self, fabric):
+        snapshot = self.sync_snapshot(fabric)
+        roster = set(snapshot[2])
+        names = {value["serial"]: name for name, value in self.registry["lab"]["switches"].items()}
+        snapshot = self.await_sync(fabric, roster, snapshot, 0)
+        attempt = 0
+        while True:
+            prefix, _, statuses = snapshot
+            drift = sorted(serial for serial, status in statuses.items() if status != "inSync")
+            if not drift:
+                if attempt:
+                    self.decisions.append({"fabric": fabric, "decision": "SYNC_RECOVERY_CONFIRMED", "attempts": attempt})
+                return
+            if attempt == SYNC_RECOVERY_ATTEMPTS:
+                self.decisions.append({"fabric": fabric, "decision": "SYNC_RECOVERY_NOT_CONVERGED", "attempts": attempt,
+                                       "switches": {names[serial]: statuses[serial] for serial in drift}})
+                raise BaselineBlocked("FABRIC_SYNC_RECOVERY_NOT_CONVERGED")
+            attempt += 1
+            try:
+                inventory = set(self.last_inventory_ids)
+                self.changed = True
+                self.call("post", prefix + "/actions/configSave", {}, sync_ids=inventory)
+                # Recheck freeze, upgrade, identity, mode and roster before deploying.
+                prefix, _, statuses = self.sync_snapshot(fabric, roster)
+                targets = sorted(serial for serial, status in statuses.items() if status in SYNC_DRIFT_STATUSES)
+                if targets and not any(status in SYNC_BUSY_STATUSES for status in statuses.values()):
+                    self.call("post", prefix + "/switchActions/deploy", {"switchIds": targets}, sync_ids=set(targets))
+                    self.decisions.append({"fabric": fabric, "decision": "SYNC_RECOVERY_DEPLOY_REQUESTED",
+                                           "attempt": attempt, "switches": [names[serial] for serial in targets]})
+                else:
+                    self.decisions.append({"fabric": fabric, "decision": "SYNC_RECOVERY_RECALCULATED", "attempt": attempt})
+            except TransientRejection as error:
+                self.decisions.append({"fabric": fabric, "decision": "SYNC_RECOVERY_TRANSIENT_REJECTION",
+                                       "attempt": attempt, "reason": str(error)})
+                if attempt == SYNC_RECOVERY_ATTEMPTS:
+                    raise
+            snapshot = self.await_sync(fabric, roster, self.sync_snapshot(fabric, roster), self.sync_settle_seconds)
 
     def linked_ports(self, fabric):
         managed = self.rows(self.call("get", "/api/v1/manage/links?fabricName=" + quote(fabric, safe="")), "links")
@@ -678,6 +818,8 @@ class InterfaceBaseline:
         try:
             seen = set()
             for fabric in self.fabrics:
+                if self.recover_config_sync:
+                    self.reconcile_fabric_sync(fabric)
                 for attempt in range(3):
                     decision_start = len(self.decisions)
                     previous_incomplete = self.readiness_incomplete
@@ -803,6 +945,7 @@ class ActionModule(ActionBase):
             arguments = self._templar.template(dict(self._task.args))
             if self._task.check_mode:
                 arguments["apply"] = False
+                arguments["recover_config_sync"] = False
             module_path = Path(__file__).with_name("nd_switch_discovery.py")
             if module_path.is_symlink() or not module_path.is_file():
                 raise ValueError("Missing bounded controller transport")

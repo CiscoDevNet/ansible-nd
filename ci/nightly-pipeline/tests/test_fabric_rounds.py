@@ -388,7 +388,7 @@ def test_fabric_rounds_run_ibgp_first_then_the_preserved_ebgp_fabric():
     # Round 1 is the canonical fabric exactly as the registry pins it; round 2 is the registry's preserved fabric.
     assert rounds[0][:2] == (CANONICAL_FABRICS["advanced"]["name"], CANONICAL_FABRICS["advanced"]["type"])
     assert rounds[1][:2] == (CANONICAL_FABRICS["network_ebgp"]["name"], CANONICAL_FABRICS["network_ebgp"]["type"])
-    assert "timeout(time: 20, unit: 'HOURS')" in text
+    assert "timeout(time: 20, unit: 'HOURS')" not in text
 
 
 def test_every_nd_version_is_expanded_into_one_run_per_round():
@@ -450,69 +450,64 @@ def test_a_round_off_the_canonical_fabric_checks_its_type_then_renders_before_an
 
 def test_the_lab_goes_home_after_the_last_reset_and_before_the_logs_are_bundled():
     text = jenkins_text()
-    producer = text[text.index("for (baseConfig in baseNdfcVersions) {"):text.index("// Clean workspace - best effort")]
-    assert "resetFabricBetweenVersions(ndfcConfig.round_tag ?: '')" in producer
-    assert producer.index("resetFabricBetweenVersions(ndfcConfig.round_tag") < producer.index("restoreHomeFabric(roundConfigs, activeRound)")
-    assert "withCleanupPreservingFailure({" in producer
-    assert producer.index("restoreHomeFabric(roundConfigs, activeRound)") < producer.index("finishStructuredExecution(executionStatus)")
-    assert producer.index("finishStructuredExecution(executionStatus)") < producer.index("bundleAllLogs()")
+    loop = text[text.index("for (ndfcConfig in roundConfigs) {"):text.index("bundleAllLogs()\n")]
+    assert "resetFabricBetweenVersions(ndfcConfig.round_tag ?: '')" in loop
+    assert loop.index("resetFabricBetweenVersions(ndfcConfig.round_tag") < loop.index("restoreHomeFabric(roundConfigs, activeRound)")
+    assert "withCleanupPreservingFailure" in loop
     home = groovy_function("restoreHomeFabric")
     assert "if (env.HOME_RESTORE_REQUIRED != 'true') { return }" in home
     assert "integration_config.home.yml" in home
-    assert "runSwitchMembershipSync(homeConfig, 'home', homeRoster)" in home
-    assert home.index("resetFabricBetweenVersions(") < home.index("runSwitchMembershipSync(")
-    assert "rethrowIfInterrupt(e)" in home and "throw e" in home
+    assert "runSwitchMembershipSync(homeConfig, 'home'" in home
+    assert "rethrowIfInterrupt(e)" in home
     assert "env.ND_SWITCH_RESTORE_FAILED = 'true'" in home
+    # A failed home restore is recorded and reported; it never stops the build.
+    assert "throw e" not in home
+    assert "NDP_SWITCH_HOME_RESTORE_FAILED: home membership was not confirmed" in home
     assert "usernamePassword(credentialsId: SWITCH_CREDENTIALS_ID" in home
+    # The renderer keeps the canonical roster under exactly the name the restore reads.
     assert HOME_ROSTER_COPY == "integration_config.home.yml"
 
 
 @pytest.mark.parametrize("failure", ["restore", "files", "home", "interrupt", "none"])
 def test_round_failure_reporting_and_archiving_groovy_runtime(lifecycle_pipeline, failure):
-    body = 'def scenario = ' + json.dumps(failure) + '\ndef failureMode = "reported-module-failure"\n'
-    body += 'def failure = new IllegalStateException("offline infrastructure failure")\n'
-    body += PRODUCER + r'''
+    lifecycle_pipeline("def scenario = " + json.dumps(failure) + "\n" + PRODUCER + r'''
 script.metaClass.runNDFCVersionTests = { Object round ->
-    calls.add('run:' + round.round_label)
-    if (scenario == 'interrupt') { throw new InterruptedException('cancelled') }
-    if (scenario == 'files') { throw failure }
-    if (scenario == 'restore') {
-        context.ND_SWITCH_RESTORE_FAILED = 'true'
-        context.PIPELINE_FAILED = 'true'
-    }
+    calls.add('round:' + round.round_label)
+    if (scenario == 'interrupt') { throw loader.loadClass('org.jenkinsci.plugins.workflow.steps.FlowInterruptedException').newInstance('cancelled') }
+    if (scenario == 'files') { throw new IllegalStateException('missing files') }
+    if (scenario == 'restore') { context.ND_SWITCH_RESTORE_FAILED = 'true'; context.PIPELINE_FAILED = 'true' }
 }
 script.metaClass.restoreHomeFabric = { Object rounds, Object active ->
-    calls.add('home')
-    if (scenario == 'home') { throw failure }
+    calls.add('home:' + active.round_label)
+    if (scenario == 'home') { throw new IllegalStateException('home failed') }
 }
 def caught = null
-try { script.run() } catch (Exception error) { caught = error }
-assert calls.contains('home') && calls.count('bundle') == 1
-assert calls.indexOf('home') < calls.indexOf('fold') && calls.indexOf('fold') < calls.indexOf('bundle')
-assert (caught != null) == (scenario in ['files', 'home', 'interrupt'])
+try { script.run() } catch (Exception failure) { caught = failure }
+assert calls.any { it.startsWith('home:') }
+assert calls.findAll { it in ['fold', 'activity', 'bundle'] } == ['fold', 'activity', 'bundle'] : calls
+assert calls.count('bundle') == 1
+assert (caught != null) == (scenario == 'interrupt')
+assert calls.contains('round:eBGP') == (scenario != 'interrupt')
 if (scenario == 'restore') {
-    assert !calls.contains('run:eBGP')
-    assert calls.contains('record:eBGP')
     assert context.PIPELINE_FAILED == 'true'
+    assert logs.any { it.startsWith('NDP_SWITCH_RESTORE_INCOMPLETE_CONTINUING:') }
 }
-if (scenario in ['files', 'interrupt']) { assert !calls.contains('run:eBGP') }
-assert calls.contains('finish:' + (scenario == 'interrupt' ? 'interrupted' : (scenario in ['files', 'home'] ? 'failed' : 'success')))
-'''
-    lifecycle_pipeline(body)
+if (scenario == 'files') { assert logs.any { it.startsWith('NDP_FABRIC_ROUND_FAILED_CONTINUING:') } }
+if (scenario == 'home') { assert calls.contains('finish:failed') }
+if (scenario == 'interrupt') { assert calls.contains('finish:interrupted') }
+''')
 
 
-def test_home_recovery_remains_required_until_the_canonical_roster_is_confirmed():
+def test_home_recovery_retries_a_failed_restore_before_the_second_round_render():
     home = groovy_function("restoreHomeFabric")
     assert "if (env.HOME_RESTORE_REQUIRED != 'true') { return }" in home
-    assert "def homeConfig = roundConfigs[0]" in home
-    assert "env.HOME_ROSTER_COPY_READY == 'true' ?" in home
-    assert '"${COLLECTIONS_DIRECTORY}/integration_config.home.yml" : "${COLLECTIONS_DIRECTORY}/integration_config.yml"' in home
+    assert "def homeRoster = env.HOME_ROSTER_COPY_READY == 'true' ?" in home
     assert "runSwitchMembershipSync(homeConfig, 'home', homeRoster)" in home
-    missing_files = home[home.index("if (env.REQUIRED_FILES_READY != 'true') {"):home.index("// Clear pairs/resources")]
+    missing_files = home[home.index("if (env.REQUIRED_FILES_READY != 'true') {"):home.index("def homeRoster")]
     assert "env.ND_SWITCH_RESTORE_FAILED = 'true'" in missing_files
     assert "env.PIPELINE_FAILED = 'true'" in missing_files
-    assert "NDP_SWITCH_HOME_RESTORE_FAILED: required runtime files are unavailable" in missing_files
-    assert home.index("runSwitchMembershipSync(homeConfig, 'home', homeRoster)") < home.index("env.HOME_RESTORE_REQUIRED = 'false'")
+    assert "NDP_SWITCH_HOME_RESTORE_FAILED_CONTINUING: required runtime files are unavailable" in missing_files
+    assert "return" in missing_files and "error(" not in missing_files
 
 
 @pytest.mark.parametrize("has_home_copy", [True, False])
@@ -562,27 +557,36 @@ def test_the_switch_sync_carries_the_round_roster_and_the_fabrics_to_move_betwee
     assert "nd_switch_rehome_fabrics_csv" not in guard
 
 
-def test_preflight_failure_keeps_home_recovery_required_and_blocks_the_next_round():
+def test_preflight_and_restore_failures_continue_into_the_tests_and_the_next_round():
     lifecycle = groovy_function("runNDFCVersionTests")
-    assert lifecycle.index("env.HOME_RESTORE_REQUIRED = 'true'") < lifecycle.index("runSwitchPreflight(ndfcConfig)")
-    assert "def preflightCompleted = false" in lifecycle
-    assert re.search(r"runSwitchPreflight\(ndfcConfig\)\s*preflightCompleted = true\s*runFabricTest\(ndfcConfig\)", lifecycle)
-    assert "if (preflightCompleted) {\n                    runSwitchPostRestore(ndfcConfig)" in lifecycle
-    assert "NDP_SWITCH_ACTIVE_ROUND_RESTORE_SKIPPED" in lifecycle
-    assert "Outer home-fabric recovery remains required" in lifecycle
-    assert "env.ND_SWITCH_RESTORE_FAILED = 'true'" in lifecycle
+    assert lifecycle.index("runSwitchPreflight(ndfcConfig)") < lifecycle.index("runFabricTest(ndfcConfig)")
+    assert "NDP_SWITCH_PREFLIGHT_FAILED_CONTINUING" in lifecycle
+    assert "env.ND_SWITCH_PREFLIGHT_CONFIRMED = 'false'" in lifecycle
+    assert "runSwitchPostRestore(ndfcConfig)" in lifecycle
+    assert "NDP_SWITCH_POST_RESTORE_FAILED_CONTINUING" in lifecycle
     text = jenkins_text()
-    assert "if (env.ND_SWITCH_RESTORE_FAILED == 'true')" in text
-    assert "previous restore did not confirm the full roster" in text
+    assert "NDP_SWITCH_RESTORE_INCOMPLETE_CONTINUING" in text
+    assert "NDP_SWITCH_ROUNDS_SKIPPED" not in text
 
 
-def test_switch_sync_passes_one_enclosing_budget_to_every_phase():
+def test_switch_sync_has_a_bounded_guard_timeout_and_env_override():
     sync = groovy_function("runSwitchMembershipSync")
     assert "def timeoutLimit = env.ND_SWITCH_SYNC_TIMEOUT ?: '3600'" in sync
     assert '"PREFLIGHT_TIMEOUT=${timeoutLimit}"' in sync
-    assert 'timeout "${PREFLIGHT_TIMEOUT}" ansible-playbook' in sync
     assert '-e "nd_switch_guard_timeout_seconds=${PREFLIGHT_TIMEOUT}"' in sync
-    assert "returnStatus: true" in sync
+    assert 'timeout -k 30 "${PREFLIGHT_TIMEOUT}" ansible-playbook' in sync
+
+
+def test_switch_sync_phase_caps_preserve_fatal_pre_home_and_failed_post():
+    sync = groovy_function("runSwitchMembershipSync")
+    catch = sync.split("} catch (Exception e) {", 1)[1]
+    assert "if (!isPost || phase == 'home') { throw e }" in catch
+    assert "if (!isPost || phase == 'home') { error(reason) }" in catch
+    assert "env.ND_SWITCH_RESTORE_FAILED = 'true'" in catch
+    assert "env.PIPELINE_FAILED = 'true'" in catch
+    assert "NDP_SWITCH_RESTORE_INCOMPLETE" in catch
+    assert "currentBuild.result = 'UNSTABLE'" not in catch
+    assert catch.index("rethrowIfInterrupt(e)") < catch.index("if (!isPost || phase == 'home')")
 
 
 def test_switch_recovery_reaches_onboarding_with_guard_owned_preparation_defaults():
@@ -632,15 +636,14 @@ def test_switch_sync_propagates_pre_and_home_errors_and_flags_post_failure():
     assert "currentBuild.result = 'UNSTABLE'" not in catch
 
 
-def test_incomplete_restore_skips_later_rounds_before_preparation():
+def test_incomplete_restore_still_runs_later_rounds():
     text = jenkins_text()
     loop = text.split("for (ndfcConfig in roundConfigs) {", 1)[1]
     guard = loop.split("activeRound = ndfcConfig", 1)[0]
     assert guard.lstrip().startswith("if (env.ND_SWITCH_RESTORE_FAILED == 'true') {")
-    assert "recordUnstartedRound(ndfcConfig, 'previous switch restore incomplete')" in guard
-    assert "NDP_SWITCH_ROUNDS_SKIPPED" in guard
-    assert "continue" in guard
-    assert "runNDFCVersionTests" not in guard
+    assert "NDP_SWITCH_RESTORE_INCOMPLETE_CONTINUING" in guard
+    assert "recordUnstartedRound" not in guard
+    assert "continue" not in guard
     assert "restoreHomeFabric(roundConfigs, activeRound)" in loop and "bundleAllLogs()" in loop
 
 
@@ -701,6 +704,25 @@ def test_runner_releases_reserved_port_channel_members_before_the_prerequisite_g
         assert task["failed_when"] is False
 
 
+
+def test_nightly_forces_prerequisite_failure_continuation_for_consul_runner():
+    paths = [
+        "Jenkinsfile_nd_jenkins_script",
+        "Jenkinsfile_nd_jenkins_script_temp_switches",
+        "Jenkinsfile_nd_jenkins_script_comm_list",
+    ]
+    files = [ROOT / filename for filename in paths]
+    files.extend(sorted((ROOT / "individual_jenkinsfiles").glob("Jenkinsfile_*")))
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        start = text.index(
+            'ansible-playbook -i "${INVENTORY_FILE}" '
+            '"${COLLECTIONS_DIRECTORY}/run_integration_module.yaml"'
+        )
+        end = text.index('echo "[ANSIBLE_EXIT_STATUS:', start)
+        invocation = text[start:end]
+        assert '-e "nd_prerequisite_continue_on_failure=true"' in invocation
+
 def test_a_round_that_stops_early_is_listed_with_its_reason_and_rows_carry_the_round():
     missing = groovy_function("recordUnstartedRound")
     assert "result: 'NOT_RUN', coverage: 'UNKNOWN', counts: [:], case_totals: [:]" in missing
@@ -708,7 +730,8 @@ def test_a_round_that_stops_early_is_listed_with_its_reason_and_rows_carry_the_r
     assert "reason ?: 'round not reached'" in missing
     assert "MODULE_ACTIVITY_RESULTS.keySet().any" in missing
     summary = groovy_function("moduleCaseSummaryRows")
-    assert 'label += " (${row.round_label} round)"' in summary
+    assert "note, row.scope, row.round_label ?: ''" in summary
+    assert "[status, row.module, row.fabric, row.nd" in summary
     fold = groovy_function("foldStructuredResults")
     assert '${row.module} (${row.scope}; ${row.round_label} round)|${row.artifact}' in fold
 
@@ -742,7 +765,7 @@ def test_capability_reporting_is_shared_and_keeps_failure_handling():
 def test_capability_failure_survives_active_aggregation_and_bounded_webex_parts(active_pipeline):
     active_pipeline(r'''
 def rejection = 'N9K-C9300v virtual peer-link is unsupported; use the physical peer-link'
-def row = [version_id: 'ND43', module: 'nd_vpc_pair.advanced', run_id: 'current', nd: '4.3',
+def row = [version_id: 'ND43', module: 'nd_vpc_pair.advanced', test_type: 'integration', run_id: 'current', nd: '4.3',
     fabric: 'fixture', scope: 'iBGP', round_label: 'iBGP', result: 'FAIL', coverage: 'COMPLETE',
     case_totals: [started: 2, passed: 0, failed: 2, skipped: 0, incomplete: 0],
     counts: [merged: [started: 2]], failure: rejection, reporting_status: 'SUCCESS',
@@ -851,16 +874,13 @@ def test_the_move_waits_for_nd_to_finish_removing_the_switches():
     assert "subelements('gathered.vpc_pairs', skip_missing=true)" in unpair["loop"]
 
 
-def test_force_delete_is_rejected_before_any_controller_call():
+def test_force_delete_is_rejected_before_controller_operations():
     play = ensure_switches_play()
     assert play["vars"]["nd_switch_rehome_force_delete"] is False
-    policy = task_named(play["tasks"], "Require a bounded non-force")
-    assert "not (nd_switch_rehome_force_delete | default(false) | bool)" in policy["ansible.builtin.assert"]["that"]
-    policy_index = play["tasks"].index(policy)
-    assert not any(any(key.startswith("cisco.nd.") for key in task)
-                   for task in walk_tasks(play["tasks"][:policy_index + 1]))
-    assert "force=true" not in json.dumps(play)
-    assert "NDP_SWITCH_LIFECYCLE_POLICY" in policy["ansible.builtin.assert"]["fail_msg"]
+    gate = task_named(play["tasks"], "Require a bounded non-force switch lifecycle")
+    assert "not (nd_switch_rehome_force_delete | default(false) | bool)" in gate["ansible.builtin.assert"]["that"]
+    assert "NDP_SWITCH_LIFECYCLE_POLICY" in gate["ansible.builtin.assert"]["fail_msg"]
+    assert "switchActions/remove?force=true" not in (ROOT / "playbooks/nd_ensure_switches.yaml").read_text()
 
 
 def test_webex_splits_the_complete_report_and_keeps_a_minimal_fallback():

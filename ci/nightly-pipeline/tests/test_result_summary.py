@@ -77,14 +77,44 @@ def test_missing_counter_is_not_reported_as_zero():
 
 
 @pytest.mark.parametrize("extra,status", [
-    ("[ANSIBLE_EXIT_STATUS: 2]", "FAIL"),
-    ("NDP_MODULE_SKIPPED missing link", "SKIP"),
-    ("NDP_MODULE_SKIPPED missing link\n[ANSIBLE_EXIT_STATUS: 2]", "FAIL"),
+    ("[ANSIBLE_EXIT_STATUS: 2]", "OK"),
+    ("NDP_MODULE_SKIPPED missing link", "OK"),
+    ("NDP_MODULE_SKIPPED missing link\n[ANSIBLE_EXIT_STATUS: 2]", "OK"),
     ("[RUN_MARKER: stale]", "ERR"),
     ("[ANSIBLE_EXIT_STATUS: invalid]", "ERR"),
 ])
-def test_fail_closed_and_skip(extra, status):
+def test_status_comes_from_the_play_recap(extra, status):
     assert REPORT.parse_log(io.StringIO(log_text(extra)), "current")["status"] == status
+
+
+@pytest.mark.parametrize("recap,status", [
+    ("host : ok=43 changed=6 unreachable=0 failed=0 skipped=2 rescued=1 ignored=0", "OK"),
+    ("host : ok=43 changed=6 unreachable=0 failed=1 skipped=2 rescued=1 ignored=0", "FAIL"),
+])
+def test_failed_prerequisite_is_reported_without_changing_the_recap_status(recap, status):
+    extra = ("TASK [NDP_PREREQUISITE_FAILED_CONTINUING] ****\n"
+             'ok: [nd] => {"msg": "NDP_PREREQUISITE_FAILED_CONTINUING: link setup failed"}\n')
+    result = REPORT.parse_log(io.StringIO(log_text(extra, recap)), "current")
+    assert result["status"] == status
+    assert result["prerequisite_status"] == "FAILED"
+    assert len(result["prerequisite_failures"]) == 1
+    assert "link setup failed" in result["prerequisite_failures"][0]
+    assert REPORT.parse_log(io.StringIO(log_text()), "current")["prerequisite_status"] == "OK"
+
+
+@pytest.mark.parametrize("failed,status", [(0, "OK"), (1, "FAIL")])
+def test_phase_sidecar_cannot_override_recap_status(tmp_path, failed, status):
+    log = tmp_path / "output.txt"
+    log.write_text(log_text(recap=f"host : ok=3 changed=0 unreachable=0 failed={failed} skipped=0 rescued=1 ignored=0"))
+    REPORT.atomic_json(str(log) + ".phases.json", {
+        "module": "example", "run_id": "current", "phase_seconds": {},
+        "completed": True, "module_skipped": True,
+        "prerequisite_failures": ["NDP_PREREQUISITE_FAILED_CONTINUING: fixture unavailable"],
+    })
+    result = REPORT.summarize(log, "example", "current")
+    assert result["status"] == status
+    assert result["prerequisite_status"] == "FAILED"
+    assert json.loads(Path(str(log) + ".summary.json").read_text())["status"] == status
 
 
 def test_unreachable_is_failure():
@@ -191,6 +221,80 @@ def test_bounded_lines_discards_oversized_payloads():
     assert lines[1] == "PLAY RECAP\n"
 
 
+@pytest.mark.parametrize("failure", ["none", "failed", "rescued"])
+def test_real_ansible_target_counts_exclude_pipeline_tasks(tmp_path, monkeypatch, failure):
+    monkeypatch.syspath_prepend(str(ROOT / "playbooks"))
+    from nd_reporting_pipeline import IntegrationRecap
+
+    role = tmp_path / "tests/integration/targets/nd_example/tasks"
+    role.mkdir(parents=True)
+    tasks = [
+        {"name": "target ok", "debug": {"msg": "ok"}},
+        {"name": "target changed", "debug": {"msg": "changed"}, "changed_when": True},
+        {"name": "target skipped", "debug": {"msg": "skip"}, "when": False},
+        {"name": "target ignored", "fail": {"msg": "expected"}, "ignore_errors": True},
+        {"name": "target loop", "debug": {"msg": "item"}, "loop": [1, 2]},
+    ]
+    if failure == "failed":
+        tasks.append({"name": "target failure", "fail": {"msg": "failure"}})
+    elif failure == "rescued":
+        tasks.append({"block": [{"name": "target rescued failure", "fail": {"msg": "failure"}}],
+                      "rescue": [{"name": "target rescue", "debug": {"msg": "rescued"}}]})
+    (role / "main.yml").write_text(yaml.safe_dump(tasks))
+    playbook = tmp_path / "run_integration_module.yaml"
+    playbook.write_text(yaml.safe_dump([{
+        "hosts": "localhost", "connection": "local", "gather_facts": False,
+        "tasks": [
+            {"name": "pipeline preparation", "debug": {"msg": "prepare"}},
+            {"name": "begin execution", "debug": {"msg": "begin"}, "tags": ["nd_phase_execution"]},
+            {"block": [{"name": "run target", "include_role": {"name": "nd_example"}}],
+             "always": [{"name": "pipeline cleanup", "debug": {"msg": "cleanup"}, "tags": ["nd_phase_cleanup"]}]},
+        ],
+    }]))
+    log = tmp_path / "local.txt"
+    environment = dict(os.environ, ANSIBLE_STDOUT_CALLBACK="nd_report",
+                       ANSIBLE_CALLBACK_PLUGINS=str(ROOT / "playbooks"),
+                       ANSIBLE_ROLES_PATH=str(role.parents[1]),
+                       ND_RESULT_LOG=str(log), TEST_RUN_MARKER="current", ND_RESULT_MODULE="nd_example",
+                       ND_RESULT_PHASE="prerequisites", ANSIBLE_NOCOLOR="1", ANSIBLE_VERBOSITY="0")
+    command = str(Path(sys.executable).parent / "ansible-playbook")
+    completed = subprocess.run([command, "-i", "localhost,", str(playbook)], env=environment,
+                               capture_output=True, text=True, timeout=30)
+    assert completed.returncode == (2 if failure == "failed" else 0), completed.stdout + completed.stderr
+    recap = IntegrationRecap("nd_example")
+    for line in Path(str(log) + ".events.jsonl").read_text().splitlines():
+        recap.observe(json.loads(line))
+    counts = json.loads(Path(str(log) + ".event-summary.json").read_text())["counts"]
+    if failure == "rescued":
+        assert counts["rescued"] == 1
+        assert recap.result(counts) is None
+    else:
+        assert recap.result(counts) == {"scope": "integration_target", "counts": {
+            "ok": 4, "changed": 1, "unreachable": 0, "failed": int(failure == "failed"),
+            "skipped": 1, "rescued": 0, "ignored": 1}}
+    assert counts["ok"] > 4
+
+
+@pytest.mark.parametrize("missing_changed,rescued,other_path", [(True, False, False), (False, True, False), (False, False, True)])
+def test_scoped_counts_are_unavailable_for_ambiguous_evidence(monkeypatch, missing_changed, rescued, other_path):
+    monkeypatch.syspath_prepend(str(ROOT / "playbooks"))
+    from nd_reporting_pipeline import IntegrationRecap
+
+    recap = IntegrationRecap("nd_example")
+    event = {"kind": "outcome", "outcome": "ok", "terminal": True, "task_uuid": "task",
+             "task_instance": 1, "host": "localhost", "phase": "execution",
+             "path": "tests/integration/targets/nd_example/tasks/main.yaml", "changed": False}
+    if missing_changed:
+        event.pop("changed")
+    if other_path:
+        event["path"] = "other/tasks/main.yaml"
+    recap.observe(event)
+    counts = dict.fromkeys(REPORT.COUNTERS, 0)
+    counts["ok"] = 1
+    counts["rescued"] = int(rescued)
+    assert recap.result(counts) is None
+
+
 @pytest.mark.parametrize("debug", [False, True])
 @pytest.mark.parametrize("prerequisite_only", [False, True])
 def test_real_ansible_callback_records_failure_cleanup_and_compact_output(tmp_path, debug, prerequisite_only):
@@ -232,6 +336,15 @@ def test_real_ansible_callback_records_failure_cleanup_and_compact_output(tmp_pa
 
 def test_jenkins_reporting_wiring_and_shell_syntax(tmp_path):
     source = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    for file_name in (
+        "Jenkinsfile_nd_jenkins_script",
+        "Jenkinsfile_nd_jenkins_script_temp_switches",
+        "Jenkinsfile_nd_jenkins_script_comm_list",
+    ):
+        variant = (ROOT / file_name).read_text()
+        fold = variant.split("def foldStructuredResults(", 1)[1].split("\n}\n", 1)[0]
+        assert "new LinkedHashMap(" not in fold
+        assert ".withIndex()" not in variant
     fold = source.split("def foldStructuredResults(", 1)[1].split("\n}\n", 1)[0]
     assert 'nd_reporting_pipeline.py" aggregate' in fold
     assert 'readFile(file: "${env.ND_REPORTING_RELATIVE_ROOT}/aggregate.json")' in fold
@@ -313,19 +426,21 @@ assert formatPhaseDuration(59.9999) == '00h 01m 00.000s'
 assert formatPhaseDuration(360000) == '100h 00m 00.000s'
 def table = formatPhaseTimingTable([
     [prerequisites: 10, execution: 3600, cleanup: 2, parsing: 0.125, archiving: 3,
-     process_seconds: 99999, prerequisite_guard_seconds: 99999],
-    [prerequisites: null, execution: 60, cleanup: 0, parsing: 0.125, archiving: 2],
-    [:]
+    process_seconds: 3900, prerequisite_guard_seconds: 99999],
+    [prerequisites: null, execution: 60, cleanup: 0, parsing: 0.125, archiving: 2, process_seconds: 80],
+    [process_seconds: 0]
 ], 4000)
 def rows = table.readLines().findAll { it.contains(' | ') }.collect { line ->
     line.split('\\|').collect { it.trim() }
 }
-assert rows.find { it[0] == 'Prerequisite setup' } == ['Prerequisite setup', '00h 00m 10.000s', '1 / 3']
-assert rows.find { it[0] == 'Test execution' } == ['Test execution', '01h 01m 00.000s', '2 / 3']
-assert rows.find { it[0] == 'Cleanup' } == ['Cleanup', '00h 00m 02.000s', '2 / 3']
-assert rows.find { it[0] == 'Result parsing' } == ['Result parsing', '00h 00m 00.250s', '2 / 3']
-assert rows.find { it[0] == 'Measured phase subtotal' }[1] == '01h 01m 17.250s'
-assert rows.find { it[0] == 'Build elapsed (to report)' }[1] == '01h 06m 40.000s'
+assert rows.find { it[2] == 'Prerequisite setup' }[3..4] == ['00h 00m 10.000s', '1 / 3']
+assert rows.find { it[2] == 'Test execution' }[3..4] == ['01h 01m 00.000s', '2 / 3']
+assert rows.find { it[2] == 'Cleanup' }[3..4] == ['00h 00m 02.000s', '2 / 3']
+assert rows.find { it[2] == 'Result parsing' }[3..4] == ['00h 00m 00.250s', '2 / 3']
+assert rows.find { it[2] == 'Recorded phase subtotal (partial)' }[3] == '01h 01m 17.250s'
+assert rows.find { it[2] == 'Module process wall time (sum)' }[3..4] == ['01h 06m 20.000s', '3 / 3']
+assert rows.find { it[2] == 'Build elapsed outside module processes' }[3] == '00h 00m 20.000s'
+assert rows.find { it[2] == 'Build elapsed (to report)' }[3] == '01h 06m 40.000s'
 assert formatPhaseTimingTable([], 0).contains('0 / 0')
 assert formatPhaseTimingTable([[:]], 10).contains('N/A')
 println table
@@ -340,7 +455,10 @@ println table
     assert post.index("echo formatPhaseTimingTable") < post.index("Post-build Webex")
     fold = source.split("def foldStructuredResults(", 1)[1].split("\n}\n", 1)[0]
     assert '"${row.version_id}|${row.module}|${row.run_id}".toString()' in fold
-    assert "PHASE_TIMING_RESULTS[key] = row.phase_seconds ?: [:]" in fold
+    assert "def phaseSeconds = row.phase_seconds ?: [:]" in fold
+    assert "for (def phaseName : phaseSeconds.keySet())" in fold
+    assert "new LinkedHashMap(" not in fold
+    assert "timing.process_seconds = row.process_seconds" in fold
     assert fold.index("PHASE_TIMING_RESULTS[key]") < fold.index('archiveArtifacts artifacts: skiplistFile')
 
 
@@ -361,7 +479,10 @@ script.MODULE_ACTIVITY_RESULTS.putAll([
     second: [module: 'example', nd: '4.3', round_label: 'eBGP', phase_seconds: [execution: 12, parsing: 0.2]],
     unknown: [module: 'unstarted', nd: '4.3', round_label: 'eBGP']
 ])
-script.PHASE_TIMING_RESULTS.putAll([first: [execution: 2, parsing: 0.1], second: [execution: 12, parsing: 0.2]])
+script.PHASE_TIMING_RESULTS.putAll([
+    first: [execution: 2, parsing: 0.1, process_seconds: 20],
+    second: [execution: 12, parsing: 0.2, process_seconds: 30]
+])
 script.SWITCH_LIFECYCLE_TIMINGS.addAll([
     [nd: '4.3', round: 'eBGP', phase: 'pre', seconds: 123, exit_code: 2],
     [nd: '4.3', round: 'iBGP', phase: 'home', seconds: 1.5, exit_code: null]
@@ -371,17 +492,22 @@ def report = writes['pipeline_timing_build_122.txt']
 assert report != null
 assert report.contains('FINAL TIME BREAKDOWN')
 assert report.contains('Build elapsed (to report)')
-assert report.contains('Phase subtotal is not build wall time')
-assert report.contains('example | ND 4.3 | iBGP | prerequisites: N/A | execution: 00h 00m 02.000s')
-assert report.contains('example | ND 4.3 | eBGP | prerequisites: N/A | execution: 00h 00m 12.000s')
-assert report.indexOf('example | ND 4.3 | eBGP') < report.indexOf('example | ND 4.3 | iBGP')
-assert report.contains('unstarted | ND 4.3 | eBGP | prerequisites: N/A | execution: N/A')
+assert report.contains('Recorded phase subtotal (partial)')
+assert report.contains('Module process wall time (sum)')
+assert report.contains('Build elapsed outside module processes')
+assert report.contains('00h 00m 50.000s')
+def moduleRows = report.substring(report.indexOf('MODULE / ROUND TIMINGS'))
+def ebgpRow = moduleRows.indexOf('example   | 4.3 | eBGP')
+def ibgpRow = moduleRows.indexOf('example   | 4.3 | iBGP')
+assert ebgpRow >= 0 && ibgpRow > ebgpRow
+assert moduleRows.substring(ebgpRow, ibgpRow).contains('00h 00m 12.000s')
+assert moduleRows.substring(ibgpRow).contains('00h 00m 02.000s')
+assert moduleRows.contains('unstarted | 4.3 | eBGP')
 assert report.contains('SWITCH LIFECYCLE INVOCATIONS (wall time; separate from module phase totals)')
-assert report.contains('ND 4.3 | eBGP | pre | 00h 02m 03.000s | exit: 2')
-assert report.contains('ND 4.3 | iBGP | home | 00h 00m 01.500s | exit: unavailable')
+assert report.contains('eBGP  | pre   | 00h 02m 03.000s |    2 |')
+assert report.contains('iBGP  | home  | 00h 00m 01.500s |    - |')
 assert archives.contains('pipeline_timing_build_122.txt')
-assert archives.contains('nd_nightly_logs_build_122.zip')
-assert shells.any { it.contains("'pipeline_timing_build_' + os.environ['BUILD_NUMBER'] + '.txt'") }
+assert !archives.any { it.contains('nd_nightly_logs_build_122.zip') }
 assert script.binding.env.PIPELINE_FAILED != 'true'
 ''')
 
@@ -400,7 +526,7 @@ def row = [version_id: 'ND43', module: 'example', test_type: 'integration', run_
     invocation: [status: scenario == 'success' ? 'OK' : 'FAIL', exit_code: scenario == 'success' ? 0 : 2,
                  counts: [ok: 43, failed: 0, skipped: 2]]]
 script.MODULE_ACTIVITY_RESULTS['planned'] = [module: 'example', test_type: 'integration', result: 'UNKNOWN',
-    coverage: 'UNKNOWN', counts: [:], case_totals: [:], failure: 'awaiting final result']
+    coverage: 'UNKNOWN', counts: [:], case_totals: [:], failure: 'result not collected; awaiting final result']
 script.metaClass.sh = { Object options -> if (scenario == 'null_message') { throw failure }; return '' }
 script.metaClass.readFile = { Map options -> script.writeReportingJson(
     [rows: [row], failed: scenario != 'success', reporting_errors: [], skiplist_file: 'skipped_tests_build_122.txt']) }
@@ -419,7 +545,8 @@ if (scenario == 'null_message') {
     assert caught == null
     def collected = script.MODULE_ACTIVITY_RESULTS['ND43|example|current']
     assert collected.result == (scenario == 'success' ? 'PASS' : 'FAIL')
-    def raw = script.moduleCaseSummaryRows().readLines().find { it.contains('|example|') && !it.contains('awaiting final result') }
+    assert script.MODULE_ACTIVITY_RESULTS['planned'].result == 'NOT_RUN'
+    def raw = script.moduleCaseSummaryRows().readLines().find { it.contains('|example|') && !it.startsWith('NOT_RUN|') }
     assert raw.startsWith((scenario == 'success' ? 'OK' : 'FAIL') + '|example|')
     assert raw.split('\\|', -1)[4..6] == (scenario == 'success' ? ['1', '0', '0'] : ['0', '1', '0'])
     assert collected.case_totals == row.case_totals
@@ -428,77 +555,3 @@ if (scenario == 'null_message') {
     if (scenario == 'nonzero_exit') { assert script.binding.env.PIPELINE_FAILED == 'true' }
 }
 ''')
-
-
-@pytest.mark.parametrize("failure", ["none", "failed", "rescued"])
-def test_real_ansible_target_counts_exclude_pipeline_tasks(tmp_path, monkeypatch, failure):
-    monkeypatch.syspath_prepend(str(ROOT / "playbooks"))
-    from nd_reporting_pipeline import IntegrationRecap
-
-    role = tmp_path / "tests/integration/targets/nd_example/tasks"
-    role.mkdir(parents=True)
-    tasks = [
-        {"name": "target ok", "debug": {"msg": "ok"}},
-        {"name": "target changed", "debug": {"msg": "changed"}, "changed_when": True},
-        {"name": "target skipped", "debug": {"msg": "skip"}, "when": False},
-        {"name": "target ignored", "fail": {"msg": "expected"}, "ignore_errors": True},
-        {"name": "target loop", "debug": {"msg": "item"}, "loop": [1, 2]},
-    ]
-    if failure == "failed":
-        tasks.append({"name": "target failure", "fail": {"msg": "failure"}})
-    elif failure == "rescued":
-        tasks.append({"block": [{"name": "target rescued failure", "fail": {"msg": "failure"}}],
-                      "rescue": [{"name": "target rescue", "debug": {"msg": "rescued"}}]})
-    (role / "main.yml").write_text(yaml.safe_dump(tasks))
-    playbook = tmp_path / "run_integration_module.yaml"
-    playbook.write_text(yaml.safe_dump([{
-        "hosts": "localhost", "connection": "local", "gather_facts": False,
-        "tasks": [
-            {"name": "pipeline preparation", "debug": {"msg": "prepare"}},
-            {"name": "begin execution", "debug": {"msg": "begin"}, "tags": ["nd_phase_execution"]},
-            {"block": [{"name": "run target", "include_role": {"name": "nd_example"}}],
-             "always": [{"name": "pipeline cleanup", "debug": {"msg": "cleanup"}, "tags": ["nd_phase_cleanup"]}]},
-        ],
-    }]))
-    log = tmp_path / "local.txt"
-    environment = dict(os.environ, ANSIBLE_STDOUT_CALLBACK="nd_report",
-                       ANSIBLE_CALLBACK_PLUGINS=str(ROOT / "playbooks"),
-                       ANSIBLE_ROLES_PATH=str(role.parents[1]),
-                       ND_RESULT_LOG=str(log), TEST_RUN_MARKER="current", ND_RESULT_MODULE="nd_example",
-                       ND_RESULT_PHASE="prerequisites", ANSIBLE_NOCOLOR="1", ANSIBLE_VERBOSITY="0")
-    command = str(Path(sys.executable).parent / "ansible-playbook")
-    completed = subprocess.run([command, "-i", "localhost,", str(playbook)], env=environment,
-                               capture_output=True, text=True, timeout=30)
-    assert completed.returncode == (2 if failure == "failed" else 0), completed.stdout + completed.stderr
-    recap = IntegrationRecap("nd_example")
-    for line in Path(str(log) + ".events.jsonl").read_text().splitlines():
-        recap.observe(json.loads(line))
-    counts = json.loads(Path(str(log) + ".event-summary.json").read_text())["counts"]
-    if failure == "rescued":
-        assert counts["rescued"] == 1
-        assert recap.result(counts) is None
-    else:
-        assert recap.result(counts) == {"scope": "integration_target", "counts": {
-            "ok": 4, "changed": 1, "unreachable": 0, "failed": int(failure == "failed"),
-            "skipped": 1, "rescued": 0, "ignored": 1}}
-    assert counts["ok"] > 4
-
-
-@pytest.mark.parametrize("missing_changed,rescued,other_path", [(True, False, False), (False, True, False), (False, False, True)])
-def test_scoped_counts_are_unavailable_for_ambiguous_evidence(monkeypatch, missing_changed, rescued, other_path):
-    monkeypatch.syspath_prepend(str(ROOT / "playbooks"))
-    from nd_reporting_pipeline import IntegrationRecap
-
-    recap = IntegrationRecap("nd_example")
-    event = {"kind": "outcome", "outcome": "ok", "terminal": True, "task_uuid": "task",
-             "task_instance": 1, "host": "localhost", "phase": "execution",
-             "path": "tests/integration/targets/nd_example/tasks/main.yaml", "changed": False}
-    if missing_changed:
-        event.pop("changed")
-    if other_path:
-        event["path"] = "other/tasks/main.yaml"
-    recap.observe(event)
-    counts = dict.fromkeys(REPORT.COUNTERS, 0)
-    counts["ok"] = 1
-    counts["rescued"] = int(rescued)
-    assert recap.result(counts) is None

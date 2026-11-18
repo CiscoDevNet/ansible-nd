@@ -18,6 +18,7 @@ CAPABILITY = (
     re.compile(r"virtual[ _-]+peer[ _-]*link|vpc[ _-]+fabric[ _-]+peering", re.I),
     re.compile(r"not supported|unsupported|does not support", re.I),
 )
+PREREQUISITE_FAILURE = re.compile(r"(NDP_PREREQUISITE_FAILED_CONTINUING|NDP_PREREQUISITE_STATUS: FAILED)[^\"]{0,280}")
 
 
 def atomic_json(path, value):
@@ -44,6 +45,7 @@ def parse_log(stream, run_id):
     task_name = ""
     failure_tasks = []
     capability_tasks = []
+    prerequisite_failures = []
     failure_evidence = None
 
     def finish_failure():
@@ -103,6 +105,11 @@ def parse_log(stream, run_id):
             in_recap = False
         if "NDP_MODULE_SKIPPED" in line and not line.startswith("TASK ["):
             skipped = True
+        prerequisite = None if line.startswith("TASK [") else PREREQUISITE_FAILURE.search(line)
+        if prerequisite:
+            text = " ".join(prerequisite.group(0).split())[:300]
+            if text not in prerequisite_failures and len(prerequisite_failures) < 20:
+                prerequisite_failures.append(text)
     finish_failure()
     errors = []
     if not run_id or markers.get("RUN_MARKER") != run_id or conflicting_run:
@@ -122,15 +129,17 @@ def parse_log(stream, run_id):
     if "TIMESTAMP_END" not in numeric:
         errors.append("execution did not complete")
     exit_code = numeric.get("ANSIBLE_EXIT_STATUS", 0)
-    failed = bool(exit_code or counts["failed"] or counts["unreachable"])
-    status = "ERR" if errors else "FAIL" if failed else "SKIP" if skipped else "OK"
+    failed = counts["failed"] > 0 or counts["unreachable"] > 0
+    status = "ERR" if errors else "FAIL" if failed else "OK"
     return {
         "schema_version": 1, "run_id": run_id, "status": status, "counts": counts,
         "exit_code": exit_code, "failure_tasks": failure_tasks, "started_at": numeric.get("TIMESTAMP_START"),
         "capability_tasks": capability_tasks,
+        "prerequisite_status": "FAILED" if prerequisite_failures else "OK",
+        "prerequisite_failures": prerequisite_failures,
         "ended_at": numeric.get("TIMESTAMP_END"), "duration_seconds": numeric.get("DURATION_SECONDS"),
-        "reason": "; ".join(errors) if errors else "Ansible execution failed" if failed else
-        "Declared lab substrate unavailable" if skipped else "",
+        "reason": "; ".join(errors) if errors else "PLAY RECAP reported failed tasks" if failed else
+        "Ansible exited nonzero after a clean PLAY RECAP" if exit_code else "",
     }
 
 
@@ -169,8 +178,11 @@ def summarize(log, module, run_id, require_execution=False):
         result["phase_seconds"].update(phases["phase_seconds"])
         result["phase_scope"] = phases.get("scope")
         result["phases_completed"] = phases.get("completed", False)
-        if phases.get("module_skipped") and result["status"] == "OK":
-            result.update(status="SKIP", reason="Declared lab substrate unavailable")
+        for text in phases.get("prerequisite_failures") or []:
+            if isinstance(text, str) and text not in result["prerequisite_failures"] and len(result["prerequisite_failures"]) < 20:
+                result["prerequisite_failures"].append(text[:300])
+        if result["prerequisite_failures"]:
+            result["prerequisite_status"] = "FAILED"
     if execution_path.exists():
         guard_seconds = execution.get("prerequisite_guard_seconds", 0)
         result["prerequisite_guard_seconds"] = guard_seconds

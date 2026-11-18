@@ -281,7 +281,7 @@ assert caught != null && caught.is(errors[scenario.expected])
 
 @pytest.mark.parametrize('primary_site, primary_kind, secondary_site, secondary_kind, expected', [
     ('round', 'flow', 'home', 'ordinary', 'primary'),
-    ('round', 'ordinary', 'home', 'ordinary', 'primary'),
+    ('round', 'ordinary', 'home', 'ordinary', 'none'),
     ('round', 'ordinary', 'home', 'flow', 'secondary'),
     ('home', 'flow', 'record', 'ordinary', 'primary'),
     ('round', 'flow', 'aggregate', 'ordinary', 'primary'),
@@ -316,14 +316,16 @@ script.metaClass.publishModuleActivityReport = { -> calls.add('activity'); failA
 script.metaClass.bundleAllLogs = { -> calls.add('bundle') }
 def caught = null
 try { script.run() } catch (Exception e) { caught = e }
-assert caught != null && caught.is(scenario.expected == 'primary' ? primary : secondary)
+// Ordinary round and home failures are recorded without stopping the build.
+if (scenario.expected == 'none') { assert caught == null : caught }
+else { assert caught != null && caught.is(scenario.expected == 'primary' ? primary : secondary) }
 assert calls.contains('home')
 assert calls.any { it.startsWith('finish:') }
 if (scenario.primary_site == 'round' && scenario.primary_kind in ['flow', 'java']) { assert calls.contains('finish:interrupted') }
 assert calls.contains('aggregate') && calls.contains('activity')
 assert calls.indexOf('raw-logs') < calls.indexOf('aggregate')
 assert calls.contains('bundle')
-if (scenario.primary_site == 'round') { assert !calls.contains('round:eBGP') }
+if (scenario.primary_site == 'round') { assert calls.contains('round:eBGP') == (scenario.primary_kind == 'ordinary') }
 '''
     groovy_runner(body)
 

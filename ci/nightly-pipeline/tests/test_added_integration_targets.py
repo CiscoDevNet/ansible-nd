@@ -16,6 +16,7 @@ captured from the live lab, so every guard is proven offline.
 """
 import pathlib
 import re
+import subprocess
 import sys
 
 import pytest
@@ -95,25 +96,6 @@ def switch(ip, serial, mode="normal", intended=None, sync="inSync", role="leaf")
         "fabricManagementIp": ip, "switchId": serial, "serialNumber": serial, "switchRole": role,
         "additionalData": {"systemMode": mode, "intendedSystemMode": intended or mode, "configSyncStatus": sync},
     }
-
-
-def jenkins_skip_note(test_output):
-    """Extract a bounded skip marker from the synthetic debug-output fixtures."""
-    idx = test_output.find("NDP_MODULE_SKIPPED")
-    assert idx >= 0
-    tail = test_output[idx: idx + 420].replace("\r", " ").replace("\n", " ")
-    tail = re.sub(r"\s+", " ", tail)
-    cut = len(tail)
-    for token in ("'", " Read `", " TASK [", " PLAY ["):
-        position = tail.find(token, 20)
-        if 0 < position < cut:
-            cut = position
-    note = tail[:cut].replace("|", "/").strip()
-    return note[:200]
-
-
-def ansible_debug_output(task_name, message, following="TASK [[x] SETUP - end the play cleanly]"):
-    return f'TASK [{task_name}] ***\nok: [nd_controller] => {{\n    "msg": "{message}"\n}}\n\n{following} ***\n'
 
 
 @pytest.fixture
@@ -293,8 +275,23 @@ def test_the_runner_runs_the_upstream_target_for_every_new_module():
     include = task("include collection target (all configured cases)")
     for module in NEW_MODULES:
         assert module not in include["when"], module
+        assert runs(include, {"test_module": "nd_manage_tor"})
         assert runs(include, {"test_module": module})
-    assert runs(include, {"test_module": "nd_manage_tor"})
+
+
+@pytest.mark.parametrize("module,base", [
+    ("nd_interface_port_channel_access", 10),
+    ("nd_interface_port_channel_trunk_host", 14),
+    ("nd_interface_port_channel_routed", 18),
+])
+def test_manual_port_channel_arguments_execute_with_disjoint_pools(module, base):
+    source = (ROOT / "run_all_integ.sh").read_text(encoding="utf-8")
+    function = source.split("module_extra_vars() {", 1)[1].split("\n}", 1)[0]
+    command = "FABRIC_NAME=fixture\nND_INTERFACE_TEST_SWITCH_IP=192.0.2.1\nmodule_extra_vars() {" + function + "\n}\nmodule_extra_vars \"$1\""
+    result = subprocess.run(["bash", "-c", command, "manual-mapping", module],
+                            text=True, capture_output=True, timeout=5, check=True)
+    for offset, member in enumerate("abcd"):
+        assert f"-e nd_test_pc_member_{member}=Ethernet1/{base + offset}" in result.stdout
 
 
 # --- nd_local_user guard --------------------------------------------------------------------------------------------
@@ -308,94 +305,102 @@ def local_user_context(logins):
     return context
 
 
-@pytest.mark.parametrize("logins, expected_foreign, skips", [
-    (["admin"], [], False),
-    (["admin", *OWN_LOGINS], [], False),
-    (["admin", "ansible_local_user_2"], [], False),
-    (["admin", "bob"], ["bob"], True),
-    (["admin", "ansible_local_user", "ops_team", "bob"], ["ops_team", "bob"], True),
-    ([], [], True),
-    (["bob"], ["bob"], True),
+@pytest.mark.parametrize("logins, expected_foreign", [
+    (["admin"], []),
+    (["admin", *OWN_LOGINS], []),
+    (["admin", "ansible_local_user_2"], []),
+    (["admin", "bob"], ["bob"]),
+    (["admin", "ansible_local_user", "ops_team", "bob"], ["ops_team", "bob"]),
+    ([], []),
+    (["bob"], ["bob"]),
 ])
-def test_the_local_user_guard_starts_only_when_admin_is_the_sole_foreign_free_account(logins, expected_foreign, skips):
+def test_the_local_user_precheck_records_foreign_logins_and_the_target_still_runs(logins, expected_foreign):
     context = local_user_context(logins)
     assert context["_ndp_lu_foreign"] == expected_foreign
-    assert runs(task("SETUP - end the play cleanly before any local user is touched"), context) is skips
-    assert runs(task("SETUP - report nd_local_user as skipped when other local users exist"), context) is skips
+    assert runs(task("include collection target (all configured cases)"), context)
 
 
-def test_the_local_user_guard_reads_before_it_decides_and_fails_closed_on_api_errors():
+def test_the_local_user_read_is_best_effort_and_masked():
     read = task("SETUP - read the controller local users")
     assert read["cisco.nd.nd_rest"] == {"method": "get", "path": "/api/v1/infra/aaa/localUsers"}
-    # No failed_when/ignore_errors: a controller that cannot be read must fail the module, never run the destructive target.
-    assert "failed_when" not in read and "ignore_errors" not in read
+    assert read["failed_when"] is False
     assert read["no_log"] is True and read["check_mode"] is False
 
 
-def test_the_local_user_guard_does_nothing_for_other_modules_and_in_audit_mode():
+def test_the_local_user_precheck_does_nothing_for_other_modules_and_in_audit_mode():
     for context in (
         {"test_module": "nd_manage_tor", "nd_prerequisite_only": False},
         {"test_module": "nd_local_user", "nd_prerequisite_only": True},
     ):
-        for fragment in (
-            "SETUP - read the controller local users", "SETUP - find the logins this test does not own",
-            "SETUP - report nd_local_user as skipped when other local users exist",
-            "SETUP - end the play cleanly before any local user is touched",
-        ):
+        for fragment in ("SETUP - read the controller local users", "SETUP - find the logins this test does not own"):
             assert not runs(task(fragment), context), (context, fragment)
 
 
-def test_the_local_user_skip_message_is_greppable_and_yields_a_clean_jenkins_note():
-    report = task("SETUP - report nd_local_user as skipped when other local users exist")
-    context = local_user_context(["admin", "bob", "ops_team"])
-    message = render_text(report["ansible.builtin.debug"]["msg"], context)
-    assert message.startswith("NDP_MODULE_SKIPPED [integration.nd_local_user]: ")
-    assert "bob, ops_team" in message
-    # The Jenkins skip-note parser cuts at the first apostrophe, so none may precede the Read pointer.
-    assert "'" not in message.split(" Read `", 1)[0]
-    note = jenkins_skip_note(ansible_debug_output(report["name"], message))
-    assert note == (
-        "NDP_MODULE_SKIPPED [integration.nd_local_user]: local users besides admin exist (bob, ops_team); "
-        "the overridden step of the target would delete them."
-    )
-    assert len(note) < 200 and "\"" not in note and "}" not in note
-
-    no_admin = local_user_context(["ops"])
-    no_admin["_ndp_lu_foreign"] = []
-    assert "no local user named admin" in render_text(report["ansible.builtin.debug"]["msg"], no_admin)
-
-
-def test_the_skip_ends_the_play_before_any_target_task_so_no_account_is_touched():
+def test_no_precheck_skips_ends_or_fails_a_selected_module():
+    assert "NDP_MODULE_SKIPPED" not in RUNNER_PATH.read_text(encoding="utf-8")
     play = runner_play()
+    every_task = list(walk(play["pre_tasks"] + play["tasks"] + play["post_tasks"]))
+    assert not any("ansible.builtin.meta" in item or "ansible.builtin.fail" in item for item in every_task)
     names = [str(item.get("name", "")) for item in play["tasks"]]
-    skip = next(index for index, name in enumerate(names) if "end the play cleanly before any local user is touched" in name)
+    local_users = next(index for index, name in enumerate(names) if "read the controller local users" in name)
     update_groups = next(index for index, name in enumerate(names) if "precheck the update-group topology" in name)
     setup = next(index for index, name in enumerate(names) if "run target setup/prepare first" in name)
     run_block = next(index for index, name in enumerate(names) if "RUN full integration suite" in name)
-    assert skip < setup < run_block
+    assert local_users < setup < run_block
     assert update_groups < setup
-    assert play["tasks"][skip]["ansible.builtin.meta"] == "end_play"
-    inner = task("SETUP - end the play cleanly before any update group is touched")
-    assert inner["ansible.builtin.meta"] == "end_play"
 
 
-def test_continuing_rescues_never_wrap_the_guards_that_protect_foreign_objects():
+def test_continuing_rescues_report_the_failed_prerequisite_and_the_play_never_fails():
     play = runner_play()
-    names = [str(item.get("name", "")) for item in play["tasks"]]
-    for guard in ("read the controller local users", "end the play cleanly before any local user is touched",
-                  "precheck the update-group topology"):
-        index = next(i for i, name in enumerate(names) if guard in name)
-        assert "rescue" not in play["tasks"][index], guard
     continuing = [item for item in play["pre_tasks"] + play["tasks"] if "rescue" in item]
     assert {item["name"].split("] ", 1)[1] for item in continuing} == {
         "prepare and verify declared prerequisites",
         "SETUP - prepare module-specific pipeline fixtures",
         "SETUP - precheck the maintenance-mode switches",
+        "SETUP - run target setup/prepare first (names vary)",
     }
     for item in continuing:
         assert not any("ansible.builtin.fail" in step or "ansible.builtin.meta" in step for step in item["rescue"])
+        assert any("NDP_PREREQUISITE_FAILED_CONTINUING" in str(step.get("ansible.builtin.debug", {}).get("msg", ""))
+                   for step in item["rescue"])
     final = play["post_tasks"][0]
-    assert "_ndp_continued_failures" in final["when"] and "ansible.builtin.fail" in final
+    assert "_ndp_continued_failures" in str(final["when"])
+    assert "ansible.builtin.fail" not in final
+    assert "NDP_PREREQUISITE_STATUS: FAILED" in final["ansible.builtin.debug"]["msg"]
+
+
+def test_pipeline_setup_failure_is_rescued_without_suppressing_collection_checks():
+    play = runner_play()
+    setup = task("SETUP - run target setup/prepare first")
+    suite = task("RUN full integration suite")
+    assert play["tasks"].index(setup) < play["tasks"].index(suite)
+    assert setup["block"][0]["ansible.builtin.include_role"] == {
+        "name": "{{ test_module }}", "tasks_from": "{{ _ndp_setup_file }}",
+    }
+    assert setup["rescue"]
+    for step in [suite, *walk(suite["block"])]:
+        assert not {"rescue", "ignore_errors", "failed_when"}.intersection(step)
+        assert "apply" not in step.get("ansible.builtin.include_role", {})
+    context = {"test_module": "fixture", "ansible_failed_task": {"name": "failed setup check"}}
+    message = render_text(
+        task("SETUP - report target setup failure and continue")["ansible.builtin.debug"]["msg"], context
+    )
+    assert "NDP_PREREQUISITE_FAILED_CONTINUING" in message
+    assert "failed setup check" in message
+
+
+@pytest.mark.parametrize("setup_file, importers, audit, expected", [
+    ("setup.yaml", 0, False, True),
+    ("setup.yaml", 1, False, False),
+    ("", 0, False, False),
+    ("setup.yaml", 0, True, False),
+])
+def test_pipeline_setup_wrapper_preserves_collection_owned_setup(setup_file, importers, audit, expected):
+    assert runs(task("SETUP - run target setup/prepare first"), {
+        "_ndp_setup_file": setup_file,
+        "_ndp_setup_importers": {"matched": importers},
+        "nd_prerequisite_only": audit,
+    }) is expected
 
 
 def test_the_local_user_cleanup_deletes_only_the_three_test_logins_and_only_after_a_passed_guard():
@@ -562,19 +567,24 @@ def update_group_context(groups, present=(LEAF3_IP, LEAF4_IP, SPINE_IP)):
     return context
 
 
-@pytest.mark.parametrize("groups, foreign, skips", [
-    ([DEFAULT_GROUP], [], False),                                    # the live lab today: only ND's built-in default group
-    ([], [], False),
-    ([DEFAULT_GROUP, {"updateGroupName": "ansible_leaf_group"}, {"updateGroupName": "ansible_spine_group"}], [], False),
-    ([DEFAULT_GROUP, {"updateGroupName": "release_wave_1"}], ["release_wave_1"], True),
-    ([DEFAULT_GROUP, {"updateGroupName": "ansible_leaf_group"}, {"updateGroupName": "leaf"}, {"updateGroupName": "spine"}], ["leaf", "spine"], True),
-    ([DEFAULT_GROUP, {"updateGroupSwitches": ["S1"]}], [], False),    # an entry without a name is not a group anyone owns
+@pytest.mark.parametrize("groups, foreign", [
+    ([DEFAULT_GROUP], []),                                    # the live lab today: only ND's built-in default group
+    ([], []),
+    ([DEFAULT_GROUP, {"updateGroupName": "ansible_leaf_group"}, {"updateGroupName": "ansible_spine_group"}], []),
+    ([DEFAULT_GROUP, {"updateGroupName": "release_wave_1"}], ["release_wave_1"]),
+    ([DEFAULT_GROUP, {"updateGroupName": "ansible_leaf_group"}, {"updateGroupName": "leaf"}, {"updateGroupName": "spine"}], ["leaf", "spine"]),
+    ([DEFAULT_GROUP, {"updateGroupSwitches": ["S1"]}], []),    # an entry without a name is not a group anyone owns
 ])
-def test_the_update_group_guard_starts_only_without_foreign_groups(groups, foreign, skips):
+def test_the_update_group_precheck_reports_foreign_groups_and_continues(groups, foreign):
     context = update_group_context(groups)
     assert context["_ndp_ug_foreign"] == foreign
-    assert runs(task("SETUP - end the play cleanly before any update group is touched"), context) is skips
-    assert runs(task("SETUP - report nd_fabric_update_group as skipped when other update groups exist"), context) is skips
+    report = task("SETUP - report unexpected update groups and continue")
+    assert runs(report, context) is bool(foreign)
+    if foreign:
+        message = render_text(report["ansible.builtin.debug"]["msg"], context)
+        assert message.startswith("NDP_PREREQUISITE_FAILED_CONTINUING [nd_fabric_update_group]: ")
+        assert all(name in message for name in foreign)
+    assert runs(task("include collection target (all configured cases)"), context)
 
 
 def test_the_update_group_guard_requires_all_three_switches_in_the_fabric():
@@ -584,29 +594,18 @@ def test_the_update_group_guard_requires_all_three_switches_in_the_fabric():
     assert "NDP_UPDATE_GROUP_PRECHECK_FAIL" in assertion["fail_msg"]
 
 
-def test_the_update_group_skip_message_yields_a_clean_jenkins_note():
-    report = task("SETUP - report nd_fabric_update_group as skipped when other update groups exist")
-    context = update_group_context([DEFAULT_GROUP, {"updateGroupName": "release_wave_1"}])
-    message = render_text(report["ansible.builtin.debug"]["msg"], context)
-    assert message.startswith("NDP_MODULE_SKIPPED [integration.nd_fabric_update_group]: ")
-    assert "'" not in message.split(" Read `", 1)[0]
-    note = jenkins_skip_note(ansible_debug_output(report["name"], message))
-    assert note == (
-        "NDP_MODULE_SKIPPED [integration.nd_fabric_update_group]: update groups besides the default one exist (release_wave_1); "
-        "the overridden and auto-assign steps of the target would delete or regroup them."
-    )
-    assert len(note) < 200
-
-
-def test_the_update_group_guard_is_read_only_and_ordered_before_any_target_task():
+def test_the_update_group_precheck_is_read_only_best_effort_and_ordered_before_any_target_task():
     block = task("SETUP - precheck the update-group topology")
     assert not runs(block, {"test_module": "nd_manage_tor", "nd_prerequisite_only": False})
     assert not runs(block, {"test_module": "nd_fabric_update_group", "nd_prerequisite_only": True})
+    assert "rescue" not in block
     for inner in block["block"]:
         arguments = inner.get("cisco.nd.nd_rest")
         if arguments:
             assert arguments["method"] == "get" and arguments["path"].startswith("/api/v1/manage/fabrics/")
-            assert "failed_when" not in inner and "ignore_errors" not in inner
+            assert inner["failed_when"] is False
+        if "ansible.builtin.assert" in inner:
+            assert inner["ignore_errors"] is True
     names = [str(item.get("name", "")) for item in runner_play()["tasks"]]
     assert names.index("[{{ test_module }}] SETUP - precheck the update-group topology") < next(
         index for index, name in enumerate(names) if "RUN full integration suite" in name

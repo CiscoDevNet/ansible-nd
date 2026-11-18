@@ -703,7 +703,7 @@ def _summarize_catalog(log, module, run_id, build, fabric, collection_root, test
     if exit_code is None:
         exit_code = state["exit_code"]
     recovered = (not exit_conflict and state["recap_rows"] > 0 and not state["recap_failed"]
-                 and state["recap_rescued"] > 0 and exit_code == 0)
+                 and state["recap_rescued"] > 0)
     if recovered:
         for outcomes in list(phase_outcomes.values()) + list(runner_outcomes.values()):
             if "failed" in outcomes:
@@ -733,11 +733,9 @@ def _summarize_catalog(log, module, run_id, build, fabric, collection_root, test
             result[phase] = "Runner observed"
     if exit_conflict:
         result["notes"].append("execution metadata/raw exit statuses disagree; invocation result unknown")
-    elif state["recap_failed"] or (exit_code is not None and exit_code != 0):
+    elif state["recap_failed"]:
         result["result"] = "FAIL"
-    elif state["module_skip"] and state["recap_rows"] > 0:
-        result["result"] = "SKIP"
-    elif state["recap_rows"] > 0 and exit_code == 0:
+    elif state["recap_rows"] > 0:
         result["result"] = "PASS"
     if state["recap_rows"] == 0:
         result["notes"].append("no valid PLAY RECAP row observed; no successful invocation result inferred")

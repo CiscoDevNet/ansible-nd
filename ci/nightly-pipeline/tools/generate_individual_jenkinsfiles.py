@@ -72,6 +72,34 @@ def render(source, target):
         result, count = selector_pattern(name).subn(lambda match: replacement, result)
         if count != 1:
             raise ValueError('Expected exactly one selector: ' + name)
+    if target == 'nd_interface_port_channel_routed':
+        # Preserve the existing issue #652 diagnostic without enabling it for other jobs.
+        hook = """                                        nd_interface_port_channel_routed)
+                                            # Issue #652 diagnostic: log ND's delete preview, then run the authored task unchanged.
+                                            if [ -s "${ND_RUNTIME_INPUTS}/pc_routed_preview_action_plugins/normal.py" ] &&
+                                                [ ! -L "${ND_RUNTIME_INPUTS}/pc_routed_preview_action_plugins/normal.py" ]; then
+                                                result_compat_env=(env "ANSIBLE_ACTION_PLUGINS=${ND_RUNTIME_INPUTS}/pc_routed_preview_action_plugins${ANSIBLE_ACTION_PLUGINS:+:${ANSIBLE_ACTION_PLUGINS}}")
+                                                result_compat_args=(-e '{"nd_pipeline_pc_routed_preview_capture":true}')
+                                            else
+                                                echo 'NDP_PC_ROUTED_DELETE_PREVIEW_UNAVAILABLE reason=hook file missing'
+                                            fi
+                                            ;;
+"""
+        replacements = (
+            ("    'compat_action_plugins/normal.py',\n",
+             "    'compat_action_plugins/normal.py',\n    'pc_routed_preview_action_plugins/normal.py',\n"),
+            ("!it.startsWith('compat_action_plugins/')",
+             "!it.startsWith('compat_action_plugins/') && !it.startsWith('pc_routed_preview_action_plugins/')"),
+            ("""                                            result_compat_args=(-e '{"nd_pipeline_community_timeout_compat":true,"ansible_command_timeout":300}')
+                                            ;;
+""", """                                            result_compat_args=(-e '{"nd_pipeline_community_timeout_compat":true,"ansible_command_timeout":300}')
+                                            ;;
+""" + hook),
+        )
+        for before, after in replacements:
+            if result.count(before) != 1:
+                raise ValueError('Expected exactly one routed-preview hook anchor: ' + before.strip())
+            result = result.replace(before, after)
     return '\n'.join(line.rstrip() for line in result.splitlines()) + '\n'
 
 

@@ -1,5 +1,8 @@
 """Verify isolated target selection without changing the shared pipeline."""
 
+import base64
+import gzip
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -40,6 +43,13 @@ def test_each_script_selects_only_its_target_and_private_webex(source, target):
         '"${WEBEX_ROOM_ID_PRIVATE}"     // Private space']
     assert 'for m in ${ORDERED_INTEGRATION_LIST}; do' in script
     assert all(line == line.rstrip() for line in script.splitlines())
+    if target == 'nd_interface_port_channel_routed':
+        assert "'pc_routed_preview_action_plugins/normal.py'," in script
+        assert "!it.startsWith('pc_routed_preview_action_plugins/')" in script
+        assert 'nd_pipeline_pc_routed_preview_capture":true' in script
+        assert 'NDP_PC_ROUTED_DELETE_PREVIEW_UNAVAILABLE' in script
+    else:
+        assert 'pc_routed_preview_action_plugins' not in script
     if target.startswith('nd_vpc_pair.'):
         assert script.count('orderedIntegrationTargets.addAll(standaloneTargets)') == 1
         assert '    targets.addAll(pairRows.collect { "nd_vpc_pair.${it.id}".toString() })' in script
@@ -56,6 +66,11 @@ def test_each_script_selects_only_its_target_and_private_webex(source, target):
 @pytest.mark.parametrize('target', generator.TARGETS)
 def test_template_is_preserved_outside_selection(source, target):
     rendered = generator.render(source, target)
+    if target == 'nd_interface_port_channel_routed':
+        rendered = rendered.replace("    'pc_routed_preview_action_plugins/normal.py',\n", '')
+        rendered = rendered.replace(" && !it.startsWith('pc_routed_preview_action_plugins/')", '')
+        rendered = re.sub(r'^ {40}nd_interface_port_channel_routed\)\n.*?^ {44};;\n', '',
+                          rendered, flags=re.M | re.S)
     for name in generator.SELECTORS:
         rendered = generator.selector_pattern(name).sub('SELECTION_' + name, rendered)
         source = generator.selector_pattern(name).sub('SELECTION_' + name, source)
@@ -79,6 +94,29 @@ def test_generate_all_34_scripts_with_manifest_and_non_destructive_recheck(tmp_p
 
 def test_workspace_individual_jenkinsfiles_match_the_current_template():
     generator.generate(check=True)
+
+
+def test_sync_recovery_runtime_and_control_reach_all_jobs():
+    jobs = [ROOT / name for name in (
+        'Jenkinsfile_nd_jenkins_script',
+        'Jenkinsfile_nd_jenkins_script_temp_switches',
+        'Jenkinsfile_nd_jenkins_script_comm_list',
+    )] + sorted((ROOT / 'individual_jenkinsfiles').glob('Jenkinsfile_*'))
+    assert len(jobs) == 37
+    for job in jobs:
+        script = job.read_text()
+        assert script.count("booleanParam(name: 'ND_INTERFACE_BASELINE_RECOVER_SYNC', defaultValue: true,") == 1, job.name
+        assert "?: EMBEDDED_INTERFACE_HELPERS[fileName.toString()]" in script, job.name
+        assert "|| EMBEDDED_INTERFACE_HELPERS.containsKey(fileName.toString())" in script, job.name
+        for key in ('action_plugins/nd_interface_baseline.py', 'nd_prerequisite/interface_baseline.yaml'):
+            pattern = r"'" + re.escape(key) + r"': \[sha256: '([0-9a-f]{64})', bytes: (\d+), gzipBase64: '([^']+)'\]"
+            matches = re.findall(pattern, script)
+            assert len(matches) == 1, (job.name, key)
+            digest, size, encoded = matches[0]
+            decoded = gzip.decompress(base64.b64decode(encoded, validate=True))
+            assert decoded == (ROOT / 'playbooks' / key).read_bytes(), (job.name, key)
+            assert hashlib.sha256(decoded).hexdigest() == digest, (job.name, key)
+            assert len(decoded) == int(size), (job.name, key)
 
 
 def test_public_destination_and_template_drift_fail_closed(source):

@@ -2823,6 +2823,8 @@
 
     - name: Run NDP_INTERFACE_BASELINE_HOOK after membership and readiness recovery
       ansible.builtin.include_tasks: "{{ playbook_dir }}/nd_prerequisite/interface_baseline.yaml"
+      vars:
+        nd_interface_baseline_audit_advisory: true
       when: nd_interface_baseline_enabled | default(false) | bool
 
     - name: Audit-only notice when switches are missing but apply is off

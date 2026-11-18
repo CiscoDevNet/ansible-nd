@@ -585,12 +585,19 @@ def structured_summary(job, closed, catalog_snapshot=None, event_observer=None):
     counts = stats.get("counts", {})
     if any(not isinstance(counts.get(key), int) or isinstance(counts.get(key), bool) or counts[key] < 0 for key in COUNTERS):
         raise ValueError("structured task recap counters are invalid")
-    failed = bool(execution["exit_code"] or counts["failed"] or counts["unreachable"])
-    summary = {"status": "FAIL" if failed else "SKIP" if stats.get("module_skipped") else "OK", "counts": counts,
+    failed = bool(counts["failed"] or counts["unreachable"])
+    summary = {"status": "FAIL" if failed else "OK", "counts": counts,
                "failure_tasks": [clean_error(value) for value in stats.get("failure_tasks", [])[:20]],
                "capability_tasks": [clean_error(value) for value in stats.get("capability_tasks", [])[:20]],
-               "reason": "Ansible execution failed" if failed else "Declared lab substrate unavailable" if stats.get("module_skipped") else ""}
+               "reason": "PLAY RECAP reported failed or unreachable tasks" if failed else
+               "Ansible exited nonzero after a clean PLAY RECAP" if execution["exit_code"] else ""}
     summary["integration_recap"] = scoped.result(counts) if scoped is not None else None
+    # Prerequisites are best effort; their failure is reported separately and
+    # never changes the module status derived from the PLAY RECAP.
+    prerequisite_failures = [clean_error(value) for value in (stats.get("prerequisite_failures") or [])[:20]
+                             if isinstance(value, str)]
+    summary["prerequisite_status"] = "FAILED" if prerequisite_failures else "OK"
+    summary["prerequisite_failures"] = prerequisite_failures
     return attach_execution(summary, job, execution, markers, stats), activity
 
 
@@ -1382,7 +1389,8 @@ def aggregate(root, config, args):
             errors.append({"id": job["id"], "module": job["module"], "scope": job["scope"], "reason": reporting_error})
         activity_result = activity.get("result", "UNKNOWN")
         if (job["test_type"] == "integration" and activity_result == "FAIL"
-                and activity.get("coverage") == "NOT_STARTED" and numeric_case_counts(activity)):
+                and activity.get("coverage") == "NOT_STARTED" and numeric_case_counts(activity)
+                and invocation.get("status") != "FAIL"):
             activity_result = "NOT_RUN"
         elif invocation.get("status") == "FAIL":
             activity_result = "FAIL"

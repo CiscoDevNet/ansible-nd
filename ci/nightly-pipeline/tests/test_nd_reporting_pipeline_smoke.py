@@ -140,7 +140,7 @@ def test_preparation_recap_does_not_change_module_task_counts(tmp_path, structur
                                                "skipped": 1, "rescued": 0, "ignored": 0}
 
 
-def test_failed_invocation_before_authored_cases_is_not_run(tmp_path):
+def test_failed_recap_before_authored_cases_is_reported_as_fail(tmp_path):
     _, queue, job, cli = queue_fixture(tmp_path, structured=True)
     cli("finish", "--status", "failed")
     cli("next", "--after-execution")
@@ -152,7 +152,8 @@ def test_failed_invocation_before_authored_cases_is_not_run(tmp_path):
     cli("ack", "--id", job["id"], "--status", "success", "--seconds", "1", "--attempt", "1")
     aggregate = cli("aggregate")
     row = aggregate["rows"][0]
-    assert row["result"] == "NOT_RUN"
+    # Module status follows the PLAY RECAP, even when no authored case started.
+    assert row["result"] == "FAIL"
     assert row["invocation"]["status"] == "FAIL"
     assert row["invocation"]["counts"]["failed"] == 1
     assert aggregate["failed"] is True

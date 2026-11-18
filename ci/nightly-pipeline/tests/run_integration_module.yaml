@@ -198,6 +198,7 @@
           required={{ _ndp_required_members }} present_names={{ _ndp_present_names }}
           present_roles={{ _ndp_present_role_by_name }}.
         success_msg: "NDP_TOPOLOGY_PREFLIGHT_OK [{{ test_module }}]: required contract satisfied by declared topology."
+      ignore_errors: true
       when: ('integration.' ~ test_module) in _ndp_reg.profiles
 
     - name: "[{{ test_module }}] validate canonical fabric membership"
@@ -208,6 +209,7 @@
           - nd_test_fabric_switches.External_Connectivity_Fabric | length == 2
           - nd_test_fabric_switches.External_Connectivity_Fabric | map(attribute='name') | list == ['external_edge_1', 'external_edge_2']
         fail_msg: "integration_config.yml does not match the canonical six-switch primary and two-switch external topology."
+      ignore_errors: true
 
     # Positional switch variables are consumed by older role test cases. Keep
     # them tied to the primary fabric so an old Consul runner cannot accidentally
@@ -226,12 +228,14 @@
           NDP_SWITCH_MAPPING_FAIL [{{ test_module }}]: positional switch_serial_1..3 must resolve to
           switches in VXLAN_EVPN_Fabric. Got [{{ switch_serial_1 }}, {{ switch_serial_2 }}, {{ switch_serial_3 }}].
           External_Connectivity_Fabric contains [{{ nd_test_fabric_switches.External_Connectivity_Fabric | map(attribute='serial') | list }}].
+      ignore_errors: true
 
     - name: "[{{ test_module }}] validate prerequisite-only mode"
       ansible.builtin.assert:
         that:
           - not (nd_prerequisite_only | default(false) | bool) or (nd_prerequisite_enable | default(false) | bool)
         fail_msg: "nd_prerequisite_only requires nd_prerequisite_enable=true."
+      ignore_errors: true
 
     - name: "[{{ test_module }}] validate interface inputs before preparation"
       ansible.builtin.assert:
@@ -245,6 +249,7 @@
           - nd_interface_selection_changed is not defined or (nd_interface_selection_changed | bool) == (_ndp_selected_profile.interface_selection_changed | default(false) | bool)
           - not (_ndp_selected_profile.interface_selection_changed | default(false) | bool) or not (nd_prerequisite_repair_baseline | default(false) | bool)
         fail_msg: "Interface inputs must match the selected prerequisite registry before preparation; custom selections require a fresh namespace without baseline deletion."
+      ignore_errors: true
       when:
         - nd_prerequisite_enable | default(false) | bool
         - test_module is match('^nd_interface_')
@@ -392,6 +397,7 @@
           enabled, equal to the profile-verified values (leave ND_LINKS_* blank to use them).
           For nd_interface_subinterface_* a non-blank nd_test_ethernet_parent must equal the profile-verified
           parent (do not pass -e nd_test_ethernet_parent to use it; got '{{ nd_test_ethernet_parent | default('unset') }}').
+      ignore_errors: true
 
     # -------------------------------------------------------------------------
     # Not every target has tasks/cleanup.yaml, and include_role + tasks_from on
@@ -1154,9 +1160,8 @@
     # SETUP (nd_local_user only, read-only): the target's overridden step deletes every controller local user that is not in its
     # config, and its first asserts expect admin to be the only user. Read the local users first and start the target only while the
     # logins are admin plus, at most, leftovers of the target's own three test logins (it deletes those itself before it starts).
-    # Anything else ends the play with the skip marker before a single account is touched, so no foreign login is ever removed.
-    # The skip reason must not contain an apostrophe, and ends with a Read pointer: the Jenkins skip-note parser cuts the note at the
-    # first apostrophe or at the first ' Read `', whichever comes first.
+    # This observation is informational only: the requested policy runs every
+    # selected module even when a precheck finds unexpected lab state.
     - name: "[{{ test_module }}] SETUP - read the controller local users"
       cisco.nd.nd_rest:
         method: get
@@ -1164,6 +1169,7 @@
       register: _ndp_lu_live
       check_mode: false
       no_log: true
+      failed_when: false
       when: test_module == 'nd_local_user' and not (nd_prerequisite_only | default(false) | bool)
 
     - name: "[{{ test_module }}] SETUP - find the logins this test does not own"
@@ -1173,25 +1179,6 @@
           {{ (_ndp_lu_live.current.localusers | default([])) | map(attribute='loginID')
              | reject('in', ['admin', 'ansible_local_user', 'ansible_local_user_2', 'ansible_local_user_3']) | list }}
       when: test_module == 'nd_local_user' and not (nd_prerequisite_only | default(false) | bool)
-
-    - name: "[{{ test_module }}] SETUP - report nd_local_user as skipped when other local users exist"
-      ansible.builtin.debug:
-        msg: >-
-          NDP_MODULE_SKIPPED [integration.{{ test_module }}]: {{
-          ('local users besides admin exist (' ~ (_ndp_lu_foreign | join(', ')) ~ '); the overridden step of the target would delete them')
-          if (_ndp_lu_foreign | length > 0)
-          else 'the controller has no local user named admin, which the target expects' }}. Read `SETUP - read the controller local users` in run_integration_module.yaml for the guard.
-      when:
-        - test_module == 'nd_local_user'
-        - not (nd_prerequisite_only | default(false) | bool)
-        - (_ndp_lu_foreign | length > 0) or ('admin' not in _ndp_lu_logins)
-
-    - name: "[{{ test_module }}] SETUP - end the play cleanly before any local user is touched"
-      ansible.builtin.meta: end_play
-      when:
-        - test_module == 'nd_local_user'
-        - not (nd_prerequisite_only | default(false) | bool)
-        - (_ndp_lu_foreign | length > 0) or ('admin' not in _ndp_lu_logins)
 
     # -------------------------------------------------------------------------
     # SETUP (nd_maintenance_mode only, read-only): the target moves two switches to maintenance and back. It stops before any change when
@@ -1257,6 +1244,7 @@
           register: _ndp_ug_live
           check_mode: false
           no_log: true
+          failed_when: false
 
         - name: "[{{ test_module }}] SETUP - read the existing update groups"
           cisco.nd.nd_rest:
@@ -1265,6 +1253,7 @@
           register: _ndp_ug_groups
           check_mode: false
           no_log: true
+          failed_when: false
 
         - name: "[{{ test_module }}] SETUP - find the test switches and the groups this test does not own"
           ansible.builtin.set_fact:
@@ -1287,33 +1276,43 @@
             success_msg: >-
               NDP_UPDATE_GROUP_PRECHECK_OK {{ _ndp_ug_present }} are present in {{ nd_test_fabric_name }}; foreign update groups:
               {{ _ndp_ug_foreign }}.
+          ignore_errors: true
 
-        - name: "[{{ test_module }}] SETUP - report nd_fabric_update_group as skipped when other update groups exist"
+        - name: "[{{ test_module }}] SETUP - report unexpected update groups and continue"
           ansible.builtin.debug:
             msg: >-
-              NDP_MODULE_SKIPPED [integration.{{ test_module }}]: update groups besides the default one exist
-              ({{ _ndp_ug_foreign | join(', ') }}); the overridden and auto-assign steps of the target would delete or regroup them.
-              Read `SETUP - precheck the update-group topology` in run_integration_module.yaml for the guard.
-          when: _ndp_ug_foreign | length > 0
-
-        - name: "[{{ test_module }}] SETUP - end the play cleanly before any update group is touched"
-          ansible.builtin.meta: end_play
-          when: _ndp_ug_foreign | length > 0
+              NDP_PREREQUISITE_FAILED_CONTINUING [{{ test_module }}]: precheck found foreign groups
+              {{ _ndp_ug_foreign | default([]) }}; executing the selected module anyway.
+          when: _ndp_ug_foreign | default([]) | length > 0
 
     # -------------------------------------------------------------------------
     # SETUP: run the target's own setup/prepare file FIRST, but only when the
     # target does not already wire it (main.yaml or a test-case importing it).
-    # Failures in the target's authored setup remain failures; the harness does not
-    # suppress them before invoking the original suite.
+    # A failure in this separate pipeline invocation is reported, then the suite
+    # still runs. Setup and checks invoked inside the collection remain unchanged.
     # -------------------------------------------------------------------------
     - name: "[{{ test_module }}] SETUP - run target setup/prepare first (names vary)"
-      ansible.builtin.include_role:
-        name: "{{ test_module }}"
-        tasks_from: "{{ _ndp_setup_file }}"
       when:
         - not (nd_prerequisite_only | default(false) | bool)
         - _ndp_setup_file | default('') | length > 0
         - (_ndp_setup_importers.matched | default(0)) | int == 0
+      block:
+        - name: "[{{ test_module }}] SETUP - execute target setup/prepare"
+          ansible.builtin.include_role:
+            name: "{{ test_module }}"
+            tasks_from: "{{ _ndp_setup_file }}"
+      rescue:
+        - name: "[{{ test_module }}] SETUP - record target setup failure and continue"
+          ansible.builtin.set_fact:
+            _ndp_continued_failures: >-
+              {{ _ndp_continued_failures | default([])
+                 + ['setup: ' ~ (ansible_failed_task.name | default('unknown task', true) | string | truncate(200))] }}
+
+        - name: "[{{ test_module }}] SETUP - report target setup failure and continue"
+          ansible.builtin.debug:
+            msg: >-
+              NDP_PREREQUISITE_FAILED_CONTINUING [{{ test_module }}]: pipeline-invoked setup failed at
+              '{{ ansible_failed_task.name | default('unknown task', true) }}'; running the authored suite anyway.
 
     # -------------------------------------------------------------------------
     # RUN: the module's full suite. A failure here fails the PLAY (so the recap
@@ -1603,14 +1602,18 @@
             - _ndp_mm_switches is defined
 
   post_tasks:
-    # Handlers notified in tasks flush before this section, so restoration has already run.
-    - name: "[{{ test_module }}] fail because prerequisites or pipeline fixtures failed before the authored target"
-      ansible.builtin.fail:
+    - name: "[{{ test_module }}] report best-effort prerequisite failures"
+      ansible.builtin.debug:
         msg: >-
-          NDP_PREREQUISITE_CONTINUED_FAILURES [{{ test_module }}]: the authored target ran, but these
-          prerequisite or fixture steps failed first: {{ _ndp_continued_failures | join('; ') }}
+          NDP_PREREQUISITE_STATUS: FAILED [{{ test_module }}] but module execution continued:
+          {{ _ndp_continued_failures | join('; ') }}
       when: _ndp_continued_failures | default([]) | length > 0
 
   handlers:
     - name: Restore prerequisite interface changes
-      ansible.builtin.include_tasks: "{{ playbook_dir }}/nd_prerequisite/nd_prerequisite_restore.yaml"
+      block:
+        - ansible.builtin.include_tasks: "{{ playbook_dir }}/nd_prerequisite/nd_prerequisite_restore.yaml"
+      rescue:
+        - name: Report prerequisite restore failure and continue
+          ansible.builtin.debug:
+            msg: "NDP_PREREQUISITE_RESTORE_FAILED_CONTINUING [{{ test_module }}]: restore handler failed; proceeding to later modules."

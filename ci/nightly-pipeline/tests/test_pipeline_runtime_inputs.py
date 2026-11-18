@@ -7,7 +7,8 @@ import pytest
 from test_build121_embedded_reporting import groovy_runner
 
 ROOT = Path(__file__).resolve().parents[1]
-VARIANTS = ('Jenkinsfile_nd_jenkins_script',)
+VARIANTS = ('Jenkinsfile_nd_jenkins_script', 'Jenkinsfile_nd_jenkins_script_temp_switches',
+            'Jenkinsfile_nd_jenkins_script_comm_list')
 
 
 @pytest.mark.parametrize('variant', VARIANTS)
@@ -61,10 +62,11 @@ def config = [version: '4.3', versionId: 'fixture', fabric_name: 'fixture', roun
 def failure = null
 try { script.runNDFCVersionTests(config) } catch (Exception e) { failure = e }
 if (!sourceOk) {
-    assert failure != null
-    assert phases.isEmpty() : phases
+    // Never-stop policy: a failed source check is logged and the round still runs.
+    assert failure == null : failure
+    assert phases == ['render', 'inventory', 'pre', 'tests', 'post'] : phases
     assert new File(workspace, 'source-checks').text == 'verified'
-    assert context.REQUIRED_FILES_READY != 'true'
+    assert context.REQUIRED_FILES_READY == 'true'
 } else {
 assert failure == null : failure
 def files = (script.CONSUL_CONFIG_FILES + script.PLAYBOOK_FILES + script.CONSUL_RUNNER_FILES +
@@ -128,9 +130,26 @@ assert context.CONSUL_SYNC_FAILED == 'true'
 ''', jenkinsfile=ROOT / variant)
 
 
+GUARD_CALLS = {
+    'none': ['source', 'source', 'source', 'physical'],
+    'physical': ['source', 'source', 'source', 'physical'],
+    'origin': ['physical'],
+    'source': ['source', 'source', 'source', 'physical'],
+    'preflight': ['source', 'physical', 'source', 'source', 'physical'],
+    'missing': ['source', 'source', 'source'],
+}
+GUARD_WARNINGS = {
+    'origin': 'NDP_SELECTED_SOURCE_ORIGIN_MISMATCH_CONTINUING',
+    'source': 'NDP_SELECTED_SOURCE_VERIFY_FAILED_CONTINUING',
+    'preflight': 'NDP_SWITCH_PREFLIGHT_FAILED_CONTINUING',
+    'physical': 'NDP_SWITCH_GUARD_FAILED',
+    'missing': 'NDP_SWITCH_GUARD_UNAVAILABLE_CONTINUING',
+}
+
+
 @pytest.mark.parametrize('variant', VARIANTS)
 @pytest.mark.parametrize('failure', ('none', 'origin', 'source', 'preflight', 'physical', 'missing'))
-def test_guard_scoping_preserves_integrity_and_physical_failures(tmp_path, variant, failure):
+def test_guard_failures_warn_and_every_target_still_runs(tmp_path, variant, failure):
     source = (ROOT / variant).read_text()
     guard = source.split('                                FIRST_TARGET_GUARD=true', 1)[1].split('                                # nd_vpc_pair', 1)[0]
     collection = tmp_path / 'collection'
@@ -156,6 +175,7 @@ def test_guard_scoping_preserves_integrity_and_physical_failures(tmp_path, varia
                ND_GIT_REPOSITORY='https://github.com/CiscoDevNet/ansible-nd.git',
                CALLS=str(tmp_path / 'calls'), FAILURE=failure,
                ND_SWITCH_PREFLIGHT_READY='false' if failure == 'preflight' else 'true',
+               ND_SWITCH_PREFLIGHT_CONFIRMED='false' if failure == 'preflight' else 'true',
                PATH=str(binary) + os.pathsep + os.environ['PATH'])
     shell = 'set -e\nRUN_FAILURE=0\nFIRST_TARGET_GUARD=true\n' + guard + '''
 SWITCH_GUARD_PLAYBOOK="$COLLECTIONS_DIRECTORY/guard.yaml"
@@ -169,12 +189,11 @@ echo "RUN_FAILURE=$RUN_FAILURE"
     result = subprocess.run(['/bin/bash', '-c', shell], env=env, text=True, capture_output=True)
     calls_file = tmp_path / 'calls'
     calls = calls_file.read_text().splitlines() if calls_file.exists() else []
-    if failure in ('none', 'physical'):
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert calls == ['source', 'source', 'source', 'physical']
-        assert 'REUSED_PREFLIGHT' in result.stdout and 'NOT_APPLICABLE' in result.stdout
-        assert ('RUN_FAILURE=1' if failure == 'physical' else 'RUN_FAILURE=0') in result.stdout
-        assert ('NDP_SWITCH_GUARD_FAILED' in result.stderr) == (failure == 'physical')
-    else:
-        assert result.returncode != 0
-        assert calls == (['source', 'source', 'source'] if failure == 'missing' else [] if failure == 'origin' else ['source'])
+    # Every guard problem is reported and the target still runs.
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == GUARD_CALLS[failure]
+    assert 'NOT_APPLICABLE' in result.stdout
+    assert ('REUSED_PREFLIGHT' in result.stdout) == (failure != 'preflight')
+    assert ('RUN_FAILURE=1' if failure == 'physical' else 'RUN_FAILURE=0') in result.stdout
+    for name, marker in GUARD_WARNINGS.items():
+        assert (marker in result.stderr) == (name == failure), marker

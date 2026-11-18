@@ -154,7 +154,8 @@ script.metaClass.sendWebexNotificationMessages = { Object messages ->
     throw new IllegalStateException('injected delivery failure')
 }
 script.runPostForTest()
-assert attempts == 2
+// Detailed send, one detailed retry, then one minimal fallback.
+assert attempts == 3
 assert sent.isEmpty()
 assert logs.any { it.contains('NDP_WEBEX_NOTIFICATION_FAILED') }
 ''')

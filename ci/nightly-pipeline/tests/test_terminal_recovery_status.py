@@ -113,8 +113,9 @@ else if(scenario=='success'){
     assert caught==null && calls==['reset','inventory','guard']
     assert script.binding.env.HOME_RESTORE_REQUIRED=='false'
 }else{
-    assert caught != null
-    if(scenario!='missing-inputs'){assert caught.is(failure)}
+    // Ordinary home-guard failures are recorded and the build continues; interruptions still propagate.
+    if(scenario in ['ordinary-failure','missing-inputs']){assert caught==null}
+    else{assert caught!=null && caught.is(failure)}
     assert script.binding.env.HOME_RESTORE_REQUIRED=='true'
 }
 ''')

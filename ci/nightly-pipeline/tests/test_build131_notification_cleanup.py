@@ -7,6 +7,145 @@ import pytest
 from test_restored_webex_options import POST, groovy_runner
 
 
+def test_canonical_webex_totals_label_recap_failures_separately():
+    source = (Path(__file__).resolve().parents[1] / 'Jenkinsfile_nd_jenkins_script').read_text()
+    detailed = source.split('def prepareDetailedWebexNotification() {', 1)[1].split('\ndef minimalBuildNotification', 1)[0]
+    fallback = source.split('def minimalBuildNotification(', 1)[1].split('\ndef runLintCheck()', 1)[0]
+    assert detailed.index('webexPlayRecapTotals(') < detailed.index('PLAY RECAP failed tasks: ${recapTotals.failed}')
+    assert detailed.index('${totalLabel} passed cases: ${caseTotals.passed}') < detailed.index('AUTHORED CASE RESULTS:')
+    # The fallback carries the known authored totals only; task recaps never stand in for case counts.
+    assert 'webexPlayRecapTotals(' not in fallback and 'PLAY RECAP' not in fallback
+    assert '${totalLabel} passed cases: ${counts.passed} | failed: ${counts.failed} | skipped: ${counts.skipped}' in fallback
+
+
+def test_all_pipelines_use_only_the_table_for_webex_counts():
+    root = Path(__file__).resolve().parents[1]
+    paths = [root / name for name in ('Jenkinsfile_nd_jenkins_script',
+        'Jenkinsfile_nd_jenkins_script_temp_switches', 'Jenkinsfile_nd_jenkins_script_comm_list')]
+    paths += sorted((root / 'individual_jenkinsfiles').glob('Jenkinsfile_*'))
+    assert len(paths) == 37
+    for path in paths:
+        source = path.read_text()
+        notification = source.split('def webexResultsTable() {', 1)[1].split('\ndef runLintCheck()', 1)[0]
+        # Only the detailed report renders the table; the fallback lists module status lines.
+        assert notification.count('webexResultsTable()') == 1, path
+        assert notification.count('webexCaseReportSummary(rows)') == 2, path
+        assert 'validatedCaseNumber(' not in notification, path
+        assert 'table.substring(0, closingFence + 3)' in notification
+        assert '${totalLabel} passed cases: ${caseTotals.passed} | PLAY RECAP failed tasks: ${recapTotals.failed}' in notification, path
+        assert '${totalLabel} passed cases: ${counts.passed} | failed: ${counts.failed} | skipped: ${counts.skipped}' in notification, path
+        for forbidden in ('INTEG PLAY RECAP COUNTS', 'AUTHORED INTEG TEST CASE COUNTS',
+                'moduleTaskRecapText()', 'modulePlayRecapText()', 'Build result:'):
+            assert forbidden not in notification, (path, forbidden)
+
+
+def test_webex_shows_case_table_without_duplicate_recaps(groovy_runner):
+    groovy_runner(POST + r'''
+script.MODULE_ACTIVITY_RESULTS.putAll([
+    ibgp: [module:'nd_manage_l3out', test_type:'integration', nd:'4.3', scope:'iBGP', round_label:'iBGP',
+        result:'FAIL', coverage:'COMPLETE', validated:true, case_totals:[started:6,passed:5,failed:1,skipped:0,incomplete:0],
+        invocation:[status:'FAIL', counts:[ok:339,changed:29,unreachable:0,failed:1,skipped:313,rescued:0,ignored:0]]],
+    ebgp: [module:'nd_manage_l3out', test_type:'integration', nd:'4.3', scope:'eBGP', round_label:'eBGP',
+        result:'NOT_RUN', coverage:'UNKNOWN', case_totals:[:]],
+    missing: [module:'other_fixture', test_type:'integration', nd:'4.3', scope:'iBGP', round_label:'iBGP',
+        result:'FAIL', coverage:'COMPLETE', validated:true, case_totals:[started:1,passed:0,failed:1,skipped:0,incomplete:0],
+        invocation:[status:'FAIL', counts:[ok:1,failed:1,skipped:1]]]
+])
+script.run()
+def message = sent.join('\n')
+assert message.contains('Total passed cases: 5 | PLAY RECAP failed tasks: 2')
+assert message.indexOf('Total passed cases:') < message.indexOf('AUTHORED CASE RESULTS:')
+def row = message.readLines().find { it.startsWith('nd_manage_l3out ') }.trim().split(/\s{2,}/)
+assert row[1..4] == ['FAIL', '5', '1', '0']
+assert row[6] == 'NOT_RUN'
+['INTEG PLAY RECAP COUNTS', 'AUTHORED INTEG TEST CASE COUNTS',
+ 'INTEGRATION TARGET TASK COUNTS', 'PLAY RECAP COUNTS BY MODULE', 'Build result:',
+ '339 | 1 | 313', 'ok=339'].each { assert !message.contains(it) }
+''')
+
+
+def test_minimal_notification_withholds_counts_when_case_report_is_unavailable(groovy_runner):
+    groovy_runner(POST + r'''
+reportReadyField.set(script, false)
+script.MODULE_ACTIVITY_RESULTS['executed'] = [module:'fixture_module', test_type:'integration',
+    round_label:'iBGP', result:'FAIL', invocation:[status:'FAIL',counts:[ok:191,failed:0,skipped:124]]]
+def message = script.minimalBuildNotification('FixtureError')
+assert !message.contains('Passed (ok): 191')
+assert message.contains('Known passed cases: 0')
+assert message.contains('Unverified authored counts: 1 module run(s)')
+assert !message.contains('AUTHORED INTEG TEST CASE COUNTS')
+''')
+
+
+def test_invalid_recaps_do_not_appear_in_the_case_table(groovy_runner):
+    groovy_runner(POST + r'''
+script.MODULE_ACTIVITY_RESULTS.putAll([
+    valid: [module:'valid_fixture', test_type:'integration', round_label:'iBGP', result:'PASS', coverage:'COMPLETE',
+        case_totals:[passed:4,failed:0,skipped:0], invocation:[status:'OK',counts:[ok:10,failed:0,skipped:2]]],
+    invalid: [module:'invalid_fixture', test_type:'integration', round_label:'eBGP', result:'FAIL', coverage:'COMPLETE',
+        case_totals:[passed:0,failed:1,skipped:0], invocation:[status:'FAIL',counts:[ok:3,failed:1]]],
+    not_run: [module:'not_run_fixture', test_type:'integration', round_label:'eBGP', result:'NOT_RUN']
+])
+script.run()
+def message = sent.join('\n')
+assert message.contains('invalid_fixture') && message.contains('not_run_fixture')
+assert message.contains('PLAY RECAP failed tasks: unavailable')
+assert !message.contains('PLAY RECAP COUNTS BY MODULE')
+''')
+
+
+def test_recap_failures_include_failed_setup_for_unstarted_cases(groovy_runner):
+    groovy_runner(r'''
+def rows = [
+    [test_type:'integration', result:'NOT_RUN', invocation:[status:'FAIL', counts:[ok:5,failed:1,skipped:2]]],
+    [test_type:'integration', result:'PASS', invocation:[status:'OK', counts:[ok:10,failed:0,skipped:4]]],
+    [test_type:'integration', result:'NOT_RUN', invocation:[status:'NOT_RUN', counts:[:]]]
+]
+assert script.webexPlayRecapTotals(rows) == [passed:'15', failed:'1', skipped:'6']
+assert script.webexPlayRecapTotals(rows + [[test_type:'integration', result:'NOT_RUN', invocation:[status:'ERR', counts:[:]]]]).failed == 'unavailable'
+rows[1].invocation.counts.remove('failed')
+assert script.webexPlayRecapTotals(rows).failed == 'unavailable'
+''')
+
+
+def test_module_recap_does_not_use_whole_invocation_counts():
+    for name in ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches",
+                 "Jenkinsfile_nd_jenkins_script_comm_list"):
+        source = (Path(__file__).resolve().parents[1] / name).read_text()
+        recap = source.split('def moduleTaskRecapText() {', 1)[1].split('\ndef moduleCaseSummaryRows()', 1)[0]
+        assert 'integration_recap' in recap
+        assert 'invocation.counts' not in recap
+
+
+@pytest.mark.parametrize('variant', ['Jenkinsfile_nd_jenkins_script',
+    'Jenkinsfile_nd_jenkins_script_temp_switches', 'Jenkinsfile_nd_jenkins_script_comm_list'])
+def test_webex_table_preserves_incomplete_case_evidence(variant):
+    source = (Path(__file__).resolve().parents[1] / variant).read_text()
+    formatter = source.split('def formatResultsTable(', 1)[1].split('\ndef splitWebexMessage(', 1)[0]
+    assert 'CASE COVERAGE / RESULT DETAILS:' in formatter
+    assert "it.status != 'SKIP' && it.note" in formatter
+    assert "record.note.split('; ').findAll" in formatter
+    assert "${record.module} (${record.label}): ${record.note}" not in formatter
+
+
+def test_webex_omits_incomplete_case_notes_after_the_table(groovy_runner):
+    groovy_runner(POST + r'''
+script.MODULE_ACTIVITY_RESULTS.putAll([
+    policy: [module:'nd_manage_policy_group', test_type:'integration', nd:'4.3', scope:'iBGP', round_label:'iBGP',
+        result:'PASS', coverage:'INCOMPLETE', validated:true,
+        case_totals:[started:121,passed:81,failed:0,skipped:0,incomplete:40], duration:'24m',
+        failure:'PRIVATE_DIAGNOSTIC_CANARY'],
+    missing: [module:'nd_manage_policy_group', test_type:'integration', nd:'4.3', scope:'eBGP', round_label:'eBGP',
+        result:'NOT_RUN', coverage:'UNKNOWN', failure:'preflight blocked']
+])
+script.run()
+def message = sent.join('\n')
+def row = message.readLines().find { it.startsWith('nd_manage_policy_group ') }.trim().split(/\s{2,}/)
+assert row[1..4] == ['OK', '81', '0', '0']
+assert !message.contains('case coverage INCOMPLETE') && !message.contains('40 incomplete case(s)')
+assert !message.contains('PRIVATE_DIAGNOSTIC_CANARY')
+''')
+
 @pytest.mark.parametrize('variant', ['Jenkinsfile_nd_jenkins_script',
     'Jenkinsfile_nd_jenkins_script_temp_switches', 'Jenkinsfile_nd_jenkins_script_comm_list'])
 def test_integration_case_contract_never_uses_whole_invocation_recaps(variant):
@@ -45,7 +184,9 @@ def test_integration_case_contract_never_uses_whole_invocation_recaps(variant):
     assert "row.result != 'NOT_RUN' && (row.validated != true" in recovery
     assert 'NDP_CASE_REPORT_RECOVERY_EXHAUSTED' in source
     assert 'NDP_WEBEX_NOTIFICATION_SUPPRESSED' not in source
-    assert "sendMinimalBuildNotification('CaseReportIncomplete')" in source
+    assert 'NDP_CASE_REPORT_PARTIAL:' in source
+    assert 'NDP_CASE_REPORT_INCOMPLETE' not in source
+    assert "sendMinimalBuildNotification('CaseReportIncomplete')" not in source
     assert "sendMinimalBuildNotification('CaseReportUnavailable')" not in source
 
 
@@ -112,7 +253,7 @@ def raw = 'FAIL|fixture_module|home|4.3|2|1|0|0|1m|Unsupported module parameter:
 ''')
 
 
-def test_missing_case_numbers_fail_validation_without_fabricating_counts(groovy_runner):
+def test_missing_case_numbers_are_reported_per_module_without_fabrication(groovy_runner):
     groovy_runner(POST + r'''
 script.MODULE_ACTIVITY_RESULTS.putAll([
     ibgp: [module:'fixture_module', test_type:'integration', nd:'4.3', scope:'iBGP', round_label:'iBGP', fabric:'home',
@@ -127,16 +268,17 @@ assert script.moduleCaseTotals(script.MODULE_ACTIVITY_RESULTS.values().toList())
 script.run()
 assert sent.size() == 1 : logs
 def message = sent[0]
-assert message.contains('Pipeline FAILED: the authored case report could not be verified.')
-assert message.contains('CASE COUNTS NOT GENERATED')
-assert message.contains('- FAIL | fixture module | iBGP') && message.contains('- NOT RUN | fixture module | eBGP')
-assert !message.contains('Total passed cases:') && !message.contains('AUTHORED CASE RESULTS')
+assert message.contains('Known passed cases: 0')
+assert message.contains('unverified counts')
+assert message.contains('FAIL') && message.contains('NOT_RUN')
+assert message.contains('AUTHORED CASE RESULTS')
+assert message.contains('?')
 assert !message.contains('Unsupported module parameter') && !message.contains('classification=')
 assert !logs.any { it.contains('NOTIFICATION_SUPPRESSED') }
 assert script.binding.env.PIPELINE_FAILED == 'true'
-assert script.currentBuild.result == 'FAILURE'
-assert !logs.join('\n').contains('Unsupported module parameter: timeout')
-assert !logs.join('\n').contains('classification=') && !logs.join('\n').contains('phase=pre')
+assert script.currentBuild.result != 'FAILURE'
+// Bounded failure details stay in the console report only.
+assert logs.join('\n').contains('Failure / reason: module base: SETUP: Remove test values; Unsupported module parameter: timeout')
 assert script.writeReportingJson(script.MODULE_ACTIVITY_RESULTS) == original
 assert script.moduleCaseTotals(script.MODULE_ACTIVITY_RESULTS.values().toList()).passed == '?'
 ''')
@@ -155,7 +297,8 @@ script.MODULE_ACTIVITY_RESULTS.putAll([
 ])
 script.run()
 assert sent.size() == 1 : logs
-assert sent[0].contains('CASE COUNTS NOT GENERATED')
+assert sent[0].contains('Known passed cases: 0')
+assert sent[0].contains('AUTHORED CASE RESULTS') && sent[0].contains('?')
 ['Total passed cases:', 'ok=11', 'Passed: 11', 'Failed: 2', 'Skipped: 4'].each { assert !sent[0].contains(it) }
 assert script.moduleCaseTotals(script.MODULE_ACTIVITY_RESULTS.values().toList()).passed == '?'
 ''')
@@ -211,7 +354,7 @@ def test_fallback_keeps_large_validated_table_within_webex_limit(groovy_runner):
     groovy_runner(POST + r'''
 script.binding.env.ACTIVE_FABRIC_ROUNDS = 'iBGP + eBGP'
 100.times { index ->
-    def name = 'fixture_module_' + index
+    def name = 'fixture_module_' + index + '_' + ('x' * 100)
     script.MODULE_ACTIVITY_RESULTS[name] = [module:name, test_type:'integration', nd:'4.3', scope:'iBGP',
         round_label:'iBGP', result:'PASS', coverage:'COMPLETE',
         case_totals:[started:1,passed:1,failed:0,skipped:0,incomplete:0],
@@ -219,25 +362,24 @@ script.binding.env.ACTIVE_FABRIC_ROUNDS = 'iBGP + eBGP'
 }
 def attempts = 0
 def renderAttempts = 0
-def fallbackTable = (0..<100).collect { index -> 'fixture_module_' + index + '_' + ('x' * 100) }.join('\n')
 script.metaClass.formatResultsTable = { Object rows, Object unit ->
     renderAttempts++
-    if (renderAttempts <= 2) { throw new SecurityException('temporary renderer failure') }
-    fallbackTable
+    throw new SecurityException('renderer unavailable')
 }
 script.metaClass.sendWebexNotificationMessages = { Object messages ->
     attempts++
     sent.addAll(messages)
 }
 script.run()
-assert renderAttempts == 3
+// The detailed report is tried twice; the fallback never renders the table.
+assert renderAttempts == 2
 assert attempts == 1 && sent.size() > 1 : [attempts, sent.size(), logs]
 assert sent.every { it.length() <= 7000 }
 def combined = sent.join('\n')
 assert !combined.contains('AUTHORED INTEG TEST CASE COUNTS')
 assert !combined.contains('Incomplete:')
-100.times { index -> assert combined.contains('fixture_module_' + index) }
-assert combined.contains('Detailed notification failed after report validation')
+assert combined.contains('Total passed cases: 100 | failed: 0 | skipped: 0')
+100.times { index -> assert combined.contains('- PASS | fixture module ' + index + ' ' + ('x' * 100) + ' | iBGP') }
 ''')
 
 
@@ -261,7 +403,7 @@ def test_minimal_notification_propagates_interruption(groovy_runner):
     groovy_runner(POST + r'''
 def interruption = loader.loadClass('org.jenkinsci.plugins.workflow.steps.FlowInterruptedException')
     .newInstance('injected interruption')
-script.metaClass.webexModuleTotals = { Object rows -> throw interruption }
+script.metaClass.webexCaseReportSummary = { Object rows -> throw interruption }
 def caught = null
 try { script.minimalBuildNotification('FixtureError') } catch (Exception error) { caught = error }
 assert caught != null && caught.is(interruption)
@@ -274,29 +416,29 @@ def zero = [test_type:'integration',result:'PASS',coverage:'COMPLETE',case_total
 assert script.webexModuleTotals([zero]) == [passed:'0',failed:'0',skipped:'0']
 assert script.webexModuleTotals([[test_type:'integration',result:'NOT_RUN']]) == [passed:'0',failed:'0',skipped:'0']
 assert script.webexModuleTotals([[test_type:'smoke',result:'PASS',case_totals:[passed:50]]]) == [passed:'0',failed:'0',skipped:'0']
-def untypedFailure = null
-try { script.webexModuleTotals([[result:'PASS',case_totals:[passed:50,failed:0,skipped:0]]]) }
-catch (Exception failure) { untypedFailure = failure }
-assert untypedFailure?.message?.contains('NDP_CASE_COUNTS_UNRECOVERABLE')
+assert script.webexModuleTotals([[result:'PASS',case_totals:[passed:50,failed:0,skipped:0]]]) ==
+    [passed:'0',failed:'0',skipped:'0']
+assert script.webexCaseReportSummary([[result:'PASS',case_totals:[passed:50,failed:0,skipped:0]]]).uncounted_rows.size() == 1
 def partial = [test_type:'integration',result:'FAIL',coverage:'PARTIAL',case_totals:[:],
     identified_testcase_totals:[passed:2,failed:1,skipped:0,incomplete:1],invocation:[counts:[ok:800,failed:2,skipped:600]]]
-def partialFailure = null
-try { script.webexModuleTotals([partial]) } catch (Exception failure) { partialFailure = failure }
-assert partialFailure?.message?.contains('NDP_CASE_COUNTS_UNRECOVERABLE')
+assert script.webexModuleTotals([partial]) == [passed:'2',failed:'1',skipped:'0']
+assert script.webexCaseReportSummary([partial]).uncounted_rows.size() == 1
 ''')
 
 
-def test_results_table_refuses_missing_case_numbers(groovy_runner):
+def test_results_table_displays_unknown_case_numbers_per_row(groovy_runner):
     groovy_runner(r'''
 def raw = 'FAIL|fixture_module|home|4.3|3 + ?|?|0|1m|case coverage INCOMPLETE; 1 incomplete case(s)|iBGP'
-def caught = null
-try { script.formatResultsTable(raw, 'module test cases') } catch (Exception failure) { caught = failure }
-assert caught?.message?.contains('NDP_CASE_COUNTS_UNRECOVERABLE')
-assert raw.contains('3 + ?')
+def table = script.formatResultsTable(raw, 'module test cases')
+assert table.contains('3 + ?') && table.contains('?')
+def invalid = null
+try { script.formatResultsTable(raw.replace('3 + ?', 'bad'), 'module test cases') }
+catch (Exception failure) { invalid = failure }
+assert invalid?.message?.contains('NDP_CASE_COUNTS_UNRECOVERABLE')
 ''')
 
 
-def test_unready_report_still_sends_failure_notification_with_totals_withheld(groovy_runner):
+def test_unready_report_still_sends_detailed_notification_with_partial_rows(groovy_runner):
     groovy_runner(POST + r'''
 reportReadyField.set(script, false)
 script.MODULE_ACTIVITY_RESULTS.putAll([
@@ -305,10 +447,39 @@ script.MODULE_ACTIVITY_RESULTS.putAll([
 ])
 script.run()
 assert sent.size() == 1 : logs
-assert sent[0].contains('Pipeline FAILED') && sent[0].contains('CASE COUNTS NOT GENERATED')
-assert sent[0].contains('- UNKNOWN | fixture module | iBGP')
-assert logs.any { it.startsWith('NDP_CASE_REPORT_INCOMPLETE:') }
+assert sent[0].contains('AUTHORED CASE RESULTS') && sent[0].contains('fixture_module')
+assert sent[0].contains('Known passed cases: 0')
+assert sent[0].contains('unverified counts') && sent[0].contains('?')
+assert sent[0].contains('Reporting reconciliation did not complete')
+assert !logs.any { it.startsWith('NDP_CASE_REPORT_INCOMPLETE:') }
 assert !logs.any { it.contains('NOTIFICATION_SUPPRESSED') }
+assert script.binding.env.PIPELINE_FAILED == 'true'
+''')
+
+
+def test_detailed_notification_keeps_good_totals_and_links_only_the_unreadable_row(groovy_runner):
+    groovy_runner(POST + r'''
+script.MODULE_ACTIVITY_RESULTS.putAll([
+    good: [module:'good_module', test_type:'integration', nd:'4.3', scope:'iBGP', round_label:'iBGP',
+        result:'PASS', coverage:'COMPLETE', validated:true,
+        case_totals:[started:4,passed:4,failed:0,skipped:0,incomplete:0],
+        duration:'1m', artifact:'good_module.log', archive_status:'success',
+        invocation:[status:'OK',counts:[ok:12,failed:0,skipped:3]]],
+    bad: [module:'bad_module', test_type:'integration', nd:'4.3', scope:'eBGP', round_label:'eBGP',
+        result:'REPORT_ERROR', coverage:'UNKNOWN', validated:false, case_totals:[:],
+        duration:'-', artifact:'bad_module.log', archive_status:'success', failure:'result parsing failed']
+])
+script.run()
+assert sent.size() == 1 : logs
+def message = sent[0]
+assert message.contains('AUTHORED CASE RESULTS')
+assert message.contains('Known passed cases: 4')
+assert message.contains('1 module run(s) with unverified counts')
+assert message.contains('good_module') && message.contains('bad_module')
+assert message.contains('REPORT_ERROR') && message.contains('?')
+assert message.contains('[bad\\_module (eBGP; eBGP round) logs](https://jenkins.example/job/nd/122/artifact/bad_module.log)')
+assert !message.contains('[good\\_module')
+assert !logs.any { it.startsWith('NDP_CASE_REPORT_INCOMPLETE:') }
 assert script.binding.env.PIPELINE_FAILED == 'true'
 ''')
 
@@ -319,13 +490,14 @@ reportReadyField.set(script, false)
 def attemptedField = script.getClass().getDeclaredField('ND_WEBEX_DELIVERY_ATTEMPTED')
 attemptedField.setAccessible(true)
 def calls = 0
-// Failure before any HTTP request: exactly one bounded retry, then a logged failure.
+// Failure before any HTTP request: one bounded detailed retry, one fallback, then a logged failure.
 script.metaClass.sendWebexNotificationMessages = { Object messages ->
     calls++
     throw new IllegalStateException('webex unavailable')
 }
 script.run()
-assert calls == 2
+assert calls == 3
+assert logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_RETRY_FAILED: java.lang.IllegalStateException') }
 assert logs.any { it.startsWith('NDP_WEBEX_NOTIFICATION_FAILED: java.lang.IllegalStateException') }
 
 // Failure after an HTTP request was attempted: never re-post (avoids duplicate messages).
@@ -344,18 +516,17 @@ assert logs.any { it.startsWith('NDP_WEBEX_NOTIFICATION_FAILED: java.lang.Illega
 
 @pytest.mark.parametrize('variant', ['Jenkinsfile_nd_jenkins_script',
     'Jenkinsfile_nd_jenkins_script_temp_switches', 'Jenkinsfile_nd_jenkins_script_comm_list'])
-def test_fallback_sender_withholds_counts_but_never_refuses_delivery(variant):
+def test_fallback_sender_keeps_partial_counts_and_never_refuses_delivery(variant):
     source = (Path(__file__).resolve().parents[1] / variant).read_text()
     sender = source.split('def sendMinimalBuildNotification(reasonClass) {', 1)[1].split('\ndef sendFallbackNotificationOnce', 1)[0]
     assert 'refusing Webex fallback' not in sender and 'error(' not in sender
-    assert 'NDP_CASE_COUNTS_WITHHELD' in sender
-    for name in ('passed', 'failed', 'skipped'):
-        assert 'validatedCaseNumber(counts.%s)' % name in sender
-    assert sender.index('validatedCaseNumber(counts.skipped)') < sender.index('sendWebexNotificationMessages(')
+    assert 'NDP_CASE_COUNTS_WITHHELD' not in sender
+    assert 'validatedCaseNumber(' not in sender
+    assert 'minimalBuildNotification(reasonClass)' in sender
     assert 'NOTIFICATION_SUPPRESSED' not in source
 
 
-def test_minimal_notification_sends_with_unverified_counts_withheld(groovy_runner):
+def test_minimal_notification_sends_known_totals_and_marks_unverified_rows(groovy_runner):
     groovy_runner(POST + r'''
 reportReadyField.set(script, false)
 script.MODULE_ACTIVITY_RESULTS['partial'] = [module:'fixture_module', test_type:'integration', nd:'4.3',
@@ -363,18 +534,19 @@ script.MODULE_ACTIVITY_RESULTS['partial'] = [module:'fixture_module', test_type:
     invocation:[counts:[ok:42, failed:1, skipped:0]]]
 script.sendMinimalBuildNotification('FixtureError')
 assert sent.size() == 1
-assert sent[0].contains('CASE COUNTS NOT GENERATED') && sent[0].contains('- FAIL | fixture module | iBGP')
-assert !sent[0].contains('ok=42') && !sent[0].contains('Total passed cases:')
+assert sent[0].contains('Known passed cases: 0 | failed: 0 | skipped: 0')
+assert sent[0].contains('Unverified authored counts: 1 module run(s)')
+assert sent[0].contains('- FAIL | fixture module | iBGP')
 assert script.binding.env.PIPELINE_FAILED == 'true'
-assert script.currentBuild.result == 'FAILURE'
+assert script.currentBuild.result != 'FAILURE'
 
-// A report marked ready whose counts fail validation is downgraded, not silenced.
+// Unknown rows do not invalidate report readiness or suppress known counts.
 reportReadyField.set(script, true)
 sent.clear()
 script.sendMinimalBuildNotification('FixtureError')
-assert sent.size() == 1 && sent[0].contains('CASE COUNTS NOT GENERATED')
-assert logs.any { it.startsWith('NDP_CASE_COUNTS_WITHHELD:') }
-assert reportReadyField.get(script) == false
+assert sent.size() == 1 && sent[0].contains('Unverified authored counts: 1 module run(s)')
+assert !logs.any { it.startsWith('NDP_CASE_COUNTS_WITHHELD:') }
+assert reportReadyField.get(script) == true
 
 // Even a rendering failure still produces the fixed failure notice.
 script.metaClass.minimalBuildNotification = { Object reason -> throw new IllegalStateException('render failed') }
@@ -418,8 +590,10 @@ script.metaClass.formatResultsTable = { Object rows, Object unit ->
 script.run()
 assert sent.size() == 1 : logs
 assert !sent[0].contains('Passed: 1') && !sent[0].contains('Failed: 0')
-assert renderAttempts == 3
-assert sent[0].contains('DETAILED TEST RESULTS UNAVAILABLE: table rendering failed.')
+// The fallback never renders the table, so it cannot fail the same way twice.
+assert renderAttempts == 2
+assert sent[0].contains('Total passed cases: 1 | failed: 0 | skipped: 0')
+assert sent[0].contains('MODULE STATUS') && sent[0].contains('- PASS | fixture module | iBGP')
 assert sent[0].contains('CASE COUNTS NOT GENERATED') == false
 assert logs.count { it.startsWith('NDP_DETAILED_NOTIFICATION_RETRY:') } == 1
 assert logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_RETRY_FAILED:') }
@@ -465,12 +639,15 @@ script.metaClass.readFile = { Map ignored -> script.writeReportingJson([
         phase_seconds:[execution:42], process_seconds:50]],
     failed:true, reporting_errors:[], skiplist_file:'skipped_tests_build_122.txt']) }
 script.metaClass.archiveArtifacts = { Map options -> archived.add(options.artifacts.toString()) }
+// Unknown counts stay on their row; the fold never throws and the report is still delivered.
 2.times {
     def caught = null
     try { script.foldStructuredResults() } catch (Exception failure) { caught = failure }
-    assert caught?.message?.contains('NDP_CASE_COUNTS_UNRECOVERABLE')
+    assert caught == null
 }
-assert reportReadyField.get(script) == false
+assert reportReadyField.get(script) == true
+assert script.binding.env.TOTAL_PASSED_COUNT == '?'
+assert script.binding.env.PIPELINE_FAILED == 'true'
 assert script.PHASE_TIMING_RESULTS['ND43|fixture_module|current'] == [execution:42, process_seconds:50]
 assert archived == ['skipped_tests_build_122.txt', 'skipped_tests_build_122.txt']
 def notes = script.getClass().getDeclaredField('BUILD_FAILURE_REASON_BUF')
@@ -531,20 +708,23 @@ assert reportReadyField.get(script) == true
 assert script.binding.env.TOTAL_PASSED_COUNT == '1'
 assert script.binding.env.TOTAL_FAILED_COUNT == '0'
 reportReadyField.set(script, false)
-script.MODULE_ACTIVITY_RESULTS.verified.coverage = 'UNKNOWN'
+script.MODULE_ACTIVITY_RESULTS.verified.case_totals = [:]
 assert !script.recoverCaseReportFromMemory()
 assert reportReadyField.get(script) == false
 ''')
 
 
-def test_activity_artifact_refuses_missing_integration_case_numbers(groovy_runner):
+def test_activity_artifact_keeps_unavailable_counts_local_to_one_row(groovy_runner):
     groovy_runner(r'''
-def caught = null
-try {
-    script.formatModuleActivityTable([[module:'fixture_module',test_type:'integration',
-        result:'FAIL',coverage:'UNKNOWN',case_totals:[:]]], '140')
-} catch (Exception failure) { caught = failure }
-assert caught?.message?.contains('NDP_CASE_COUNTS_UNRECOVERABLE')
+def report = script.formatModuleActivityTable([
+    [module:'good_module',test_type:'integration',result:'PASS',coverage:'COMPLETE',
+        case_totals:[passed:2,failed:0,skipped:0]],
+    [module:'bad_module',test_type:'integration',result:'REPORT_ERROR',coverage:'UNKNOWN',case_totals:[:],
+        artifact:'bad_module.log']
+], '140')
+assert report.contains('good_module') && report.contains('bad_module')
+assert report.contains('cases passed 2') && report.contains('cases passed ?')
+assert report.contains('bad_module.log')
 ''')
 
 
@@ -573,140 +753,3 @@ assert !message.contains('CASE COUNTS NOT GENERATED')
 assert !logs.any { it.contains('NOTIFICATION_SUPPRESSED') || it.startsWith('NDP_CASE_REPORT_INCOMPLETE') }
 assert script.binding.env.PIPELINE_FAILED == 'true'
 ''')
-
-
-def test_module_recap_does_not_use_whole_invocation_counts():
-    for name in ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches",
-                 "Jenkinsfile_nd_jenkins_script_comm_list"):
-        source = (Path(__file__).resolve().parents[1] / name).read_text()
-        recap = source.split('def moduleTaskRecapText() {', 1)[1].split('\ndef moduleCaseSummaryRows()', 1)[0]
-        assert 'integration_recap' in recap
-        assert 'invocation.counts' not in recap
-
-
-@pytest.mark.parametrize('variant', ['Jenkinsfile_nd_jenkins_script',
-    'Jenkinsfile_nd_jenkins_script_temp_switches', 'Jenkinsfile_nd_jenkins_script_comm_list'])
-def test_webex_table_preserves_incomplete_case_evidence(variant):
-    source = (Path(__file__).resolve().parents[1] / variant).read_text()
-    formatter = source.split('def formatResultsTable(', 1)[1].split('\ndef splitWebexMessage(', 1)[0]
-    assert 'CASE COVERAGE / RESULT DETAILS:' in formatter
-    assert "it.status != 'SKIP' && it.note" in formatter
-    assert "record.note.split('; ').findAll" in formatter
-    assert "${record.module} (${record.label}): ${record.note}" not in formatter
-
-
-def test_webex_omits_incomplete_case_notes_after_the_table(groovy_runner):
-    groovy_runner(POST + r'''
-script.MODULE_ACTIVITY_RESULTS.putAll([
-    policy: [module:'nd_manage_policy_group', test_type:'integration', nd:'4.3', scope:'iBGP', round_label:'iBGP',
-        result:'PASS', coverage:'INCOMPLETE', validated:true,
-        case_totals:[started:121,passed:81,failed:0,skipped:0,incomplete:40], duration:'24m',
-        failure:'PRIVATE_DIAGNOSTIC_CANARY'],
-    missing: [module:'nd_manage_policy_group', test_type:'integration', nd:'4.3', scope:'eBGP', round_label:'eBGP',
-        result:'NOT_RUN', coverage:'UNKNOWN', failure:'preflight blocked']
-])
-script.run()
-def message = sent.join('\n')
-def row = message.readLines().find { it.startsWith('nd_manage_policy_group ') }.trim().split(/\s{2,}/)
-assert row[1..4] == ['OK', '81', '0', '0']
-assert !message.contains('case coverage INCOMPLETE') && !message.contains('40 incomplete case(s)')
-assert !message.contains('PRIVATE_DIAGNOSTIC_CANARY')
-''')
-
-
-def test_all_pipelines_use_only_the_table_for_webex_counts():
-    root = Path(__file__).resolve().parents[1]
-    paths = [root / name for name in ('Jenkinsfile_nd_jenkins_script',
-        'Jenkinsfile_nd_jenkins_script_temp_switches', 'Jenkinsfile_nd_jenkins_script_comm_list')]
-    paths += sorted((root / 'individual_jenkinsfiles').glob('Jenkinsfile_*'))
-    assert len(paths) == 37
-    for path in paths:
-        source = path.read_text()
-        notification = source.split('def webexResultsTable() {', 1)[1].split('\ndef runLintCheck()', 1)[0]
-        assert notification.count('webexResultsTable()') == 2, path
-        assert notification.count('validatedCaseNumber(') == 6, path
-        assert 'table.substring(0, closingFence + 3)' in notification
-        assert 'Total passed cases: ${caseTotals.passed} | PLAY RECAP failed tasks: ${recapTotals.failed}' in notification, path
-        assert 'Total passed cases: ${counts.passed} | PLAY RECAP failed tasks: ${recapTotals.failed}' in notification, path
-        for forbidden in ('INTEG PLAY RECAP COUNTS', 'AUTHORED INTEG TEST CASE COUNTS',
-                'moduleTaskRecapText()', 'modulePlayRecapText()', 'Build result:'):
-            assert forbidden not in notification, (path, forbidden)
-
-
-def test_webex_shows_case_table_without_duplicate_recaps(groovy_runner):
-    groovy_runner(POST + r'''
-script.MODULE_ACTIVITY_RESULTS.putAll([
-    ibgp: [module:'nd_manage_l3out', test_type:'integration', nd:'4.3', scope:'iBGP', round_label:'iBGP',
-        result:'FAIL', coverage:'COMPLETE', validated:true, case_totals:[started:6,passed:5,failed:1,skipped:0,incomplete:0],
-        invocation:[status:'FAIL', counts:[ok:339,changed:29,unreachable:0,failed:1,skipped:313,rescued:0,ignored:0]]],
-    ebgp: [module:'nd_manage_l3out', test_type:'integration', nd:'4.3', scope:'eBGP', round_label:'eBGP',
-        result:'NOT_RUN', coverage:'UNKNOWN', case_totals:[:]],
-    missing: [module:'other_fixture', test_type:'integration', nd:'4.3', scope:'iBGP', round_label:'iBGP',
-        result:'FAIL', coverage:'COMPLETE', validated:true, case_totals:[started:1,passed:0,failed:1,skipped:0,incomplete:0],
-        invocation:[status:'FAIL', counts:[ok:1,failed:1,skipped:1]]]
-])
-script.run()
-def message = sent.join('\n')
-assert message.contains('Total passed cases: 5 | PLAY RECAP failed tasks: 2')
-assert message.indexOf('Total passed cases:') < message.indexOf('AUTHORED CASE RESULTS:')
-def row = message.readLines().find { it.startsWith('nd_manage_l3out ') }.trim().split(/\s{2,}/)
-assert row[1..4] == ['FAIL', '5', '1', '0']
-assert row[6] == 'NOT_RUN'
-['INTEG PLAY RECAP COUNTS', 'AUTHORED INTEG TEST CASE COUNTS',
- 'INTEGRATION TARGET TASK COUNTS', 'PLAY RECAP COUNTS BY MODULE', 'Build result:',
- '339 | 1 | 313', 'ok=339'].each { assert !message.contains(it) }
-''')
-
-
-def test_minimal_notification_withholds_counts_when_case_report_is_unavailable(groovy_runner):
-    groovy_runner(POST + r'''
-reportReadyField.set(script, false)
-script.MODULE_ACTIVITY_RESULTS['executed'] = [module:'fixture_module', test_type:'integration',
-    round_label:'iBGP', result:'FAIL', invocation:[status:'FAIL',counts:[ok:191,failed:0,skipped:124]]]
-def message = script.minimalBuildNotification('FixtureError')
-assert !message.contains('Passed (ok): 191')
-assert message.contains('CASE COUNTS NOT GENERATED')
-assert !message.contains('Total passed cases:')
-assert !message.contains('AUTHORED INTEG TEST CASE COUNTS')
-''')
-
-
-def test_invalid_recaps_do_not_appear_in_the_case_table(groovy_runner):
-    groovy_runner(POST + r'''
-script.MODULE_ACTIVITY_RESULTS.putAll([
-    valid: [module:'valid_fixture', test_type:'integration', round_label:'iBGP', result:'PASS', coverage:'COMPLETE',
-        case_totals:[passed:4,failed:0,skipped:0], invocation:[status:'OK',counts:[ok:10,failed:0,skipped:2]]],
-    invalid: [module:'invalid_fixture', test_type:'integration', round_label:'eBGP', result:'FAIL', coverage:'COMPLETE',
-        case_totals:[passed:0,failed:1,skipped:0], invocation:[status:'FAIL',counts:[ok:3,failed:1]]],
-    not_run: [module:'not_run_fixture', test_type:'integration', round_label:'eBGP', result:'NOT_RUN']
-])
-script.run()
-def message = sent.join('\n')
-assert message.contains('invalid_fixture') && message.contains('not_run_fixture')
-assert message.contains('PLAY RECAP failed tasks: unavailable')
-assert !message.contains('PLAY RECAP COUNTS BY MODULE')
-''')
-
-
-def test_recap_failures_include_failed_setup_for_unstarted_cases(groovy_runner):
-    groovy_runner(r'''
-def rows = [
-    [test_type:'integration', result:'NOT_RUN', invocation:[status:'FAIL', counts:[ok:5,failed:1,skipped:2]]],
-    [test_type:'integration', result:'PASS', invocation:[status:'OK', counts:[ok:10,failed:0,skipped:4]]],
-    [test_type:'integration', result:'NOT_RUN', invocation:[status:'NOT_RUN', counts:[:]]]
-]
-assert script.webexPlayRecapTotals(rows) == [passed:'15', failed:'1', skipped:'6']
-assert script.webexPlayRecapTotals(rows + [[test_type:'integration', result:'NOT_RUN', invocation:[status:'ERR', counts:[:]]]]).failed == 'unavailable'
-rows[1].invocation.counts.remove('failed')
-assert script.webexPlayRecapTotals(rows).failed == 'unavailable'
-''')
-
-
-def test_canonical_webex_totals_label_recap_failures_separately():
-    source = (Path(__file__).resolve().parents[1] / 'Jenkinsfile_nd_jenkins_script').read_text()
-    detailed = source.split('def prepareDetailedWebexNotification() {', 1)[1].split('\ndef minimalBuildNotification', 1)[0]
-    fallback = source.split('def minimalBuildNotification(', 1)[1].split('\ndef runLintCheck()', 1)[0]
-    assert detailed.index('webexPlayRecapTotals(') < detailed.index('PLAY RECAP failed tasks: ${recapTotals.failed}')
-    assert detailed.index('Total passed cases: ${caseTotals.passed}') < detailed.index('AUTHORED CASE RESULTS:')
-    assert fallback.index('webexPlayRecapTotals(') < fallback.index('PLAY RECAP failed tasks: ${recapTotals.failed}')
-    assert fallback.index('Total passed cases: ${counts.passed}') < fallback.index('AUTHORED CASE RESULTS:')

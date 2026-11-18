@@ -54,7 +54,6 @@ def groovy_runner(request, tmp_path_factory):
         assert 'CHECK_PASSED' in result.stdout
     return run
 
-
 @pytest.mark.parametrize('prerequisite_only', [False, True])
 @pytest.mark.parametrize('groovy_runner', (*VARIANTS, 'Jenkinsfile_nd_jenkins_script_comm_list'), indirect=True)
 def test_port_channels_run_after_vpc_pairs_before_switches_and_reporting_matches(groovy_runner, prerequisite_only):
@@ -142,7 +141,7 @@ if (exitCode == 0) {
     if (phase != 'pre') {
         assert context.ND_SWITCH_RESTORE_FAILED == 'true'
         assert context.PIPELINE_FAILED == 'true'
-        assert logs.any { it.startsWith('NDP_SWITCH_RESTORE_INCOMPLETE:') && it.contains('later rounds blocked') }
+        assert logs.any { it.startsWith('NDP_SWITCH_RESTORE_INCOMPLETE:') && it.contains('later rounds will continue') }
     }
 }
 ''')
@@ -202,7 +201,7 @@ script.metaClass.runSwitchPostRestore = { Object round ->
 '''
 
 @pytest.mark.parametrize('mode', ['preflight', 'tests', 'tests-interrupted', 'tests-secondary', 'success'])
-def test_failed_preflight_never_retries_active_destination_and_keeps_home_required(groovy_runner, mode):
+def test_failed_preflight_still_runs_tests_and_restoration(groovy_runner, mode):
     body = 'def failureMode = ' + json.dumps(mode) + '\n' + r'''
 def failure = failureMode == 'tests-interrupted' ? loader.loadClass('org.jenkinsci.plugins.workflow.steps.FlowInterruptedException').newInstance('primary abort') : new IllegalStateException('offline infrastructure failure')
 '''
@@ -211,13 +210,12 @@ def caught = null
 try { script.runNDFCVersionTests(config) } catch (Exception e) { caught = e }
 assert calls.contains('preflight')
 assert context.HOME_RESTORE_REQUIRED == 'true'
+assert calls.contains('tests') && calls.contains('active-post')
 if (failureMode == 'preflight') {
-    assert caught != null && caught.is(failure)
-    assert !calls.contains('tests') && !calls.contains('active-post')
-    assert context.ND_SWITCH_RESTORE_FAILED == 'true' && context.PIPELINE_FAILED == 'true'
-    assert logs.any { it.startsWith('NDP_SWITCH_ACTIVE_ROUND_RESTORE_SKIPPED:') && it.contains('Outer home-fabric recovery remains required') }
+    assert caught == null
+    assert context.ND_SWITCH_PREFLIGHT_CONFIRMED == 'false'
+    assert logs.any { it.startsWith('NDP_SWITCH_PREFLIGHT_FAILED_CONTINUING:') }
 } else {
-    assert calls.contains('tests') && calls.contains('active-post')
     if (failureMode == 'success') { assert caught == null }
     else { assert caught != null && caught.is(failure) }
 }
@@ -251,6 +249,7 @@ script.metaClass.restoreHomeFabric = { Object rounds, Object active -> calls.add
 script.metaClass.recordUnstartedRound = { Object round, Object reason -> calls.add('record:' + round.round_label) }
 script.metaClass.finishStructuredExecution = { Object status -> calls.add('finish:' + status) }
 script.metaClass.publishStructuredArtifacts = { -> calls.add('parse-and-publish') }
+script.metaClass.preserveModuleLogs = { -> calls.add('archive-logs') }
 script.metaClass.foldStructuredResults = { -> calls.add('fold') }
 script.metaClass.publishModuleActivityReport = { -> calls.add('activity') }
 script.metaClass.bundleAllLogs = { -> calls.add('bundle') }
@@ -258,7 +257,7 @@ script.metaClass.cleanWs = { -> calls.add('clean') }
 '''
 
 @pytest.mark.parametrize('mode', ['infrastructure', 'reported-module-failure'])
-def test_producer_stops_on_infrastructure_but_continues_collected_module_failures(groovy_runner, mode):
+def test_producer_continues_round_setup_and_collected_module_failures(groovy_runner, mode):
     body = 'def failureMode = ' + json.dumps(mode) + '\ndef failure = new IllegalStateException("offline setup failed")\n'
     body += PRODUCER + r'''
 def caught = null
@@ -272,15 +271,12 @@ assert recoveryIndex < terminalIndex && terminalIndex < publisherIndex
 assert publisherIndex < calls.indexOf('fold')
 assert calls.indexOf('fold') < calls.indexOf('activity')
 assert calls.indexOf('activity') < calls.indexOf('bundle')
+assert caught == null
+assert calls.contains('round:eBGP') && calls.contains('reset')
+assert calls.contains('finish:success')
+assert context.PIPELINE_FAILED == 'true'
 if (failureMode == 'infrastructure') {
-    assert caught != null && caught.is(failure)
-    assert !calls.contains('round:eBGP') && !calls.contains('reset')
-    assert calls.contains('finish:failed')
-} else {
-    assert caught == null
-    assert calls.contains('round:eBGP') && calls.contains('reset')
-    assert calls.contains('finish:success')
-    assert context.PIPELINE_FAILED == 'true'
+    assert logs.any { it.startsWith('NDP_FABRIC_ROUND_FAILED_CONTINUING:') }
 }
 '''
     groovy_runner(body)

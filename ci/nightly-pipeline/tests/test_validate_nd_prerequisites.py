@@ -320,7 +320,7 @@ def test_profile_execution_roles_match_canonical_baseline(registry):
                 )
 
 
-def test_integration_vpc_pair_expands_to_two_blocked_executions(registry):
+def test_integration_vpc_pair_expands_with_exact_physical_peer_links(registry):
     executions = expand_profile_executions(registry, "integration.nd_vpc_pair")
     assert [item["execution_id"] for item in executions] == [
         "integration.nd_vpc_pair.advanced",
@@ -328,10 +328,18 @@ def test_integration_vpc_pair_expands_to_two_blocked_executions(registry):
     ]
     assert [item["fabric_ref"] for item in executions] == ["advanced", "external"]
     assert all(item["confirmation"]["status"] == "pending" for item in executions)
-    # Both pairs are physical (virtual peering is unsupported on these switches) and blocked until
-    # the lab owner cables and records the peer-links.
+    # Both pairs are physical (virtual peering is unsupported on these switches).
     assert all(item["pair_mode"] == "physical" for item in executions)
-    assert all(item["physical_peer_links"] == [] for item in executions)
+    assert executions[0]["physical_peer_links"] == [{
+        "src": {"switch_ref": "vxlan_leaf_1", "interface": "Ethernet1/2"},
+        "dst": {"switch_ref": "vxlan_leaf_2", "interface": "Ethernet1/1"},
+    }]
+    assert executions[1]["physical_peer_links"] == [
+        {"src": {"switch_ref": "external_edge_1", "interface": "Ethernet1/5"},
+         "dst": {"switch_ref": "external_edge_2", "interface": "Ethernet1/6"}},
+        {"src": {"switch_ref": "external_edge_1", "interface": "Ethernet1/7"},
+         "dst": {"switch_ref": "external_edge_2", "interface": "Ethernet1/8"}},
+    ]
     advanced_reason = " ".join(executions[0]["confirmation"]["reasons"])
     external_reason = " ".join(executions[1]["confirmation"]["reasons"])
     assert "leaf_1 Ethernet1/2 <-> leaf_2 Ethernet1/1" in advanced_reason
@@ -535,15 +543,13 @@ def test_jenkins_target_parser_ignores_commented_entries():
     assert set(expected["INTEGRATION_MODULES"] + expected["INTERFACE_INTEGRATION_MODULES"]) <= set(expected["EFFECTIVE_INTEGRATION_MODULES"])
 
 
-def test_jenkins_exposes_branch_notification_and_debug_parameters_only():
+def test_jenkins_exposes_baseline_controls_branch_notification_and_debug_parameters():
     jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
     block = re.search(r"\n    parameters \{(.*?)\n    \}", jenkins_text, re.S).group(1)
-    expected = ["DEBUG", "DEBUG_MODULES", "WEBEX_CUSTOM_MESSAGE", "ND_GIT_BRANCH"]
-    assert re.findall(r"(?:booleanParam|string|choice|text|password)\(name: '([A-Za-z0-9_]+)'", block) == expected
-    # Topology and coverage remain fixed; no interface selector is read.
-    assert set(re.findall(r"\bparams\.([A-Za-z0-9_]+)", jenkins_text)) == set(expected)
-    for removed in ("RUN_ND_MANAGE_LINKS", "RUN_ND_VPC_PAIR", "RUN_ND_MANAGE_TOR", "ND_LINKS_FABRIC",
-                    "ND_INTERFACE_TEST_SWITCH_IP", "ND_SUBIF_ETHERNET_PARENT"):
+    assert re.findall(r"(?:booleanParam|string|choice|text|password)\(name: '([A-Za-z0-9_]+)'", block) == ["DEBUG", "ND_INTERFACE_BASELINE_ENABLED", "ND_INTERFACE_BASELINE_APPLY", "ND_INTERFACE_BASELINE_RECOVER_SYNC", "ND_IBGP_TO_EBGP_LEAF_TOR_FORCE_DELETE", "DEBUG_MODULES", "WEBEX_CUSTOM_MESSAGE", "ND_GIT_BRANCH"]
+    # Topology and coverage remain fixed; the interface baseline controls do not alter topology or test coverage.
+    assert set(re.findall(r"\bparams\.([A-Za-z0-9_]+)", jenkins_text)) == {"DEBUG", "DEBUG_MODULES", "WEBEX_CUSTOM_MESSAGE", "ND_GIT_BRANCH", "ND_IBGP_TO_EBGP_LEAF_TOR_FORCE_DELETE"}
+    for removed in ("RUN_ND_MANAGE_LINKS", "RUN_ND_VPC_PAIR", "RUN_ND_MANAGE_TOR", "ND_LINKS_FABRIC", "ND_SUBIF_ETHERNET_PARENT", "ND_INTERFACE_TEST_SWITCH_IP"):
         assert removed not in jenkins_text, removed
 
 
@@ -845,7 +851,8 @@ def test_runner_rejects_cross_fabric_positional_switch_mapping():
     assert "switch_serial_3 not in (nd_test_fabric_switches.External_Connectivity_Fabric" in runner_text
     assert "NDP_SWITCH_GUARD_FAILED" in jenkins_text
     assert "attempting this target with its own prerequisites and authored tests" in jenkins_text
-    assert "canonical switch pre-flight is unavailable; refusing to run" in jenkins_text
+    assert "NDP_SWITCH_PREFLIGHT_FAILED_CONTINUING" in jenkins_text
+    assert "canonical switch pre-flight is unavailable; refusing to run" not in jenkins_text
 
 
 @pytest.mark.parametrize("variant", [

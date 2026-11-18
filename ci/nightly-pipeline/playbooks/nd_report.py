@@ -24,6 +24,7 @@ MAX_EVENTS = 100000
 MAX_EVENT_BYTES = 8192
 MAX_JOURNAL_BYTES = 32 * 1024 * 1024
 MAX_FAILURE_LABELS = 20
+PREREQUISITE_FAILURE_MARKERS = ("NDP_PREREQUISITE_FAILED_CONTINUING", "NDP_PREREQUISITE_STATUS: FAILED")
 REASON_PATTERNS = (
     (re.compile(r"Unsupported module parameter:\s*timeout|Unsupported parameters for.{0,200}?module:\s*timeout\b", re.I), "Unsupported module parameter: timeout"),
     (re.compile(r"No Commands to execute", re.I), "No Commands to execute"),
@@ -80,6 +81,7 @@ class CallbackModule(DefaultCallback):
         self.phase_seconds = {"prerequisites": None, "execution": None, "cleanup": None}
         self.started = time.monotonic()
         self.module_skipped = False
+        self.prerequisite_failures = []
         self.debug = os.environ.get("ND_REPORT_DEBUG", "false") == "true"
         self.invocation_id = uuid.uuid4().hex
         self.event_module = os.environ.get("ND_RESULT_MODULE", "")
@@ -283,6 +285,7 @@ class CallbackModule(DefaultCallback):
             "counts": counts if counts is not None else dict.fromkeys(COUNTERS, 0),
             "host_count": host_count, "recap_rows": host_count,
             "module_skipped": self.module_skipped, "phase_seconds": self.phase_seconds,
+            "prerequisite_failures": list(self.prerequisite_failures),
             "failure_tasks": self.failure_tasks, "capability_tasks": self.capability_tasks,
             "capture_error": bool(self.event_errors), "errors": list(self.event_errors),
             "scope": "provisional callback evidence; wrapper exit, cleanup and closure remain authoritative",
@@ -317,6 +320,7 @@ class CallbackModule(DefaultCallback):
             "phase_seconds": self.phase_seconds,
             "completed": completed,
             "module_skipped": self.module_skipped,
+            "prerequisite_failures": list(self.prerequisite_failures),
             "scope": "runner boundaries; target-internal setup/cleanup remain within execution",
         }
         try:
@@ -329,6 +333,14 @@ class CallbackModule(DefaultCallback):
         self.phase_seconds[self.phase] = round((self.phase_seconds[self.phase] or 0) + now - self.started, 6)
         self.started = now
 
+    def _note_prerequisite_failure(self, message):
+        if any(marker in message for marker in PREREQUISITE_FAILURE_MARKERS):
+            text = _bounded(" ".join(message.split()), 300)
+            if text not in self.prerequisite_failures and len(self.prerequisite_failures) < 20:
+                self.prerequisite_failures.append(text)
+            return True
+        return False
+
     def _compact(self, result):
         payload = result._result
         message = payload.get("msg", "")
@@ -336,6 +348,7 @@ class CallbackModule(DefaultCallback):
         module_skipped = not no_log and isinstance(message, str) and "NDP_MODULE_SKIPPED" in message
         if module_skipped:
             self.module_skipped = True
+        prerequisite_failed = not no_log and isinstance(message, str) and self._note_prerequisite_failure(message)
         if no_log:
             # Preserve censorship even when an older result omitted the flag.
             payload["_ansible_no_log"] = True
@@ -347,6 +360,8 @@ class CallbackModule(DefaultCallback):
         }
         if module_skipped:
             compact_payload["msg"] = "NDP_MODULE_SKIPPED: declared lab substrate unavailable"
+        elif prerequisite_failed:
+            compact_payload["msg"] = self.prerequisite_failures[-1] if self.prerequisite_failures else "NDP_PREREQUISITE_STATUS: FAILED"
         # Ansible 2.19+ supplies a callback-local mutable mapping through a
         # getter-only _result property. Update that mapping; assigning _result
         # raises AttributeError and suppresses successful-result output.

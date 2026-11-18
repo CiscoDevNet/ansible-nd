@@ -131,14 +131,14 @@ assert fallback.startsWith('ND 4.3 (iBGP + eBGP) NIGHTLY NOTIFICATION - Build 12
 assert !fallback.contains('x' * 1201)
 assert fallback.contains('Branch: fixture-owner:feature/example\nCommit: ' + ('b' * 40))
 assert fallback.length() < 7000
-assert fallback.contains('Total passed cases: 3 | PLAY RECAP failed tasks: unavailable')
-assert fallback.indexOf('Total passed cases:') < fallback.indexOf('AUTHORED CASE RESULTS:')
+assert fallback.contains('Total passed cases: 3 | failed: 1 | skipped: 2')
+assert fallback.indexOf('Total passed cases:') < fallback.indexOf('MODULE STATUS')
+assert fallback.contains('- FAIL | fixture module | iBGP')
+assert fallback.contains('- PASS | smoke fixture.yaml | iBGP')
 assert !fallback.contains('AUTHORED INTEG TEST CASE COUNTS')
 assert !fallback.contains('Incomplete:')
-def row = fallback.readLines().find { it.startsWith('fixture_module ') }.trim().split(/\s{2,}/)
-assert row[1..4] == ['FAIL', '3', '1', '2']
 assert !fallback.contains('Passed: 103') && !fallback.contains('CASE COUNTS NOT GENERATED')
-assert !(fallback =~ /(?i)N\/A|unknown/)
+assert !(fallback =~ /(?i)N\/A|unknown|unavailable/)
 ''')
 
 

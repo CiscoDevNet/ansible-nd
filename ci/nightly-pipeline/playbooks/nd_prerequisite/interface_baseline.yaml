@@ -131,6 +131,13 @@
     # This include runs only at lifecycle boundaries or after reset, when the
     # target has finished cleanup. Future reservations are not active port use.
     idle_reserved_ports: true
+    # Recalculate & Deploy identity/mode-verified lab switches whose only gap is
+    # configSyncStatus, then require fresh inSync. Not tied to interface apply.
+    # Operators can disable it with ND_INTERFACE_BASELINE_RECOVER_SYNC=false.
+    recover_config_sync: >-
+      {{ (nd_interface_baseline_recover_config_sync | default(lookup('env', 'ND_INTERFACE_BASELINE_RECOVER_SYNC') | default(true, true)) | bool)
+          and (nd_switch_apply | default(true) | bool)
+          and not (nd_prerequisite_only | default(false) | bool) }}
     apply: >-
       {{ (nd_interface_baseline_apply | default(lookup('env', 'ND_INTERFACE_BASELINE_APPLY') | default(false, true)) | bool)
           and (nd_switch_apply | default(true) | bool)
@@ -152,8 +159,44 @@
       - "NDP_INTERFACE_BASELINE reason={{ _nd_interface_baseline_result.reason | default('UNVERIFIED') }} apply={{ _nd_interface_baseline_result.apply | default(false) }} inspected={{ _nd_interface_baseline_result.inspected | default(0) }} candidates={{ _nd_interface_baseline_result.candidates | default(0) }} verified={{ _nd_interface_baseline_result.verified | default(0) }}"
       - "{{ _nd_interface_baseline_result.decisions | default([]) }}"
 
+# Only the post-recovery call site opts in. An audit that changed nothing and
+# found only ND config-sync lag (no identity/mode failure) cannot make the lab
+# unsafe, so it must not abort the round and leave every module NOT_RUN.
+- name: Classify an audit-only config-sync gap as advisory
+  ansible.builtin.set_fact:
+    _nd_interface_baseline_advisory: >-
+      {{ (nd_interface_baseline_audit_advisory | default(false) | bool)
+         and (_nd_interface_baseline_result.apply | default(true)) is sameas false
+         and (_nd_interface_baseline_result.changed | default(true)) is sameas false
+         and (_nd_interface_baseline_result.reason | default('')) == 'SWITCH_READINESS_OR_IDENTITY_UNVERIFIED'
+         and _nd_baseline_unready | length > 0
+         and (_nd_baseline_unready | map(attribute='failed_checks', default=[]) | map('join', ',') | unique | list) == ['configSyncStatus'] }}
+  vars:
+    _nd_baseline_unready: >-
+      {{ _nd_interface_baseline_result.decisions | default([])
+         | selectattr('decision', 'defined')
+         | selectattr('decision', 'equalto', 'SWITCH_READINESS_OR_IDENTITY_UNVERIFIED') | list }}
+
+- name: Report the advisory audit-only config-sync gap
+  ansible.builtin.debug:
+    msg: >-
+      NDP_INTERFACE_BASELINE_ADVISORY: audit-only baseline made no changes; switches not yet in config sync
+      {{ _nd_interface_baseline_result.decisions | selectattr('decision', 'defined')
+         | selectattr('decision', 'equalto', 'SWITCH_READINESS_OR_IDENTITY_UNVERIFIED')
+         | map(attribute='switch') | list }}. Continuing; module targets own their own deploy/sync.
+  when: _nd_interface_baseline_advisory | bool
+
 - name: Require accepted operations and fresh verification for interface baseline changes
   ansible.builtin.assert:
     that:
       - (_nd_interface_baseline_result.baseline_failed | default(true)) is sameas false
+        or _nd_interface_baseline_advisory | bool
     fail_msg: "NDP_INTERFACE_BASELINE_BLOCKED: inventory, safety, deployment or verification could not be established; no membership transfer is permitted."
+  ignore_errors: true
+
+- name: Report an incomplete interface baseline without blocking module execution
+  ansible.builtin.debug:
+    msg: "NDP_INTERFACE_BASELINE_BLOCKED_CONTINUING: baseline readiness was not confirmed; continuing with the selected module."
+  when:
+    - (_nd_interface_baseline_result.baseline_failed | default(true)) is not sameas false
+    - not (_nd_interface_baseline_advisory | bool)

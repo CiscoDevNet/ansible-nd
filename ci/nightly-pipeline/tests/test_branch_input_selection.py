@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 
 import pytest
@@ -92,28 +93,33 @@ def test_bad_fork_input_stops_before_any_checkout_shell(branch_script, selection
 @pytest.mark.parametrize("owner", ["CiscoDevNet", "fixture-owner"])
 @pytest.mark.parametrize("gate_index", [0, 1], ids=["before-preflight", "before-each-target"])
 @pytest.mark.parametrize("matches", [True, False])
-def test_origin_gate_requires_the_exact_selected_repository(tmp_path, variant, owner, gate_index, matches):
+def test_origin_gate_warns_on_an_unselected_repository_and_continues(tmp_path, variant, owner, gate_index, matches):
     repo = tmp_path / "collection"
     repo.mkdir()
     git(repo, "init", "-q")
     expected = "https://github.com/" + owner + "/ansible-nd.git"
     actual = expected if matches else "https://github.com/unselected-owner/ansible-nd.git"
     git(repo, "remote", "add", "origin", actual)
+    (repo / "nd_verify_develop_sources.py").write_text("import sys\nsys.exit(0)\n")
+    python = tmp_path / "base/venv/bin/python"
+    python.parent.mkdir(parents=True)
+    python.symlink_to(sys.executable)
     lines = (ROOT / variant).read_text().splitlines()
     gates = []
     for index, line in enumerate(lines):
         if "NDP_SELECTED_SOURCE_ORIGIN_MISMATCH" not in line:
             continue
-        # A gate is either one `|| { ...; }` line or a multi-line `|| {` block.
-        start = next(i for i in range(index, -1, -1) if "|| {" in lines[i])
-        end = index if lines[start].rstrip().endswith("}") else next(
-            i for i in range(index, len(lines)) if lines[i].strip() == "}")
+        start = next(i for i in range(index, -1, -1) if lines[i].strip().startswith("if [ \"$(git"))
+        end = next(i for i in range(index, len(lines)) if lines[i].strip() == "fi")
         gates.append("\n".join(item.strip() for item in lines[start:end + 1]))
     assert len(gates) == 2
-    # The per-target gate returns from its shell function; retain that context.
-    command = "set -e\ncheck_origin() {\n" + gates[gate_index] + "\n}\ncheck_origin\n"
-    result = subprocess.run(["bash", "-c", command], cwd=repo,
-                            env=dict(offline_environment(), COLLECTIONS_DIRECTORY=str(repo), ND_GIT_REPOSITORY=expected),
+    command = "set -e\n" + gates[gate_index] + "\necho GATE_PASSED\n"
+    environment = dict(offline_environment(), COLLECTIONS_DIRECTORY=str(repo), ND_GIT_REPOSITORY=expected,
+                       BASE_DIRECTORY=str(tmp_path / "base"), ND_GIT_BRANCH="develop", ND_GIT_COMMIT="1" * 40)
+    environment["PATH"] = str(python.parent) + os.pathsep + environment.get("PATH", os.defpath)
+    result = subprocess.run(["bash", "-c", command], cwd=repo, env=environment,
                             text=True, capture_output=True, timeout=10)
-    assert (result.returncode == 0) is matches
-    assert ("NDP_SELECTED_SOURCE_ORIGIN_MISMATCH" in result.stderr) is not matches
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "GATE_PASSED" in result.stdout
+    assert ("NDP_SELECTED_SOURCE_ORIGIN_MISMATCH_CONTINUING" in result.stdout + result.stderr) is not matches
+    assert "NDP_SELECTED_SOURCE_VERIFY_FAILED_CONTINUING" not in result.stdout + result.stderr

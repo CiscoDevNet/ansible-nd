@@ -518,6 +518,148 @@ def test_initial_sync_retry_does_not_extend_the_shared_deadline(baseline):
     assert state['writes'] == []
 
 
+def sync_recovery_fixture(baseline, tmp_path, initial=('outOfSync',), after_deploy=('inProgress', 'inSync'),
+                          problem=None, transient_saves=0):
+    registry, original, state = controller_fixture()
+    registry['lab']['fabrics'] = {'advanced': {'name': 'fixture', 'type': 'vxlanIbgp', 'lifecycle': 'retained'}}
+    state.update(now=0.0, sync=list(initial), saves=0, deploys=[])
+
+    def request(method, path, content, timeout):
+        state['now'] += 0.01
+        if path.endswith('/actions/configSave') or path.endswith('/switchActions/deploy'):
+            state['calls'].append((method, path))
+            state['writes'].append((method, path, copy.deepcopy(content)))
+        if path.endswith('/actions/configSave'):
+            state['saves'] += 1
+            if state['saves'] <= transient_saves:
+                return {'status': 503, 'failed': True, 'current': {}}
+            if problem == 'rejected_save':
+                return {'status': 400, 'current': {'message': 'rejected'}}
+            state['after_save'] = True
+            return {'status': 200, 'current': {'status': 'Config save is completed'}}
+        if path.endswith('/switchActions/deploy'):
+            state['deploys'].append(copy.deepcopy(content))
+            if problem == 'foreign_item':
+                return {'status': 207, 'current': {'items': [{'switchId': 'FOREIGN', 'status': 'Success'}]}}
+            state['sync'] = ['inProgress', 'outOfSync'] if problem == 'never_converges' else list(after_deploy)
+            return {'status': 207, 'current': {'items': [{'switchId': serial, 'status': 'Success'}
+                                                         for serial in content['switchIds']]}}
+        if path.endswith('deploymentFreeze') and problem == 'freeze_after_save' and state.get('after_save'):
+            return {'status': 200, 'current': {'deploymentFreeze': True}}
+        reply = original(method, path, content, timeout)
+        if path.endswith('/switches'):
+            if problem == 'vanish_after_save' and state.get('after_save'):
+                reply['current']['switches'] = []
+                return reply
+            node = reply['current']['switches'][0]
+            node['additionalData']['configSyncStatus'] = state['sync'][0] if len(state['sync']) == 1 else state['sync'].pop(0)
+            if problem == 'wrong_identity':
+                node['fabricManagementIp'] = '192.0.2.99'
+        return reply
+
+    def sleep(seconds):
+        state['now'] += seconds
+
+    def run(apply=False, earlier_gap=False):
+        gate = baseline.InterfaceBaseline(registry, ['fixture'], request, apply=apply, poll_seconds=5,
+            clock=lambda: state['now'], sleep=sleep, switch_refs=['leaf'],
+            journal_path=str(tmp_path / 'journal.jsonl'), recover_config_sync=True)
+        # Simulates an audit-only readiness gap left by an earlier fabric.
+        gate.readiness_incomplete = earlier_gap
+        return gate.run()
+
+    return state, run
+
+
+def sync_writes(state):
+    return [path.rsplit('/', 2)[-2] + '/' + path.rsplit('/', 1)[-1] for _, path, _ in state['writes']]
+
+
+@pytest.mark.parametrize('apply', [False, True])
+def test_lifecycle_recovery_recalculates_deploys_drifted_switches_and_reverifies(baseline, tmp_path, apply):
+    state, run = sync_recovery_fixture(baseline, tmp_path)
+    result = run(apply=apply)
+    assert result['baseline_failed'] is False, result['reason']
+    assert sync_writes(state)[:2] == ['actions/configSave', 'switchActions/deploy']
+    assert state['saves'] == 1 and state['deploys'] == [{'switchIds': ['SERIAL00001']}]
+    assert result['changed'] is True and result['verified'] == (1 if apply else 0)
+    assert len(state['writes']) == (4 if apply else 2)
+    decisions = [row['decision'] for row in result['decisions'] if 'fabric' in row]
+    assert decisions == ['SYNC_RECOVERY_DEPLOY_REQUESTED', 'SYNC_RECOVERY_CONFIRMED']
+    assert 'SERIAL00001' not in json.dumps(result['decisions'])
+    journal = [json.loads(line) for line in (tmp_path / 'journal.jsonl').read_text().splitlines()]
+    assert [row['path'].rsplit('/', 1)[-1] for row in journal if row['phase'] == 'request'][:2] == ['configSave', 'deploy']
+
+
+def test_lifecycle_recovery_still_runs_after_an_earlier_fabric_audit_gap(baseline, tmp_path):
+    state, run = sync_recovery_fixture(baseline, tmp_path)
+    result = run(earlier_gap=True)
+    assert state['saves'] == 1 and state['deploys'] == [{'switchIds': ['SERIAL00001']}]
+    assert 'SYNC_RECOVERY_CONFIRMED' in [row['decision'] for row in result['decisions']]
+    # The earlier gap still fails the final audit verdict.
+    assert result['reason'] == 'SWITCH_READINESS_OR_IDENTITY_UNVERIFIED'
+
+
+def test_lifecycle_recovery_waits_for_busy_switches_without_redeploying(baseline, tmp_path):
+    state, run = sync_recovery_fixture(baseline, tmp_path, initial=('inProgress', 'deploymentInProgress', 'inSync'))
+    result = run()
+    assert result['baseline_failed'] is False and state['writes'] == []
+    assert not any(row['decision'].startswith('SYNC_RECOVERY') for row in result['decisions'])
+
+
+def test_lifecycle_recovery_never_overlaps_a_stuck_deployment(baseline, tmp_path):
+    state, run = sync_recovery_fixture(baseline, tmp_path, initial=('inProgress',))
+    result = run()
+    assert result['reason'] == 'FABRIC_SYNC_IN_PROGRESS_TIMEOUT' and state['writes'] == []
+    assert 410 <= state['now'] <= 425
+
+
+def test_lifecycle_recovery_retries_transient_rejection_after_settling(baseline, tmp_path):
+    state, run = sync_recovery_fixture(baseline, tmp_path, transient_saves=1)
+    result = run()
+    assert result['baseline_failed'] is False, result['reason']
+    assert state['saves'] == 2 and len(state['deploys']) == 1
+    assert [row['decision'] for row in result['decisions'] if 'fabric' in row] == [
+        'SYNC_RECOVERY_TRANSIENT_REJECTION', 'SYNC_RECOVERY_DEPLOY_REQUESTED', 'SYNC_RECOVERY_CONFIRMED']
+
+
+def test_lifecycle_recovery_is_bounded_and_skips_interface_cleanup_when_drift_persists(baseline, tmp_path):
+    state, run = sync_recovery_fixture(baseline, tmp_path, problem='never_converges')
+    result = run(apply=True)
+    assert result['reason'] == 'FABRIC_SYNC_RECOVERY_NOT_CONVERGED'
+    assert state['saves'] == 3 and len(state['deploys']) == 3
+    assert set(sync_writes(state)) == {'actions/configSave', 'switchActions/deploy'}
+    assert result['decisions'][-1] == {'fabric': 'fixture', 'decision': 'SYNC_RECOVERY_NOT_CONVERGED',
+                                       'attempts': 3, 'switches': {'leaf': 'outOfSync'}}
+
+
+@pytest.mark.parametrize('problem,reason,saves,deploys', [
+    ('wrong_identity', 'SWITCH_READINESS_OR_IDENTITY_UNVERIFIED', 0, 0),
+    ('rejected_save', 'API_REQUEST_REJECTED', 1, 0),
+    ('freeze_after_save', 'DEPLOYMENT_FREEZE_OR_UNVERIFIED', 1, 0),
+    ('vanish_after_save', 'FABRIC_SYNC_ROSTER_CHANGED', 1, 0),
+    ('foreign_item', 'SYNC_ACTION_RESPONSE_UNVERIFIED', 1, 1),
+])
+def test_lifecycle_recovery_fails_closed_without_retrying_unsafe_states(baseline, tmp_path, problem, reason, saves, deploys):
+    state, run = sync_recovery_fixture(baseline, tmp_path, problem=problem)
+    result = run()
+    assert result['baseline_failed'] is True and result['reason'] == reason
+    assert state['saves'] == saves and len(state['deploys']) == deploys
+
+
+@pytest.mark.parametrize('change', ['foreign_fabric', 'no_journal', 'no_switch_scope'])
+def test_lifecycle_recovery_requires_owned_fabrics_explicit_switches_and_checkpoint(baseline, tmp_path, change):
+    registry, request, _ = controller_fixture()
+    registry['lab']['fabrics'] = {'advanced': {'name': 'fixture', 'lifecycle': 'retained'}}
+    arguments = {'switch_refs': ['leaf'], 'journal_path': str(tmp_path / 'journal.jsonl'), 'recover_config_sync': True}
+    if change == 'foreign_fabric':
+        registry['lab']['fabrics']['advanced']['name'] = 'other'
+    else:
+        arguments.pop('journal_path' if change == 'no_journal' else 'switch_refs')
+    with pytest.raises(ValueError, match='retained lab scope'):
+        baseline.InterfaceBaseline(registry, ['fixture'], request, **arguments)
+
+
 def test_explicit_interface_scope_touches_only_the_selected_unused_port(baseline):
     registry, request, state = controller_fixture()
     result = baseline.InterfaceBaseline(registry, ['fixture'], request, apply=True,
@@ -760,6 +902,31 @@ def test_real_action_adapter_masks_requests_and_check_mode_never_writes(baseline
     assert action._task.no_log is False
 
 
+def test_check_mode_adapter_never_recalculates_or_deploys_drifted_switches(baseline, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    registry, request, state = controller_fixture()
+    registry['lab']['fabrics'] = {'advanced': {'name': 'fixture', 'type': 'vxlanIbgp', 'lifecycle': 'retained'}}
+
+    def drifted(method, path, content, timeout):
+        reply = request(method, path, content, timeout)
+        if path.endswith('/switches'):
+            reply['current']['switches'][0]['additionalData']['configSyncStatus'] = 'outOfSync'
+        return reply
+
+    monkeypatch.setattr(baseline.ActionBase, 'run', lambda *args, **kwargs: {})
+    action = baseline.ActionModule.__new__(baseline.ActionModule)
+    action._task = SimpleNamespace(args={'registry': registry, 'fabrics': ['fixture'], 'switch_refs': ['leaf'],
+        'journal_path': str(tmp_path / 'journal.jsonl'), 'recover_config_sync': True, 'poll_seconds': 0},
+        no_log=False, check_mode=True)
+    action._templar = SimpleNamespace(template=lambda value: value)
+    action._connection = SimpleNamespace(_socket_path=None)
+    action._execute_module = lambda module_name, module_args, task_vars: drifted(
+        module_args['method'], module_args['path'], module_args.get('content'), 30)
+    result = action.run(task_vars={})
+    assert result['reason'] == 'SWITCH_READINESS_OR_IDENTITY_UNVERIFIED' and state['writes'] == []
+
+
 FAKE_REST = r'''
 import json, os
 from pathlib import Path
@@ -774,13 +941,16 @@ if method == 'put':
 if endpoint.endswith('interfaceActions/deploy'):
     state['deployed'] = True
     state['detail']['operData']['adminStatus'] = 'down'
+if endpoint.endswith('switchActions/deploy'):
+    state['sync'] = 'inSync'
 if method != 'get':
     body = {'results':[{'switchId':'SERIAL00001','interfaceName':'Ethernet1/63','status':'success'}]}
 elif endpoint == '/api/v1/manage/fabrics/fixture':
     body = {'name':'fixture','category':'fabric','management':{'type':'vxlanIbgp','hostInterfaceAdminState':False}}
 elif endpoint.endswith('/switches'):
     body = {'switches':[{'switchId':'SERIAL00001','fabricManagementIp':'192.0.2.10','switchRole':'leaf','additionalData':{
-        'systemMode':'normal','intendedSystemMode':'normal','discoveredSystemMode':'normal','configSyncStatus':'inSync'}}]}
+        'systemMode':state.get('mode','normal'),'intendedSystemMode':'normal','discoveredSystemMode':'normal',
+        'configSyncStatus':state.get('sync','inSync')}}]}
 elif endpoint.endswith('deploymentFreeze'):
     body = {'deploymentFreeze':state.get('frozen',False)}
 elif endpoint.endswith('softwareUpdatePlan/summary'):
@@ -807,6 +977,9 @@ module.exit_json(changed=method != 'get',status=200 if method == 'get' else 207,
 def test_real_ansible_shared_task_runs_audit_apply_and_check_mode_without_network(tmp_path, apply, check_mode, membership_apply, writes, frozen):
     registry, _, state = controller_fixture()
     registry['lab']['fabrics']={'advanced':{'name':'fixture','type':'vxlanIbgp','lifecycle':'retained'}}
+    registry['lab']['switches']['leaf']['baseline_fabric_ref']='advanced'
+    registry['profiles']={'integration.fixture':{'resources':[{'kind':'verify_logical_interface_namespace',
+        'switch_ref':'leaf','interface_type':'port_channel','interfaces':['Port-channel520']}]}}
     state["frozen"] = frozen
     registry_path = tmp_path / "registry.yaml"
     registry_path.write_text(json.dumps(registry))
@@ -833,12 +1006,101 @@ def test_real_ansible_shared_task_runs_audit_apply_and_check_mode_without_networ
     if check_mode:
         command.append("--check")
     completed = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=60)
-    assert (completed.returncode == 0) is (not frozen), completed.stdout + completed.stderr
+    # A blocked baseline is reported and the run continues (never-stop policy).
+    assert completed.returncode == 0, completed.stdout + completed.stderr
     captured = json.loads(ledger.read_text())
     assert len([row for row in captured["calls"] if row[0] != "get"]) == (0 if frozen else writes)
     assert "NDP_INTERFACE_BASELINE" in completed.stdout
-    if frozen:
-        assert "NDP_INTERFACE_BASELINE_BLOCKED" in completed.stdout
+    assert ("NDP_RESERVED_MEMBERS_FREE switch=leaf" in completed.stdout) is membership_apply
+    assert ("NDP_INTERFACE_BASELINE_BLOCKED_CONTINUING" in completed.stdout) is frozen
+    assert "192.0.2.10" not in completed.stdout and "SERIAL00001" not in completed.stdout
+
+
+
+@pytest.mark.parametrize("problem,apply,advisory,passes", [
+    ("outOfSync", False, True, True), ("outOfSync", False, False, False),
+    ("outOfSync", True, True, False), ("maintenance", False, True, False)])
+def test_post_recovery_audit_sync_gap_is_advisory_only(tmp_path, problem, apply, advisory, passes):
+    registry, _, state = controller_fixture()
+    registry['lab']['fabrics'] = {'advanced': {'name': 'fixture', 'type': 'vxlanIbgp', 'lifecycle': 'retained'}}
+    registry['lab']['switches']['leaf']['baseline_fabric_ref'] = 'advanced'
+    state['sync' if problem == 'outOfSync' else 'mode'] = problem
+    registry_path = tmp_path / "registry.yaml"
+    registry_path.write_text(json.dumps(registry))
+    ledger = tmp_path / "ledger.json"
+    ledger.write_text(json.dumps(state))
+    modules = tmp_path / "collections/ansible_collections/cisco/nd/plugins/modules"
+    modules.mkdir(parents=True)
+    (modules / "nd_rest.py").write_text(FAKE_REST)
+    helper = PLUGIN.parent.parent / "nd_prerequisite/interface_baseline.yaml"
+    playbook = tmp_path / "play.yaml"
+    playbook.write_text(json.dumps([{"hosts": "localhost", "connection": "local", "gather_facts": False,
+        "vars": {"ansible_python_interpreter": sys.executable, "nd_interface_baseline_registry_file": str(registry_path),
+                 "nd_test_fabric_switches": {"fixture": []}, "nd_interface_baseline_apply": apply,
+                 "nd_switch_apply": apply, "nd_interface_baseline_poll_seconds": 0,
+                 "nd_interface_baseline_audit_advisory": advisory,
+                 # Classification only; sync recovery has its own helper test.
+                 "nd_interface_baseline_recover_config_sync": False},
+        "tasks": [{"ansible.builtin.include_tasks": str(helper)}]}]))
+    config = tmp_path / "ansible.cfg"
+    config.write_text("[defaults]\n")
+    environment = dict(os.environ, ANSIBLE_CONFIG=str(config), ANSIBLE_COLLECTIONS_PATH=str(tmp_path / "collections"),
+        ANSIBLE_COLLECTIONS_SCAN_SYS_PATH="False", ANSIBLE_ACTION_PLUGINS=str(PLUGIN.parent),
+        ANSIBLE_STDOUT_CALLBACK="default", ANSIBLE_NOCOLOR="1", BASELINE_FAKE_LEDGER=str(ledger),
+        ANSIBLE_LOCAL_TEMP=str(tmp_path / "local"), ANSIBLE_REMOTE_TEMP=str(tmp_path / "remote"),
+        OBJC_DISABLE_INITIALIZE_FORK_SAFETY="YES")
+    command = [str(Path(sys.executable).with_name("ansible-playbook")), "-i", "localhost,", str(playbook)]
+    completed = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=60)
+    output = completed.stdout + completed.stderr
+    # The hook never stops the run; only the advisory/blocked classification differs.
+    assert completed.returncode == 0, output
+    assert "reason=SWITCH_READINESS_OR_IDENTITY_UNVERIFIED" in output
+    assert ("NDP_INTERFACE_BASELINE_ADVISORY" in output) is passes
+    assert ("NDP_INTERFACE_BASELINE_BLOCKED" in output) is (not passes)
+    assert ("NDP_INTERFACE_BASELINE_BLOCKED_CONTINUING" in output) is (not passes)
+    assert [row for row in json.loads(ledger.read_text())["calls"] if row[0] != "get"] == []
+
+@pytest.mark.parametrize("switch_apply,knob,recovered", [(True, None, True), (True, "false", False), (False, None, False)])
+def test_lifecycle_helper_recovers_config_sync_unless_disabled(tmp_path, switch_apply, knob, recovered):
+    registry, _, state = controller_fixture()
+    registry['lab']['fabrics'] = {'advanced': {'name': 'fixture', 'type': 'vxlanIbgp', 'lifecycle': 'retained'}}
+    registry['lab']['switches']['leaf']['baseline_fabric_ref'] = 'advanced'
+    state['sync'] = 'outOfSync'
+    registry_path = tmp_path / "registry.yaml"
+    registry_path.write_text(json.dumps(registry))
+    ledger = tmp_path / "ledger.json"
+    ledger.write_text(json.dumps(state))
+    modules = tmp_path / "collections/ansible_collections/cisco/nd/plugins/modules"
+    modules.mkdir(parents=True)
+    (modules / "nd_rest.py").write_text(FAKE_REST)
+    helper = PLUGIN.parent.parent / "nd_prerequisite/interface_baseline.yaml"
+    playbook = tmp_path / "play.yaml"
+    playbook.write_text(json.dumps([{"hosts": "localhost", "connection": "local", "gather_facts": False,
+        "vars": {"ansible_python_interpreter": sys.executable, "nd_interface_baseline_registry_file": str(registry_path),
+                 "nd_test_fabric_switches": {"fixture": []}, "nd_switch_apply": switch_apply,
+                 "nd_interface_baseline_poll_seconds": 0},
+        "tasks": [{"ansible.builtin.include_tasks": str(helper)}]}]))
+    config = tmp_path / "ansible.cfg"
+    config.write_text("[defaults]\n")
+    environment = dict(os.environ, ANSIBLE_CONFIG=str(config), ANSIBLE_COLLECTIONS_PATH=str(tmp_path / "collections"),
+        ANSIBLE_COLLECTIONS_SCAN_SYS_PATH="False", ANSIBLE_ACTION_PLUGINS=str(PLUGIN.parent),
+        ANSIBLE_STDOUT_CALLBACK="default", ANSIBLE_NOCOLOR="1", BASELINE_FAKE_LEDGER=str(ledger),
+        ANSIBLE_LOCAL_TEMP=str(tmp_path / "local"), ANSIBLE_REMOTE_TEMP=str(tmp_path / "remote"),
+        OBJC_DISABLE_INITIALIZE_FORK_SAFETY="YES")
+    environment.pop("ND_INTERFACE_BASELINE_APPLY", None)
+    environment.pop("ND_INTERFACE_BASELINE_RECOVER_SYNC", None)
+    if knob is not None:
+        environment["ND_INTERFACE_BASELINE_RECOVER_SYNC"] = knob
+    command = [str(Path(sys.executable).with_name("ansible-playbook")), "-i", "localhost,", str(playbook)]
+    completed = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=60)
+    output = completed.stdout + completed.stderr
+    writes = [path.rsplit("/", 2)[-2] + "/" + path.rsplit("/", 1)[-1]
+              for method, path in json.loads(ledger.read_text())["calls"] if method != "get"]
+    assert writes == (["actions/configSave", "switchActions/deploy"] if recovered else []), output
+    assert ("reason=AUDIT_COMPLETE" in output) is recovered
+    assert ("reason=SWITCH_READINESS_OR_IDENTITY_UNVERIFIED" in output) is (not recovered)
+    # Never-stop policy: an unrecovered gap is reported and the run continues.
+    assert completed.returncode == 0, output
     assert "192.0.2.10" not in completed.stdout and "SERIAL00001" not in completed.stdout
 
 
@@ -1060,13 +1322,20 @@ def test_real_registry_and_all_lifecycle_delivery_hooks_are_complete(baseline):
     assert "NDP_INTERFACE_BASELINE_HOOK after reset" in reset["tasks"][-1]["name"]
     assert reset["tasks"][-1]["when"][-1] == "not (nd_reset_defer_interface_baseline | default(false) | bool)"
     assert guard["vars"]["nd_switch_predelete_copy_timeout_seconds"] == 900
+    helper = yaml.safe_load((root / "playbooks/nd_prerequisite/interface_baseline.yaml").read_text())
+    recovery = next(task for task in helper if "nd_interface_baseline" in task)["nd_interface_baseline"]["recover_config_sync"]
+    # Lifecycle hooks normally audit interfaces; sync recovery must not depend on interface apply.
+    assert "nd_switch_apply" in recovery and "nd_prerequisite_only" in recovery
+    assert "ND_INTERFACE_BASELINE_RECOVER_SYNC" in recovery and "nd_interface_baseline_recover_config_sync" in recovery
+    assert "INTERFACE_BASELINE_APPLY" not in recovery and "nd_interface_baseline_apply" not in recovery
     for variant in ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches", "Jenkinsfile_nd_jenkins_script_comm_list"):
         source = (root / variant).read_text()
         assert "'nd_prerequisite/interface_baseline.yaml'" in source
         assert "'action_plugins/nd_interface_baseline.py'" in source
-        expected_default = "false"
+        expected_default = "false" if variant == "Jenkinsfile_nd_jenkins_script_temp_switches" else "true"
         assert "name: 'ND_INTERFACE_BASELINE_ENABLED', defaultValue: " + expected_default in source
         assert "name: 'ND_INTERFACE_BASELINE_APPLY', defaultValue: false" in source
+        assert "name: 'ND_INTERFACE_BASELINE_RECOVER_SYNC', defaultValue: true" in source
         assert "NDP_INTERFACE_BASELINE_RUNTIME_MISSING" in source
         home = source.split('def restoreHomeFabric(', 1)[1].split('\ndef recordUnstartedRound(', 1)[0]
         assert "withEnv(['ND_RESET_DEFER_INTERFACE_BASELINE=true'])" in home

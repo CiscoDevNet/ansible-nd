@@ -113,7 +113,7 @@ script.metaClass.withCredentials = { List credentials, Closure body ->
 script.metaClass.httpRequest = { Map options ->
     requests.add(new JsonSlurper().parseText(options.requestBody.toString()))
     assert options.customHeaders[0].maskValue == true
-    assert options.timeout == 45
+    assert options.timeout == 180
     return [status: 200]
 }
 def round = [version: '4.3', versionId: 'ND43', round_label: 'iBGP',
@@ -264,15 +264,18 @@ script.metaClass.sh = { Object ignored -> throw new AssertionError('fallback mus
 script.metaClass.writeFile = { Map ignored -> throw new AssertionError('fallback must not require FilePath') }
 def fallback = script.minimalBuildNotification()
 assert fallback.length() < 1500
-assert fallback.contains('Build result: FAILURE')
+assert fallback.contains('AUTHORED CASE TOTALS UNAVAILABLE: no integration-module result rows were collected.')
 assert fallback.contains('Branch: ' + ('b' * 200) + '\n')
 assert fallback.contains('Commit: ' + ('c' * 80) + '\n')
-assert fallback.contains('Test-case counts are unknown')
+assert !fallback.contains('CASE COUNTS NOT GENERATED')
 assert fallback.contains('https://jenkins.invalid/job/nd/122/console')
-assert source.contains('sendWebexNotificationMessages([minimalBuildNotification(e.getClass().getName())])')
-script.sendWebexNotificationMessages([fallback])
+def reportReadyField = script.getClass().getDeclaredField('ND_CASE_REPORT_READY')
+reportReadyField.setAccessible(true)
+reportReadyField.set(script, false)
+script.sendMinimalBuildNotification('FixtureError')
 assert requests.size() == 1
-assert requests[0].markdown == fallback
+assert !requests[0].markdown.contains('CASE COUNTS NOT GENERATED')
+assert requests[0].markdown.length() < 7000
 ''')
 
 
@@ -316,7 +319,7 @@ def test_fallback_reports_only_revision_and_safe_exception_class(groovy_runner):
     groovy_runner(r"""
 def name = 'org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException'
 def fallback = script.minimalBuildNotification(name)
-assert fallback.contains('Reporting revision: ' + script.ND_REPORTING_REVISION)
+assert !fallback.contains('Reporting revision')
 assert fallback.contains('Detailed reporting error class: ' + name)
 assert fallback.contains('Branch: develop\nCommit: ' + ('a' * 40) + '\n')
 def unsafe = script.minimalBuildNotification('Authorization: Bearer OFFLINE_RAW_SECRET\nresponse body')
@@ -346,15 +349,13 @@ def test_real_post_fallback_identifies_revision_and_exception_without_raw_messag
     groovy_runner(POST_DSL + r"""
 def type = loader.parseClass('package org.jenkinsci.plugins.scriptsecurity.sandbox; class RejectedAccessException extends RuntimeException { RejectedAccessException(String text) { super(text) } }')
 def failure = type.newInstance('OFFLINE_RAW_SECRET_ERROR_BODY_NEVER_FORWARD')
-script.metaClass.moduleCaseTotals = { Object rows -> throw failure }
+script.metaClass.webexCaseReportSummary = { Object rows -> throw failure }
 script.run()
 assert requests.size() == 1
-assert requests[0].markdown.contains('Build result: FAILURE')
-assert requests[0].markdown.contains('Reporting revision: ' + script.ND_REPORTING_REVISION)
-assert requests[0].markdown.contains('Detailed reporting error class: org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException')
+assert requests[0].markdown.contains('the result report could not be rendered')
 assert !requests[0].markdown.contains('OFFLINE_RAW_SECRET')
-assert logs.any { it == 'NDP_NOTIFICATION_REVISION: ' + script.ND_REPORTING_REVISION }
-assert logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_FAILED: org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException; revision=') }
+assert !logs.any { it.contains('REVISION') || it.contains('revision=') }
+assert !logs.any { it.contains('NOTIFICATION_SUPPRESSED') }
 assert !logs.join('\n').contains('OFFLINE_RAW_SECRET')
 assert writes.isEmpty() && shells.isEmpty()
 """)
@@ -375,21 +376,21 @@ for (int index = 0; index < 30; index++) {
 script.TEST_RESULT_ARTIFACTS_BUF = artifacts.join('\n')
 context.LOG_BUNDLE_FILE = 'all_logs_build_122.zip'
 context.MODULE_ACTIVITY_REPORT_FILE = 'module_test_activity_build_122.txt'
+def reportReadyField = script.getClass().getDeclaredField('ND_CASE_REPORT_READY')
+reportReadyField.setAccessible(true)
+reportReadyField.set(script, true)
 script.run()
 assert requests.size() >= 3
 for (def request : requests) { assert request.markdown.length() <= 7000 }
 def delivered = requests.collect { it.markdown }.join('\n')
 for (int index = 0; index < 220; index++) { assert delivered.contains('unique_post_module_' + index + ' ') }
-for (int index = 0; index < 30; index++) {
-    assert delivered.contains('https://jenkins.invalid/job/nd/122/artifact/fixture-reports/executions/unique_artifact_' + index + '.txt')
-}
-assert delivered.contains('https://jenkins.invalid/job/nd/122/artifact/all_logs_build_122.zip')
-assert delivered.contains('https://jenkins.invalid/job/nd/122/artifact/module_test_activity_build_122.txt')
+assert delivered.contains('[Build artifacts](https://jenkins.invalid/job/nd/122/artifact/)')
+assert delivered.count('/artifact/') == 1
 assert !source.contains('compactMessage')
 assert logs.any { it.startsWith('NDP_WEBEX_REPORT_SIZE: characters=') && it.endsWith('part_limit=7000') }
-assert logs.any { it.startsWith('📨 Webex notification before delivery (') && it.contains('unique_post_module_219') && it.contains('unique_artifact_29.txt') }
+assert logs.any { it.startsWith('📨 Webex notification before delivery (') && it.contains('unique_post_module_219') }
 assert !delivered.contains('Detailed reporting was unavailable')
-assert logs.any { it == 'NDP_NOTIFICATION_REVISION: ' + script.ND_REPORTING_REVISION }
+assert !logs.any { it.contains('REVISION') }
 assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_FAILED:') }
 assert writes.isEmpty() && shells.isEmpty()
 """)
@@ -404,7 +405,6 @@ def test_current_file_fingerprint_cannot_match_captured_build124_old_signature(f
         'denied_plan_write': 'writeFile file: planFile',
     }
     assert all(value not in source for value in old_fingerprint.values())
-    assert re.search(r"ND_REPORTING_REVISION = '[^']+'", source)
-    assert 'NDP_NOTIFICATION_REVISION: ${ND_REPORTING_REVISION}' in source
+    assert 'REVISION' not in source
     assert 'writeFile file: stagedPlanFile' in source
     # This detects local source drift; it does not activate or inspect live Jenkins.
