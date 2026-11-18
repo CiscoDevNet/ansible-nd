@@ -353,7 +353,7 @@ def test_merged_sparse_attachment_update_preserves_cached_bindings(workflow, res
         "attach": [
             {
                 "ip_address": "192.0.2.10",
-                **({"deploy": False, "attachment_options": {"svi_enabled": True}} if resource == "network" else {"freeform_config": ""}),
+                **({"deploy": False, "attachment_options": {"svi_enabled": False}} if resource == "network" else {"freeform_config": ""}),
             }
         ],
     }

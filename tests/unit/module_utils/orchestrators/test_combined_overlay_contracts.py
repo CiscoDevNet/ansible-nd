@@ -110,7 +110,8 @@ def test_canonical_attachment_omission_and_empty_ports_reach_exact_replacement_d
     planned = manager.planned_detach_payloads("staged", parsed, current, desired)
     if interfaces is None:
         assert "interfaces" not in payload
-        assert planned == []
+        assert planned == [{"networkName": "BLUE", "switchId": "TOR1", "attach": False}]
+        assert manager.planned_detach_payloads("merged", parsed, current, desired) == []
     else:
         assert payload["interfaces"] == []
         assert planned == [{"networkName": "BLUE", "switchId": "TOR1", "attach": False}]

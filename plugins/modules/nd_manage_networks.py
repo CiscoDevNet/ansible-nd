@@ -49,9 +49,11 @@ options:
   state:
     description:
       - Desired state of Network resources.
-      - V(merged) creates or updates Networks that do not match the desired config.
-      - V(replaced) replaces existing Networks that match the desired config.
-      - V(overridden) replaces all Networks; removes any not in config.
+      - V(merged) creates named Networks when absent and updates supplied properties, preserving omitted properties and unlisted Networks.
+      - V(replaced) creates or replaces named Network definitions. Omitted manageable scalars reset to defaults or clear where supported;
+        omitted lists clear or default. Unlisted Networks remain unchanged.
+      - V(overridden) uses V(replaced) property semantics and deletes Networks omitted from O(config).
+      - Existing allocated Network IDs and VLAN IDs are retained when omitted. Attachment-only and deployment-only entries do not replace definitions.
       - V(deleted) removes specified Networks (or all if config is empty).
       - V(gathered) returns current Network state.
       - V(staged) uses V(replaced) definition semantics for listed Networks,
@@ -94,6 +96,7 @@ options:
       - List of Network definition configurations to manage.
       - Each element defines a Network with identity, VLAN, gateway,
         PVLAN, attachment, deployment, and other settings.
+      - Entries containing only the Network name and attachment or deployment settings manage those operations without replacing the definition.
       - On standalone fabrics, all Network definition, attachment, and deployment
         options are applied directly to the target fabric.
       - In V(merged), supplied IGMP or NetFlow monitor settings use existing
@@ -176,6 +179,7 @@ options:
             description:
               - Interface attachment entries.
               - Under C(state=merged), omission preserves existing port bindings.
+              - Under V(replaced) and V(overridden), omission clears existing port bindings on a listed attachment.
               - An explicit empty list requests no interface bindings and also
                 supports a new switch-only attachment.
               - In V(replaced), V(overridden) and V(staged), removed ports cause the exact Network/switch attachment
@@ -225,7 +229,11 @@ options:
             type: bool
             default: true
           attachment_options:
-            description: Switch-specific attachment options.
+            description:
+              - Switch-specific attachment options.
+              - In V(merged), omitted options retain saved writable values; an empty dictionary resets the options.
+              - In V(replaced) and V(overridden), omitted options reset to defaults or are cleared, including route-target lists.
+              - Clearing saved options can require two batched writes to reset and restore the effective options before optional deployment.
             type: dict
             suboptions:
               dpu_secure:
@@ -250,7 +258,9 @@ options:
                 description: Active switch selection for classic and routed fabrics only.
                 type: bool
           freeform_config:
-            description: Additional free-form CLI configuration for this attachment.
+            description:
+              - Additional free-form CLI configuration for this attachment.
+              - Omission preserves the saved value in V(merged) and clears it in V(replaced) and V(overridden).
             type: str
       network_id:
         description:
@@ -292,10 +302,14 @@ options:
         description: VLAN name; names over 32 characters require switch support for long VLAN names.
         type: str
       gateway_ipv4_address:
-        description: IPv4 gateway address and prefix.
+        description:
+          - IPv4 gateway address and prefix.
+          - An empty string clears the gateway; omission in V(merged) preserves it.
         type: str
       gateway_ipv6_address:
-        description: IPv6 gateway address and prefix.
+        description:
+          - IPv6 gateway address and prefix.
+          - An empty string clears the gateway; omission in V(merged) preserves it.
         type: str
       secondary_gateway_ipv4_collection:
         description: Secondary IPv4 gateway addresses.
@@ -386,7 +400,9 @@ options:
           - Per-child-fabric override entries for Fabric groups and Multi-cluster Fabric groups.
           - Each entry targets a child member fabric and may override its
             fabric-instance multicast, DHCP, TRM, and NetFlow settings.
-          - Omitted fields are not explicitly changed on the child.
+          - In V(merged), omitted fields retain existing child settings.
+          - For definition requests in V(replaced) and V(overridden), omitted editable settings reset on member fabrics,
+            including when the member entry is omitted. Inherited parent fields and allocated multicast addresses are retained.
           - C(attach), C(deploy), Network name, mode, VRF,
             Network ID, VLAN ID, VLAN name, gateways, interface description,
             MTU, routing tag, ARP suppression,

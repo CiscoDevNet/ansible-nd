@@ -90,7 +90,7 @@ def _effective_vrf(sm, name="BLUE", state="merged"):
 
 def _validate_child_effective(intent, existing=None, state="merged", vrf_type="vxlanIbgp", *, fabric_default=None, is_multicluster=False):
     entry = {"vrf_name": "BLUE", **intent}
-    proposed = VrfDataModel.from_config(_transform(entry, fabric_name="AK-VXLAN", is_child=True))
+    proposed = VrfDataModel.from_config(_transform(entry, fabric_name="AK-VXLAN", is_child=True, state=state))
     proposed.vrf_type = vrf_type
     current = (
         VrfDataModel.from_config({"fabric_name": "AK-VXLAN", "vrf_name": "BLUE", "vrf_type": vrf_type, "fabric_data": existing})
@@ -99,11 +99,13 @@ def _validate_child_effective(intent, existing=None, state="merged", vrf_type="v
     )
     key = ("BLUE", "AK-VXLAN")
     sm = SimpleNamespace(
-        proposed={key: proposed}, existing={key: current} if current is not None else {}, model_orchestrator=_orchestrator_for_request_tests({"state": state})
+        proposed=NDConfigCollection(VrfDataModel, [proposed]),
+        existing={key: current} if current is not None else {},
+        model_orchestrator=_orchestrator_for_request_tests({"state": state}),
     )
     fabric_data = {"management": {"l3VniNoVlanDefaultOption": fabric_default}} if fabric_default is not None else {}
     VrfWorkflowCoordinator._validate_child_vrf_intent(sm, [entry], state, _Strategy(fabric_data=fabric_data, is_child=True, is_multicluster=is_multicluster))
-    return proposed, current
+    return sm.proposed.get(key), current
 
 
 def test_vrf_gathered_flatteners_preserve_present_values_and_ignore_empty_sections():
@@ -730,6 +732,46 @@ def test_standalone_new_password_requires_key_type():
     sm = SimpleNamespace(existing=NDConfigCollection(VrfDataModel), proposed=NDConfigCollection(VrfDataModel, [proposed]))
     with pytest.raises(ValidationError, match="bgp_passwd_encrypt is required"):
         _resolve_standalone(sm, [intent], "merged")
+
+
+def test_merged_key_type_only_update_preserves_the_saved_password():
+    current = VrfDataModel.from_response(
+        {
+            "fabricName": "AK-VXLAN",
+            "vrfName": "BLUE",
+            "vrfType": "vxlanIbgp",
+            "fabricData": {"bgpPassword": "aabbccdd", "bgpPasswordKeyType": "3des"},
+        }
+    )
+    intent = {"vrf_name": "BLUE", "bgp_passwd_encrypt": "type7"}
+    proposed = VrfDataModel.from_config(_transform(intent, state="merged"))
+    sm = SimpleNamespace(existing=NDConfigCollection(VrfDataModel, [current]), proposed=NDConfigCollection(VrfDataModel, [proposed]))
+    _resolve_standalone(sm, [intent], "merged")
+    fabric = _effective_vrf(sm).to_payload()["fabricData"]
+    assert fabric["bgpPassword"] == "aabbccdd"
+    assert fabric["bgpPasswordKeyType"] == "type7"
+    assert current.fabric_data["bgpPasswordKeyType"] == "3des"
+
+
+@pytest.mark.parametrize("state", ["replaced", "overridden", "staged"])
+@pytest.mark.parametrize("child", [False, True])
+def test_authoritative_fabric_defaults_are_not_filtered_as_sparse_intent(state, child):
+    fabric = _transform({"vrf_name": "BLUE"}, is_child=child, state=state)["fabric_data"]
+    assert fabric["advertiseHostRoute"] is False
+    assert fabric["advertiseDefaultRoute"] is True
+    assert fabric["configureStaticDefaultRoute"] is True
+    assert fabric["bgpAllowAsIn"] is False
+    assert fabric["bgpAllowAsInNum"] == 3
+    assert fabric["bgpAsOverride"] is False
+    assert fabric["bgpDisablePeerAsCheck"] is False
+    assert fabric["bgpSoftReconfigAlways"] is False
+    assert fabric["bgpBestPathRelax"] is False
+    assert fabric["bgpLogNeighborChange"] is False
+    assert fabric["netflow"] is False
+    assert fabric["trmData"]["ipv4Trm"] is False
+    assert fabric["trmData"]["ipv6Trm"] is False
+    assert "bgpPassword" not in fabric
+    assert "bgpPasswordKeyType" not in fabric
 
 
 def test_standalone_authoritative_omission_resets_nondefaults():
@@ -2170,8 +2212,25 @@ def test_child_vrf_new_fields_map_to_sparse_fabric_payload():
 def test_child_vrf_sparse_defaults_and_repeat_comparison(state):
     intent = {"adv_host_routes": False, "bgp_log_neighbor_change": True}
     proposed, current = _validate_child_effective(intent, {"advertiseHostRoute": False, "bgpLogNeighborChange": True}, state)
-    assert proposed.fabric_data == {"advertiseHostRoute": False, "bgpLogNeighborChange": True}
-    assert current.get_diff(proposed, exclude_unset=state == "merged") is True
+    assert proposed.fabric_data["advertiseHostRoute"] is False
+    assert proposed.fabric_data["bgpLogNeighborChange"] is True
+    assert current.get_diff(proposed, exclude_unset=state == "merged") is (state == "merged")
+    repeated, _current = _validate_child_effective(intent, proposed.fabric_data, state)
+    assert proposed.get_diff(repeated, exclude_unset=state == "merged") is True
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
+@pytest.mark.parametrize("child", [False, True])
+def test_enabled_trm_authoritative_omissions_send_empty_mvpn_lists(state, child):
+    config = {"vrf_name": "BLUE", "trm_enable": True, "no_rp": True, "underlay_mcast_ip": "239.1.1.3"}
+    data = _transform(config, is_child=child, state=state)
+    trm = data["fabric_data"]["trmData"]
+    assert trm["ipv4Trm"] is True
+    for field in ("mvpnRouteTargetImport", "mvpnRouteTargetExport"):
+        if state == "merged":
+            assert field not in trm
+        else:
+            assert trm[field] == []
 
 
 @pytest.mark.parametrize("is_multicluster", [False, True], ids=["msd", "mcfg"])
@@ -2187,7 +2246,11 @@ def test_child_vrf_l3vni_creation_default_preserves_existing_mode(is_multicluste
     expected = fabric_default if current is None else existing_mode
     assert proposed.fabric_data.get("l3VniWithoutVlan") is expected
     if current is not None:
-        assert current.get_diff(proposed, exclude_unset=state == "merged") is True
+        assert current.get_diff(proposed, exclude_unset=state == "merged") is (state == "merged")
+        repeated, _current = _validate_child_effective(
+            {"bgp_log_neighbor_change": False}, proposed.fabric_data, state, fabric_default=fabric_default, is_multicluster=is_multicluster
+        )
+        assert proposed.get_diff(repeated, exclude_unset=state == "merged") is True
     if expected is None:
         assert "l3VniWithoutVlan" not in proposed.fabric_data
 

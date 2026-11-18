@@ -13,7 +13,7 @@ def expand_desired_attachments_with_vpc_peers(
     desired: dict[tuple[str, str], dict[str, Any]],
     attachment_details: Iterable[Any] | None,
     resource_name_field: str,
-    peer_payload_mutator: Callable[[dict[str, Any]], None] | None = None,
+    peer_payload_mutator: Callable[[dict[str, Any], dict[str, Any]], None] | None = None,
 ) -> dict[tuple[str, str], dict[str, Any]]:
     """
     # Summary
@@ -55,7 +55,7 @@ def expand_desired_attachments_with_vpc_peers(
         peer_payload = dict(payload)
         peer_payload["switchId"] = peer_switch_id
         if peer_payload_mutator is not None:
-            peer_payload_mutator(peer_payload)
+            peer_payload_mutator(peer_payload, detail_by_key.get(peer_key) or {})
         expanded[peer_key] = peer_payload
 
     return expanded

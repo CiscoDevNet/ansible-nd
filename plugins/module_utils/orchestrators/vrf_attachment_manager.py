@@ -41,6 +41,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_at
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.attachment_vpc_peer_expander import (
     expand_desired_attachments_with_vpc_peers,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.attachment_state import effective_attachment, instance_values_match
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.delete_readiness import (
     DeleteReadinessPolicy,
 )
@@ -63,6 +64,7 @@ class VrfAttachmentManager:
     """
 
     clear_vlan_id_intent_key = "_clearVlanId"
+    instance_reset_defaults = {"dpuSecure": False}
     delete_wait_delay = 15
     delete_wait_chunk_size = 30
     delete_wait_base_timeout = 600
@@ -70,6 +72,17 @@ class VrfAttachmentManager:
     delete_wait_max_timeout = 900
     undeploy_retry_attempts = 3
     attachment_query_page_size = 10000
+    managed_instance_fields = {
+        "dpuSecure",
+        "dpuAffinity",
+        "loopbackId",
+        "loopbackIpv4Address",
+        "loopbackIpv6Address",
+        "routeTargetImport",
+        "routeTargetExport",
+        "evpnRouteTargetImport",
+        "evpnRouteTargetExport",
+    }
 
     def __init__(self, coordinator: Any):
         self.coordinator = coordinator
@@ -156,7 +169,7 @@ class VrfAttachmentManager:
         if phase == "pre":
             payloads = self.coordinator._planned_detach_payloads(state, config, current, desired)
         else:
-            payloads = self.coordinator._planned_attach_payloads(current, desired)
+            payloads = self.planned_attach_payloads(current, desired, state=state)
 
         if not payloads:
             self._trace("vrf_attachment_phase_noop", phase=phase, desired_count=len(desired or {}), current_count=len(current or {}))
@@ -607,11 +620,25 @@ class VrfAttachmentManager:
         self,
         current: dict[tuple[str, str], dict[str, Any]],
         desired: dict[tuple[str, str], dict[str, Any]],
+        state: str = "merged",
     ) -> list[dict[str, Any]]:
         """Compute attach payloads for missing or changed desired attachments."""
         payloads: list[dict[str, Any]] = []
         for key, desired_payload in sorted(desired.items()):
             existing = current.get(key)
+            desired_payload = effective_attachment(
+                existing,
+                desired_payload,
+                state=state,
+                model=VrfAttachmentInstanceValuesModel,
+                managed_options=self.managed_instance_fields,
+                option_defaults=self.instance_reset_defaults,
+            )
+            options = desired_payload.get("instanceValues") or {}
+            loopback_id = options.get("loopbackId")
+            addresses = options.get("loopbackIpv4Address") or options.get("loopbackIpv6Address")
+            if loopback_id is not None and not addresses or addresses and loopback_id is None:
+                raise ValueError(f"VRF '{key[0]}' attachment on '{key[1]}' requires loopback_id and at least one loopback address together.")
             if existing is None or not self.coordinator._attachment_matches(existing, desired_payload):
                 payloads.append(desired_payload)
         return payloads
@@ -635,13 +662,9 @@ class VrfAttachmentManager:
             if existing_extra_config != desired_extra_config:
                 return False
         if "instanceValues" in desired:
-            desired_instance = desired.get("instanceValues") or {}
-            existing_instance = existing.get("instanceValues") or {}
-            if not desired_instance:
-                return not existing_instance
-            for key, value in desired_instance.items():
-                if existing_instance.get(key) != value:
-                    return False
+            return instance_values_match(
+                existing.get("instanceValues"), desired.get("instanceValues"), VrfAttachmentInstanceValuesModel, VrfAttachmentManager.instance_reset_defaults
+            )
         return True
 
     def api_attachment_payloads(self, payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:

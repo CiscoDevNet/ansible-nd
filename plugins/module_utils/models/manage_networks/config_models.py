@@ -538,6 +538,8 @@ class NetworkConfigModel(NDBaseModel):
     @field_validator("gateway_ipv4_address", mode="before")
     @classmethod
     def _validate_ipv4_cidr(cls, v: str | None) -> str | None:
+        if v == "":
+            return v
         return NetworkValidators.validate_cidrv4(v)
 
     @field_validator("multicast_group_address", mode="before")
@@ -548,6 +550,8 @@ class NetworkConfigModel(NDBaseModel):
     @field_validator("gateway_ipv6_address", mode="before")
     @classmethod
     def _validate_ipv6_cidr(cls, v: str | None) -> str | None:
+        if v == "":
+            return v
         return NetworkValidators.validate_cidrv6(v)
 
     @field_validator("secondary_gateway_ipv4_collection", mode="before")

@@ -211,11 +211,15 @@ class DefaultL3DataModel(NDNestedModel):
     @field_validator("gateway_ipv4_address", mode="before")
     @classmethod
     def validate_gateway_ipv4_address(cls, v: str | None) -> str | None:
+        if v == "":
+            return v
         return NetworkValidators.validate_cidrv4(v)
 
     @field_validator("gateway_ipv6_address", mode="before")
     @classmethod
     def validate_gateway_ipv6_address(cls, v: str | None) -> str | None:
+        if v == "":
+            return v
         return NetworkValidators.validate_cidrv6(v)
 
     @field_validator("secondary_gateway_ipv4_collection", mode="before")
@@ -693,9 +697,10 @@ class VxlanNetworkModel(NetworkBaseModel):
         None
         """
         data = super().to_diff_dict(**kwargs)
-        if self.network_type == NetworkType.VXLAN.value and not kwargs.get("exclude_unset", False):
+        if not kwargs.get("exclude_unset", False):
             l2_data = data.setdefault("l2Data", {})
             l2_data.setdefault("vlanName", "")
+        if self.network_type == NetworkType.VXLAN.value and not kwargs.get("exclude_unset", False):
             l2_data.setdefault("xConnect", False)
             l2_data.setdefault("fabricData", {})
         if self.layer == NetworkLayer.LAYER2.value:
@@ -710,9 +715,17 @@ class VxlanNetworkModel(NetworkBaseModel):
         # TODO(4.2.1) network-get-omits-empty-collections
         if not kwargs.get("exclude_unset", False):
             l3_data = data.setdefault("l3Data", {})
+            l3_data.setdefault("vlanInterfaceDescription", "")
+            l3_data.setdefault("gatewayIpv4Address", "")
+            l3_data.setdefault("gatewayIpv6Address", "")
             l3_data.setdefault("secondaryGatewayIpv4Collection", [])
             l3_data.setdefault("secondaryGatewayIpv6Collection", [])
-            l3_data.setdefault("fabricData", {}).setdefault("dhcpServers", [])
+            fabric_data = l3_data.setdefault("fabricData", {})
+            fabric_data.setdefault("dhcpServers", [])
+            if self.network_type != NetworkType.VXLAN.value:
+                for name, field in VxlanL3FabricDataModel.model_fields.items():
+                    if field.default is False:
+                        fabric_data.setdefault(field.alias or name, False)
         if self.network_type == NetworkType.VXLAN.value:
             l3_data = data.get("l3Data")
             if isinstance(l3_data, dict):

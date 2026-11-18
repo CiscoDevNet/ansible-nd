@@ -116,9 +116,6 @@ class _StagedVrfAttachmentCoordinator:
     def _planned_detach_payloads(self, state, config, current, desired):
         return VrfAttachmentManager(self).planned_detach_payloads(state, config, current, desired)
 
-    def _planned_attach_payloads(self, current, desired):
-        return VrfAttachmentManager(self).planned_attach_payloads(current, desired)
-
     @staticmethod
     def _record_deploy_target(deploy_targets, vrf_name, switch_id):
         deploy_targets.setdefault(vrf_name, set())
@@ -189,13 +186,12 @@ def test_vrf_workflow_coordinator_resolves_strategy_with_gen3_restsend():
     assert coordinator.workflow_trace[0]["event"] == "fabric_resolver_start"
 
 
-def test_vrf_parent_child_task_args_use_merged_for_mutating_partial_child_overrides():
+def test_vrf_parent_child_task_args_follow_property_state_without_child_deletion():
     """
     # Summary
 
-    Verify generated child tasks use merged semantics for parent mutating
-    states because child_fabric_config carries partial per-child overrides, not
-    full child VRF definitions.
+    Verify merged child intent stays sparse, while authoritative parent states
+    replace named child definitions without using child-wide deletion scope.
     """
     strategy = MulticlusterParentVrfStrategy(
         fabric_name="MCFG_R",
@@ -208,7 +204,7 @@ def test_vrf_parent_child_task_args_use_merged_for_mutating_partial_child_overri
             vrf_configs=[{"vrf_name": "BLUE", "adv_host_routes": True}],
             state=state,
         )
-        assert args["state"] == "merged"
+        assert args["state"] == ("merged" if state == "merged" else "replaced")
 
     args = strategy.build_child_task_args(
         child_fabric_name="AK-VXLAN",
@@ -350,6 +346,15 @@ def test_parent_sparse_child_trm_update_inherits_enabled_state_and_converges(
     validated = validator.validate({"config": config})
     assert not validated.error_messages
 
+    if state != "merged":
+        args = {"fabric_name": "PARENT", "state": state, "config": deepcopy(validated.validated_parameters["config"]), "output_level": "normal"}
+        coordinator = VrfWorkflowCoordinator(_Module(args, check_mode=True), strategy)
+        with pytest.raises(ValueError, match="require|TRM"):
+            coordinator._handle_parent_workflow(args, strategy.fabric_type)
+        assert controller["parents"] == []
+        assert controller["writes"] == []
+        return
+
     for run, check_mode in enumerate((True, False, False, True)):
         args = {"fabric_name": "PARENT", "state": state, "config": deepcopy(validated.validated_parameters["config"]), "output_level": "normal"}
         coordinator = VrfWorkflowCoordinator(_Module(args, check_mode=check_mode), strategy)
@@ -371,6 +376,46 @@ def test_parent_sparse_child_trm_update_inherits_enabled_state_and_converges(
     assert controller["inventory"][0]["vrfId"] == 50000
     assert controller["inventory"][0]["vlanId"] == 2001
     assert all("rp_address" not in task["config"][0] and "trm_enable" not in task["config"][0] for task in controller["parents"])
+
+
+@pytest.mark.parametrize("strategy_cls", [MultisiteParentVrfStrategy, MulticlusterParentVrfStrategy])
+@pytest.mark.parametrize("state", ["replaced", "overridden", "staged"])
+@pytest.mark.parametrize("explicit_member", [False, True])
+def test_authoritative_parent_resets_omitted_child_options_and_preserves_parent_context(strategy_cls, state, explicit_member, child_vrf_trm_controller):
+    controller = child_vrf_trm_controller
+    row = controller["inventory"][0]
+    row["coreData"] = {"vrfVlanName": "INHERITED", "mtu": 9000, "routeTargetImport": ["65000:90"]}
+    row["fabricData"] = {
+        "l3VniWithoutVlan": False,
+        "bgpAsOverride": True,
+        "bgpAllowAsIn": True,
+        "bgpAllowAsInNum": 6,
+        "bgpLogNeighborChange": True,
+        "bgpPassword": "aabbccdd",
+        "bgpPasswordKeyType": "type6",
+        "trmData": {"ipv4Trm": True, "v4RpAbsent": True, "l3VniMulticastGroup": "239.1.1.1", "mvpnRouteTargetImport": ["65000:1"]},
+    }
+    member = {"fabricName": "c1", "fabricState": "member", "managementType": "vxlanIbgp"}
+    if strategy_cls is MulticlusterParentVrfStrategy:
+        member["clusterName"] = "cluster1"
+    strategy = strategy_cls(fabric_name="PARENT", fabric_data={"members": [member]})
+    config = [{"vrf_name": "BLUE", **({"child_fabric_config": [{"fabric_name": "c1"}]} if explicit_member else {})}]
+    inherited = deepcopy(row["coreData"])
+    for run, check_mode in enumerate((True, False, False, True)):
+        args = {"fabric_name": "PARENT", "state": state, "config": deepcopy(config), "output_level": "normal"}
+        result = VrfWorkflowCoordinator(_Module(args, check_mode=check_mode), strategy)._handle_parent_workflow(args, strategy.fabric_type)
+        assert not result.get("failed"), result
+        assert result["changed"] is (run < 2)
+        assert len(controller["writes"]) == (0 if run == 0 else 1)
+        assert controller["inventory"][0]["coreData"] == inherited
+        assert controller["inventory"][0]["vrfId"] == 50000
+        assert controller["inventory"][0]["vlanId"] == 2001
+    fabric = controller["writes"][0]["fabricData"]
+    assert fabric["bgpAsOverride"] is False
+    assert fabric["bgpAllowAsIn"] is False and fabric["bgpAllowAsInNum"] == 3
+    assert fabric["trmData"]["ipv4Trm"] is False
+    assert "bgpPassword" not in fabric and "bgpPasswordKeyType" not in fabric
+    assert not fabric["trmData"].get("mvpnRouteTargetImport")
 
 
 @pytest.mark.parametrize("strategy_cls", [MultisiteParentVrfStrategy, MulticlusterParentVrfStrategy])
@@ -475,12 +520,18 @@ def test_sparse_new_child_type_uses_cached_fabric_context(multicluster, state, v
     try:
         proposed = sm.proposed.get(("BLUE", "c1"))
         assert isinstance(proposed, _ConcreteVxlanVrfModel)
-        assert proposed.to_payload(exclude_unset=True) == {
+        payload = proposed.to_payload(exclude_unset=True)
+        assert {key: value for key, value in payload.items() if key != "fabricData"} == {
             "fabricName": "c1",
             "vrfName": "BLUE",
             "vrfType": vrf_type,
-            "fabricData": {"bgpLogNeighborChange": False},
         }
+        assert payload["fabricData"]["bgpLogNeighborChange"] is False
+        if state == "merged":
+            assert payload["fabricData"] == {"bgpLogNeighborChange": False}
+        else:
+            assert payload["fabricData"]["bgpAllowAsInNum"] == 3
+            assert payload["fabricData"]["trmData"]["ipv4Trm"] is False
         assert sm.output.format()["proposed"][0]["vrf_type"] == vrf_type
         assert controller["queries"] == [("c1", multicluster)]
         assert controller["writes"] == []
@@ -947,9 +998,6 @@ class _ReplacedVrfCoordinator:
 
     def _planned_detach_payloads(self, state, config, current, desired):
         return self.attachments.planned_detach_payloads(state, config, current, desired)
-
-    def _planned_attach_payloads(self, current, desired):
-        return self.attachments.planned_attach_payloads(current, desired)
 
     def _attachment_map_after_detach(self, current, payloads):
         return self.attachments.attachment_map_after_detach(current, payloads)
@@ -1927,11 +1975,11 @@ def test_vrf_workflow_coordinator_attachment_match_compares_extra_config_only_wh
     assert VrfAttachmentManager.attachment_matches(existing, explicit_clear) is False
 
 
-def test_vrf_workflow_coordinator_attachment_match_compares_instance_values_only_when_supplied():
+def test_vrf_workflow_coordinator_attachment_match_compares_complete_effective_options():
     """
     # Summary
 
-    Verify omitted attachment_options is not treated as an implicit clear.
+    Verify the comparator recognizes cleared siblings in complete effective options.
     """
     existing = {
         "vrfName": "ansible-vrf",
@@ -1964,7 +2012,7 @@ def test_vrf_workflow_coordinator_attachment_match_compares_instance_values_only
 
     assert VrfAttachmentManager.attachment_matches(existing, omitted) is True
     assert VrfAttachmentManager.attachment_matches(existing, explicit_clear) is False
-    assert VrfAttachmentManager.attachment_matches(existing, explicit_subset) is True
+    assert VrfAttachmentManager.attachment_matches(existing, explicit_subset) is False
 
 
 def test_vrf_workflow_coordinator_00004_child_write_ignores_null_parser_defaults():

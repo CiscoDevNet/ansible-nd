@@ -733,13 +733,12 @@ def test_network_config_model_preserves_missing_attachment_interfaces():
     assert "interfaces" not in model.to_config()["attach"][0]
 
 
-def test_network_parent_child_task_args_use_merged_for_mutating_partial_child_overrides():
+def test_network_parent_child_task_args_follow_property_state_without_child_deletion():
     """
     # Summary
 
-    Verify generated child tasks use merged semantics for parent mutating
-    states because child_fabric_config carries partial per-child overrides, not
-    full child Network definitions.
+    Verify merged child intent stays sparse, while authoritative parent states
+    replace named child definitions without using child-wide deletion scope.
     """
     strategy = MulticlusterParentNetworkStrategy(
         fabric_name="MCFG_R",
@@ -752,7 +751,7 @@ def test_network_parent_child_task_args_use_merged_for_mutating_partial_child_ov
             network_configs=[{"network_name": "BLUE_NET", "multicast_group_address": "239.1.1.10"}],
             state=state,
         )
-        assert args["state"] == "merged"
+        assert args["state"] == ("merged" if state == "merged" else "replaced")
 
     args = strategy.build_child_task_args(
         child_fabric_name="AK-VXLAN",
@@ -2609,7 +2608,7 @@ def test_pvlan_omitted_role_attachment_only_preserves_definition(state, strategy
         manager = NetworkAttachmentManager(coordinator)
         manager.resolve_switch_ids = lambda *_args: {"192.0.2.1": "SW1"}
         desired = manager.desired_attachment_map({"config": parsed}, orchestrator.strategy)
-        payloads = manager.planned_attach_payloads(current_attachments, desired, preserve_omitted_fields=state == "merged")
+        payloads = manager.planned_attach_payloads(current_attachments, desired, state=state)
         assert len(payloads) == (0 if repeat else 1)
         assert manager.planned_detach_payloads(state, parsed, current_attachments, desired) == []
         current_attachments = desired
@@ -3015,7 +3014,7 @@ def test_network_id_resolution_leaves_deferred_and_child_scopes_unchanged(scope,
     model_cls = NDNetworkOrchestrator(rest_send=RestSend({"state": state}), strategy=strategy).model_class
     proposed = model_cls.from_config({"network_name": "N", "network_type": "vxlan", "layer": "layer2"})
     current = model_cls.from_response({"networkName": "N", "networkType": "vxlan", "networkMode": "layer2", "networkId": 30000, "vlanId": 2301})
-    snapshot = SimpleNamespace(existing={"N": current}, proposed={"N": proposed})
+    snapshot = SimpleNamespace(existing={"N": current}, proposed=NDConfigCollection(model_cls, [proposed]))
     NetworkWorkflowCoordinator._resolve_proposed_networks(snapshot, [{"network_name": "N", "layer": "layer2"}], state, strategy)
     assert proposed.network_id is None
     assert proposed.vlan_id == (2301 if scope == "mcfg" else None)
@@ -3203,7 +3202,7 @@ def test_child_multicast_omission_and_explicit_change_follow_parent_sparse_contr
         entry.pop("fabric_name")
         entry["network_name"] = "N"
         args = parent.build_child_task_args("fab1", [entry], parent_state)
-        assert args["state"] == "merged"
+        assert args["state"] == ("merged" if parent_state == "merged" else "replaced")
         for repeat in (False, True):
             module = _Module({**args, "output_level": "normal"})
             module.check_mode = check_mode
@@ -6694,7 +6693,7 @@ def test_new_switch_only_attachment_keeps_omitted_and_explicit_empty_interfaces_
     manager = NetworkAttachmentManager(coordinator)
     manager.resolve_switch_ids = lambda *_args: {"192.0.2.1": "SW1"}
     desired = manager.desired_attachment_map({"state": "merged", "config": parsed}, strategy)
-    payload = manager.planned_attach_payloads({}, desired, preserve_omitted_fields=True)[0]
+    payload = manager.planned_attach_payloads({}, desired, state="merged")[0]
     assert ("interfaces" in payload) is explicit_empty
     if explicit_empty:
         assert payload["interfaces"] == []
@@ -6703,7 +6702,7 @@ def test_new_switch_only_attachment_keeps_omitted_and_explicit_empty_interfaces_
 
     current = {("N", "SW1"): {"networkName": "N", "switchId": "SW1", "attach": True, "interfaces": [{"mode": "access", "interfaceRange": "Ethernet1/1"}]}}
     if explicit_empty:
-        assert manager.planned_attach_payloads(current, desired, preserve_omitted_fields=True)[0]["interfaces"] == []
+        assert manager.planned_attach_payloads(current, desired, state="merged")[0]["interfaces"] == []
 
 
 def test_pending_network_status_is_not_delete_ready():
@@ -7561,6 +7560,56 @@ def test_layer2_classic_or_routed_preparation_is_unchanged(network_type):
     )
     prepared = orchestrator.prepare_config_data([{"network_name": "USERS", "layer": "layer2", "vlan_id": 101}])[0]
     assert "l3_data" not in prepared
+
+
+@pytest.mark.parametrize("state", ["replaced", "overridden", "staged"])
+@pytest.mark.parametrize("layer", ["layer2", "layer3"])
+@pytest.mark.parametrize("multicluster", [False, True])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_child_authoritative_options_survive_an_omitted_l3_readback_block(state, layer, multicluster, enabled):
+    strategy = ChildNetworkStrategy(fabric_name="child1", fabric_data={"managementType": "vxlanIbgp"}, cluster_name="remote" if multicluster else None)
+    assert strategy.is_multicluster is multicluster
+    orchestrator = NDNetworkOrchestrator(rest_send=RestSend({"state": state}), strategy=strategy)
+    entry = {"network_name": "USERS", "layer": layer, "netflow_enable": enabled}
+    if enabled:
+        entry["vlan_netflow_monitor"] = "VLAN_MON"
+    current = orchestrator.model_class.from_response(
+        {
+            "fabricName": "child1",
+            "networkName": "USERS",
+            "networkType": "vxlanIbgp",
+            "networkMode": layer,
+            "vrfName": "BLUE" if layer == "layer3" else "NA",
+            "networkId": 50001,
+            "vlanId": 2001,
+            "l2Data": {"vlanName": "INHERITED"},
+        }
+    )
+    proposed = orchestrator.model_class.from_config(orchestrator.prepare_config_data([entry])[0])
+    sm = SimpleNamespace(existing=NDConfigCollection(orchestrator.model_class, [current]), proposed=NDConfigCollection(orchestrator.model_class, [proposed]))
+    NetworkWorkflowCoordinator._resolve_proposed_networks(sm, [entry], state, strategy)
+    effective = sm.proposed.get("USERS")
+    assert current.l3_data is None
+    assert effective.l2_data.vlan_name == "INHERITED"
+    if not enabled:
+        assert sm.existing.get_diff_config(effective) == "no_diff"
+        return
+    assert effective.l3_data.fabric_data.netflow is True
+    assert effective.l3_data.fabric_data.vlan_netflow_monitor == "VLAN_MON"
+    assert effective.l3_data.mtu is None
+    assert effective.l3_data.arp_suppression is None
+    assert sm.existing.get_diff_config(effective) == "changed"
+    wire = orchestrator._create_or_update_payload(effective)
+    assert wire["l3Data"]["fabricData"]["netflow"] is True
+    assert wire["l3Data"]["fabricData"]["l2NetflowMonitor"] == "VLAN_MON"
+    assert "mtu" not in wire["l3Data"] and "arpSuppression" not in wire["l3Data"]
+    saved = {**current.to_payload(), "networkMode": layer, "l3Data": wire["l3Data"]}
+    observed = orchestrator.model_class.from_response(saved)
+    repeated = orchestrator.model_class.from_config(orchestrator.prepare_config_data([entry])[0])
+    sm.existing = NDConfigCollection(orchestrator.model_class, [observed])
+    sm.proposed = NDConfigCollection(orchestrator.model_class, [repeated])
+    NetworkWorkflowCoordinator._resolve_proposed_networks(sm, [entry], state, strategy)
+    assert sm.existing.get_diff_config(sm.proposed.get("USERS")) == "no_diff"
 
 
 @pytest.mark.parametrize("netflow", [False, True])

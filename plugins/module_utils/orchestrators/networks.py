@@ -166,7 +166,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 }
             )
             model = DefaultL2DataModel(**{k: v for k, v in kwargs.items() if v is not None})
-        payload = model.to_payload(exclude_unset=self.rest_send.params.get("state", "merged") == "merged" or bool(self.strategy and self.strategy.is_child))
+        payload = model.to_payload(exclude_unset=self.rest_send.params.get("state", "merged") == "merged")
         if fabric_data_payload and isinstance(payload, dict):
             payload["fabricData"] = fabric_data_payload
         return payload or ({} if self._network_layer(config) is not None else None)
@@ -174,7 +174,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
     def _l3_data(self, config: dict[str, Any], network_type: str) -> dict[str, Any] | None:
         # Merged definitions retain supplied fields; creation defaults remain on the payload models.
         sparse = self.rest_send.params.get("state", "merged") == "merged"
-        exclude_unset = sparse or bool(self.strategy and self.strategy.is_child)
+        exclude_unset = sparse
         common = {
             "gateway_ipv4_address": self._value(config, "gateway_ipv4_address", "gatewayIpv4Address"),
             "gateway_ipv6_address": self._value(config, "gateway_ipv6_address", "gatewayIpv6Address"),
@@ -247,7 +247,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         return payload or None
 
     def _transform_config_to_payload_model_data(self, config: dict[str, Any], fabric_name: str) -> dict[str, Any]:
-        if not self.has_network_definition_intent(config):
+        if not self.strategy.is_child and not self.has_network_definition_intent(config):
             return {
                 "fabric_name": self._value(config, "fabric_name", "fabricName", default=fabric_name),
                 "network_name": self._value(config, "network_name", "networkName"),
@@ -1220,6 +1220,12 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             payload.pop("l3Data", None)
         if self.strategy.is_parent:
             payload = self._parent_definition_payload(payload)
+        l3_data = payload.get("l3Data")
+        if isinstance(l3_data, dict) and model_instance.layer != NetworkLayer.LAYER2.value:
+            # ND requires key omission to clear a gateway.
+            for field in ("gatewayIpv4Address", "gatewayIpv6Address"):
+                if l3_data.get(field) == "":
+                    l3_data.pop(field)
         return payload
 
     def create(self, model_instance: NDNetworkModel, **kwargs) -> ResponseType:

@@ -493,6 +493,12 @@ class VrfWorkflowCoordinator:
                 proposed.vrf_id = current.vrf_id
             if proposed.vrf_type in VXLAN_VRF_TYPES:
                 cls._resolve_l3vni_mode(proposed, current, entry, fabric_default)
+            if state != "merged" and current is not None:
+                # Replace child-owned fabric data, not the inherited parent definition.
+                replacement = current.model_copy(deep=True)
+                replacement.fabric_data = proposed.fabric_data
+                proposed = replacement
+                sm.proposed.replace(proposed)
             effective = current.model_copy(deep=True).merge(proposed) if state == "merged" and current is not None else proposed
             public = effective.to_gathered_config()
             child_fields = set(getattr(VrfChildConfigModel, "model_fields", {}))
@@ -611,7 +617,10 @@ class VrfWorkflowCoordinator:
         child_tasks_dict: dict[str, dict] = {}
 
         for vrf in config:
-            child_configs = vrf.get("child_fabric_config") or []
+            child_configs = list(vrf.get("child_fabric_config") or [])
+            if state in ("replaced", "overridden", "staged"):
+                supplied_members = {entry["fabric_name"] for entry in child_configs}
+                child_configs.extend({"fabric_name": member} for member in child_member_names if member not in supplied_members)
 
             if state != "deleted":
                 for child_cfg in child_configs:
@@ -622,7 +631,7 @@ class VrfWorkflowCoordinator:
                                 f"Fabric '{child_fabric_name}' is not a member of " f"parent fabric '{parent_fabric}'. " f"Known members: {child_member_names}"
                             )
                         )
-                    if not self._has_child_vrf_options(child_cfg):
+                    if state == "merged" and not self._has_child_vrf_options(child_cfg):
                         self._trace("child_task_skipped_without_child_options", child_fabric=child_fabric_name, state=state)
                         continue
                     child_tasks_dict = self._accumulate_child_task(
@@ -1208,14 +1217,6 @@ class VrfWorkflowCoordinator:
     ) -> list[dict[str, Any]]:
         """Compute detach payloads for deleted/replaced/overridden states."""
         return self.attachments.planned_detach_payloads(state, config, current, desired)
-
-    def _planned_attach_payloads(
-        self,
-        current: dict[tuple[str, str], dict[str, Any]],
-        desired: dict[tuple[str, str], dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Compute attach payloads for missing or changed desired attachments."""
-        return self.attachments.planned_attach_payloads(current, desired)
 
     def _expand_desired_attachments_with_vpc_peers(
         self,

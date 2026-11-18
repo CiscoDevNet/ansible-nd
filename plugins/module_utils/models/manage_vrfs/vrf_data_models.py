@@ -666,6 +666,8 @@ class VrfDataModel(NDBaseModel):
         if self.vrf_type in VXLAN_VRF_TYPES and not kwargs.get("exclude_unset", False):
             core = data.get("coreData") or {}
             data["coreData"] = core
+            for key in ("vrfVlanName", "vrfInterfaceDescription", "vrfDescription"):
+                core.setdefault(key, "")
             for name, field in VxlanCoreData.model_fields.items():
                 if field.default_factory is list:
                     alias = field.alias or name

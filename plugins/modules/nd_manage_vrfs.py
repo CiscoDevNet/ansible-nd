@@ -35,9 +35,11 @@ options:
   state:
     description:
       - Desired state of the VRF resources.
-      - V(merged) creates or updates VRFs that do not match the desired config.
-      - V(replaced) replaces existing VRFs that match the desired config.
-      - V(overridden) replaces all VRFs; removes any not in config.
+      - V(merged) creates named VRFs when absent and updates supplied properties, preserving omitted properties and unlisted VRFs.
+      - V(replaced) creates or replaces named VRFs. Omitted manageable scalars reset to defaults or clear where supported;
+        omitted lists clear or default. Unlisted VRFs remain unchanged.
+      - V(overridden) uses V(replaced) property semantics and deletes VRFs omitted from O(config).
+      - Existing allocated VRF IDs, VLAN IDs and L3VNI-without-VLAN mode are retained when omitted.
       - V(deleted) removes specified VRFs (or all if config is empty).
       - V(gathered) returns current VRF state (the only state allowed on child
         fabrics when targeted directly).
@@ -469,10 +471,15 @@ options:
           freeform_config:
             description:
               - Additional free-form CLI configuration for this attachment.
+              - Omission preserves the saved value in V(merged) and clears it in V(replaced) and V(overridden).
             type: str
           attachment_options:
             description:
               - Attachment-specific options for this switch.
+              - In V(merged), omitted options retain saved writable values; an empty dictionary resets the options.
+              - In V(replaced) and V(overridden), omitted options reset to defaults or are cleared, including route-target lists.
+              - Loopback changes require an ID and at least one address in the effective attachment.
+                Only V(merged) inherits omitted members of that combination from existing state.
             type: dict
             suboptions:
               dpu_secure:
@@ -522,6 +529,8 @@ options:
             VRF Lite advertising, BGP, and NetFlow settings.
           - In C(state=merged), omitted fields retain the existing child VRF setting.
             C(state=replaced) and C(state=overridden) use authoritative state semantics.
+          - Authoritative states reset omitted editable settings on member fabrics, including when the member entry is omitted.
+            Inherited parent fields and existing L3VNI-without-VLAN mode are retained.
           - VRF identity, security, VLAN/SVI and other General fields, Advanced
             text fields and IPv6 link-local, VPN/EVPN targets, RT auto-generation,
             templates, attachments, and deployment are parent-owned or locked.

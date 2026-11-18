@@ -34,6 +34,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationTyp
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import NetworkChildConfigModel, NetworkConfigModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import NetworkLayer, VlanNetworkType
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.network_data_models import DefaultL3DataModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.networks import NDNetworkOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.backends.resource import ResourceConfigActionsBackend
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_attachment_manager import (
@@ -479,7 +480,10 @@ class NetworkWorkflowCoordinator:
         child_tasks_dict: dict[str, dict] = {}
 
         for network in config:
-            child_configs = network.get("child_fabric_config") or []
+            child_configs = list(network.get("child_fabric_config") or [])
+            if state in ("replaced", "overridden", "staged") and (child_configs or NDNetworkOrchestrator.has_network_definition_intent(network)):
+                supplied_members = {entry["fabric_name"] for entry in child_configs}
+                child_configs.extend({"fabric_name": member} for member in child_member_names if member not in supplied_members)
 
             if state != "deleted":
                 for child_cfg in child_configs:
@@ -490,7 +494,7 @@ class NetworkWorkflowCoordinator:
                                 f"Fabric '{child_fabric_name}' is not a member of " f"parent fabric '{parent_fabric}'. " f"Known members: {child_member_names}"
                             )
                         )
-                    if not self._has_child_network_options(child_cfg):
+                    if state == "merged" and not self._has_child_network_options(child_cfg):
                         self._trace("child_task_skipped_without_child_options", child_fabric=child_fabric_name, state=state)
                         continue
                     child_tasks_dict = self._accumulate_child_task(
@@ -746,7 +750,7 @@ class NetworkWorkflowCoordinator:
         for entry in config:
             name = entry["network_name"]
             current = sm.existing.get(name)
-            operational_only = not NDNetworkOrchestrator.has_network_definition_intent(entry)
+            operational_only = not strategy.is_child and not NDNetworkOrchestrator.has_network_definition_intent(entry)
             if operational_only:
                 if current is None:
                     raise NDStateMachineError(f"Network '{name}' must already exist for an operational-only task.")
@@ -773,6 +777,24 @@ class NetworkWorkflowCoordinator:
                 sm.proposed.replace(current.model_copy(deep=True))
                 continue
             proposed = sm.proposed.get(name)
+            if strategy.is_child and state != "merged" and current is not None:
+                # Retain inherited L2/L3 data; only the child's writable fabric options reset.
+                replacement = current.model_copy(deep=True)
+                l2_data = proposed.l2_data
+                if replacement.l2_data is not None:
+                    replacement.l2_data.x_connect = l2_data.x_connect if l2_data is not None else False
+                    requested_fabric = l2_data.fabric_data if l2_data is not None else None
+                    if requested_fabric is not None:
+                        if replacement.l2_data.fabric_data is None:
+                            replacement.l2_data.fabric_data = requested_fabric
+                        else:
+                            replacement.l2_data.fabric_data.merge(requested_fabric)
+                if replacement.l3_data is not None:
+                    replacement.l3_data.fabric_data = proposed.l3_data.fabric_data if proposed.l3_data is not None else None
+                elif proposed.l3_data is not None:
+                    replacement.l3_data = DefaultL3DataModel(fabric_data=proposed.l3_data.fabric_data, mtu=None, arp_suppression=None)
+                proposed = replacement
+                sm.proposed.replace(proposed)
             if state in ("replaced", "overridden", "staged") and not strategy.is_child and current is not None:
                 if not strategy.is_multicluster and proposed.network_id is None and current.network_id is not None:
                     proposed.network_id = current.network_id
@@ -945,7 +967,7 @@ class NetworkWorkflowCoordinator:
             result["changed"] = True
         if trace.get("failed") or final.get("failed"):
             result["failed"] = True
-        for key in ("check_mode_attachment_payloads", "check_mode_deploy_payloads"):
+        for key in ("check_mode_attachment_payloads", "check_mode_instance_value_reset_payloads", "check_mode_deploy_payloads"):
             payloads = trace.get(key)
             if payloads:
                 result.setdefault(key, [])
@@ -1199,14 +1221,6 @@ class NetworkWorkflowCoordinator:
     ) -> list[dict[str, Any]]:
         """Compute detach payloads for deleted/replaced/overridden states."""
         return self.attachments.planned_detach_payloads(state, config, current, desired)
-
-    def _planned_attach_payloads(
-        self,
-        current: dict[tuple[str, str], dict[str, Any]],
-        desired: dict[tuple[str, str], dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Compute attach payloads for missing or changed desired attachments."""
-        return self.attachments.planned_attach_payloads(current, desired)
 
     def _expand_desired_attachments_with_vpc_peers(
         self,

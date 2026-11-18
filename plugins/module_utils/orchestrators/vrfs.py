@@ -237,6 +237,10 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
 
     def _transform_child_config_to_payload_model_data(self, config: dict[str, Any], fabric_name: str) -> dict[str, Any]:
         """Transform child overrides into a fabricData-only VRF payload."""
+        if self.rest_send.params.get("state", "merged") != "merged":
+            defaults = VrfConfigModel.from_config(config, context={"state": "replaced"}).to_config()
+            complete = self._transform_config_to_payload_model_data(defaults, fabric_name)
+            return {key: value for key, value in complete.items() if key in ("fabric_name", "vrf_name", "fabric_data")}
         transformed: dict[str, Any] = {
             "fabric_name": self._value(config, "fabric_name", default=fabric_name),
             "vrf_name": self._value(config, "vrf_name"),
@@ -374,6 +378,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             core_values.update(mtu=None, ipv6_link_local=None)
         core_data = VxlanCoreData(**core_values)
 
+        mvpn_default = [] if self.rest_send.params.get("state", "merged") != "merged" and (config.get("trm_enable") or config.get("ipv6_trm")) else None
         trm_data = TrmData(
             ipv4_trm=self._value(config, "trm_enable", default=False),
             ipv6_trm=self._value(config, "ipv6_trm", default=False),
@@ -392,10 +397,12 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             mvpn_route_target_import=self._value(
                 config,
                 "import_mvpn_rt",
+                default=mvpn_default,
             ),
             mvpn_route_target_export=self._value(
                 config,
                 "export_mvpn_rt",
+                default=mvpn_default,
             ),
         )
 
@@ -426,7 +433,9 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         is_multicluster = getattr(self.strategy, "is_multicluster", False)
         core_payload = core_data.to_payload(exclude_unset=self.rest_send.params.get("state", "merged") == "merged")
         fabric_payload = fabric_data.to_payload()
-        if not is_parent:
+        if self.rest_send.params.get("state", "merged") != "merged" and not config.get("bgp_password"):
+            fabric_payload.pop("bgpPasswordKeyType", None)
+        if not is_parent and self.rest_send.params.get("state", "merged") == "merged":
             fabric_sources = {
                 "l3VniWithoutVlan": "l3vni_wo_vlan",
                 "bgpBestPathRelax": "bgp_best_path_relax",
@@ -1052,6 +1061,11 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         if getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False):
             return self._mcfg_parent_vrf_payload(model_instance)
         payload = model_instance.to_payload()
+        core_data = payload.get("coreData")
+        if isinstance(core_data, dict):
+            for field in ("vrfVlanName", "vrfInterfaceDescription", "vrfDescription"):
+                if core_data.get(field) == "":
+                    core_data.pop(field)
         if not getattr(self.strategy, "is_parent", False) and (payload.get("fabricData") or {}).get("l3VniWithoutVlan") is True:
             payload.pop("vlanId", None)
             core_data = payload.get("coreData")

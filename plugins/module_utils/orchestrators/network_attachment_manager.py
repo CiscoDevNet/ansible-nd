@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import re
 import time
 
@@ -52,6 +54,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_ch
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.attachment_vpc_peer_expander import (
     expand_desired_attachments_with_vpc_peers,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.attachment_state import effective_attachment, instance_values, instance_values_match
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.delete_readiness import (
     DeleteReadinessPolicy,
 )
@@ -77,6 +80,9 @@ class NetworkAttachmentManager:
     delete_wait_max_timeout = 900
     undeploy_retry_attempts = 3
     attachment_query_page_size = 10000
+    managed_instance_fields = {"dpuSecure", "dpuAffinity", "sviEnabled", "switchRouteTargetImport", "switchRouteTargetExport", "isActive"}
+    instance_reset_defaults = {"dpuSecure": False, "sviEnabled": True}
+    reset_instance_values_intent_key = "_resetInstanceValues"
 
     def __init__(self, coordinator: Any):
         self.coordinator = coordinator
@@ -154,7 +160,7 @@ class NetworkAttachmentManager:
                 current_count=len(current),
             )
 
-        explicit_interface_keys = {key for key, payload in desired.items() if "interfaces" in payload}
+        explicit_interface_keys = {key for key, payload in desired.items() if state != "merged" or "interfaces" in payload}
         if desired:
             desired = self.expand_desired_attachments_with_vpc_peers(
                 desired,
@@ -165,7 +171,7 @@ class NetworkAttachmentManager:
         payloads = (
             self.planned_detach_payloads(state, config, current, desired, explicit_interface_keys)
             if phase == "pre"
-            else self.planned_attach_payloads(current, desired, preserve_omitted_fields=state == "merged")
+            else self.planned_attach_payloads(current, desired, state=state)
         )
         if not payloads:
             self._trace("network_attachment_phase_noop", phase=phase, desired_count=len(desired or {}), current_count=len(current or {}))
@@ -173,17 +179,31 @@ class NetworkAttachmentManager:
 
         deploy_enabled = deploy_enabled_by_network(config, getattr(self.coordinator, "config_actions", None))
         deploy_targets: dict[str, set[str]] = {}
+        reattach_desired = dict(desired)
         for payload in payloads:
             network_name = payload.get("networkName")
             if phase == "pre" or deploy_enabled.get(network_name, True):
                 self.record_deploy_target(deploy_targets, network_name, payload.get("switchId"))
+            if phase == "pre":
+                key = (network_name, payload["switchId"])
+                if key in desired:
+                    reattach_desired[key] = effective_attachment(
+                        current.get(key),
+                        desired[key],
+                        state=state,
+                        model=NetworkAttachmentInstanceValuesModel,
+                        managed_options=self.managed_instance_fields,
+                        option_defaults=self.instance_reset_defaults,
+                        interfaces=True,
+                    )
 
         trace = self.post_network_attachments(
             module_args, strategy, payloads, deploy_targets, OperationType.DELETE if phase == "pre" else OperationType.CREATE
         )
         self._trace("network_attachment_phase_end", phase=phase, payload_count=len(payloads), deploy_target_count=len(deploy_targets))
         trace["current"] = current
-        trace["desired"] = desired
+        # Reattachment must retain allocation and reset intent from before detach.
+        trace["desired"] = reattach_desired
         trace["payloads"] = payloads
         return trace
 
@@ -438,15 +458,15 @@ class NetworkAttachmentManager:
     ) -> dict[tuple[str, str], dict[str, Any]]:
         """Add vPC peer attachments from attachment-query rows."""
 
-        def clear_peer_interfaces(peer_payload: dict[str, Any]) -> None:
+        def preserve_peer_interfaces(peer_payload: dict[str, Any], peer_detail: dict[str, Any]) -> None:
             if "interfaces" in peer_payload:
-                peer_payload["interfaces"] = []
+                peer_payload["interfaces"] = deepcopy(peer_detail.get("interfaces") or [])
 
         return expand_desired_attachments_with_vpc_peers(
             desired,
             attachment_details,
             "networkName",
-            peer_payload_mutator=clear_peer_interfaces,
+            peer_payload_mutator=preserve_peer_interfaces,
         )
 
     @staticmethod
@@ -479,20 +499,49 @@ class NetworkAttachmentManager:
     def planned_attach_payloads(
         current: dict[tuple[str, str], dict[str, Any]],
         desired: dict[tuple[str, str], dict[str, Any]],
-        preserve_omitted_fields: bool = False,
+        state: str = "merged",
     ) -> list[dict[str, Any]]:
         payloads = []
         for key, desired_payload in desired.items():
             current_payload = current.get(key)
-            if preserve_omitted_fields and current_payload is not None:
-                retained = {
-                    field: current_payload[field]
-                    for field in ("vlanId", "interfaces")
-                    if field not in desired_payload and current_payload.get(field) is not None
-                }
-                if retained:
-                    desired_payload = {**desired_payload, **retained}
+            desired_payload = effective_attachment(
+                current_payload,
+                desired_payload,
+                state=state,
+                model=NetworkAttachmentInstanceValuesModel,
+                managed_options=NetworkAttachmentManager.managed_instance_fields,
+                option_defaults=NetworkAttachmentManager.instance_reset_defaults,
+                interfaces=True,
+            )
             if current_payload is None or NetworkAttachmentManager._attachment_changed(current_payload, desired_payload):
+                if current_payload is not None:
+                    have = instance_values(current_payload.get("instanceValues"), NetworkAttachmentInstanceValuesModel)
+                    want = desired_payload.get("instanceValues") or {}
+                    if any(
+                        not NetworkAttachmentManager._empty_equivalent(value) and NetworkAttachmentManager._empty_equivalent(want.get(key))
+                        for key, value in have.items()
+                    ):
+                        unknown = (
+                            set(current_payload.get("instanceValues") or {})
+                            - NetworkAttachmentManager.managed_instance_fields
+                            - set(NetworkAttachmentInstanceValuesModel.model_fields)
+                        )
+                        if unknown:
+                            raise ValueError(
+                                f"Network '{key[0]}' attachment on '{key[1]}' cannot safely reset options with unrecognized saved fields: "
+                                + ", ".join(sorted(unknown))
+                            )
+                        if any(
+                            not NetworkAttachmentManager._empty_equivalent(value)
+                            and (
+                                field not in NetworkAttachmentManager.instance_reset_defaults
+                                or value != NetworkAttachmentManager.instance_reset_defaults[field]
+                            )
+                            for field, value in want.items()
+                        ):
+                            desired_payload[NetworkAttachmentManager.reset_instance_values_intent_key] = True
+                        else:
+                            desired_payload["instanceValues"] = {}
                 payloads.append(desired_payload)
         return payloads
 
@@ -515,12 +564,11 @@ class NetworkAttachmentManager:
             detach_keys = {key for key in current if key[0] in target_names and key not in desired}
         if state in ("replaced", "overridden", "staged"):
             for key in current.keys() & desired.keys():
-                # Peer expansion uses interfaces=[] as passive peer metadata.
-                # Only an explicitly configured switch attachment may authorize
-                # clearing ports on that switch before the exact reattachment.
+                # Inferred peers do not authorize clearing omitted ports.
                 if explicit_interface_keys is not None and key not in explicit_interface_keys:
                     continue
-                if NetworkAttachmentManager._has_removed_ports(current[key], desired[key]):
+                requested = desired[key] if "interfaces" in desired[key] else {**desired[key], "interfaces": []}
+                if NetworkAttachmentManager._has_removed_ports(current[key], requested):
                     detach_keys.add(key)
         payloads = []
         for name, switch_id in sorted(detach_keys):
@@ -621,15 +669,6 @@ class NetworkAttachmentManager:
 
     @staticmethod
     def _attachment_changed(current: dict[str, Any], desired: dict[str, Any]) -> bool:
-        def normalized_options(value):
-            if not isinstance(value, dict):
-                return value
-            aliases = {name: field.alias or name for name, field in NetworkAttachmentInstanceValuesModel.model_fields.items()}
-            normalized = {aliases.get(key, key): item for key, item in value.items()}
-            # Conflicting alias spellings must remain visible rather than having
-            # dictionary insertion order decide which intent wins.
-            return normalized if len(normalized) == len(value) else value
-
         for key in ("vlanId", "instanceValues", "extraConfig"):
             if key not in desired:
                 continue
@@ -637,7 +676,9 @@ class NetworkAttachmentManager:
                 continue
             want, have = desired.get(key), current.get(key)
             if key == "instanceValues":
-                want, have = normalized_options(want), normalized_options(have)
+                if not instance_values_match(have, want, NetworkAttachmentInstanceValuesModel, NetworkAttachmentManager.instance_reset_defaults):
+                    return True
+                continue
             if want != have:
                 return True
         if "interfaces" in desired and NetworkAttachmentManager._normalized_interfaces(
@@ -746,21 +787,33 @@ class NetworkAttachmentManager:
             deploy_target_count=len(deploy_targets),
         )
         if getattr(getattr(self.coordinator, "module", None), "check_mode", False):
+            resets: list[dict[str, Any]] = []
+            payloads = self._payloads_for_controller(payloads, None, instance_value_resets=resets, convert_interfaces=False)
             self._trace("network_attachment_post_check_mode", payload_count=len(payloads), deploy_target_count=len(deploy_targets))
-            return {
+            trace = {
                 "changed": True,
                 "failed": False,
                 "deploy_targets": deploy_targets,
                 "payloads": payloads,
                 "check_mode_attachment_payloads": payloads,
             }
+            if resets:
+                trace["check_mode_instance_value_reset_payloads"] = resets
+            return trace
         orchestrator, results = self.coordinator._new_network_orchestrator(module_args, strategy)
         controller_version = getattr(getattr(orchestrator, "rest_send", None), "controller_version", None)
         payloads = self._prepare_attachment_payloads(strategy, payloads)
-        payloads = self._payloads_for_controller(payloads, controller_version)
+        resets = []
+        payloads = self._payloads_for_controller(payloads, controller_version, instance_value_resets=resets)
         request = NetworkAttachDetachPayloadModel(attachments=[NetworkAttachmentModel(**payload) for payload in payloads])
         self.validate_attachment_interfaces(orchestrator, strategy, payloads)
         endpoint = orchestrator._make_endpoint(self._attachments_post_endpoint_cls(strategy))
+        if resets:
+            # ND merges nonempty option maps, so removing a value needs an empty-map reset first.
+            reset_request = NetworkAttachDetachPayloadModel(attachments=[NetworkAttachmentModel(**payload) for payload in resets])
+            self._trace("network_attachment_instance_values_reset", payload_count=len(resets))
+            reset_response = orchestrator._request(path=endpoint.path, verb=endpoint.verb, data=reset_request.to_payload(), operation_type=operation_type)
+            self._raise_on_failed_results(reset_response, "Network attachment option reset failed")
         response = orchestrator._request(
             path=endpoint.path,
             verb=endpoint.verb,
@@ -844,13 +897,22 @@ class NetworkAttachmentManager:
         return prepared
 
     @staticmethod
-    def _payloads_for_controller(payloads: list[dict[str, Any]], controller_version: str | None) -> list[dict[str, Any]]:
-        """Return attachment payload copies with interface modes converted to controller API spelling."""
+    def _payloads_for_controller(
+        payloads: list[dict[str, Any]],
+        controller_version: str | None,
+        *,
+        instance_value_resets: list[dict[str, Any]] | None = None,
+        convert_interfaces: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Copy final payloads, normalize interface modes and collect any required option-reset batch."""
         converted = []
         for payload in payloads:
             item = dict(payload)
-            if "interfaces" in item:
+            reset = item.pop(NetworkAttachmentManager.reset_instance_values_intent_key, False)
+            if convert_interfaces and "interfaces" in item:
                 item["interfaces"] = NetworkAttachmentManager._interfaces_for_controller(item.get("interfaces"), controller_version)
+            if reset and instance_value_resets is not None:
+                instance_value_resets.append({**item, "instanceValues": {}})
             converted.append(item)
         return converted
 

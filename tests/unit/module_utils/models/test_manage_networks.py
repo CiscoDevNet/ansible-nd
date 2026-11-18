@@ -866,8 +866,12 @@ def test_multicast_omission_policy_does_not_hide_other_l2_resets(network_type, r
 def test_mcfg_l2_comparison_defaults_do_not_apply_to_other_network_types(network_type):
     absent = NetworkBaseModel.from_config({"networkName": "N", "networkType": network_type})
     present = NetworkBaseModel.from_response({"networkName": "N", "networkType": network_type, "l2Data": {"xConnect": False}})
-    assert "l2Data" not in absent.to_diff_dict()
-    assert present.to_diff_dict()["l2Data"] == {"xConnect": False}
+    if network_type == "userDefined":
+        assert "l2Data" not in absent.to_diff_dict()
+        assert present.to_diff_dict()["l2Data"] == {"xConnect": False}
+    else:
+        assert absent.to_diff_dict()["l2Data"] == {"vlanName": ""}
+        assert present.to_diff_dict()["l2Data"] == {"vlanName": "", "xConnect": False}
 
 
 def test_custom_network_comparison_does_not_apply_vxlan_collection_equivalence():
