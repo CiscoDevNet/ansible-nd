@@ -99,12 +99,12 @@
   ansible.builtin.include_tasks: nd4x_scope_preflight.yaml
   when: nd4x_definition_state == 'overridden'
 
-- name: "{{ nd4x_definition_state | upper }} L3: Reset omitted scalars and clear omitted lists"
+- name: "{{ nd4x_definition_state | upper }} L3: Retain omitted layer and VRF while resetting other properties"
   cisco.nd.nd4x_module_test:
     module: cisco.nd.nd_manage_networks
     state: "{{ nd4x_definition_state }}"
     common_args: "{{ nd4x_network_common_args }}"
-    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': [{'network_name': nd4x_network_names[1], 'layer': 'layer3', 'vrf_name': nd4x_network_vrf_name, 'deploy': false}]}) | from_yaml }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': [{'network_name': nd4x_network_names[1], 'routing_tag': 12345, 'deploy': false}]}) | from_yaml }}"
     check_mode_queries: "{{ nd4x_network_snapshots }}"
     expected: "{{ nd4x_network_expected_change }}"
     nd_queries:
@@ -112,6 +112,8 @@
         path: "{{ nd4x_network_definition_scope.api }}/networks/{{ nd4x_network_names[1] }}{{ nd4x_network_definition_scope.suffix }}"
         expected_status: 200
         expect:
+          - {jsonpath: '$.current.networkMode', equals: layer3}
+          - {jsonpath: '$.current.vrfName', equals: "{{ nd4x_network_vrf_name }}"}
           - {jsonpath: '$.current.l3Data.mtu', equals: 9216}
           - {jsonpath: '$.current.l3Data.arpSuppression', equals: false}
       - name: Read the effective child-owned settings after reset

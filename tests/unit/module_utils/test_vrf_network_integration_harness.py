@@ -106,6 +106,73 @@ def test_harness_seed_fixtures_match_module_contract(resource, topology, release
             validate_config(resource, topology, config)
 
 
+@pytest.mark.parametrize("topology", TOPOLOGIES)
+@pytest.mark.parametrize("release", RELEASES)
+@pytest.mark.parametrize("state", ("replaced", "overridden", "staged"))
+def test_authoritative_network_fixtures_exercise_omitted_layer_with_native_readback(topology, release, state):
+    target, variables, templar = fixture_context("network", topology, release)
+    variables["ansible_search_path"] = [str(target)]
+    templar = Templar(loader=DataLoader(), variables=variables)
+    tasks = yaml.safe_load((target / f"tasks/nd4x_{state}.yaml").read_text())
+    task = next(task for task in tasks if task.get("name", "").startswith(state.upper() + ":"))
+    harness = task["cisco.nd.nd4x_module_test"]
+    config = templar.template(harness["config"])
+    assert len(config) == 1
+    assert "layer" not in config[0]
+    assert "vrf_name" not in config[0]
+    assert config[0]["vlan_name"]
+    validate_config("network", topology, config[0], state)
+    assert templar.template(harness["expected"])["idempotency"] == {"changed": False, "failed": False}
+    expectations = [expectation for query in harness["nd_queries"] for expectation in query.get("expect", [])]
+    assert {"jsonpath": "$.current.networkMode", "equals": "layer2"} in expectations
+    assert {"jsonpath": "$.current.vrfName", "equals": "NA"} in expectations
+    assert "check_mode_queries" in harness
+
+
+@pytest.mark.parametrize("topology", TOPOLOGIES)
+@pytest.mark.parametrize("release", RELEASES)
+@pytest.mark.parametrize("state", ("replaced", "overridden"))
+def test_l3_network_reset_fixture_omits_layer_and_required_vrf_association(topology, release, state):
+    target, variables, templar = fixture_context("network", topology, release)
+    variables.update(ansible_search_path=[str(target)], nd4x_definition_state=state)
+    templar = Templar(loader=DataLoader(), variables=variables)
+    tasks = yaml.safe_load((target / "tasks/nd4x_definition_state.yaml").read_text())
+    task = next(task for task in tasks if "L3: Retain omitted layer" in task.get("name", ""))
+    harness = task["cisco.nd.nd4x_module_test"]
+    config = templar.template(harness["config"])
+    assert len(config) == 1
+    assert "layer" not in config[0]
+    assert "vrf_name" not in config[0]
+    assert config[0]["routing_tag"] == 12345
+    assert "mtu" not in config[0]
+    validate_config("network", topology, config[0], state)
+    assert {"jsonpath": "$.current.networkMode", "equals": "layer3"} in harness["nd_queries"][0]["expect"]
+    assert {"jsonpath": "$.current.vrfName", "equals": "{{ nd4x_network_vrf_name }}"} in harness["nd_queries"][0]["expect"]
+    assert templar.template(harness["expected"])["idempotency"] == {"changed": False, "failed": False}
+
+
+@pytest.mark.parametrize("topology", ("standalone", "msd"))
+@pytest.mark.parametrize("release", RELEASES)
+def test_primary_pvlan_layer_regression_stays_in_opt_in_suite(topology, release):
+    target, variables, templar = fixture_context("network", topology, release)
+    tasks = yaml.safe_load((target / "tasks/nd4x_pvlan.yaml").read_text())
+    task = next(task for task in tasks if "omitted layer preserves the primary PVLAN" in task.get("name", ""))
+    assert task["loop"] == ["merged", "replaced", "staged"]
+    assert any("privateVlan" in str(prerequisite.get("ansible.builtin.assert", {})) for prerequisite in tasks)
+    for state in task["loop"]:
+        variables["item"] = state
+        templar = Templar(loader=DataLoader(), variables=variables)
+        harness = task["cisco.nd.nd4x_module_test"]
+        config = templar.template(harness["config"])
+        assert "layer" not in config[0]
+        assert "vlan_network_type" not in config[0]
+        assert "vrf_name" not in config[0]
+        validate_config("network", topology, config[0], state)
+        assert {"jsonpath": "$.current.networkMode", "equals": "layer3"} in harness["nd_queries"][0]["expect"]
+        assert {"jsonpath": "$.current.vlanNetworkType", "equals": "privatePrimary"} in harness["nd_queries"][0]["expect"]
+        assert templar.template(harness["expected"])["idempotency"] == {"changed": False, "failed": False}
+
+
 @pytest.mark.parametrize("resource", RESOURCES)
 @pytest.mark.parametrize("topology", TOPOLOGIES)
 @pytest.mark.parametrize("release", RELEASES)
