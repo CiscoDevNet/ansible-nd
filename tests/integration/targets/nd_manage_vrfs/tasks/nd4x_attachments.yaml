@@ -54,6 +54,12 @@
     check_mode_queries: "{{ nd4x_vrf_snapshots }}"
     expected: "{{ nd4x_vrf_expected_no_change }}"
 
+- name: Verify attachment option preservation and authoritative resets
+  ansible.builtin.include_tasks: nd4x_attachment_state.yaml
+  loop: "{{ ['replaced', 'overridden'] if nd4x_vrf_destructive_enabled | bool else ['replaced'] }}"
+  loop_control:
+    loop_var: nd4x_attachment_state
+
 - name: Deploy only the owned resource when device testing is explicitly enabled
   cisco.nd.nd4x_module_test:
     module: cisco.nd.nd_manage_vrfs

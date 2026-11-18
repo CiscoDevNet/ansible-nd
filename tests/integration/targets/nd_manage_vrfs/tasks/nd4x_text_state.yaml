@@ -1,0 +1,69 @@
+---
+- name: Read the saved text and numeric settings before the sparse clear
+  cisco.nd.nd_rest:
+    path: "{{ nd4x_vrf_definition_scope.api }}/vrfs/{{ nd4x_vrf_names[0] }}{{ nd4x_vrf_definition_scope.suffix }}"
+    method: get
+  register: nd4x_vrf_before_text_clear
+
+- name: Require actual nonempty values before testing their removal
+  ansible.builtin.assert:
+    that:
+      - nd4x_vrf_before_text_clear.current.coreData.vrfVlanName | default('') | length > 0
+      - nd4x_vrf_before_text_clear.current.coreData.vrfInterfaceDescription | default('') | length > 0
+      - nd4x_vrf_before_text_clear.current.coreData.vrfDescription | default('') | length > 0
+
+- name: Read the child override before changing inherited parent text
+  cisco.nd.nd_rest:
+    path: "{{ nd4x_vrf_text_child_scope.api }}/vrfs/{{ nd4x_vrf_names[0] }}{{ nd4x_vrf_text_child_scope.suffix }}"
+    method: get
+  vars:
+    nd4x_vrf_text_child_scope: "{{ nd4x_vrf_scopes | selectattr('name', 'equalto', nd4x_vrf_child) | first }}"
+  when: nd4x_vrf_topology != 'standalone'
+  register: nd4x_vrf_child_before_text_clear
+
+- name: MERGED TEXT CLEAR removes only the three explicitly empty fields
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: merged
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config: >-
+      {{ lookup('ansible.builtin.template', 'nd_vrf_conf.j2', template_vars={'vrf_conf': [{
+        'vrf_name': nd4x_vrf_names[0], 'vrf_vlan_name': '', 'vrf_intf_desc': '', 'vrf_description': ''
+      }]}) | from_yaml }}
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_change }}"
+    nd_queries:
+      - name: Read cleared text and retained numeric settings independently
+        path: "{{ nd4x_vrf_definition_scope.api }}/vrfs/{{ nd4x_vrf_names[0] }}{{ nd4x_vrf_definition_scope.suffix }}"
+        expected_status: 200
+        expect:
+          - {jsonpath: '$.current.coreData.mtu', exists: true}
+          - {jsonpath: '$.current.coreData.maxBgpPaths', exists: true}
+  register: nd4x_vrf_text_clear
+
+- name: Require all three text fields to be cleared without reallocating identity
+  ansible.builtin.assert:
+    that:
+      - nd4x_vrf_text_clear.nd_query_results[0].result.current.coreData.vrfVlanName | default('') == ''
+      - nd4x_vrf_text_clear.nd_query_results[0].result.current.coreData.vrfInterfaceDescription | default('') == ''
+      - nd4x_vrf_text_clear.nd_query_results[0].result.current.coreData.vrfDescription | default('') == ''
+      - nd4x_vrf_text_clear.nd_query_results[0].result.current.coreData.mtu | int == nd4x_vrf_before_text_clear.current.coreData.mtu | int
+      - nd4x_vrf_text_clear.nd_query_results[0].result.current.coreData.maxBgpPaths | int == nd4x_vrf_before_text_clear.current.coreData.maxBgpPaths | int
+      - nd4x_vrf_text_clear.nd_query_results[0].result.current.vrfId | int == nd_vrf_base_id | int + 80
+      - nd4x_vrf_text_clear.nd_query_results[0].result.current.vlanId | int == nd_vrf_base_vlan | int + 80
+
+- name: Read the child override after changing inherited parent text
+  cisco.nd.nd_rest:
+    path: "{{ nd4x_vrf_text_child_scope.api }}/vrfs/{{ nd4x_vrf_names[0] }}{{ nd4x_vrf_text_child_scope.suffix }}"
+    method: get
+  vars:
+    nd4x_vrf_text_child_scope: "{{ nd4x_vrf_scopes | selectattr('name', 'equalto', nd4x_vrf_child) | first }}"
+  when: nd4x_vrf_topology != 'standalone'
+  register: nd4x_vrf_child_after_text_clear
+
+- name: Require the parent text clear to preserve the child's editable settings
+  ansible.builtin.assert:
+    that:
+      - nd4x_vrf_child_before_text_clear.current.fabricData.advertiseHostRoute | bool
+      - nd4x_vrf_child_after_text_clear.current.fabricData.advertiseHostRoute | bool
+  when: nd4x_vrf_topology != 'standalone'

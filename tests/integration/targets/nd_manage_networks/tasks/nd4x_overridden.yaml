@@ -27,3 +27,8 @@
         path: "{{ nd4x_network_api }}/networks/{{ nd4x_network_names[1] if 'network' == 'vrf' else nd4x_network_names[2] }}"
         expected_status: 404
         expected_failed: true
+
+- name: Verify Layer 3 scalar and list override
+  ansible.builtin.include_tasks: nd4x_definition_state.yaml
+  vars:
+    nd4x_definition_state: overridden

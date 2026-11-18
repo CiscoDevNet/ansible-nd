@@ -88,3 +88,6 @@
     config: "{{ lookup('ansible.builtin.template', 'nd_vrf_conf.j2', template_vars={'vrf_conf': [{'vrf_name': nd4x_vrf_names[0], 'deploy': false}]}) | from_yaml }}"
     check_mode_queries: "{{ nd4x_vrf_snapshots }}"
     expected: "{{ nd4x_vrf_expected_no_change }}"
+
+- name: Verify explicit text clears preserve omitted numeric properties
+  ansible.builtin.include_tasks: nd4x_text_state.yaml

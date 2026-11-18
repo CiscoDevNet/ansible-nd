@@ -33,6 +33,14 @@
     that:
       - nd4x_vrf_replaced.nd_query_results[0].result.current.vrfId | int == nd_vrf_base_id | int + 80
       - nd4x_vrf_replaced.nd_query_results[0].result.current.vlanId | int == nd_vrf_base_vlan | int + 80
+      - nd4x_vrf_replaced.nd_query_results[0].result.current.coreData.mtu | int == 9216
+      - nd4x_vrf_replaced.nd_query_results[0].result.current.coreData.routeTargetImport | default([]) == []
+      - nd4x_vrf_replaced.nd_query_results[0].result.current.coreData.routeTargetExport | default([]) == []
+      - nd4x_vrf_replaced.nd_query_results[0].result.current.coreData.evpnRouteTargetImport | default([]) == []
+      - nd4x_vrf_replaced.nd_query_results[0].result.current.coreData.evpnRouteTargetExport | default([]) == []
+      - nd4x_vrf_replaced.nd_query_results[0].result.current.coreData.vrfDescription | default('') == ''
+      - nd4x_vrf_replaced.nd_query_results[0].result.current.coreData.vrfVlanName | default('') == ''
+      - nd4x_vrf_replaced.nd_query_results[0].result.current.coreData.vrfInterfaceDescription | default('') == ''
 
 - name: "REPLACED DEFAULTS: Name-only replacement restores documented defaults"
   cisco.nd.nd4x_module_test:
@@ -57,3 +65,15 @@
     that:
       - nd4x_vrf_reset_defaults.nd_query_results[0].result.current.vrfId | int == nd_vrf_base_id | int + 80
       - nd4x_vrf_reset_defaults.nd_query_results[0].result.current.vlanId | int == nd_vrf_base_vlan | int + 80
+
+- name: Verify omitted MVPN lists reset without disabling active TRM
+  ansible.builtin.include_tasks: nd4x_trm_state.yaml
+  vars:
+    nd4x_definition_state: replaced
+  when: "'trm' in nd_vrf_harness_features"
+
+- name: Verify omitted no-VLAN mode survives replacement
+  ansible.builtin.include_tasks: nd4x_mode_state.yaml
+  vars:
+    nd4x_definition_state: replaced
+  when: "'no_vlan' in nd_vrf_harness_features"

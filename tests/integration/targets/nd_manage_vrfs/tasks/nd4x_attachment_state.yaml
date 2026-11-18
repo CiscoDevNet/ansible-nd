@@ -1,0 +1,103 @@
+---
+- name: "{{ nd4x_attachment_state | upper }} ATTACHMENT SEED: Save nondefault options and freeform"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: merged
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config: >-
+      {{ lookup('ansible.builtin.template', 'nd_vrf_conf.j2', template_vars={'vrf_conf': [
+        nd4x_vrf_seed | combine({'attach': [{
+          'ip_address': nd4x_vrf_switch, 'freeform_config': '! ND4X attachment state',
+          'attachment_options': {
+            'loopback_id': 841, 'loopback_ipv4_address': '198.18.254.1',
+            'import_vpn_rt': ['65000:50981'], 'export_vpn_rt': ['65000:50982'],
+            'import_evpn_rt': ['65000:50983'], 'export_evpn_rt': ['65000:50984']
+          }
+        }]})]}) | from_yaml }}
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_change }}"
+
+- name: MERGED LOOPBACK changes inherit the saved ID and unrelated options
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: merged
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config:
+      - vrf_name: "{{ nd4x_vrf_names[0] }}"
+        attach:
+          - ip_address: "{{ nd4x_vrf_switch }}"
+            attachment_options: {loopback_ipv4_address: 198.18.254.2}
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_change }}"
+  when: nd4x_attachment_state == 'replaced'
+
+- name: MERGED ATTACHMENT CLEAR only the supplied import list
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: merged
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config:
+      - vrf_name: "{{ nd4x_vrf_names[0] }}"
+        attach:
+          - ip_address: "{{ nd4x_vrf_switch }}"
+            attachment_options: {import_vpn_rt: []}
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_change }}"
+
+- name: Read the sparse VRF attachment result independently
+  cisco.nd.nd_rest:
+    path: "{{ nd4x_vrf_api }}/vrfAttachments/query?includeAll=true&max=100&offset=0"
+    method: post
+    content:
+      vrfNames: ["{{ nd4x_vrf_names[0] }}"]
+      switchIds: ["{{ nd_vrf_harness_switch_id }}"]
+  register: nd4x_vrf_sparse_binding
+
+- name: Require every omitted writable VRF attachment sibling to survive
+  ansible.builtin.assert:
+    that:
+      - nd4x_vrf_sparse_binding.current.attachments | length == 1
+      - nd4x_vrf_sparse_binding.current.attachments[0].instanceValues.routeTargetImport | default([]) == []
+      - nd4x_vrf_sparse_binding.current.attachments[0].instanceValues.routeTargetExport == ['65000:50982']
+      - nd4x_vrf_sparse_binding.current.attachments[0].instanceValues.evpnRouteTargetImport == ['65000:50983']
+      - nd4x_vrf_sparse_binding.current.attachments[0].instanceValues.evpnRouteTargetExport == ['65000:50984']
+      - nd4x_vrf_sparse_binding.current.attachments[0].instanceValues.loopbackId | int == 841
+      - nd4x_vrf_sparse_binding.current.attachments[0].instanceValues.loopbackIpv4Address == ('198.18.254.2' if nd4x_attachment_state == 'replaced' else '198.18.254.1')
+      - nd4x_vrf_sparse_binding.current.attachments[0].extraConfig == '! ND4X attachment state'
+
+- name: Verify all VRFs are owned before an overridden attachment test
+  ansible.builtin.include_tasks: nd4x_scope_preflight.yaml
+  when: nd4x_attachment_state == 'overridden'
+
+- name: "{{ nd4x_attachment_state | upper }} ATTACHMENT: Omitted options and freeform reset"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: "{{ nd4x_attachment_state }}"
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config: >-
+      {{ lookup('ansible.builtin.template', 'nd_vrf_conf.j2', template_vars={'vrf_conf': [
+        nd4x_vrf_seed | combine({'attach': [{'ip_address': nd4x_vrf_switch}]})]}) | from_yaml }}
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_change }}"
+
+- name: Read the reset VRF attachment independently
+  cisco.nd.nd_rest:
+    path: "{{ nd4x_vrf_api }}/vrfAttachments/query?includeAll=true&max=100&offset=0"
+    method: post
+    content:
+      vrfNames: ["{{ nd4x_vrf_names[0] }}"]
+      switchIds: ["{{ nd_vrf_harness_switch_id }}"]
+  register: nd4x_vrf_reset_binding
+
+- name: Require reset lists and loopback without removing the switch attachment
+  ansible.builtin.assert:
+    that:
+      - nd4x_vrf_reset_binding.current.attachments | length == 1
+      - nd4x_vrf_reset_binding.current.attachments[0].attach | bool
+      - nd4x_vrf_reset_binding.current.attachments[0].extraConfig | default('') == ''
+      - nd4x_vrf_reset_binding.current.attachments[0].instanceValues.routeTargetImport | default([]) == []
+      - nd4x_vrf_reset_binding.current.attachments[0].instanceValues.routeTargetExport | default([]) == []
+      - nd4x_vrf_reset_binding.current.attachments[0].instanceValues.evpnRouteTargetImport | default([]) == []
+      - nd4x_vrf_reset_binding.current.attachments[0].instanceValues.evpnRouteTargetExport | default([]) == []
+      - nd4x_vrf_reset_binding.current.attachments[0].instanceValues.loopbackId | default(none) == none
+      - nd4x_vrf_reset_binding.current.attachments[0].instanceValues.loopbackIpv4Address | default('') == ''

@@ -110,8 +110,15 @@
       - not nd4x_network_options_readback.current.attachments[0].instanceValues.sviEnabled | bool
       - >-
         not (nd_network_harness_interface_tests_enabled | default(false) | bool) or
-        nd4x_network_interface in
-        (nd4x_network_options_readback.current.attachments[0].interfaces | map(attribute='interfaceRange') | list)
+        (nd4x_network_interface | lower | regex_replace('^ethernet', 'eth')) in
+        (nd4x_network_options_readback.current.attachments[0].interfaces | selectattr('mode', 'equalto', 'trunk')
+         | map(attribute='interfaceRange') | map('lower') | map('regex_replace', '^ethernet', 'eth') | list)
+
+- name: Verify attachment option preservation and authoritative resets
+  ansible.builtin.include_tasks: nd4x_attachment_state.yaml
+  loop: "{{ ['replaced', 'overridden'] if nd4x_network_destructive_enabled | bool else ['replaced'] }}"
+  loop_control:
+    loop_var: nd4x_attachment_state
 
 - name: Deploy only the owned resource when device testing is explicitly enabled
   cisco.nd.nd4x_module_test:
@@ -165,6 +172,9 @@
   retries: 12
   delay: 5
   when: nd_network_harness_deploy_tests_enabled | default(false) | bool
+
+- name: Verify an explicit empty options object uses one reset and preserves independent settings
+  ansible.builtin.include_tasks: nd4x_attachment_reset.yaml
 
 - name: Delete the attached resource using module-managed scoped cleanup
   cisco.nd.nd4x_module_test:

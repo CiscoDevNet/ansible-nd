@@ -43,3 +43,8 @@
     config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': [{'network_name': nd4x_network_names[0], 'deploy': false}]}) | from_yaml }}"
     check_mode_queries: "{{ nd4x_network_snapshots }}"
     expected: "{{ nd4x_network_expected_no_change }}"
+
+- name: Verify Layer 3 scalar and list replacement
+  ansible.builtin.include_tasks: nd4x_definition_state.yaml
+  vars:
+    nd4x_definition_state: replaced
