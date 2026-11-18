@@ -1,0 +1,52 @@
+---
+- name: "NEGATIVE HARNESS: Reject an unsupported subinterface parent in check mode"
+  cisco.nd.nd_interface_subinterface_managed: &nd4x_bad_parent
+    output_level: "{{ nd4x_output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: Loopback0.220
+    state: merged
+  check_mode: true
+  register: nd4x_bad_parent_check_mode
+  ignore_errors: true
+
+- name: "NEGATIVE HARNESS: Reject an unsupported subinterface parent in normal mode"
+  cisco.nd.nd_interface_subinterface_managed: *nd4x_bad_parent
+  register: nd4x_bad_parent_normal_mode
+  ignore_errors: true
+
+- name: "NEGATIVE HARNESS: Reject an ambiguous abbreviated parent in check mode"
+  cisco.nd.nd_interface_subinterface_managed:
+    output_level: "{{ nd4x_output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: t1/0/1.220
+    state: deleted
+  check_mode: true
+  register: nd4x_ambiguous_parent_check_mode
+  ignore_errors: true
+
+- name: "NEGATIVE HARNESS: Reject an ambiguous abbreviated parent in normal mode"
+  cisco.nd.nd_interface_subinterface_managed:
+    output_level: "{{ nd4x_output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: t1/0/1.220
+    state: deleted
+  register: nd4x_ambiguous_parent_normal_mode
+  ignore_errors: true
+
+- name: "NEGATIVE HARNESS: Verify the exact validation failures"
+  ansible.builtin.assert:
+    that:
+      - nd4x_bad_parent_check_mode is failed
+      - nd4x_bad_parent_normal_mode is failed
+      - "'is not a supported subinterface parent' in nd4x_bad_parent_check_mode.msg"
+      - "'is not a supported subinterface parent' in nd4x_bad_parent_normal_mode.msg"
+      - nd4x_ambiguous_parent_check_mode is failed
+      - nd4x_ambiguous_parent_normal_mode is failed
+      - "'is ambiguous' in nd4x_ambiguous_parent_check_mode.msg"
+      - "'is ambiguous' in nd4x_ambiguous_parent_normal_mode.msg"

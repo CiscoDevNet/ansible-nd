@@ -1,0 +1,136 @@
+---
+# NX-OS harness setup must never treat an occupied reserved interface name as
+# stale harness data. Require all reserved names to be absent before setup.
+- name: "NX-OS RESERVED PREFLIGHT: Read the current fabric switch inventory"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches"
+    method: get
+  register: nd4x_nxos_reserved_switches_result
+  changed_when: false
+
+- name: "NX-OS RESERVED PREFLIGHT: Normalize the switch inventory"
+  ansible.builtin.set_fact:
+    nd4x_nxos_reserved_switches: >-
+      {{ nd4x_nxos_reserved_switches_result.current.switches
+         | default(nd4x_nxos_reserved_switches_result.jsondata.switches | default([], true), true) }}
+
+- name: "NX-OS RESERVED PREFLIGHT: Resolve the configured switch"
+  vars:
+    matches: >-
+      {{ nd4x_nxos_reserved_switches
+         | selectattr('fabricManagementIp', 'equalto', test_switch_ip)
+         | list }}
+  ansible.builtin.assert:
+    that:
+      - nd4x_nxos_reserved_switches is sequence
+      - nd4x_nxos_reserved_switches is not string
+      - nd4x_nxos_reserved_switches | length > 0
+      - nd4x_nxos_reserved_switches | selectattr('switchId', 'defined') | list | length == nd4x_nxos_reserved_switches | length
+      - nd4x_nxos_reserved_switches | selectattr('fabricManagementIp', 'defined') | list | length == nd4x_nxos_reserved_switches | length
+      - nd4x_nxos_reserved_switches | map(attribute='switchId') | unique | list | length == nd4x_nxos_reserved_switches | length
+      - matches | length == 1
+    fail_msg: >-
+      Cannot safely prepare the NX-OS harness: expected a complete current switch inventory with exactly one
+      switch at {{ test_switch_ip }} in {{ test_fabric_name }}.
+
+- name: "NX-OS RESERVED PREFLIGHT: Record the current test switch ID"
+  vars:
+    matches: >-
+      {{ nd4x_nxos_reserved_switches
+         | selectattr('fabricManagementIp', 'equalto', test_switch_ip)
+         | map(attribute='switchId')
+         | list }}
+  ansible.builtin.set_fact:
+    nd4x_nxos_reserved_switch_id: "{{ matches[0] }}"
+
+- name: "NX-OS RESERVED PREFLIGHT: Read the complete switch interface inventory"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ nd4x_nxos_reserved_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+    method: get
+  register: nd4x_nxos_reserved_interfaces_result
+  changed_when: false
+
+- name: "NX-OS RESERVED PREFLIGHT: Read the switch running configuration"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ nd4x_nxos_reserved_switch_id }}/diff"
+    method: get
+  register: nd4x_nxos_reserved_diff_result
+  changed_when: false
+
+- name: "NX-OS RESERVED PREFLIGHT: Normalize and validate inventory snapshots"
+  ansible.builtin.set_fact:
+    nd4x_nxos_reserved_interfaces: >-
+      {{ nd4x_nxos_reserved_interfaces_result.current.interfaces
+         | default(nd4x_nxos_reserved_interfaces_result.jsondata.interfaces | default([], true), true) }}
+    nd4x_nxos_reserved_diff_configs: >-
+      {{ nd4x_nxos_reserved_diff_result.current.diffConfigs
+         | default(nd4x_nxos_reserved_diff_result.jsondata.diffConfigs | default([], true), true) }}
+    nd4x_nxos_reserved_names: >-
+      {{ nd4x_subif_eth_cleanup | map(attribute='interface_name') | list }}
+
+- name: "NX-OS RESERVED PREFLIGHT: Require complete interface and running-config data"
+  ansible.builtin.assert:
+    that:
+      - nd4x_nxos_reserved_interfaces is sequence
+      - nd4x_nxos_reserved_interfaces is not string
+      - >-
+        (nd4x_nxos_reserved_interfaces_result.current.interfaces is defined
+         and nd4x_nxos_reserved_interfaces_result.current.interfaces is sequence
+         and nd4x_nxos_reserved_interfaces_result.current.interfaces is not string)
+        or
+        (nd4x_nxos_reserved_interfaces_result.jsondata.interfaces is defined
+         and nd4x_nxos_reserved_interfaces_result.jsondata.interfaces is sequence
+         and nd4x_nxos_reserved_interfaces_result.jsondata.interfaces is not string)
+      - nd4x_nxos_reserved_interfaces | selectattr('interfaceName', 'defined') | list | length == nd4x_nxos_reserved_interfaces | length
+      - nd4x_nxos_reserved_interfaces | selectattr('interfaceType', 'defined') | list | length == nd4x_nxos_reserved_interfaces | length
+      - nd4x_nxos_reserved_interfaces | length < 500
+      - nd4x_nxos_reserved_diff_configs is sequence
+      - nd4x_nxos_reserved_diff_configs is not string
+      - >-
+        (nd4x_nxos_reserved_diff_result.current.diffConfigs is defined
+         and nd4x_nxos_reserved_diff_result.current.diffConfigs is sequence
+         and nd4x_nxos_reserved_diff_result.current.diffConfigs is not string)
+        or
+        (nd4x_nxos_reserved_diff_result.jsondata.diffConfigs is defined
+         and nd4x_nxos_reserved_diff_result.jsondata.diffConfigs is sequence
+         and nd4x_nxos_reserved_diff_result.jsondata.diffConfigs is not string)
+      - nd4x_nxos_reserved_diff_configs | selectattr('runningConfig', 'defined') | list | length == nd4x_nxos_reserved_diff_configs | length
+    fail_msg: >-
+      Cannot safely run the NX-OS harness: ND did not return a complete interface inventory (the 500-row page limit
+      may have been reached) or complete running-configuration inventory for switch {{ nd4x_nxos_reserved_switch_id }}.
+      No cleanup or setup was performed.
+
+- name: "NX-OS RESERVED PREFLIGHT: Require every reserved interface name to be absent from ND inventory"
+  vars:
+    occupied_names: >-
+      {{ nd4x_nxos_reserved_interfaces
+         | map(attribute='interfaceName')
+         | map('lower')
+         | list }}
+  ansible.builtin.assert:
+    that:
+      - item | lower not in occupied_names
+    fail_msg: >-
+      Refusing NX-OS harness setup because reserved interface {{ item }} already exists in ND's interface inventory
+      on {{ test_switch_ip }}. Inspect it and clear or reassign the reserved test IDs before retrying; the harness
+      has not deleted or changed it.
+  loop: "{{ nd4x_nxos_reserved_names }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: "NX-OS RESERVED PREFLIGHT: Require every reserved interface name to be absent from running configuration"
+  vars:
+    running_config: >-
+      {{ nd4x_nxos_reserved_diff_configs
+         | map(attribute='runningConfig')
+         | join('\n') }}
+  ansible.builtin.assert:
+    that:
+      - running_config is not search('(?im)^\\s*interface\\s+' ~ (item | regex_escape) ~ '\\s*$')
+    fail_msg: >-
+      Refusing NX-OS harness setup because reserved interface {{ item }} already appears in the switch running configuration
+      on {{ test_switch_ip }}. Inspect it and clear or reassign the reserved test IDs before retrying; the harness
+      has not deleted or changed it.
+  loop: "{{ nd4x_nxos_reserved_names }}"
+  loop_control:
+    label: "{{ item }}"

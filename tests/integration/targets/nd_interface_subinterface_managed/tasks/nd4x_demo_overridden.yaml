@@ -1,0 +1,134 @@
+---
+- name: "OVERRIDDEN HARNESS: Require destructive-test opt-in"
+  ansible.builtin.assert:
+    that:
+      - nd4x_subinterface_managed_destructive_tests_enabled | bool
+    fail_msg: >-
+      The overridden scenario can delete managed subinterfaces outside its requested configuration.
+      Run it only on a dedicated test fabric and set
+      nd_subinterface_managed_destructive_tests_enabled=true.
+
+- name: "OVERRIDDEN HARNESS PREFLIGHT: Protect reserved NX-OS subinterface names"
+  ansible.builtin.include_tasks: nd4x_demo_nxos_reserved_preflight.yaml
+
+# `state: overridden` queries the whole fabric. Run a fresh fabric-wide
+# inventory before even the reserved-resource cleanup below. Keep this outside
+# the cleanup block so a failed/incomplete inventory does not run setup or cleanup.
+- name: "OVERRIDDEN HARNESS PREFLIGHT: Prove fabric-wide override scope is reserved"
+  ansible.builtin.include_tasks: nd4x_demo_override_scope_preflight.yaml
+  vars:
+    nd4x_override_scope_fabric_name: "{{ test_fabric_name }}"
+    nd4x_override_scope_switch_ip: "{{ test_switch_ip }}"
+    nd4x_override_scope_phase: preflight
+    nd4x_override_scope_allowed_pairs: "{{ nd4x_override_reserved_nxos_pairs }}"
+
+- name: "OVERRIDDEN HARNESS: Restrict managed resources to the reserved .20 subinterface"
+  block:
+    - name: "OVERRIDDEN HARNESS SETUP: Create the reserved .20 through .22 resources"
+      cisco.nd.nd_interface_subinterface_managed:
+        output_level: "{{ nd4x_output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ nd4x_subif_eth_20 }}"
+          - "{{ nd4x_subif_eth_21 }}"
+          - "{{ nd4x_subif_eth_22 }}"
+          - "{{ nd4x_subif_pc_23 }}"
+        state: merged
+
+    - name: "OVERRIDDEN HARNESS: Update retained .20 and Port-channel .23, removing the other reserved subinterfaces"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_subinterface_managed
+        state: overridden
+        common_args:
+          output_level: "{{ nd4x_output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ nd4x_subif_eth_20_updated }}"
+          - "{{ nd4x_subif_pc_23_updated }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate retained .20 and removed .21 and .22
+            path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.ip"
+                equals: "192.168.60.21"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.20')].configData.networkOS.policy.description"
+                equals: "ND4X harness updated subinterface 20"
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.21')]"
+                exists: false
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.22')]"
+                exists: false
+              - jsonpath: "$.current.interfaces[?(@.interfaceName == '{{ ethernet_parent }}.24')]"
+                exists: false
+      register: nd4x_overridden_eth_20
+
+    # ND can lag the module's successful apply when publishing Port-channel
+    # subinterfaces to the interfaces inventory. Poll that inventory before
+    # relying on it for field assertions or the fabric-wide postflight.
+    - name: "OVERRIDDEN HARNESS: Wait for the retained Port-channel .23 in ND REST inventory"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ test_fabric_name }}/switches/{{ test_switch_id }}/interfaces?max=500&offset=0&sort=interfaceName:asc"
+        method: get
+      register: nd4x_overridden_interfaces
+      until: >-
+        nd4x_overridden_interfaces.current.interfaces | default([])
+        | selectattr('interfaceName', 'defined')
+        | selectattr('interfaceName', 'match', '(?i)^' ~ ((port_channel_parent ~ '.23') | regex_escape) ~ '$')
+        | list | length == 1
+      retries: 30
+      delay: 10
+
+    - name: "OVERRIDDEN HARNESS: Validate retained Port-channel REST fields and removed members"
+      vars:
+        interfaces: "{{ nd4x_overridden_interfaces.current.interfaces | default([]) }}"
+        retained_port_channel: >-
+          {{ interfaces
+             | selectattr('interfaceName', 'match', '(?i)^' ~ ((port_channel_parent ~ '.23') | regex_escape) ~ '$')
+             | first }}
+        interface_names_lower: "{{ interfaces | map(attribute='interfaceName') | map('lower') | list }}"
+      ansible.builtin.assert:
+        that:
+          - retained_port_channel.configData.networkOS.policy.ip == '192.168.63.21'
+          - retained_port_channel.configData.networkOS.policy.description == 'ND4X updated Port-channel subinterface 23'
+          - interface_names_lower | intersect([ethernet_parent ~ '.21', ethernet_parent ~ '.22', ethernet_parent ~ '.24'] | map('lower') | list) | length == 0
+        fail_msg: >-
+          ND REST inventory did not converge to the intended override result: Port-channel .23 must have
+          the updated IP and description, and reserved Ethernet .21, .22, and .24 must be absent.
+
+    - name: "OVERRIDDEN HARNESS POSTFLIGHT: Prove only .20 and Port-channel .23 remain fabric-wide"
+      ansible.builtin.include_tasks: nd4x_demo_override_scope_preflight.yaml
+      vars:
+        nd4x_override_scope_fabric_name: "{{ test_fabric_name }}"
+        nd4x_override_scope_switch_ip: "{{ test_switch_ip }}"
+        nd4x_override_scope_phase: postflight
+        nd4x_override_scope_allowed_pairs: "{{ nd4x_override_intended_nxos_pairs }}"
+
+    - name: "OVERRIDDEN HARNESS: Verify returned membership and idempotency"
+      ansible.builtin.assert:
+        that:
+          - (nd4x_overridden_eth_20.first_run_result.after | selectattr('interface_name', 'equalto', ethernet_parent ~ '.20') | first).config_data.network_os.policy.ip == '192.168.60.21'
+          - (nd4x_overridden_eth_20.first_run_result.after | selectattr('interface_name', 'equalto', ethernet_parent ~ '.20') | first).config_data.network_os.policy.description == 'ND4X harness updated subinterface 20'
+          - (nd4x_overridden_eth_20.first_run_result.after | selectattr('interface_name', 'equalto', port_channel_parent ~ '.23') | first).config_data.network_os.policy.ip == '192.168.63.21'
+          - (nd4x_overridden_eth_20.first_run_result.after | selectattr('interface_name', 'equalto', port_channel_parent ~ '.23') | first).config_data.network_os.policy.description == 'ND4X updated Port-channel subinterface 23'
+          - nd4x_overridden_eth_20.first_run_result.after | selectattr('interface_name', 'in', [ethernet_parent ~ '.21', ethernet_parent ~ '.22']) | list | length == 0
+          - nd4x_overridden_eth_20.second_run_result.changed == false
+          - nd4x_overridden_eth_20.nd_query_results | length == 1
+  always:
+    - name: "OVERRIDDEN HARNESS CLEANUP: Remove reserved subinterfaces"
+      cisco.nd.nd_interface_subinterface_managed:
+        output_level: "{{ nd4x_output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_subif_eth_cleanup }}"
+        state: deleted
