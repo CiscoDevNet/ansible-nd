@@ -156,6 +156,24 @@ assert !logs.any { it.startsWith('NDP_WEBEX_NOTIFICATION_SENT:') }
 ''')
 
 
+def test_partial_multipart_delivery_sets_attempt_flag(sender):
+    sender(r'''
+script.binding.env.WEBEX_ROOM_ID = 'fixture-room'
+script.metaClass.httpRequest = { Map options ->
+    requests.add(options)
+    return [status: requests.size() == 1 ? 200 : 500]
+}
+def caught = null
+try { script.sendWebexNotificationMessages(['first', 'second', 'third']) }
+catch (Exception failure) { caught = failure }
+assert caught != null && requests.size() == 2
+def attempted = script.getClass().getDeclaredField('ND_WEBEX_DELIVERY_ATTEMPTED')
+attempted.setAccessible(true)
+assert attempted.get(script) == true
+assert logs.any { it.startsWith('NDP_WEBEX_NOTIFICATION_SENT: part 1/3') }
+''')
+
+
 def test_actual_post_does_not_repeat_http_with_an_unresolved_destination(sender):
     sender(r'''
 script.binding.env.WEBEX_ROOM_ID = 'null'

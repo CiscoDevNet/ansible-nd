@@ -44,10 +44,11 @@ def test_each_script_selects_only_its_target_and_private_webex(source, target):
         assert script.count('orderedIntegrationTargets.addAll(standaloneTargets)') == 1
         assert '    targets.addAll(pairRows.collect { "nd_vpc_pair.${it.id}".toString() })' in script
     assert (
-        "            orderedIntegrationTargets.addAll(effectiveIntegrationModules)\n"
+        "            orderedIntegrationTargets.addAll(effectiveIntegrationModules.findAll { it != 'nd_manage_switches' })\n"
         "            if (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true') {\n"
         "                orderedIntegrationTargets.addAll(standaloneTargets)\n"
         "            }\n"
+        "            orderedIntegrationTargets.addAll(effectiveIntegrationModules.findAll { it == 'nd_manage_switches' })\n"
     ) in script
 
 
@@ -84,6 +85,23 @@ def test_public_destination_and_template_drift_fail_closed(source):
         generator.render(source.replace('def PLAYBOOK_FILES = [', 'def OTHER_FILES = ['), generator.TARGETS[0])
 
 
+def test_template_rejects_yaml_document_separator(source):
+    with pytest.raises(ValueError, match='Groovy, not YAML'):
+        generator.render('---\n' + source, generator.TARGETS[0])
+
+
+def test_all_shared_and_individual_jenkinsfiles_start_as_groovy():
+    shared = [ROOT / name for name in (
+        'Jenkinsfile_nd_jenkins_script',
+        'Jenkinsfile_nd_jenkins_script_temp_switches',
+        'Jenkinsfile_nd_jenkins_script_comm_list',
+    )]
+    individual = sorted((ROOT / 'individual_jenkinsfiles').glob('Jenkinsfile_*'))
+    assert len(individual) == 34
+    assert all(path.read_text(encoding='utf-8').startswith('import groovy.transform.Field\n')
+               for path in shared + individual)
+
+
 def test_refresh_updates_unmodified_outputs_but_preserves_user_edits(tmp_path, source):
     template = tmp_path / 'template'
     template.write_text(source)
@@ -101,7 +119,6 @@ def test_refresh_updates_unmodified_outputs_but_preserves_user_edits(tmp_path, s
         generator.generate(template=template, output=output, refresh=True)
     assert changed.read_text() == 'user edit'
     assert untouched.read_bytes() == before
-
 def test_individual_template_matches_main_runtime_and_timing_helpers(source):
     main = (ROOT / 'Jenkinsfile_nd_jenkins_script').read_text()
     for name in ('prepareRuntimeInputs', 'formatPhaseTimingTable', 'bundleAllLogs',

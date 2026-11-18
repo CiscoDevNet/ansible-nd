@@ -1106,6 +1106,21 @@ def test_l3out_requires_cables_for_routed_and_svi_and_plans_subinterface_link(re
         ("ensure_interface", "external_edge_1", "Ethernet1/4"),
     ]
 
+
+def test_l3out_recovers_shut_subinterface_link_endpoints(registry, valid_state):
+    confirmed = confirm(registry, "integration.nd_manage_l3out")
+    resolved = resolve_execution(confirmed, "integration.nd_manage_l3out")
+    state = copy.deepcopy(valid_state)
+    for switch_ref in ("vxlan_border_1", "external_edge_1"):
+        state["interfaces"][switch_ref]["Ethernet1/2"] = {
+            "admin_state": False, "operational_state": "down"}
+    operations = plan_topology_delta(confirmed, resolved, state)
+    assert [(operation["operation"], operation["switch_ref"], operation["interface"])
+            for operation in operations] == [
+        ("ensure_interface", "vxlan_border_1", "Ethernet1/2"),
+        ("ensure_interface", "external_edge_1", "Ethernet1/2"),
+    ]
+
 def test_reserved_port_channel_namespace_allows_only_empty_target_owned_cleanup(registry, valid_state):
     profile_id = "integration.nd_interface_port_channel_routed"
     confirmed = confirm(registry, profile_id)

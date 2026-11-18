@@ -44,9 +44,11 @@ if a['method']:
             anomalies = []
             if scenario.startswith('startup_warning_'):
                 copies = len(s.get('copy_requests', []))
-                active = not copies or scenario == 'startup_warning_persists' or s['anomaly_reads'] == 2
+                active = not copies or scenario in ('startup_warning_persists', 'startup_warning_api_error') or s['anomaly_reads'] == 2
                 anomalies = [{'fabricName':'fixture-source', 'cleared':not active,
                               'anomalyString':'Switch [fixture/FIXTURE0006]: ~Periodic "copy run start" has been skipped on the switch due to an active deployment, maintenance mode, or deployment disable mode.'}]
+                if scenario == 'startup_warning_api_error' and copies:
+                    finish(changed=False, status=200, current={'anomalies':anomalies, 'code':500, 'message':'RAW_PAYLOAD'})
             if scenario.startswith('predelete_leaf_tor_') or scenario.startswith('leaf_tor_') and s['selected_calls']:
                 deployed = len([path for path in s['rest_writes']
                                 if '/fixture-source/' in path and path.endswith('/actions/deploy')])
@@ -278,13 +280,27 @@ def test_predelete_resolves_startup_save_preconditions_before_recalculate(tmp_pa
         assert 'NDP_SWITCH_STARTUP_SAVE_DIAGNOSTIC' in completed.stdout
         assert 'CLEAR' in completed.stdout
         assert state['anomaly_reads'] >= 4
+        assert 'NDP_SWITCH_STARTUP_SAVE_ANOMALY_SUPERSEDED' not in completed.stdout
+    assert 'DO_NOT_PRINT_ME' not in completed.stdout and 'RAW_PAYLOAD' not in completed.stdout
+
+
+def test_verified_copy_supersedes_lagging_skipped_save_warning(tmp_path):
+    # Builds 137 and 175: ND kept the periodic-save warning active after a verified explicit copy.
+    completed, state = execute(tmp_path, 'startup_warning_persists')
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert len(state['selected_calls']) == 1
+    assert len(state['copy_requests']) == 2
+    assert 'DESTINATION_ADD_REACHED' in completed.stdout
+    assert 'NDP_SWITCH_STARTUP_SAVE_ANOMALY_SUPERSEDED' in completed.stdout
+    assert 'WARNING_ACTIVE' in completed.stdout
+    assert 'NDP_SWITCH_PREDELETE_COPY_BLOCKED' not in completed.stdout
     assert 'DO_NOT_PRINT_ME' not in completed.stdout and 'RAW_PAYLOAD' not in completed.stdout
 
 
 @pytest.mark.parametrize('scenario', [
     'startup_frozen', 'startup_upgrade_active', 'startup_active_forever', 'startup_maintenance_stuck',
     'startup_mode_refused', 'startup_missing_mode', 'startup_migration', 'startup_copy_refused',
-    'startup_warning_persists', 'startup_copy_after_deploy_refused', 'startup_freeze_after_deploy',
+    'startup_warning_api_error', 'startup_copy_after_deploy_refused', 'startup_freeze_after_deploy',
     'startup_late_out_of_sync',
 ])
 def test_unsafe_startup_save_preconditions_never_remove_or_onboard(tmp_path, scenario):
@@ -301,10 +317,11 @@ def test_unsafe_startup_save_preconditions_never_remove_or_onboard(tmp_path, sce
         assert len(state['mode_requests']) == 1
         assert state.get('copy_requests', []) == []
         assert state.get('vpc_unpairs', []) == []
-    if scenario in {'startup_copy_refused', 'startup_warning_persists'}:
-        if scenario == 'startup_warning_persists':
+    if scenario in {'startup_copy_refused', 'startup_warning_api_error'}:
+        if scenario == 'startup_warning_api_error':
             assert 'NDP_SWITCH_STARTUP_SAVE_DIAGNOSTIC' in completed.stdout
-            assert 'WARNING_ACTIVE' in completed.stdout
+            assert 'API_ERROR_BODY' in completed.stdout
+            assert 'NDP_SWITCH_STARTUP_SAVE_ANOMALY_SUPERSEDED' not in completed.stdout
         assert all(path.endswith('/actions/copyRunStart') for path in state['rest_writes'])
         assert state.get('vpc_unpairs', []) == []
     assert not any('force=true' in path for path in state['rest_writes'])
@@ -600,11 +617,12 @@ def execute(tmp_path, scenario, remove_retries=2, force=False, phase='pre', sour
                     'predelete_deploy_async_not_ready', 'predelete_deploy_unknown_missing_status', 'leaf_tor_retry_pending',
                     'predelete_leaf_tor_persists', 'leaf_tor_forever'}:
         values['nd_switch_predelete_timeout_seconds'] = 12
-    if scenario in {'startup_active_forever', 'startup_maintenance_stuck', 'startup_warning_persists', 'startup_late_out_of_sync'}:
+    if scenario in {'startup_active_forever', 'startup_maintenance_stuck', 'startup_warning_api_error', 'startup_late_out_of_sync'}:
         values['nd_switch_predelete_timeout_seconds'] = 12
     if scenario == 'predelete_disabled': values['nd_switch_predelete_deploy'] = False
     if scenario == 'predelete_outer_budget_expired': values['nd_switch_guard_timeout_seconds'] = 1
-    if scenario == 'startup_warning_persists':
+    if scenario == 'startup_warning_persists': values['nd_switch_predelete_copy_settle_seconds'] = 1
+    if scenario == 'startup_warning_api_error':
         clock = tmp_path / 'startup_clock.py'
         clock.write_text('import json,time\nfrom pathlib import Path\n'
                          'state=json.loads(Path(' + repr(str(state)) + ').read_text())\n'

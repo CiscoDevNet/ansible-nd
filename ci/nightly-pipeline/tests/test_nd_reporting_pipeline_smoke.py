@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -20,13 +21,21 @@ TASKS = [
     ("GATHERED TC3 - gather", MODULE, {"state": "gathered"}, "skipped"),
     ("CLEANUP - restore", "debug", {}, "ok"),
 ]
+PIPELINE_VARIANTS = ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches",
+                     "Jenkinsfile_nd_jenkins_script_comm_list")
+BLOCKED_REASON = "Source or switch readiness could not be verified; see switch-guard diagnostics"
+BLOCKED_RECORD = ["[MODULE: nd_blocked] Prerequisite blocked; authored target not started.",
+                  "[RUN_MARKER: smoke-round]", "[TIMESTAMP_START: 100]",
+                  f"ERROR! NDP_MODULE_BLOCKED: nd_blocked: {BLOCKED_REASON}; continuing with the next module",
+                  "[ANSIBLE_EXIT_STATUS: 125]", "[TIMESTAMP_END: 103]", "[DURATION_SECONDS: 3]",
+                  "[MODULE: nd_blocked] Execution completed."]
 
 
 def write_json(path, value):
     path.write_text(json.dumps(value) + "\n")
 
 
-def queue_fixture(tmp_path, structured, stale_marker=False, skip_fields=None, extra_events=(), preparation_recap=False):
+def queue_fixture(tmp_path, structured, stale_marker=False, skip_fields=None, extra_events=(), preparation_recap=False, scoped_events=False):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     queue = workspace / "reports"
@@ -81,14 +90,16 @@ def queue_fixture(tmp_path, structured, stale_marker=False, skip_fields=None, ex
         for index, (name, action, _, outcome) in enumerate(TASKS):
             if outcome is None:
                 continue
+            phase = "prerequisites" if scoped_events and index == 0 else "cleanup" if scoped_events and index == len(TASKS) - 1 else "execution"
             event = {"schema_version": 1, "module": MODULE, "run_id": "smoke-round", "invocation_id": "smoke",
-                     "phase": "execution", "task_uuid": str(index), "task_instance": 1, "name": name,
+                     "phase": phase, "task_uuid": str(index), "task_instance": 1, "name": name,
                      "path": str(source), "line": 1, "action": action, "role": MODULE, "no_log": False}
             if outcome == "skipped":
                 event.update(skip_fields or {})
             records.append(dict(event, kind="task", seq=len(records) + 1))
             records.append(dict(event, kind="outcome", seq=len(records) + 1, outcome=outcome,
-                                host="localhost", terminal=True, item=False, ignored=False, reason_codes=[]))
+                                host="localhost", terminal=True, item=False, ignored=False, reason_codes=[],
+                                **({"changed": index == 1} if scoped_events else {})))
         for event in extra_events:
             records.append(dict(event, seq=len(records) + 1))
         journal = "".join(json.dumps(event, sort_keys=True) + "\n" for event in records).encode()
@@ -104,6 +115,21 @@ def queue_fixture(tmp_path, structured, stale_marker=False, skip_fields=None, ex
 
 
 @pytest.mark.parametrize("structured", [True, False])
+def test_scoped_recap_excludes_pipeline_setup_and_cleanup(tmp_path, structured):
+    _, queue, job, cli = queue_fixture(tmp_path, structured, scoped_events=True)
+    cli("finish", "--status", "failed")
+    cli("next", "--after-execution")
+    result = json.loads((queue / "results" / (job["id"] + ".json")).read_text())
+    scoped = result["invocation"].get("integration_recap")
+    if structured:
+        assert scoped == {"scope": "integration_target", "counts": {
+            "ok": 2, "changed": 1, "unreachable": 0, "failed": 1,
+            "skipped": 1, "rescued": 0, "ignored": 0}}
+    else:
+        assert scoped is None
+
+
+@pytest.mark.parametrize("structured", [True, False])
 def test_preparation_recap_does_not_change_module_task_counts(tmp_path, structured):
     _, queue, job, cli = queue_fixture(tmp_path, structured, preparation_recap=True)
     cli("finish", "--status", "failed")
@@ -112,6 +138,24 @@ def test_preparation_recap_does_not_change_module_task_counts(tmp_path, structur
     stored = json.loads((queue / "results" / (job["id"] + ".json")).read_text())
     assert stored["invocation"]["counts"] == {"ok": 4, "changed": 1, "unreachable": 0, "failed": 1,
                                                "skipped": 1, "rescued": 0, "ignored": 0}
+
+
+def test_failed_invocation_before_authored_cases_is_not_run(tmp_path):
+    _, queue, job, cli = queue_fixture(tmp_path, structured=True)
+    cli("finish", "--status", "failed")
+    cli("next", "--after-execution")
+    result_path = queue / "results" / (job["id"] + ".json")
+    result = json.loads(result_path.read_text())
+    result["activity"].update(coverage="NOT_STARTED", result="FAIL",
+                              testcase_totals=dict.fromkeys(("started", "passed", "failed", "skipped", "incomplete"), 0))
+    write_json(result_path, result)
+    cli("ack", "--id", job["id"], "--status", "success", "--seconds", "1", "--attempt", "1")
+    aggregate = cli("aggregate")
+    row = aggregate["rows"][0]
+    assert row["result"] == "NOT_RUN"
+    assert row["invocation"]["status"] == "FAIL"
+    assert row["invocation"]["counts"]["failed"] == 1
+    assert aggregate["failed"] is True
 
 
 @pytest.mark.parametrize("structured", [True, False])
@@ -142,6 +186,7 @@ def test_closed_execution_reaches_artifact_receipt_and_ordered_aggregate(tmp_pat
     assert row["validated"] is True
     assert row["case_totals"] == {"started": 2, "passed": 1, "failed": 1, "skipped": 1, "incomplete": 0}
     assert row["phase_seconds"]["archiving"] == 2.5
+    assert row["process_seconds"] == 10
     assert row["reporting_metrics"]["archive_attempts"] == 1
     assert row["base"] != "Not observed" and row["cleanup"] != "Not observed"
     assert row["summary_source"] == execution["summary_source"]
@@ -185,6 +230,21 @@ def test_missing_numeric_case_counts_recalculate_from_closed_log(tmp_path, monke
     assert result["activity"]["testcase_totals"] == {
         "started": 2, "passed": 1, "failed": 1, "skipped": 1, "incomplete": 0}
     assert recoveries == [job["id"]]
+
+
+def test_numeric_case_counts_accepts_incomplete_and_not_started_evidence(monkeypatch):
+    monkeypatch.syspath_prepend(str(HELPER.parent))
+    import nd_reporting_pipeline as pipeline
+
+    incomplete = {"validated": True, "coverage": "INCOMPLETE",
+        "testcase_totals": {"started": 4, "passed": 2, "failed": 1, "skipped": 0, "incomplete": 1}}
+    not_started = {"validated": True, "coverage": "NOT_STARTED",
+        "testcase_totals": {"started": 0, "passed": 0, "failed": 0, "skipped": 0, "incomplete": 0}}
+    inconsistent = {"validated": True, "coverage": "INCOMPLETE",
+        "testcase_totals": {"started": 4, "passed": 2, "failed": 1, "skipped": 0, "incomplete": 0}}
+    assert pipeline.numeric_case_counts(incomplete)
+    assert pipeline.numeric_case_counts(not_started)
+    assert not pipeline.numeric_case_counts(inconsistent)
 
 
 @pytest.mark.parametrize("first_failure", ["missing_counts", "read_error"])
@@ -420,3 +480,133 @@ def test_aggregate_bounds_and_sanitizes_case_skip_notes(tmp_path):
         assert "fixture.invalid" not in note
         assert "192.0.2.1" not in note
         assert "password=fixture" not in note
+
+
+def blocked_round(tmp_path):
+    workspace = tmp_path / "workspace"
+    queue = workspace / "reports"
+    collection = workspace / "collection"
+    for module in ("nd_blocked", MODULE):
+        source = collection / "tests/integration/targets" / module / "tasks/main.yaml"
+        source.parent.mkdir(parents=True)
+        write_json(source, [{"name": "MERGED TC1 - configure", module: {"state": "merged"}},
+                            {"name": "MERGED TC1 - verify", "assert": {"that": [True]}}])
+
+    def cli(command, *arguments, check=True):
+        completed = subprocess.run([sys.executable, str(HELPER), command, "--root", str(queue), *arguments],
+                                   text=True, capture_output=True, timeout=20)
+        if check:
+            assert completed.returncode == 0, completed.stdout + completed.stderr
+        return json.loads(completed.stdout)
+
+    cli("init", "--workspace", str(workspace), "--build", "174", "--run-id", "blocked-build")
+    plan = workspace / "plan.json"
+    write_json(plan, {"build": "174", "version_id": "ND43", "version": "4.3", "run_id": "smoke-round",
+                     "round_label": "iBGP", "fabric_name": "fabric", "targets": [
+                         {"module": "nd_blocked", "test_type": "integration", "scope": "iBGP"},
+                         {"module": MODULE, "test_type": "integration", "scope": "iBGP"},
+                         {"module": "blocked.yaml", "test_type": "smoke", "scope": "iBGP"}]})
+    registered = cli("register", "--plan", str(plan), "--collection-root", str(collection), "--include-executions")
+    return queue, Path(registered["log_dir"]), cli
+
+
+def run_passing_module(cli, log_dir):
+    arguments = ["--version-id", "ND43", "--module", MODULE, "--run-id", "smoke-round"]
+    cli("begin", *arguments)
+    source = log_dir.parent.parent.parent / "collection/tests/integration/targets" / MODULE / "tasks/main.yaml"
+    log = log_dir / ("test_output_fabric_ND43_%s.txt" % MODULE)
+    lines = [f"[MODULE: {MODULE}] Starting execution...", "[RUN_MARKER: smoke-round]", "[TIMESTAMP_START: 100]"]
+    for name in ("MERGED TC1 - configure", "MERGED TC1 - verify"):
+        lines += [f"TASK [{MODULE} : {name}] ***", f"task path: {source}:1", "ok: [localhost]"]
+    lines += ["PLAY RECAP", "localhost : ok=2 changed=1 unreachable=0 failed=0 skipped=0 rescued=0 ignored=0",
+              "[ANSIBLE_EXIT_STATUS: 0]", "[TIMESTAMP_END: 110]", "[DURATION_SECONDS: 10]",
+              f"[MODULE: {MODULE}] Execution completed."]
+    log.write_text("\n".join(lines) + "\n")
+    write_json(Path(str(log) + ".execution.json"), {
+        "module": MODULE, "run_id": "smoke-round", "exit_code": 0, "started_at": 100, "ended_at": 110})
+    cli("close", *arguments, "--exit-code", "0", "--duration-seconds", "10")
+
+
+def publish_all(cli):
+    cli("finish", "--status", "failed")
+    while True:
+        available = cli("next", "--after-execution")
+        if available["done"]:
+            return cli("aggregate")
+        cli("ack", "--id", available["execution"]["id"], "--status", "success", "--seconds", "1", "--attempt", "1")
+
+
+def record_blocked_modules(tmp_path, variant, queue, log_dir):
+    """Run the pipeline's own record_blocked_module shell helper against the real reporter."""
+    source = (ROOT / variant).read_text()
+    helpers = "begin_reported_module() {" + source.split("begin_reported_module() {", 1)[1].split(
+        'PROFILE_VALIDATOR="${COLLECTIONS_DIRECTORY}', 1)[0]
+    helpers = helpers.replace('"$HOME/ansible/venv/bin/python"', '"$TEST_PYTHON"')
+    script = tmp_path / "blocked.sh"
+    script.write_text("set -e\nRUN_FAILURE=0\n" + helpers + f'''
+PREREQUISITE_START=$(( $(date +%s) - 7 ))
+record_blocked_module nd_blocked "{BLOCKED_REASON}"
+unset PREREQUISITE_START
+record_blocked_module blocked.yaml "Required Consul smoke playbook is missing, empty, or unsafe" PLAYBOOK
+echo "RUN_FAILURE=$RUN_FAILURE"
+''')
+    environment = dict(os.environ, PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"],
+                       TEST_PYTHON=sys.executable, ND_REPORT_LOG_DIR=str(log_dir), FABRIC_NAME="fabric",
+                       VERSION_ID="ND43", TEST_RUN_MARKER="smoke-round", ND_REPORTING_ROOT=str(queue),
+                       ND_REPORTING_TOOLS=str(ROOT / "playbooks"))
+    completed = subprocess.run(["bash", str(script)], env=environment, text=True, capture_output=True, timeout=60)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "RUN_FAILURE=1" in completed.stdout
+    assert "NDP_MODULE_CLOSE_FAILED" not in completed.stderr
+
+
+@pytest.mark.parametrize("variant", PIPELINE_VARIANTS)
+def test_prerequisite_blocked_modules_produce_a_complete_report(tmp_path, variant):
+    queue, log_dir, cli = blocked_round(tmp_path)
+    record_blocked_modules(tmp_path, variant, queue, log_dir)
+    run_passing_module(cli, log_dir)
+
+    aggregate = publish_all(cli)
+    assert aggregate["reporting_errors"] == []
+    assert aggregate["failed"] is True
+    rows = {row["module"]: row for row in aggregate["rows"]}
+    assert rows[MODULE]["result"] == "PASS"
+    for module, reason in (("nd_blocked", BLOCKED_REASON),
+                           ("blocked.yaml", "Required Consul smoke playbook is missing, empty, or unsafe")):
+        row = rows[module]
+        assert row["result"] == "NOT_RUN"
+        assert row["summary_source"] == "prerequisite_blocked"
+        assert row["reporting_status"] == "SUCCESS"
+        assert set(row["case_totals"].values()) == {0}
+        assert reason in row["failure"]
+    nd_blocked = json.loads((log_dir / "test_output_fabric_ND43_nd_blocked.txt.summary.json").read_text())
+    assert nd_blocked["phase_seconds"]["prerequisites"] >= 7
+
+
+def write_blocked_record(cli, log_dir, lines, exit_code=125, sidecar_exit=125):
+    arguments = ["--version-id", "ND43", "--module", "nd_blocked", "--run-id", "smoke-round"]
+    cli("begin", *arguments)
+    log = log_dir / "test_output_fabric_ND43_nd_blocked.txt"
+    log.write_text("\n".join(lines) + "\n")
+    write_json(Path(str(log) + ".execution.json"), {
+        "module": "nd_blocked", "run_id": "smoke-round", "exit_code": sidecar_exit,
+        "started_at": 100, "ended_at": 103})
+    cli("close", *arguments, "--exit-code", str(exit_code), "--duration-seconds", "3")
+
+
+@pytest.mark.parametrize("lines,sidecar_exit,expected", [
+    # Build 174 record: no completion marker, so it could never be reported.
+    (BLOCKED_RECORD[:7], 125, "malformed"),
+    (["[MODULE: nd_blocked] Starting execution..."] + BLOCKED_RECORD[1:7], 125, "completion marker"),
+    (BLOCKED_RECORD[:4] + ["PLAY RECAP", "localhost : ok=9 changed=0 unreachable=0 failed=0 skipped=0 rescued=0 ignored=0"]
+     + BLOCKED_RECORD[4:], 125, "malformed"),
+    (BLOCKED_RECORD, 2, "wrapper execution"),
+])
+def test_untrusted_blocked_records_remain_reporting_errors(tmp_path, lines, sidecar_exit, expected):
+    queue, log_dir, cli = blocked_round(tmp_path)
+    write_blocked_record(cli, log_dir, lines, sidecar_exit=sidecar_exit)
+    run_passing_module(cli, log_dir)
+    aggregate = publish_all(cli)
+    errors = [error for error in aggregate["reporting_errors"] if error["module"] == "nd_blocked"]
+    assert len(errors) == 1 and expected in errors[0]["reason"]
+    assert {row["module"]: row["result"] for row in aggregate["rows"]}["nd_blocked"] != "PASS"

@@ -99,8 +99,16 @@ def test_origin_gate_requires_the_exact_selected_repository(tmp_path, variant, o
     expected = "https://github.com/" + owner + "/ansible-nd.git"
     actual = expected if matches else "https://github.com/unselected-owner/ansible-nd.git"
     git(repo, "remote", "add", "origin", actual)
-    gates = [line.strip() for line in (ROOT / variant).read_text().splitlines()
-             if "NDP_SELECTED_SOURCE_ORIGIN_MISMATCH" in line]
+    lines = (ROOT / variant).read_text().splitlines()
+    gates = []
+    for index, line in enumerate(lines):
+        if "NDP_SELECTED_SOURCE_ORIGIN_MISMATCH" not in line:
+            continue
+        # A gate is either one `|| { ...; }` line or a multi-line `|| {` block.
+        start = next(i for i in range(index, -1, -1) if "|| {" in lines[i])
+        end = index if lines[start].rstrip().endswith("}") else next(
+            i for i in range(index, len(lines)) if lines[i].strip() == "}")
+        gates.append("\n".join(item.strip() for item in lines[start:end + 1]))
     assert len(gates) == 2
     # The per-target gate returns from its shell function; retain that context.
     command = "set -e\ncheck_origin() {\n" + gates[gate_index] + "\n}\ncheck_origin\n"

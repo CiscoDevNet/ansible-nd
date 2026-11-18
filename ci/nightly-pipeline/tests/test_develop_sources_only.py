@@ -1,4 +1,7 @@
 """Offline checks for pristine selected-branch execution; no ND calls."""
+import base64
+import gzip
+import hashlib
 import importlib.util
 import os
 from pathlib import Path
@@ -13,6 +16,35 @@ CHECKOUT = ROOT.parents[1]
 SPEC = importlib.util.spec_from_file_location("develop_gate", ROOT / "playbooks/nd_verify_develop_sources.py")
 GATE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(GATE)
+L2DCI_REST = r'''
+import json, os
+from pathlib import Path
+from ansible.module_utils.basic import AnsibleModule
+m = AnsibleModule(argument_spec={'method': {'type': 'str'}, 'path': {'type': 'str'}, 'content': {'type': 'raw'}})
+p = Path(os.environ['L2DCI_STATE']); s = json.loads(p.read_text())
+path = m.params['path']
+s['calls'].append([m.params['method'], path, m.params['content']])
+out = None
+if path.startswith('/api/v1/manage/links'):
+    out = {'links': s['links']}
+elif path.endswith('/interfaceActions/deploy'):
+    for item in m.params['content']['interfaces']:
+        stored = s['interfaces'][item['switchId'] + ' ' + item['interfaceName']]
+        if s['converge_on_deploy']:
+            stored['operData']['mode'] = stored['configData']['mode']
+else:
+    serial, interface = path.split('/switches/')[1].split('/interfaces/')
+    out = s['interfaces'].get(serial + ' ' + interface.replace('%2F', '/'), {})
+p.write_text(json.dumps(s))
+if out is None:
+    m.fail_json(msg='object to sanitize can only be of type list or dict. Got NoneType')
+m.exit_json(changed=False, current=out)
+'''
+L2DCI_LINK = {"srcSwitchId": "SERIALB", "srcSwitchName": "border", "srcInterfaceName": "Ethernet1/4",
+              "dstSwitchId": "SERIALE", "dstSwitchName": "edge", "dstInterfaceName": "Ethernet1/4",
+              "configData": {"policyType": "layer2Dci"}, "linkPresent": True}
+L3DCI_LINK = dict(L2DCI_LINK, srcInterfaceName="Ethernet1/1", dstInterfaceName="Ethernet1/3",
+                  configData={"policyType": "layer3DciVrfLite"})
 
 
 def original_source(relative):
@@ -371,6 +403,63 @@ def test_l3out_external_asn_override_runs_in_ansible(tmp_path, existing_asn, res
         assert "NDP_L3OUT_FABRIC2_ASN_MISSING" in result.stdout
 
 
+def l2dci_interface(serial, oper_mode, mode="trunk", policy_type="l2DciLinkMember"):
+    return {"switchId": serial, "interfaceName": "Ethernet1/4",
+            "configData": {"mode": mode, "networkOS": {"policy": {"policyType": policy_type, "adminState": True}}},
+            "operData": {"mode": oper_mode, "adminStatus": "up"}}
+
+
+@pytest.mark.parametrize("case,links,border,converge,deploys,marker,reason", [
+    ("deploys_border", [L3DCI_LINK, L2DCI_LINK], l2dci_interface("SERIALB", "routed"), True, 1,
+     "NDP_L3OUT_L2DCI_ENDPOINTS_OK", "deployed=1"),
+    ("never_converges", [L2DCI_LINK], l2dci_interface("SERIALB", "routed"), False, 1,
+     "NDP_L3OUT_L2DCI_ENDPOINTS_UNVERIFIED", "did not report trunk/up after deploy: border Ethernet1/4 mode=routed"),
+    ("unexpected_intent", [L2DCI_LINK], l2dci_interface("SERIALB", "routed", mode="routed", policy_type="int_routed_host"),
+     True, 0, "NDP_L3OUT_L2DCI_ENDPOINTS_UNVERIFIED", "stored intent is not an enabled l2DciLinkMember trunk on border"),
+    ("link_absent", [L3DCI_LINK], l2dci_interface("SERIALB", "routed"), True, 0,
+     "NDP_L3OUT_L2DCI_ENDPOINTS_UNVERIFIED", "no layer2Dci link exists between the authored SVI switches"),
+    ("already_converged", [L2DCI_LINK], l2dci_interface("SERIALB", "trunk"), True, 0,
+     "NDP_L3OUT_L2DCI_ENDPOINTS_OK", "deployed=0"),
+])
+def test_l3out_svi_l2dci_endpoint_deploy_runs_in_ansible(tmp_path, case, links, border, converge, deploys, marker, reason):
+    play = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]
+    setup = next(task for task in walk(play["pre_tasks"] + play["tasks"])
+                 if task.get("name", "").endswith("SETUP - deploy the stored L2 DCI endpoint intent the SVI case uses"))
+    collection = tmp_path / "collections/ansible_collections/cisco/nd/plugins/modules"
+    collection.mkdir(parents=True)
+    (collection / "nd_rest.py").write_text(L2DCI_REST)
+    state_path = tmp_path / "state.json"
+    state_path.write_text(__import__("json").dumps({
+        "links": links, "converge_on_deploy": converge, "calls": [],
+        "interfaces": {"SERIALB Ethernet1/4": border, "SERIALE Ethernet1/4": l2dci_interface("SERIALE", "trunk")}}))
+    svi = {"fabric1_name": "FAB1", "fabric2_name": "FAB2", "connectivity_details": {
+        "routing_interface_type": "svi",
+        "links": [{"switch1_details": {"switch_id": "SERIALB"}, "switch2_details": {"switch_id": "SERIALE"}}]}}
+    play_path = tmp_path / "play.yaml"
+    play_path.write_text(yaml.safe_dump([{"hosts": "all", "connection": "local", "gather_facts": False,
+        "vars": {"ansible_python_interpreter": sys.executable, "test_module": "nd_manage_l3out", "l3out_svi": svi,
+                 "nd_l3out_l2dci_retries": 2, "nd_l3out_l2dci_delay": 0},
+        "tasks": [setup]}], sort_keys=False))
+    config = tmp_path / "ansible.cfg"
+    config.write_text("[defaults]\n")
+    env = dict(os.environ, ANSIBLE_CONFIG=str(config), ANSIBLE_COLLECTIONS_PATH=str(tmp_path / "collections"),
+               ANSIBLE_COLLECTIONS_SCAN_SYS_PATH="False", ANSIBLE_LOCAL_TEMP=str(tmp_path / "local"),
+               ANSIBLE_REMOTE_TEMP=str(tmp_path / "remote"), L2DCI_STATE=str(state_path),
+               OBJC_DISABLE_INITIALIZE_FORK_SAFETY="YES")
+    result = subprocess.run([str(Path(sys.executable).with_name("ansible-playbook")), "-i", "localhost,", str(play_path)],
+                            cwd=tmp_path, env=env, text=True, capture_output=True, timeout=120)
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "failed=0" in result.stdout, output
+    assert re.search(re.escape(marker) + r":[^\\\n]*" + re.escape(reason), result.stdout), output
+    calls = __import__("json").loads(state_path.read_text())["calls"]
+    deploy_calls = [call for call in calls if call[1].endswith("/interfaceActions/deploy")]
+    assert deploy_calls == [["post", "/api/v1/manage/fabrics/FAB1/interfaceActions/deploy",
+                             {"interfaces": [{"interfaceName": "Ethernet1/4", "switchId": "SERIALB"}]}]] * deploys
+    # Intent is never written: every call other than the deploy is a read.
+    assert all(call[0] == "get" for call in calls if call not in deploy_calls)
+
+
 @pytest.mark.parametrize("module,policy_type,mode", [
     ("access", "accessPoHost", "access"),
     ("trunk", "trunkPoHost", "trunk"),
@@ -643,3 +732,64 @@ def test_reconciled_prerequisites_must_be_observed_before_module_runs(tmp_path, 
                             cwd=tmp_path, env=dict(os.environ, ANSIBLE_LOCAL_TEMP=str(tmp_path / "local")),
                             text=True, capture_output=True, timeout=30)
     assert (result.returncode == 0) is success, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("operations,expected", [
+    ([{"operation": "verify_free_interfaces"}], False),
+    ([{"operation": "verify_free_interfaces", "port_channel_detachments": []}], False),
+    ([{"operation": "verify_free_interfaces", "port_channel_detachments": [{"interface": "Port-channel521"}]}], True),
+])
+def test_detaching_port_channel_members_requires_fresh_capture(tmp_path, operations, expected):
+    tasks = yaml.safe_load((ROOT / "playbooks/nd_prerequisite/nd_prerequisite_wrapper.yaml").read_text())
+    decision = next(task for task in tasks if task.get("name") == "Decide whether prerequisite operations require fresh post-apply verification")
+    play = [{"hosts": "localhost", "connection": "local", "gather_facts": False,
+             "vars": {"_ndp_result": {"operations": operations}, "expected": expected},
+             "tasks": [decision, {"ansible.builtin.assert": {"that": ["_ndp_reconcile_requires_refresh == expected"]}}]}]
+    path = tmp_path / "refresh.yaml"
+    path.write_text(yaml.safe_dump(play))
+    result = subprocess.run([str(Path(sys.executable).with_name("ansible-playbook")), "-i", "localhost,", str(path)],
+                            cwd=tmp_path, env=dict(os.environ, ANSIBLE_LOCAL_TEMP=str(tmp_path / "local")),
+                            text=True, capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("still_bundled", [False, True])
+def test_released_physical_port_must_have_no_port_channel_id(tmp_path, still_bundled):
+    tasks = yaml.safe_load((ROOT / "playbooks/nd_prerequisite/apply_verify_free_interfaces.yaml").read_text())
+    gate = next(task for task in tasks if task.get("name") == "Require exact identities and typed before-images for every released port")
+    policy = {"adminState": True}
+    if still_bundled:
+        policy["portChannelId"] = 521
+    port = {"switchId": "SERIAL0001", "interfaceName": "Ethernet1/20", "interfaceType": "ethernet",
+            "configData": {"mode": "routed", "networkOS": {"networkOSType": "nx-os", "policy": policy}}}
+    play = [{"hosts": "localhost", "connection": "local", "gather_facts": False,
+             "vars": {"_ndp_operation": {"serial": "SERIAL0001"},
+                      "_ndp_free_before": {"results": [{"current": port, "_ndp_free_port": "Ethernet1/20"}]}},
+             "tasks": [gate]}]
+    path = tmp_path / "port-readback.yaml"
+    path.write_text(yaml.safe_dump(play))
+    result = subprocess.run([str(Path(sys.executable).with_name("ansible-playbook")), "-i", "localhost,", str(path)],
+                            cwd=tmp_path, env=dict(os.environ, ANSIBLE_LOCAL_TEMP=str(tmp_path / "local")),
+                            text=True, capture_output=True, timeout=30)
+    assert (result.returncode == 0) is not still_bundled, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("variant", ["Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches",
+                                     "Jenkinsfile_nd_jenkins_script_comm_list"])
+@pytest.mark.parametrize("key,path", [
+    ("nd_prerequisite_orchestrator.py", "tests/nd_prerequisite_orchestrator.py"),
+    ("nd_prerequisite/nd_prerequisite_wrapper.yaml", "playbooks/nd_prerequisite/nd_prerequisite_wrapper.yaml"),
+    ("nd_prerequisite/nd_prerequisite_capture.yaml", "playbooks/nd_prerequisite/nd_prerequisite_capture.yaml"),
+    ("nd_prerequisite/apply_verify_free_interfaces.yaml", "playbooks/nd_prerequisite/apply_verify_free_interfaces.yaml"),
+    ("nd_prerequisite/restore_interface_operation.yaml", "playbooks/nd_prerequisite/restore_interface_operation.yaml"),
+])
+def test_unbundle_prerequisite_payloads_match_local_source(variant, key, path):
+    source = (ROOT / variant).read_text()
+    pattern = r"'" + re.escape(key) + r"': \[sha256: '([0-9a-f]+)', bytes: (\d+), gzipBase64: '([^']+)'\]"
+    matches = re.findall(pattern, source)
+    assert len(matches) == 1
+    digest, size, encoded = matches[0]
+    payload = gzip.decompress(base64.b64decode(encoded))
+    assert payload == (ROOT / path).read_bytes()
+    assert hashlib.sha256(payload).hexdigest() == digest
+    assert len(payload) == int(size)

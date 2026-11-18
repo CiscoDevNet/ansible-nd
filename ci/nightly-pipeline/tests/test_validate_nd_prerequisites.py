@@ -534,21 +534,6 @@ def test_jenkins_target_parser_ignores_commented_entries():
     assert set(expected["INTEGRATION_MODULES"] + expected["INTERFACE_INTEGRATION_MODULES"]) <= set(expected["EFFECTIVE_INTEGRATION_MODULES"])
 
 
-def test_jenkins_runs_vpc_pairs_immediately_after_policy_groups():
-    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
-    ordering = jenkins_text.split("def orderedIntegrationTargets = []", 1)[1].split("def integrationForShell", 1)[0]
-    assert "effectiveIntegrationModules.each { moduleName ->" in ordering
-    assert ordering.index("orderedIntegrationTargets.add(moduleName)") < ordering.index("orderedIntegrationTargets.addAll(standaloneTargets)")
-    assert "moduleName == 'nd_manage_policy_group' && env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true'" in ordering
-    assert "ORDERED_INTEGRATION_LIST=${orderedIntegrationTargets.join(' ')}" in jenkins_text
-    assert 'for m in ${ORDERED_INTEGRATION_LIST}; do' in jenkins_text
-    assert 'run_standalone_integration "${m}"' in jenkins_text
-    assert 'for m in ${STANDALONE_INTEGRATION_LIST}; do' not in jenkins_text
-    assert 'def plannedResultTargets = orderedIntegrationTargets.collect' in jenkins_text
-    assert 'registerStructuredExecutions(ndfcConfig, plannedResultTargets' in jenkins_text
-    assert "standaloneTargets.each { m -> resultTargets.add([m, 'integration']) }" not in jenkins_text
-
-
 def test_jenkins_exposes_branch_notification_and_debug_parameters_only():
     jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
     block = re.search(r"\n    parameters \{(.*?)\n    \}", jenkins_text, re.S).group(1)
@@ -857,8 +842,28 @@ def test_runner_rejects_cross_fabric_positional_switch_mapping():
     assert "NDP_SWITCH_MAPPING_FAIL" in runner_text
     assert "switch_serial_3 in (nd_test_fabric_switches.VXLAN_EVPN_Fabric" in runner_text
     assert "switch_serial_3 not in (nd_test_fabric_switches.External_Connectivity_Fabric" in runner_text
-    assert "refusing to run the module" in jenkins_text
+    assert "NDP_SWITCH_GUARD_FAILED" in jenkins_text
+    assert "attempting this target with its own prerequisites and authored tests" in jenkins_text
     assert "canonical switch pre-flight is unavailable; refusing to run" in jenkins_text
+
+
+def test_jenkins_runs_switches_after_links_and_vpc_pairs():
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    ordering = jenkins_text.split("def orderedIntegrationTargets = []", 1)[1].split("def integrationForShell", 1)[0]
+    assert (
+        ordering.index("orderedIntegrationTargets.addAll(effectiveIntegrationModules.findAll { it != 'nd_manage_switches' })")
+        < ordering.index("orderedIntegrationTargets.addAll(standaloneTargets)")
+        < ordering.index("orderedIntegrationTargets.addAll(effectiveIntegrationModules.findAll { it == 'nd_manage_switches' })")
+    )
+    assert "if (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true')" in ordering
+    assert "ORDERED_INTEGRATION_LIST=${orderedIntegrationTargets.join(' ')}" in jenkins_text
+    assert 'for m in ${ORDERED_INTEGRATION_LIST}; do' in jenkins_text
+    assert 'run_standalone_integration "${m}"' in jenkins_text
+    assert 'for m in ${STANDALONE_INTEGRATION_LIST}; do' not in jenkins_text
+    assert 'for sm in ${ORDERED_INTEGRATION_LIST} ${PLAYBOOK_LIST}; do' not in jenkins_text
+    assert "begin_reported_module()" in jenkins_text
+    assert "close_reported_module()" in jenkins_text
+    assert "standaloneTargets.each { m -> resultTargets.add([m, 'integration']) }" not in jenkins_text
 
 
 def test_l3out_runner_verifies_required_vrfs_before_running_role():

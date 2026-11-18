@@ -106,7 +106,7 @@ assert sent.every { it.contains('ansible-nd branch: fixture-owner:feature/exampl
 220.times { index -> assert combined.contains('fixture_module_' + index) }
 assert combined.contains('[Build artifacts](https://jenkins.example/job/nd/122/artifact/)')
 assert combined.count('/artifact/') == 1
-assert combined.contains('Passed: 220')
+assert !combined.contains('AUTHORED INTEG TEST CASE COUNTS')
 assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_FAILED:') }
 ''')
 
@@ -116,12 +116,28 @@ def test_minimal_fallback_retains_rounds_note_and_raw_fork_selection(groovy_runn
 script.binding.env.putAll([ACTIVE_DCNM_VERSIONS: '4.3', ACTIVE_FABRIC_ROUNDS: 'iBGP + eBGP',
     ND_GIT_BRANCH: 'feature/example', ND_GIT_SELECTION: 'fixture-owner:feature/example', ND_GIT_COMMIT: 'b' * 40])
 script.binding.params.WEBEX_CUSTOM_MESSAGE = 'x' * 5000
+def readyField = script.getClass().getDeclaredField('ND_CASE_REPORT_READY')
+readyField.setAccessible(true)
+readyField.set(script, true)
+script.MODULE_ACTIVITY_RESULTS.putAll([
+    authored: [module:'fixture_module', test_type:'integration', nd:'4.3', scope:'iBGP', round_label:'iBGP',
+        result:'FAIL', coverage:'COMPLETE', case_totals:[started:4,passed:3,failed:1,skipped:2,incomplete:0],
+        base:'Ran', cleanup:'Ran', duration:'2m', failure:''],
+    smoke: [module:'smoke_fixture.yaml', test_type:'smoke', nd:'4.3', scope:'iBGP', round_label:'iBGP',
+        result:'PASS', coverage:'COMPLETE', case_totals:[passed:100,failed:10,skipped:200]]
+])
 def fallback = script.minimalBuildNotification('fixture.ReportingError')
 assert fallback.startsWith('ND 4.3 (iBGP + eBGP) NIGHTLY NOTIFICATION - Build 122\n' + ('x' * 1200) + '\n\n')
 assert !fallback.contains('x' * 1201)
 assert fallback.contains('Branch: fixture-owner:feature/example\nCommit: ' + ('b' * 40))
 assert fallback.length() < 7000
-assert fallback.contains('CASE COUNTS VALIDATION FAILED')
+assert fallback.contains('Total passed cases: 3 | PLAY RECAP failed tasks: unavailable')
+assert fallback.indexOf('Total passed cases:') < fallback.indexOf('AUTHORED CASE RESULTS:')
+assert !fallback.contains('AUTHORED INTEG TEST CASE COUNTS')
+assert !fallback.contains('Incomplete:')
+def row = fallback.readLines().find { it.startsWith('fixture_module ') }.trim().split(/\s{2,}/)
+assert row[1..4] == ['FAIL', '3', '1', '2']
+assert !fallback.contains('Passed: 103') && !fallback.contains('CASE COUNTS NOT GENERATED')
 assert !(fallback =~ /(?i)N\/A|unknown/)
 ''')
 

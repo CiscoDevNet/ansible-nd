@@ -47,6 +47,8 @@ def selector_pattern(name):
 
 
 def render(source, target):
+    if source.lstrip().startswith('---'):
+        raise ValueError('Jenkinsfile template must be Groovy, not YAML')
     if target not in TARGETS:
         raise ValueError('Unknown target: ' + target)
     active_rooms = re.findall(r'^\s*WEBEX_ROOM_ID\s*=\s*(.+)$', source, re.M)

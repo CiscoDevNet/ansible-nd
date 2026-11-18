@@ -6,6 +6,9 @@ import pytest
 
 from test_switch_rehome_preflight import execute, expression_environment, guard, named, move_tasks
 
+ACTIVE_WARNING = {'fabricName': 'fixture', 'cleared': False,
+                  'anomalyString': '[FIXTURE0001] periodic Copy Run Start was skipped'}
+
 
 @pytest.mark.parametrize('filename', [
     'Jenkinsfile_nd_jenkins_script', 'Jenkinsfile_nd_jenkins_script_temp_switches',
@@ -266,3 +269,22 @@ def test_startup_warning_diagnostic_distinguishes_active_warning_from_poll_failu
     assert report['matching_records'] == 1
     assert 'PRIVATE_CANARY' not in json.dumps(report)
     assert 'FIXTURE0001' not in json.dumps(report)
+
+
+@pytest.mark.parametrize('reply,expected', [
+    ({'status': 200, 'current': {'anomalies': [ACTIVE_WARNING]}}, True),
+    ({'status': 200, 'current': {'anomalies': [dict(ACTIVE_WARNING, cleared=None)]}}, True),
+    ({'status': 200, 'current': {'anomalies': []}}, False),
+    ({'status': 200, 'failed': True, 'current': {'anomalies': [ACTIVE_WARNING]}}, False),
+    ({'status': 503, 'current': {'anomalies': [ACTIVE_WARNING]}}, False),
+    ({'status': 200, 'current': {'code': 500, 'anomalies': [ACTIVE_WARNING]}}, False),
+    ({'status': 200, 'current': {'anomalies': [ACTIVE_WARNING, 'malformed']}}, False),
+    ({'status': 200, 'current': {'anomalies': [ACTIVE_WARNING] * 200}}, False),
+])
+def test_only_readable_lagging_startup_warning_is_superseded_by_verified_copy(reply, expected):
+    context = dict(_predelete_anomaly_reply=reply, _predelete_anomaly_fabric='fixture',
+                   _predelete_requested_ids=['FIXTURE0001'])
+    report = expression_environment().from_string(guard()['vars']['_nd_predelete_copy_anomaly_report']).render(**context)
+    superseded = expression_environment().from_string(guard()['vars']['_nd_predelete_copy_anomaly_superseded']).render(
+        _nd_predelete_copy_anomaly_report=report, **context)
+    assert superseded is expected

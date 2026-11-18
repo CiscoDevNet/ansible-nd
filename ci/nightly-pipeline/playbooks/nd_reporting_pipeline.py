@@ -411,6 +411,78 @@ def boundary_evidence(job, closed):
     return execution, {key: int(value) for key, value in last.items() if value.isdigit()}
 
 
+BLOCKED_EXIT_STATUS = 125
+BLOCKED_RECORD_LIMIT = 65536
+BLOCKED_TIMESTAMP = re.compile(r"^\[(TIMESTAMP_START|TIMESTAMP_END|DURATION_SECONDS): (0|[1-9][0-9]{0,11})\]$")
+BLOCKED_REASON = re.compile(r"^ERROR! NDP_MODULE_BLOCKED: (?P<module>[^\n]+?): (?P<reason>[^\n]{1,500}); continuing with the next module$")
+
+
+def blocked_summary(job, closed):
+    """Recognize the producer's exact record for a target that never started.
+
+    Returns None for ordinary execution logs.  A log that claims a prerequisite
+    block must match the complete fixed record, so no Ansible output, recap or
+    authored case can hide inside it; any disagreement is a reporting error.
+    """
+    log = Path(job["log"])
+    kind = "PLAYBOOK" if job["test_type"] == "smoke" else "MODULE"
+    claim = "[%s: %s] Prerequisite blocked; authored target not started." % (kind, job["module"])
+    before = file_stamp(log)
+    with log.open("rb") as stream:
+        data = stream.read(BLOCKED_RECORD_LIMIT + 1)
+    text = data.decode("utf-8", errors="replace")
+    if not text.startswith(claim + "\n"):
+        return None
+    if closed.get("log_stamp") != before or len(data) > BLOCKED_RECORD_LIMIT:
+        raise ValueError("prerequisite-blocked record changed after closure or exceeds its bound")
+    lines = text.split("\n")
+    if lines.pop() != "" or len(lines) != 8:
+        raise ValueError("prerequisite-blocked record is malformed")
+    if (lines[1] != "[RUN_MARKER: %s]" % job["run_id"]
+            or lines[4] != "[ANSIBLE_EXIT_STATUS: %d]" % BLOCKED_EXIT_STATUS
+            or lines[7] != "[%s: %s] Execution completed." % (kind, job["module"])):
+        raise ValueError("prerequisite-blocked record identity or exit marker is invalid")
+    markers = {}
+    for index, name in ((2, "TIMESTAMP_START"), (5, "TIMESTAMP_END"), (6, "DURATION_SECONDS")):
+        match = BLOCKED_TIMESTAMP.match(lines[index])
+        if not match or match[1] != name:
+            raise ValueError("prerequisite-blocked record lacks a valid " + name)
+        markers[name] = int(match[2])
+    if (markers["TIMESTAMP_END"] < markers["TIMESTAMP_START"]
+            or markers["DURATION_SECONDS"] != markers["TIMESTAMP_END"] - markers["TIMESTAMP_START"]):
+        raise ValueError("prerequisite-blocked record timestamps disagree")
+    reason = BLOCKED_REASON.match(lines[3])
+    if not reason or reason["module"] != job["module"]:
+        raise ValueError("prerequisite-blocked record reason is invalid")
+    if closed.get("exit_code") != BLOCKED_EXIT_STATUS:
+        raise ValueError("closed execution and prerequisite-blocked exit statuses disagree")
+    execution = read_json(str(log) + ".execution.json", limit=65536)
+    identity(execution, job)
+    if (execution.get("exit_code") != BLOCKED_EXIT_STATUS or isinstance(execution.get("exit_code"), bool)
+            or execution.get("started_at") != markers["TIMESTAMP_START"]
+            or execution.get("ended_at") != markers["TIMESTAMP_END"]):
+        raise ValueError("wrapper execution disagrees with the prerequisite-blocked record")
+    if file_stamp(log) != before:
+        raise ValueError("prerequisite-blocked record changed while validating")
+    failure = clean_error("Prerequisite blocked; authored target not started: " + reason["reason"])
+    summary = {"status": "NOT_RUN", "counts": {}, "failure_tasks": [], "capability_tasks": [],
+               "reason": failure, "integration_recap": None, "target_started": False}
+    summary = attach_execution(summary, job, execution, markers)
+    if summary["phase_seconds"].get("prerequisites") is None:
+        summary["phase_seconds"]["prerequisites"] = summary["prerequisite_guard_seconds"]
+    zero_totals = {key: 0 for key in ("started", "passed", "failed", "skipped", "incomplete")}
+    activity = {"schema_version": 1, "module": job["module"], "run_id": job["run_id"], "build": str(job["build"]),
+                "fabric": job["scope"], "test_type": job["test_type"], "validated": True, "result": "NOT_RUN",
+                "coverage": "NOT_STARTED", "counts": {state: 0 for state in STATES},
+                "testcase_totals": dict(zero_totals), "identified_case_counts": {state: 0 for state in STATES},
+                "identified_testcase_totals": dict(zero_totals), "other_cases": 0, "identified_other_cases": 0,
+                "base": "Not reached", "cleanup": "Not reached", "failure": [failure],
+                "notes": ["prerequisite blocked before the authored target started; no module cases inferred"],
+                "case_results": [], "evidence_truncated": False,
+                "count_unit": "authored module cases; the target was not started"}
+    return summary, activity
+
+
 def phase_timings(job, event_stats=None):
     phases = {"prerequisites": None, "execution": None, "cleanup": None}
     path = str(job["log"]) + ".phases.json"
@@ -749,6 +821,14 @@ def ensure_summary(root, job, closed, timeout):
             catalog_snapshot = validate_catalog(root, job)
             if not isinstance(catalog_snapshot, dict):
                 raise ValueError("frozen catalog must be an object")
+            blocked = blocked_summary(job, closed)
+            if blocked is not None:
+                result = persist_result(root, job, blocked[0], blocked[1], "prerequisite_blocked",
+                                        time.monotonic() - start, closed)
+                result["count_recalculation_attempts"] = 0
+                result["count_recalculation_complete"] = True
+                atomic_json(path, result)
+                return result
             summary_source = "structured_events"
             structured_error = None
             observations_path = within(root, job["log"] + ".skip-observations.txt")
@@ -963,7 +1043,8 @@ def module_skip_report(root, job, result):
             activity.get("base", "Not observed"), activity.get("cleanup", "Not observed")))
         if not_run:
             reason = " ".join(str(value) for value in activity.get("failure", [])).lower()
-            blocked = "preflight blocked" if "preflight" in reason or "pre-flight" in reason else "earlier execution stopped"
+            blocked = ("prerequisite blocked" if "prerequisite blocked" in reason else
+                       "preflight blocked" if "preflight" in reason or "pre-flight" in reason else "earlier execution stopped")
             output.write("Not executed—" + blocked + ".\n")
         totals = activity.get("testcase_totals", {})
         if not_run:
@@ -1300,7 +1381,10 @@ def aggregate(root, config, args):
         if reporting_error:
             errors.append({"id": job["id"], "module": job["module"], "scope": job["scope"], "reason": reporting_error})
         activity_result = activity.get("result", "UNKNOWN")
-        if invocation.get("status") == "FAIL":
+        if (job["test_type"] == "integration" and activity_result == "FAIL"
+                and activity.get("coverage") == "NOT_STARTED" and numeric_case_counts(activity)):
+            activity_result = "NOT_RUN"
+        elif invocation.get("status") == "FAIL":
             activity_result = "FAIL"
         elif invocation.get("status") == "ERR" and activity_result not in {"FAIL", "NOT_RUN"}:
             activity_result = "UNKNOWN"
@@ -1337,6 +1421,13 @@ def aggregate(root, config, args):
                     skipped_case_notes.append(note)
                 else:
                     skipped_case_notes_truncated = True
+        process_seconds = invocation.get("duration_seconds")
+        if duration(process_seconds) == "-":
+            process_seconds = invocation.get("process_seconds")
+        if duration(process_seconds) == "-":
+            process_seconds = (result.get("closure") or {}).get("duration_seconds")
+        if duration(process_seconds) == "-":
+            process_seconds = None
         row = {"id": job["id"], "sequence": job["sequence"], "module": job["module"], "test_type": job["test_type"],
                "nd": job["nd"], "version_id": job["version_id"], "round_label": job["round_label"],
                "run_id": job["run_id"], "scope": job["scope"], "fabric": job["fabric"],
@@ -1353,6 +1444,7 @@ def aggregate(root, config, args):
                "skipped_case_notes_truncated": skipped_case_notes_truncated,
                "source_notes": [clean_error(value) for value in activity.get("notes", [])[:4]],
                "duration": duration(invocation.get("duration_seconds")),
+               "process_seconds": process_seconds,
                "phase_seconds": phases, "invocation": invocation, "reporting_metrics": metrics,
                "summary_source": result["summary_source"], "reporting_status": "ERROR" if reporting_error else "SUCCESS",
                "archive_status": archive_status,
@@ -1403,7 +1495,7 @@ def aggregate(root, config, args):
              "home_recovery_status": (producer or {}).get("home_recovery_status", "unverified"),
              "reporting_tail_seconds": max(0, max(archive_times) - producer["finished_at"]) if archive_times and producer else None,
              "summary_sources": {name: sum(row["summary_source"] == name for row in rows)
-                                 for name in ("structured_events", "raw_log_recovery", "unavailable")},
+                                 for name in ("structured_events", "raw_log_recovery", "prerequisite_blocked", "unavailable")},
              "failed": bool(errors or any(row["result"] in {"FAIL", "UNKNOWN", "NOT_RUN"} for row in rows)
                             or (producer or {}).get("status") != "success"
                             or (producer or {}).get("home_recovery_status") == "failed"),

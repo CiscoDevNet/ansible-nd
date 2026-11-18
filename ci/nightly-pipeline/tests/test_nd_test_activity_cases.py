@@ -162,6 +162,22 @@ def test_unnumbered_module_call_with_failed_validation_counts_as_failed(tmp_path
     assert result["testcase_totals"] == {"started": 1, "passed": 0, "failed": 1, "skipped": 0, "incomplete": 0}
 
 
+def test_build156_ipv6_validation_sequence_is_not_reported_as_all_passing(tmp_path):
+    collection = ROOT.parent / "checkouts/ansible-nd-local-fixes"
+    path = collection / "tests/integration/targets/nd_manage_acl/tasks/acl_ipv6.yaml"
+    if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != "24e1a05def8957e77adeca924097f7d0bee753f5cad943b9a0ca8f4719f5624c":
+        pytest.skip("build 156 ACL source revision is not available")
+    rows = records_for(collection, "nd_manage_acl", "tasks/acl_ipv6.yaml")
+    last = next(index for index, record in enumerate(rows)
+                if record["name"] == "VALIDATION: Verify the persisted IPv6 ACL matches the configured entries")
+    rows = rows[:last + 1]
+    log, _, _ = emit_log(tmp_path, rows, paths=False, collection=collection, module="nd_manage_acl",
+                         outcomes={rows[-1]["key"]: "failed"})
+    result = REPORT.summarize(log, "nd_manage_acl", "current", "156", "iBGP", collection)
+    assert result["result"] == "FAIL"
+    assert result["testcase_totals"]["failed"] > 0
+
+
 @pytest.mark.parametrize("paths", [True, False])
 def test_unnumbered_ignored_validation_does_not_fail_case(tmp_path, paths):
     collection, module = synthetic_collection(tmp_path, [

@@ -13,13 +13,6 @@ VARIANTS = ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp
 
 
 @pytest.mark.parametrize("variant", VARIANTS)
-def test_leaf_tor_clearance_release_is_selected(variant):
-    source = (ROOT / variant).read_text()
-    assert "def SWITCH_LIFECYCLE_CONSUL_PREFIX = 'releases/leaf-tor-forward-force-20261111'" in source
-    assert "def CONSUL_PREFLIGHT_FILES = ['nd_ensure_switches.yaml', 'action_plugins/nd_switch_discovery.py']" in source
-
-
-@pytest.mark.parametrize("variant", VARIANTS)
 def test_runtime_downloads_verified_deploy_guard_and_action_as_one_release(variant, tmp_path):
     java = Path(os.environ.get("ND_WEBEX_TEST_JAVA", "/private/tmp/nd-local-groovy-runtime/jdk-21.0.13+9-jre/Contents/Home/bin/java"))
     jar = Path(os.environ.get("ND_WEBEX_TEST_GROOVY", "/private/tmp/nd-groovy-all-2.4.21.jar"))
@@ -33,7 +26,7 @@ script.metaClass.downloadFromConsul = { Object key, Object target ->
 }
 script.prepareRuntimeInputs()
 assert script.binding.env.ND_RUNTIME_INPUTS_READY == 'true'
-def release = 'releases/leaf-tor-forward-force-20261111/'
+def release = 'releases/startup-save-superseded-20261117/'
 def guarded = ['nd_ensure_switches.yaml', 'action_plugins/nd_switch_discovery.py']
 assert downloads.findAll { it.key.startsWith(release) }.size() == 2
 guarded.each { name ->
@@ -44,6 +37,7 @@ guarded.each { name ->
 assert !downloads.any { it.key.contains('bounded-switch-lifecycle-20261029') }
 assert !downloads.any { it.key.contains('predelete-deploy-verified-20261030') }
 assert !downloads.any { it.key.contains('predelete-response-compatible-20261030') }
+assert !downloads.any { it.key.contains('leaf-tor-forward-force-20261111') }
 // The release changes switch prerequisites only; authored collection sources are untouched.
 assert downloads.every { !it.key.endsWith('.md') && !it.key.endsWith('.doc') }
 assert downloads.count { it.key == 'compat_action_plugins/normal.py' } == 1
@@ -55,3 +49,10 @@ println('CHECK_PASSED')
                             text=True, capture_output=True, timeout=45)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "CHECK_PASSED" in result.stdout
+
+
+@pytest.mark.parametrize("variant", VARIANTS)
+def test_startup_save_release_is_selected(variant):
+    source = (ROOT / variant).read_text()
+    assert "def SWITCH_LIFECYCLE_CONSUL_PREFIX = 'releases/startup-save-superseded-20261117'" in source
+    assert "def CONSUL_PREFLIGHT_FILES = ['nd_ensure_switches.yaml', 'action_plugins/nd_switch_discovery.py']" in source

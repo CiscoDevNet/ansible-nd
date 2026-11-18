@@ -253,8 +253,7 @@ def test_jenkins_wires_every_new_module_in_a_safe_order():
     assert integration.index("nd_local_user") > integration.index("nd_manage_fabric_group_members")
     assert integration.index("nd_maintenance_mode") > integration.index("nd_manage_tor")
     assert integration.index("nd_fabric_update_group") > integration.index("nd_maintenance_mode")
-    # The user excludes the switch lifecycle; all other baseline targets stay selected.
-    assert "nd_manage_switches" not in effective
+    assert effective.count("nd_manage_switches") == 1
     destructive = [effective.index(name) for name in ("nd_resource_manager", "nd_manage_fabric", "nd_manage_links")]
     assert all(effective.index(module) < min(destructive) for module in NEW_MODULES)
 

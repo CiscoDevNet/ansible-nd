@@ -5,9 +5,13 @@ installer shell runs only in an isolated local workspace; all HTTP calls are
 substituted and no ND, Jenkins or Webex service is contacted.
 """
 
+import base64
+import gzip
+import hashlib
 import os
 from pathlib import Path
 import subprocess
+import re
 import sys
 
 import pytest
@@ -212,7 +216,7 @@ assert !new File(workspace, 'redirect/nd_report.py').exists()
 def test_canonical_selection_and_both_rounds_remain_enabled(groovy_runner):
     groovy_runner(r'''
 assert script.INTEGRATION_MODULES.containsAll(['nd_manage_policy', 'nd_local_user', 'nd_manage_tor', 'nd_maintenance_mode'])
-assert !script.INTEGRATION_MODULES.contains('nd_manage_switches')
+assert script.INTEGRATION_MODULES.count('nd_manage_switches') == 1
 assert !script.TRAILING_INTEGRATION_MODULES.contains('nd_manage_switches')
 assert script.INTERFACE_INTEGRATION_MODULES.size() == 12
 assert script.STANDALONE_INTEGRATION_MODULES == ['nd_vpc_pair']
@@ -254,3 +258,18 @@ println('CACHE_PREFIX=' + context.PYTHONPYCACHEPREFIX)
     redirected = subprocess.check_output(command, cwd=workspace, env=dict(environment, PYTHONPYCACHEPREFIX=prefix), text=True).strip()
     assert control == "CACHED"  # Disabling writes alone still permits stale bytecode reads.
     assert redirected == "SOURCE"
+
+
+@pytest.mark.parametrize("variant", ["Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches",
+                                     "Jenkinsfile_nd_jenkins_script_comm_list"])
+@pytest.mark.parametrize("helper", ["nd_report.py", "nd_reporting_pipeline.py"])
+def test_scoped_reporting_embedded_bytes_match_source(variant, helper):
+    source = (ROOT / variant).read_text()
+    pattern = r"'" + re.escape(helper) + r"': \[sha256: '([0-9a-f]+)', bytes: (\d+), gzipBase64: '([^']+)'\]"
+    matches = re.findall(pattern, source)
+    assert len(matches) == 1
+    digest, size, encoded = matches[0]
+    decoded = gzip.decompress(base64.b64decode(encoded))
+    assert decoded == (ROOT / "playbooks" / helper).read_bytes()
+    assert hashlib.sha256(decoded).hexdigest() == digest
+    assert len(decoded) == int(size)

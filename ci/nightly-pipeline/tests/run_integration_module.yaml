@@ -666,6 +666,199 @@
           when: _ndp_l3out_route_maps_created | length > 0
 
     # -------------------------------------------------------------------------
+    # SETUP (nd_manage_l3out SVI case): ND accepts an SVI L3Out only over an ext_l2_dci_link
+    # (policy layer2Dci) between the authored switch pair. Scoped build 3 (2026-11-16) had that link
+    # present with trunk intent on both Eth1/4 endpoints, yet the border endpoint was still routed on the
+    # switch and the SVI create failed with 207 "No appropriate link found". Deploy only the trunk intent ND
+    # already stores for that link's endpoints. Nothing here writes intent or fails the target: the routed
+    # and subInterface cases still run, and an SVI failure stays visible in the target's own result.
+    - name: "[{{ test_module }}] SETUP - deploy the stored L2 DCI endpoint intent the SVI case uses"
+      when:
+        - test_module == 'nd_manage_l3out'
+        - not (nd_prerequisite_only | default(false) | bool)
+        - nd_l3out_deploy_l2dci_endpoints | default(true) | bool
+        - (l3out_svi | default({})).connectivity_details.routing_interface_type | default('') == 'svi'
+      block:
+        - name: "[{{ test_module }}] SETUP - resolve the authored SVI switch pair"
+          ansible.builtin.set_fact:
+            _ndp_l2dci_fabric1: "{{ l3out_svi.fabric1_name | default('') | string }}"
+            _ndp_l2dci_fabric_by_switch: >-
+              {{ {(_ndp_l2dci_case_link.switch1_details.switch_id | default('') | string): (l3out_svi.fabric1_name | default('') | string),
+                  (_ndp_l2dci_case_link.switch2_details.switch_id | default('') | string): (l3out_svi.fabric2_name | default('') | string)} }}
+            _ndp_l2dci_matches: []
+            _ndp_l2dci_endpoints: []
+            _ndp_l2dci_state: []
+            _ndp_l2dci_pending: []
+            _ndp_l2dci_unconverged: []
+          vars:
+            _ndp_l2dci_case_link: "{{ l3out_svi.connectivity_details.links | default([], true) | first | default({}, true) }}"
+
+        - name: "[{{ test_module }}] SETUP - require two distinct authored SVI switches with fabrics"
+          ansible.builtin.set_fact:
+            _ndp_l2dci_pair_ok: >-
+              {{ _ndp_l2dci_fabric_by_switch | length == 2
+                 and '' not in (_ndp_l2dci_fabric_by_switch.keys() | list)
+                 and '' not in (_ndp_l2dci_fabric_by_switch.values() | list) }}
+
+        - name: "[{{ test_module }}] SETUP - read the links ND manages for {{ _ndp_l2dci_fabric1 }}"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/links?fabricName={{ _ndp_l2dci_fabric1 }}"
+          register: _ndp_l2dci_links
+          failed_when: false
+          no_log: true
+          when: _ndp_l2dci_pair_ok | bool
+
+        - name: "[{{ test_module }}] SETUP - select the layer2Dci link between the authored SVI switches"
+          ansible.builtin.set_fact:
+            _ndp_l2dci_links_readable: "{{ _ndp_l2dci_rows is not string and _ndp_l2dci_rows is iterable and _ndp_l2dci_rows is not mapping }}"
+            _ndp_l2dci_matches: >-
+              {{ ([] if (_ndp_l2dci_rows is string or _ndp_l2dci_rows is not iterable or _ndp_l2dci_rows is mapping) else _ndp_l2dci_rows)
+                 | select('mapping')
+                 | selectattr('configData', 'defined') | selectattr('configData', 'mapping')
+                 | selectattr('configData.policyType', 'defined')
+                 | selectattr('configData.policyType', 'equalto', 'layer2Dci')
+                 | selectattr('srcSwitchId', 'defined') | selectattr('dstSwitchId', 'defined')
+                 | selectattr('srcInterfaceName', 'defined') | selectattr('dstInterfaceName', 'defined')
+                 | selectattr('srcSwitchId', 'in', _ndp_l2dci_fabric_by_switch.keys() | list)
+                 | selectattr('dstSwitchId', 'in', _ndp_l2dci_fabric_by_switch.keys() | list)
+                 | list }}
+          vars:
+            _ndp_l2dci_rows: >-
+              {{ _ndp_l2dci_links.current.links
+                 if ((_ndp_l2dci_links.current | default('')) is mapping and _ndp_l2dci_links.current.links is defined)
+                 else '' }}
+          when: _ndp_l2dci_pair_ok | bool
+
+        - name: "[{{ test_module }}] SETUP - name both endpoints of the single matching link"
+          ansible.builtin.set_fact:
+            _ndp_l2dci_endpoints:
+              - name: "{{ _ndp_l2dci_link.srcSwitchName | default('switch1') }}"
+                fabric: "{{ _ndp_l2dci_fabric_by_switch[_ndp_l2dci_link.srcSwitchId] }}"
+                serial: "{{ _ndp_l2dci_link.srcSwitchId }}"
+                interface: "{{ _ndp_l2dci_link.srcInterfaceName }}"
+              - name: "{{ _ndp_l2dci_link.dstSwitchName | default('switch2') }}"
+                fabric: "{{ _ndp_l2dci_fabric_by_switch[_ndp_l2dci_link.dstSwitchId] }}"
+                serial: "{{ _ndp_l2dci_link.dstSwitchId }}"
+                interface: "{{ _ndp_l2dci_link.dstInterfaceName }}"
+          vars:
+            _ndp_l2dci_link: "{{ _ndp_l2dci_matches | first }}"
+          when:
+            - _ndp_l2dci_matches | length == 1
+            - _ndp_l2dci_matches[0].srcSwitchId != _ndp_l2dci_matches[0].dstSwitchId
+
+        - name: "[{{ test_module }}] SETUP - read each L2 DCI endpoint's stored intent and switch-reported mode"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ item.fabric }}/switches/{{ item.serial }}/interfaces/{{ item.interface | replace('/', '%2F') }}"
+          loop: "{{ _ndp_l2dci_endpoints }}"
+          register: _ndp_l2dci_before
+          failed_when: false
+          no_log: true
+
+        - name: "[{{ test_module }}] SETUP - classify each L2 DCI endpoint before any deploy"
+          ansible.builtin.set_fact:
+            _ndp_l2dci_state: >-
+              {{ _ndp_l2dci_state + [item.item | combine({
+                   'intent_trunk': _ndp_l2dci_intent_ok | bool,
+                   'converged': (_ndp_l2dci_intent_ok | bool) and (_ndp_l2dci_oper_ok | bool),
+                   'mode': _ndp_l2dci_cur.operData.mode | default('unknown', true) | string,
+                   'admin': _ndp_l2dci_cur.operData.adminStatus | default('unknown', true) | string})] }}
+          loop: "{{ _ndp_l2dci_before.results | default([]) }}"
+          vars:
+            _ndp_l2dci_cur: "{{ item.current if (item.current | default('')) is mapping else {} }}"
+            _ndp_l2dci_intent_ok: >-
+              {{ (_ndp_l2dci_cur.switchId | default('')) == item.item.serial
+                 and (_ndp_l2dci_cur.interfaceName | default('')) == item.item.interface
+                 and (_ndp_l2dci_cur.configData.mode | default('')) == 'trunk'
+                 and (_ndp_l2dci_cur.configData.networkOS.policy.policyType | default('')) == 'l2DciLinkMember'
+                 and (_ndp_l2dci_cur.configData.networkOS.policy.adminState | default(false) | bool) }}
+            _ndp_l2dci_oper_ok: >-
+              {{ (_ndp_l2dci_cur.operData.mode | default('')) == 'trunk'
+                 and (_ndp_l2dci_cur.operData.adminStatus | default('')) == 'up' }}
+          no_log: true
+
+        - name: "[{{ test_module }}] SETUP - select endpoints whose stored trunk intent is not on the switch"
+          ansible.builtin.set_fact:
+            _ndp_l2dci_pending: >-
+              {{ (_ndp_l2dci_state | rejectattr('converged') | list)
+                 if (_ndp_l2dci_state | length == 2 and _ndp_l2dci_state | rejectattr('intent_trunk') | list | length == 0)
+                 else [] }}
+
+        # ND answers interfaceActions/deploy with HTTP 207 and nd_rest raises after ND accepted it, so this
+        # result proves nothing; the switch-reported mode read below is the evidence.
+        - name: "[{{ test_module }}] SETUP - deploy the stored trunk intent of unconverged L2 DCI endpoints"
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ item.fabric }}/interfaceActions/deploy"
+            content:
+              interfaces:
+                - interfaceName: "{{ item.interface }}"
+                  switchId: "{{ item.serial }}"
+          loop: "{{ _ndp_l2dci_pending }}"
+          register: _ndp_l2dci_deploy
+          failed_when: false
+          no_log: true
+
+        # The attempts clause ends polling on the last retry without Ansible's exhaustion failure;
+        # convergence is judged by the next task, which never fails the target.
+        - name: "[{{ test_module }}] SETUP - wait for the switch to report the deployed trunk endpoints"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ item.fabric }}/switches/{{ item.serial }}/interfaces/{{ item.interface | replace('/', '%2F') }}"
+          loop: "{{ _ndp_l2dci_pending }}"
+          register: _ndp_l2dci_after
+          retries: "{{ nd_l3out_l2dci_retries | default(12) | int }}"
+          delay: "{{ nd_l3out_l2dci_delay | default(10) | int }}"
+          until: >-
+            ((_ndp_l2dci_after.current | default({})).switchId | default('')) == item.serial
+            and ((_ndp_l2dci_after.current | default({})).interfaceName | default('')) == item.interface
+            and ((_ndp_l2dci_after.current | default({})).operData.mode | default('')) == 'trunk'
+            and ((_ndp_l2dci_after.current | default({})).operData.adminStatus | default('')) == 'up'
+            or (_ndp_l2dci_after.attempts | default(0) | int) >= (nd_l3out_l2dci_retries | default(12) | int)
+          failed_when: false
+          no_log: true
+
+        - name: "[{{ test_module }}] SETUP - judge the deployed L2 DCI endpoints from the switch-reported mode"
+          ansible.builtin.set_fact:
+            _ndp_l2dci_unconverged: >-
+              {{ _ndp_l2dci_unconverged + ([] if (
+                   (_ndp_l2dci_cur.switchId | default('')) == item.item.serial
+                   and (_ndp_l2dci_cur.interfaceName | default('')) == item.item.interface
+                   and (_ndp_l2dci_cur.operData.mode | default('')) == 'trunk'
+                   and (_ndp_l2dci_cur.operData.adminStatus | default('')) == 'up')
+                 else [item.item.name ~ ' ' ~ item.item.interface ~ ' mode=' ~ (_ndp_l2dci_cur.operData.mode | default('unknown', true))
+                       ~ ' admin=' ~ (_ndp_l2dci_cur.operData.adminStatus | default('unknown', true))]) }}
+          loop: "{{ _ndp_l2dci_after.results | default([]) }}"
+          vars:
+            _ndp_l2dci_cur: "{{ item.current if (item.current | default('')) is mapping else {} }}"
+          no_log: true
+
+        - name: "[{{ test_module }}] SETUP - report the L2 DCI endpoint state the SVI case depends on"
+          ansible.builtin.debug:
+            msg: >-
+              {{ 'NDP_L3OUT_L2DCI_ENDPOINTS_OK' if _ndp_l2dci_reason == '' else 'NDP_L3OUT_L2DCI_ENDPOINTS_UNVERIFIED' }}:
+              {{ _ndp_l2dci_pair_text or 'no link selected' }};
+              deployed={{ _ndp_l2dci_pending | length }};
+              {{ _ndp_l2dci_reason or 'the switch reports trunk/up on both endpoints' }}.
+          vars:
+            _ndp_l2dci_pair_text: >-
+              {{ _ndp_l2dci_endpoints | map(attribute='name') | zip(_ndp_l2dci_endpoints | map(attribute='interface'))
+                 | map('join', ' ') | join(' <-> ') }}
+            _ndp_l2dci_reason: >-
+              {{ 'the authored SVI switch pair or fabrics are incomplete' if not (_ndp_l2dci_pair_ok | bool)
+                 else ('links of ' ~ _ndp_l2dci_fabric1 ~ ' could not be read') if not (_ndp_l2dci_links_readable | default(false) | bool)
+                 else 'no layer2Dci link exists between the authored SVI switches' if _ndp_l2dci_matches | length == 0
+                 else 'more than one layer2Dci link exists between the authored SVI switches' if _ndp_l2dci_matches | length > 1
+                 else 'the matching layer2Dci link has the same switch on both ends' if _ndp_l2dci_endpoints | length != 2
+                 else ('stored intent is not an enabled l2DciLinkMember trunk on '
+                       ~ (_ndp_l2dci_state | rejectattr('intent_trunk') | map(attribute='name') | join(', ')) ~ '; nothing was deployed')
+                   if (_ndp_l2dci_state | length != 2 or _ndp_l2dci_state | rejectattr('intent_trunk') | list | length > 0)
+                 else ('the switch did not report trunk/up after deploy: ' ~ (_ndp_l2dci_unconverged | join(', ')))
+                   if _ndp_l2dci_unconverged | length > 0
+                 else '' }}
+
+    # -------------------------------------------------------------------------
     # SETUP (vPC interface targets): prepare the declared physical fixture over the cabled
     # leaf_1 Eth1/2 <-> leaf_2 Eth1/1 peer-link. The original target retains ownership of its
     # own setup and teardown; no runner flag bypasses those tasks. The target's multi-pair

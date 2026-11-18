@@ -67,15 +67,23 @@ if (!sourceOk) {
     assert context.REQUIRED_FILES_READY != 'true'
 } else {
 assert failure == null : failure
-assert requests.size() == 37 : requests.size()
+def files = (script.CONSUL_CONFIG_FILES + script.PLAYBOOK_FILES + script.CONSUL_RUNNER_FILES +
+    script.CONSUL_PREREQUISITE_FILES + script.CONSUL_PREREQUISITE_SUPPORT_FILES + script.CONSUL_PREFLIGHT_FILES).unique()
+def embedded = source.contains('Map EMBEDDED_INTERFACE_HELPERS = [') ? script.EMBEDDED_INTERFACE_HELPERS.keySet() : []
+def expectedKeys = files.findAll { !embedded.contains(it) }.collect { name ->
+    script.CONSUL_PREFLIGHT_FILES.contains(name) ? script.SWITCH_LIFECYCLE_CONSUL_PREFIX + '/' + name : name
+}
+assert requests.size() == expectedKeys.size() : [requests.size(), expectedKeys.size()]
+assert expectedKeys.every { key -> requests.count { it.url.endsWith('/' + key + '?raw') } == 1 }
 script.runNDFCVersionTests(config)
-assert requests.size() == 37
-def releaseRequests = requests.findAll { it.url.contains('/releases/predelete-readiness-20261030/') }
+assert requests.size() == expectedKeys.size()
+def release = script.SWITCH_LIFECYCLE_CONSUL_PREFIX
+def releaseRequests = requests.findAll { it.url.contains('/' + release + '/') }
 assert releaseRequests.size() == 2
 assert releaseRequests.any { it.url.endsWith('/nd_ensure_switches.yaml?raw') }
 assert releaseRequests.any { it.url.endsWith('/action_plugins/nd_switch_discovery.py?raw') }
-assert new File(context.ND_RUNTIME_INPUTS, 'nd_ensure_switches.yaml').text.contains('/releases/predelete-readiness-20261030/')
-assert new File(context.ND_RUNTIME_INPUTS, 'action_plugins/nd_switch_discovery.py').text.contains('/releases/predelete-readiness-20261030/')
+assert new File(context.ND_RUNTIME_INPUTS, 'nd_ensure_switches.yaml').text.contains('/' + release + '/')
+assert new File(context.ND_RUNTIME_INPUTS, 'action_plugins/nd_switch_discovery.py').text.contains('/' + release + '/')
 assert !new File(context.ND_RUNTIME_INPUTS, 'releases').exists()
 assert phases == ['render', 'inventory', 'pre', 'tests', 'post'] * 2
 assert new File(workspace, 'source-checks').text == 'verifiedverified'
@@ -121,7 +129,7 @@ assert context.CONSUL_SYNC_FAILED == 'true'
 
 
 @pytest.mark.parametrize('variant', VARIANTS)
-@pytest.mark.parametrize('failure', ('none', 'source', 'preflight', 'physical'))
+@pytest.mark.parametrize('failure', ('none', 'origin', 'source', 'preflight', 'physical', 'missing'))
 def test_guard_scoping_preserves_integrity_and_physical_failures(tmp_path, variant, failure):
     source = (ROOT / variant).read_text()
     guard = source.split('                                FIRST_TARGET_GUARD=true', 1)[1].split('                                # nd_vpc_pair', 1)[0]
@@ -129,31 +137,44 @@ def test_guard_scoping_preserves_integrity_and_physical_failures(tmp_path, varia
     collection.mkdir()
     (collection / 'nd_verify_develop_sources.py').write_text('import os,sys\nassert sys.argv[sys.argv.index("--expected-branch")+1] == os.environ["ND_GIT_BRANCH"]\nopen(os.environ["CALLS"], "a").write("source\\n")\nsys.exit(3 if os.environ["FAILURE"] == "source" else 0)\n')
     guard_file = collection / 'guard.yaml'
-    guard_file.write_text('---\n')
+    if failure != 'missing':
+        guard_file.write_text('---\n')
     binary = tmp_path / 'bin'
     binary.mkdir()
     command = binary / 'ansible-playbook'
     command.write_text('#!/bin/sh\necho physical >> "$CALLS"\n[ "$FAILURE" != physical ]\n')
     command.chmod(0o755)
+    timeout = binary / 'timeout'
+    timeout.write_text('#!/bin/sh\n[ "$1" = -k ] || exit 2\nshift 3\nexec "$@"\n')
+    timeout.chmod(0o755)
+    git = binary / 'git'
+    git.write_text('#!/bin/sh\n[ "$3" = remote ] && [ "$4" = get-url ] && [ "$5" = origin ] || exit 2\n'
+                   'if [ "$FAILURE" = origin ]; then echo https://example.invalid/unexpected.git; else printf "%s\\n" "$ND_GIT_REPOSITORY"; fi\n')
+    git.chmod(0o755)
     env = dict(os.environ, COLLECTIONS_DIRECTORY=str(collection), ND_GIT_COMMIT='fixture',
                ND_GIT_BRANCH='feature/fixture',
+               ND_GIT_REPOSITORY='https://github.com/CiscoDevNet/ansible-nd.git',
                CALLS=str(tmp_path / 'calls'), FAILURE=failure,
                ND_SWITCH_PREFLIGHT_READY='false' if failure == 'preflight' else 'true',
                PATH=str(binary) + os.pathsep + os.environ['PATH'])
-    shell = 'set -e\nFIRST_TARGET_GUARD=true\n' + guard + '''
+    shell = 'set -e\nRUN_FAILURE=0\nFIRST_TARGET_GUARD=true\n' + guard + '''
 SWITCH_GUARD_PLAYBOOK="$COLLECTIONS_DIRECTORY/guard.yaml"
 SWITCH_GUARD_TIMEOUT=30
 SWITCH_GUARD_APPLY=true
 ensure_switches_ready "first policy" nd_manage_policy
 ensure_switches_ready "controller" nd_local_user
 ensure_switches_ready "fabric policy" nd_manage_policy
+echo "RUN_FAILURE=$RUN_FAILURE"
 '''
     result = subprocess.run(['/bin/bash', '-c', shell], env=env, text=True, capture_output=True)
-    calls = (tmp_path / 'calls').read_text().splitlines()
-    if failure == 'none':
+    calls_file = tmp_path / 'calls'
+    calls = calls_file.read_text().splitlines() if calls_file.exists() else []
+    if failure in ('none', 'physical'):
         assert result.returncode == 0, result.stdout + result.stderr
         assert calls == ['source', 'source', 'source', 'physical']
         assert 'REUSED_PREFLIGHT' in result.stdout and 'NOT_APPLICABLE' in result.stdout
+        assert ('RUN_FAILURE=1' if failure == 'physical' else 'RUN_FAILURE=0') in result.stdout
+        assert ('NDP_SWITCH_GUARD_FAILED' in result.stderr) == (failure == 'physical')
     else:
         assert result.returncode != 0
-        assert calls == (['source', 'source', 'source', 'physical'] if failure == 'physical' else ['source'])
+        assert calls == (['source', 'source', 'source'] if failure == 'missing' else [] if failure == 'origin' else ['source'])

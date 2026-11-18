@@ -190,6 +190,11 @@
     nd_switch_predelete_deploy: "{{ lookup('env', 'ND_SWITCH_PREDELETE_DEPLOY') | default(true, true) }}"
     nd_switch_predelete_timeout_seconds: 600
     nd_switch_predelete_copy_timeout_seconds: 900
+    # The per-switch Copy Run Start result is the persistence evidence. ND can keep
+    # an earlier "periodic copy run start skipped" warning active until its own next
+    # periodic save (builds 137 and 175 kept it for the whole 900 s window after a
+    # verified save). Poll this long for clearance, then continue with a warning.
+    nd_switch_predelete_copy_settle_seconds: 300
     nd_switch_predelete_call_timeout_seconds: 60
     nd_switch_predelete_poll_seconds: 10
     _nd_predelete_remaining: >-
@@ -489,6 +494,11 @@
            'requested_switches': _predelete_requested_ids | length, 'matching_records': ns.matched,
            'active_records': ns.active, 'unverified_clearance_records': ns.unverified,
            'malformed_records': ns.malformed} -}}
+    # A well-formed read that still lists the lagging skipped periodic-save warning.
+    # API, schema and pagination failures remain blocking.
+    _nd_predelete_copy_anomaly_superseded: >-
+      {{ not (_predelete_anomaly_reply.failed | default(false) | bool)
+         and _nd_predelete_copy_anomaly_report.category in ['WARNING_ACTIVE', 'CLEARANCE_UNVERIFIED'] }}
     # Bounded wait-and-retry for the ONBOARD (add) step. A switch that is still
     # (re)booting, or that ND has not finished rediscovering after a reset/rehome
     # (iBGP -> eBGP), makes ND return a discovery response with NO serial, which the
@@ -1112,6 +1122,7 @@
                   ansible.builtin.set_fact:
                     _nd_predelete_copy_started: "{{ _nd_switch_clock }}"
                     _nd_predelete_copy_poll_started: false
+                    _nd_predelete_copy_superseded: []
 
                 - name: Require a full startup-save window inside the outer membership deadline
                   ansible.builtin.assert:
@@ -1163,6 +1174,7 @@
                 - name: Record that fresh startup-save anomaly polling is starting
                   ansible.builtin.set_fact:
                     _nd_predelete_copy_poll_started: true
+                    _nd_predelete_copy_poll_clock: "{{ _nd_switch_clock }}"
 
                 - name: Wait for skipped periodic startup-save anomalies to clear after the explicit copy
                   cisco.nd.nd_rest:
@@ -1184,6 +1196,9 @@
                   no_log: true
                   until: >-
                     (_nd_predelete_copy_anomalies_clear | bool)
+                    or ((_nd_predelete_copy_anomaly_superseded | bool)
+                        and ((_nd_switch_clock | float) - (_nd_predelete_copy_poll_clock | float))
+                            >= (nd_switch_predelete_copy_settle_seconds | float))
                     or (nd_remove_anomalies.status | default(0) | int not in [0, 200, 408, 429]
                         and nd_remove_anomalies.status | default(0) | int < 500)
                     or (_nd_predelete_remaining | float) <= 0
@@ -1195,12 +1210,12 @@
                     _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _rf) | map(attribute='serial') | list }}"
                     ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
 
-                - name: Require fresh evidence that skipped startup-save anomalies are cleared
+                - name: Require readable startup-save anomaly evidence after the verified explicit copy
                   ansible.builtin.assert:
                     that:
                       - _nd_predelete_remaining | float > 0
-                      - _nd_predelete_copy_anomalies_clear | bool
-                    fail_msg: "NDP_SWITCH_PREDELETE_COPY_BLOCKED: the targeted startup-save anomaly is still active or its state is unverifiable; no removal is allowed."
+                      - (_nd_predelete_copy_anomalies_clear | bool) or (_nd_predelete_copy_anomaly_superseded | bool)
+                    fail_msg: "NDP_SWITCH_PREDELETE_COPY_BLOCKED: startup-save anomaly evidence is unreadable or malformed, or the membership deadline expired; no removal is allowed."
                   vars:
                     _predelete_anomaly_reply: "{{ _anomaly }}"
                     _predelete_anomaly_fabric: "{{ _anomaly._rf }}"
@@ -1211,9 +1226,36 @@
                     label: "{{ _anomaly._rf }}"
                   no_log: true
 
+                - name: Record lagging startup-save warnings superseded by the verified explicit copy
+                  ansible.builtin.set_fact:
+                    _nd_predelete_copy_superseded: >-
+                      {{ _nd_predelete_copy_superseded
+                         + ([] if (_nd_predelete_copy_anomalies_clear | bool) else [_nd_predelete_copy_anomaly_report.category]) }}
+                  vars:
+                    _predelete_anomaly_reply: "{{ _anomaly }}"
+                    _predelete_anomaly_fabric: "{{ _anomaly._rf }}"
+                    _predelete_requested_ids: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _anomaly._rf) | map(attribute='serial') | list }}"
+                  loop: "{{ nd_remove_anomalies.results }}"
+                  loop_control:
+                    loop_var: _anomaly
+                    label: "{{ _anomaly._rf }}"
+                  no_log: true
+
+                - name: Continue the transfer when only a lagging skipped periodic-save warning remains
+                  ansible.builtin.debug:
+                    msg: >-
+                      NDP_SWITCH_STARTUP_SAVE_ANOMALY_SUPERSEDED categories={{ _nd_predelete_copy_superseded | unique | list | to_json }}
+                      settle_seconds={{ nd_switch_predelete_copy_settle_seconds | int }}: explicit Copy Run Start succeeded for
+                      every leaving switch after idle, Normal, unfrozen and update-free checks; ND has not yet cleared its
+                      earlier skipped periodic-save warning. Continuing the transfer.
+                  when: _nd_predelete_copy_superseded | length > 0
+
                 - name: Report confirmed startup configuration persistence
                   ansible.builtin.debug:
-                    msg: "NDP_SWITCH_PREDELETE_STARTUP_SAVED: Copy Run Start succeeded for all {{ nd_rehome_moves | length }} leaving switches; fresh anomaly evidence is clear."
+                    msg: >-
+                      NDP_SWITCH_PREDELETE_STARTUP_SAVED: Copy Run Start succeeded for all {{ nd_rehome_moves | length }} leaving switches;
+                      {{ 'a lagging skipped periodic-save warning remains (NDP_SWITCH_STARTUP_SAVE_ANOMALY_SUPERSEDED).'
+                         if _nd_predelete_copy_superseded | length > 0 else 'fresh anomaly evidence is clear.' }}
               always:
                 - name: Report bounded startup-save clearance evidence even after polling fails
                   ansible.builtin.debug:
