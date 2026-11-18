@@ -8,17 +8,24 @@
 Unit tests for the nd_manage_links strategies and orchestrator helpers.
 
 Covers strategy-driven endpoint query-param population with URL encoding for
-both link scopes and the bulk per-item failure guard.
+both link scopes and the per-item 207 failures surfaced through the shared
+NdV1Strategy handling.
 """
 
 from __future__ import annotations
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.links.links import NDLinkModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.links import NDLinkOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.manage_link import ManageLinkStrategy
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.one_manage_link import OneManageLinkStrategy
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
+from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
+from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
+from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
 
 # ---------------------------------------------------------------------------
 # Strategy -> endpoint path building (URL encoded)
@@ -84,37 +91,130 @@ def test_empty_params_produce_bare_path():
 
 
 # ---------------------------------------------------------------------------
-# Bulk per-item failure guard
+# Bulk per-item failures surface through the shared NdV1Strategy (issue #640)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "response,should_raise",
-    [
-        ({"links": [{"linkId": "a", "status": "success"}]}, False),
-        ({"links": [{"linkId": "a"}]}, False),
-        ([], False),
-        ("not-a-dict", False),
-        ({"links": [{"linkId": "a", "status": "failure"}]}, True),
-        ({"items": [{"id": "b", "success": False}]}, True),
-        ({"results": [{"uuid": "c", "error": "boom"}]}, True),
-        ({"failed": [{"linkId": "d", "message": "nope"}]}, True),
-        ({"links": [{"linkId": "a", "status": "success"}, {"linkId": "e", "status": "failed"}]}, True),
-    ],
-)
-def test_raise_on_bulk_failures(response, should_raise):
-    if should_raise:
-        with pytest.raises(Exception):
-            NDLinkOrchestrator._raise_on_bulk_failures(response, "create")
-    else:
-        NDLinkOrchestrator._raise_on_bulk_failures(response, "create")
+def responses_links(key: str):
+    """Load fixture data for the links orchestrator per-item failure tests."""
+    return load_fixture("test_links")[key]
 
 
-def test_bulk_failure_message_includes_id_and_reason():
-    with pytest.raises(Exception) as exc:
-        NDLinkOrchestrator._raise_on_bulk_failures({"links": [{"linkId": "L9", "status": "failure", "message": "bad mtu"}]}, "create")
-    text = str(exc.value)
-    assert "L9" in text and "bad mtu" in text
+def _pipeline_orchestrator(gen_responses: ResponseGenerator) -> NDLinkOrchestrator:
+    """
+    Build an orchestrator whose `_request` runs the real RestSend -> ResponseHandler -> NdV1Strategy pipeline against
+    file-based responses, so per-item 207 handling is exercised end to end instead of being patched out.
+    """
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.gen = gen_responses
+
+    response_handler = ResponseHandler()
+    response_handler.response = {"RETURN_CODE": 200, "MESSAGE": "OK"}
+    response_handler.verb = HttpVerbEnum.GET
+    response_handler.commit()
+
+    rest_send = RestSend({"check_mode": False, "state": "merged"})
+    rest_send.sender = sender
+    rest_send.response_handler = response_handler
+    rest_send.unit_test = True
+    rest_send.timeout = 1
+    return NDLinkOrchestrator(rest_send=rest_send, strategy=ManageLinkStrategy(fabric_name="f"))
+
+
+def _numbered_link(src_interface: str, dst_interface: str) -> NDLinkModel:
+    return NDLinkModel.from_config(
+        {
+            "src_fabric_name": "f",
+            "dst_fabric_name": "f",
+            "src_switch_name": "leaf1",
+            "dst_switch_name": "leaf2",
+            "src_switch_id": "SID1",
+            "dst_switch_id": "SID2",
+            "src_interface_name": src_interface,
+            "dst_interface_name": dst_interface,
+            "config_data": {
+                "policy_type": "numbered",
+                "template_inputs": {"src_ip": "10.99.30.1", "dst_ip": "10.99.30.2", "mtu": 9216},
+            },
+        }
+    )
+
+
+def test_links_00110_bulk_create_per_item_failure_names_the_link():
+    """
+    # Summary
+
+    Verify a 207 bulk-create body with a `failure` item in `links[]` raises through the shared NdV1Strategy handling
+    and the error names the failed link by `linkId` with its message (issue #640; the bespoke `_raise_on_bulk_failures`
+    detector was retired).
+
+    ## Test
+
+    - POST /api/v1/manage/links answers 207 with one `success` and one `failure` item
+    - create_bulk raises `Bulk create failed: ...` carrying `LINK-UUID-8541: Link creation failed: ...`
+    - The successful link is not reported and exactly one request was sent
+
+    ## Classes and Methods
+
+    - NDLinkOrchestrator.create_bulk()
+    - NDBaseOrchestrator._post_bulk()
+    - NdV1Strategy.is_success()
+    - NdV1Strategy.extract_error_message()
+    """
+
+    def responses():
+        yield responses_links("test_links_00110a")
+
+    orchestrator = _pipeline_orchestrator(ResponseGenerator(responses()))
+    models = [_numbered_link("Ethernet1/1", "Ethernet1/1"), _numbered_link("Ethernet1/2", "Ethernet1/2")]
+
+    with pytest.raises(Exception, match=r"Bulk create failed: .*LINK-UUID-8541: Link creation failed: MTU 9216 not supported on Ethernet1/2") as exc:
+        orchestrator.create_bulk(models)
+
+    assert "LINK-UUID-8540" not in str(exc.value)
+    assert len(orchestrator.rest_send.responses) == 1
+    assert orchestrator.rest_send.path.split("?")[0] == "/api/v1/manage/links"
+
+
+def test_links_00111_bulk_delete_per_item_failure_names_the_link():
+    """
+    # Summary
+
+    Verify a 207 bulk-remove body with a `failure` item in `links[]` raises through the shared NdV1Strategy handling
+    and the error names the failed link by `linkId` with its message (issue #640).
+
+    ## Test
+
+    - `_link_id_map` is pre-seeded so no controller read is needed to resolve the link ids
+    - POST /api/v1/manage/linkActions/remove answers 207 with the OpenAPI `deletedTwoLinks` example
+    - delete_bulk raises `Bulk delete failed: ...` carrying `LINK-UUID-8541: Deletion of link with id:LINK-UUID-8541 failed due to invalid linkId.`
+    - Exactly one request was sent with both link ids
+
+    ## Classes and Methods
+
+    - NDLinkOrchestrator.delete_bulk()
+    - NDBaseOrchestrator._post_bulk()
+    - NdV1Strategy.is_success()
+    - NdV1Strategy.extract_error_message()
+    """
+
+    def responses():
+        yield responses_links("test_links_00111a")
+
+    orchestrator = _pipeline_orchestrator(ResponseGenerator(responses()))
+    models = [_numbered_link("Ethernet1/1", "Ethernet1/1"), _numbered_link("Ethernet1/2", "Ethernet1/2")]
+    orchestrator._link_id_map[models[0].get_identifier_value()] = "LINK-UUID-8540"
+    orchestrator._link_id_map[models[1].get_identifier_value()] = "LINK-UUID-8541"
+
+    with pytest.raises(
+        Exception, match=r"Bulk delete failed: .*LINK-UUID-8541: Deletion of link with id:LINK-UUID-8541 failed due to invalid linkId\."
+    ) as exc:
+        orchestrator.delete_bulk(models)
+
+    assert "LINK-UUID-8540:" not in str(exc.value)
+    assert len(orchestrator.rest_send.responses) == 1
+    assert orchestrator.rest_send.committed_payload == {"links": ["LINK-UUID-8540", "LINK-UUID-8541"]}
 
 
 # ---------------------------------------------------------------------------
@@ -143,8 +243,6 @@ class _FakeIndex:
 
 
 def _orchestrator():
-    from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
-
     return NDLinkOrchestrator(rest_send=RestSend({"check_mode": False}), strategy=ManageLinkStrategy(fabric_name="f"))
 
 
