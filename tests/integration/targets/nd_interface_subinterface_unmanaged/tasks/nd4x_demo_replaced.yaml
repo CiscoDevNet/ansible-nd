@@ -1,0 +1,107 @@
+---
+- name: Run unmanaged subinterface replaced harness tests
+  block:
+    - name: "REPLACED SETUP: Remove reserved unmanaged subinterfaces"
+      cisco.nd.nd_interface_subinterface_unmanaged:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_subif_cleanup_config }}"
+        state: deleted
+
+    - name: "REPLACED SETUP: Create the existing subinterface"
+      cisco.nd.nd_interface_subinterface_unmanaged:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ nd4x_subif_eth_40 }}"
+        state: merged
+
+    - name: "REPLACED: Existing unmanaged subinterface is unchanged"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_subinterface_unmanaged
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: false
+        config:
+          - "{{ nd4x_subif_eth_40 }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate existing unmanaged subinterface
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(@.interfaceName ==
+                  '{{ ethernet_parent }}.40')].configData.networkOS.policy.policyType
+                equals: monitorSubinterface
+      register: nd4x_replaced_existing
+
+    - name: "REPLACED: Missing unmanaged subinterface falls back to create"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_subinterface_unmanaged
+        state: replaced
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        module_args:
+          config_actions:
+            deploy: false
+        config:
+          - "{{ nd4x_subif_eth_49 }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate created unmanaged subinterface .49
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.interfaces[?(@.interfaceName ==
+                  '{{ ethernet_parent }}.49')].configData.networkOS.policy.policyType
+                equals: monitorSubinterface
+      register: nd4x_replaced_missing
+
+    - name: "REPLACED: Verify no-op and create paths"
+      ansible.builtin.assert:
+        that:
+          - nd4x_replaced_existing.second_run_result.changed == false
+          - nd4x_replaced_missing.first_run_result.after
+            | selectattr('interface_name', 'equalto', ethernet_parent ~ '.49')
+            | list | length == 1
+          - nd4x_replaced_missing.second_run_result.changed == false
+  always:
+    - name: "REPLACED CLEANUP: Remove reserved unmanaged subinterfaces"
+      cisco.nd.nd_interface_subinterface_unmanaged:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config: "{{ nd4x_subif_cleanup_config }}"
+        state: deleted
