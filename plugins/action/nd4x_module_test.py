@@ -1449,7 +1449,6 @@ class ActionModule(ActionBase):
                 "enable_ir": network_value("enable_ir", "enableIr", fabric_data),
                 "rt_auto": network_value("rt_auto", "rtAuto", l2_data),
                 "deploy": item.get("deploy"),
-                "deploy_type": network_value("deploy_type", "deployType"),
             }
 
         config_data = item.get("config_data") or item.get("configData") or {}

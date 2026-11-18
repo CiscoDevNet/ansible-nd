@@ -1439,7 +1439,6 @@ def test_summarize_network_config_item(action_plugin, network_item):
         "enable_ir": False,
         "rt_auto": False,
         "deploy": None,
-        "deploy_type": None,
     }
 
 
@@ -1476,7 +1475,6 @@ def test_summarize_gathered_module_result(action_plugin):
                 "enable_ir": None,
                 "rt_auto": None,
                 "deploy": None,
-                "deploy_type": None,
             }
         ],
     }

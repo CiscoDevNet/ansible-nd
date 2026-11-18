@@ -54,6 +54,7 @@ class ConfigActionsPolicy:
     read_only_states: frozenset[str] = frozenset({"gathered"})
     config_key: str = "config"
     resource_deploy_key: str = "deploy"
+    resource_requires_switch_targets: bool = False
 
 
 @dataclass(frozen=True)
