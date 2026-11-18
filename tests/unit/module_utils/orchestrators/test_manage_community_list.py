@@ -188,13 +188,18 @@ def test_manage_community_list_00110() -> None:
 
     def responses():
         yield responses_manage_community_list(f"{method_name}a")
+        yield responses_manage_community_list(f"{method_name}b")
 
     unused_rest_send, instance, unused_fabric_context = _instance(ResponseGenerator(responses()))
     assert unused_rest_send is not None
     assert unused_fabric_context is not None
+    items = [_model()]
 
     with pytest.raises(RuntimeError, match="duplicate name"):
-        instance.create_bulk([_model()])
+        instance.create_bulk(items)
+
+    # The failure-path re-read (issue #646) found nothing created
+    assert instance.accepted_mutations(items) == []
 
 
 def test_manage_community_list_00115() -> None:
@@ -232,6 +237,140 @@ def test_manage_community_list_00120() -> None:
 
     with pytest.raises(RuntimeError, match="requires type, entries"):
         instance.create(CommunityListModel.from_config({"name": "CL1"}))
+
+
+def test_manage_community_list_00130() -> None:
+    """
+    # Summary
+
+    Verify create_bulk reads the collection back after a flat (non-207) failure and reports the items the controller committed
+    ahead of the failing one (issue #646): the error names them and `accepted_mutations` returns exactly that subset.
+
+    ## Test
+
+    - POST [A, BAD, C] answers HTTP 403 naming only BAD, with no `results[]`
+    - The failure-path GET lists only A
+    - create_bulk raises `RuntimeError` naming the created item
+    - `accepted_mutations` returns A for the submitted set and nothing for a set without A
+
+    ## Classes and Methods
+
+    - ManageCommunityListOrchestrator.create_bulk()
+    - NDBulkCreateReadBackOrchestrator._created_despite_failure()
+    - NDBulkCreateReadBackOrchestrator.accepted_mutations()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_manage_community_list(f"{method_name}a")
+        yield responses_manage_community_list(f"{method_name}b")
+
+    rest_send, instance, unused_fabric_context = _instance(ResponseGenerator(responses()))
+    assert unused_fabric_context is not None
+    items = [_model("A"), _model("BAD", tenant_name="tenantA"), _model("C")]
+
+    match = r"Bulk create failed for \['A', 'BAD', 'C'\]: .*Tenant name 'tenantA' is not valid.*created \['A'\] from the same request"
+    with pytest.raises(RuntimeError, match=match):
+        instance.create_bulk(items)
+
+    assert rest_send.response_count == 2
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/communityLists?max=100&offset=0"
+    assert rest_send.verb == HttpVerbEnum.GET.value
+    assert instance.accepted_mutations(items) == [items[0]]
+    assert instance.accepted_mutations(items[1:]) == []
+
+
+def test_manage_community_list_00140() -> None:
+    """
+    # Summary
+
+    Verify a failed failure-path re-read never masks the create failure and reports nothing as created (issue #646).
+
+    ## Test
+
+    - POST answers HTTP 403
+    - The failure-path GET answers HTTP 500
+    - create_bulk raises `RuntimeError` carrying the controller's 403 message and no created items
+    - `accepted_mutations` returns an empty list
+
+    ## Classes and Methods
+
+    - ManageCommunityListOrchestrator.create_bulk()
+    - NDBulkCreateReadBackOrchestrator._created_despite_failure()
+    - NDBulkCreateReadBackOrchestrator.accepted_mutations()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_manage_community_list(f"{method_name}a")
+        yield responses_manage_community_list(f"{method_name}b")
+
+    unused_rest_send, instance, unused_fabric_context = _instance(ResponseGenerator(responses()))
+    assert unused_rest_send is not None
+    assert unused_fabric_context is not None
+    items = [_model("A"), _model("BAD", tenant_name="tenantA")]
+
+    with pytest.raises(RuntimeError, match=r"Tenant name 'tenantA' is not valid") as exc_info:
+        instance.create_bulk(items)
+
+    assert "from the same request" not in str(exc_info.value)
+    assert instance.accepted_mutations(items) == []
+
+
+def test_manage_community_list_00150() -> None:
+    """
+    # Summary
+
+    Verify the failure-path re-read matches a tenant-scoped item by its qualified API identifier (issue #646).
+
+    ## Test
+
+    - POST [tenantA~A, BAD] answers HTTP 403
+    - The failure-path GET echoes the created list under its qualified name `tenantA~A`
+    - `accepted_mutations` returns the tenant-scoped item, whose config name is the bare `A`
+
+    ## Classes and Methods
+
+    - ManageCommunityListOrchestrator.create_bulk()
+    - NDBulkCreateReadBackOrchestrator.accepted_mutations()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_manage_community_list(f"{method_name}a")
+        yield responses_manage_community_list(f"{method_name}b")
+
+    unused_rest_send, instance, unused_fabric_context = _instance(ResponseGenerator(responses()))
+    assert unused_rest_send is not None
+    assert unused_fabric_context is not None
+    items = [_model("A", tenant_name="tenantA"), _model("BAD", tenant_name="tenantB")]
+
+    with pytest.raises(RuntimeError, match=r"created \['A'\] from the same request"):
+        instance.create_bulk(items)
+
+    assert instance.accepted_mutations(items) == [items[0]]
+    assert items[0].get_identifier_value() == "tenantA~A"
+
+
+def test_manage_community_list_00160() -> None:
+    """
+    # Summary
+
+    Verify `accepted_mutations` reports nothing before any bulk create has failed (issue #646).
+
+    ## Classes and Methods
+
+    - NDBulkCreateReadBackOrchestrator.accepted_mutations()
+    """
+
+    def responses():
+        yield {}
+
+    unused_rest_send, instance, unused_fabric_context = _instance(ResponseGenerator(responses()))
+    assert unused_rest_send is not None
+    assert unused_fabric_context is not None
+
+    assert instance.accepted_mutations([_model("A")]) == []
 
 
 def test_manage_community_list_00200() -> None:
