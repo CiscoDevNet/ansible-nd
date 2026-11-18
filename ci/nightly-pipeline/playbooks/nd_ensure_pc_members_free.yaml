@@ -1,0 +1,142 @@
+---
+# Remediating port-channel unbundle pre-flight.
+#
+# The three nd_interface_port_channel_* integration targets (access / trunk_host /
+# trunk_network) share one member pool -- Ethernet1/10-13 on vxlan_leaf_1
+# (192.0.2.195) -- and each creates port-channel501/502/503 (see every target's
+# tasks/setup.yaml). If a prior build crashes mid-test, a stale test port-channel50x
+# can survive still holding a member (e.g. port-channel502 keeps Ethernet1/12). On the
+# next run the read-only verify_free_interfaces prerequisite gate then finds that member
+# is a port-channel member and SKIPs the port-channel modules
+# ("reserved interface is a port-channel member") -- and that gate only verifies, it
+# never remediates. The within-build orphan is handled by the port-channel teardown
+# patch (always: teardown on each target); this pre-flight closes the CROSS-BUILD gap
+# by deleting any leftover test port-channel50x and then Recalculate & Deploy, so the
+# members are free BEFORE the prerequisite gate runs.
+#
+# Runs after the switch + interface pre-flights and BEFORE runFabricTest (which hosts
+# the profile-coverage / prerequisite gate), so the port-channel modules see free
+# members instead of a stale orphan.
+#
+# TWO MODES (mirrors nd_ensure_interfaces_up.yaml / nd_ensure_switches.yaml):
+#   * AUDIT (default, nd_pc_unbundle_apply=false): check-mode probe + report only.
+#     Deletes nothing, deploys nothing. Used during a prerequisite-only run.
+#   * ENFORCE (nd_pc_unbundle_apply=true): delete every listed stale port-channel on
+#     the member switch, then configSave (Recalculate) + deploy (Deploy) the fabric so
+#     the freed members take effect. Best-effort: a delete or deploy that fails is
+#     reported (NDP_PC_UNBUNDLE_*) but never fatal, so a single stuck port-channel can
+#     never block the nightly.
+#
+# Example:
+#   ansible-playbook -i inventory.yaml playbooks/nd_ensure_pc_members_free.yaml \
+#     -e nd_pc_unbundle_apply=true -e nd_pc_fabric_name=VXLAN_EVPN_Fabric
+- name: Free shared port-channel members before the integration suite (pre-flight)
+  hosts: nd
+  gather_facts: false
+  vars:
+    # The fabric that owns the port-channel member switch. Required in every mode; the
+    # Jenkins pipeline passes the active round fabric (ndfcConfig.fabric_name). Empty =>
+    # the play skips cleanly (NDP_PC_UNBUNDLE_SKIP) rather than failing.
+    nd_pc_fabric_name: ""
+    # The switch that carries the shared port-channel member pool (vxlan_leaf_1). This
+    # is the same switch the nd_interface_port_channel_* targets pin their PCs to.
+    nd_pc_switch_ip: "192.0.2.195"
+    # The stale test port-channels to clear. The nd_interface_port_channel_* targets
+    # only ever create port-channel501/502/503 (lowercase interface_name, per each
+    # target's tasks/setup.yaml), so clearing these frees Ethernet1/10-13.
+    nd_pc_member_names:
+      - port-channel501
+      - port-channel502
+      - port-channel503
+    # Gate live mutation. false = audit only; true = delete + configSave + deploy.
+    nd_pc_unbundle_apply: false
+    # Controller output verbosity for the nd_interface module (matches the targets).
+    nd_pc_output_level: info
+
+  tasks:
+    - name: Report the pre-flight skip when no fabric name is supplied
+      ansible.builtin.debug:
+        msg: >-
+          NDP_PC_UNBUNDLE_SKIP no fabric name supplied (nd_pc_fabric_name is empty);
+          skipping the port-channel unbundle pre-flight.
+      when: nd_pc_fabric_name | default('') | trim | length == 0
+
+    - name: End the play without failing when no fabric name is supplied
+      ansible.builtin.meta: end_play
+      when: nd_pc_fabric_name | default('') | trim | length == 0
+
+    # Build the delete config once: one {switch_ip, interface_name} entry per stale
+    # port-channel, exactly the shape nd_interface_port_channel_access expects.
+    - name: Build the stale port-channel delete config
+      ansible.builtin.set_fact:
+        _nd_pc_delete_config: >-
+          {{ _nd_pc_delete_config | default([])
+             + [{'switch_ip': nd_pc_switch_ip, 'interface_name': item}] }}
+      loop: "{{ nd_pc_member_names }}"
+      loop_control:
+        label: "{{ item }}"
+
+    # AUDIT: a check-mode delete is non-destructive and reports changed=true only when
+    # a listed port-channel actually exists on the switch, so it tells us whether a
+    # stale orphan is holding a member without touching the fabric.
+    - name: "AUDIT: probe whether any stale test port-channel exists (check mode, no change)"
+      cisco.nd.nd_interface_port_channel_access:
+        output_level: "{{ nd_pc_output_level }}"
+        fabric_name: "{{ nd_pc_fabric_name }}"
+        config: "{{ _nd_pc_delete_config }}"
+        state: deleted
+      check_mode: true
+      register: _nd_pc_audit
+      failed_when: false
+
+    - name: Report the audit scope and result
+      ansible.builtin.debug:
+        msg:
+          - "NDP_PC_UNBUNDLE_SCOPE fabric={{ nd_pc_fabric_name }} switch={{ nd_pc_switch_ip }} names={{ nd_pc_member_names | join(',') }} apply={{ nd_pc_unbundle_apply | bool }}"
+          - >-
+            NDP_PC_UNBUNDLE_AUDIT stale_present={{ _nd_pc_audit is changed }}
+            {{ 'a stale test port-channel is holding a member and will be cleared in ENFORCE mode'
+               if (_nd_pc_audit is changed)
+               else 'no stale test port-channel on the member switch' }}
+
+    # ENFORCE: delete the stale port-channel(s), then Recalculate & Deploy so the freed
+    # members are pushed to the switch. Best-effort -- every step tolerates failure so
+    # the pre-flight can never block the nightly.
+    - name: "ENFORCE: delete every stale test port-channel on the member switch"
+      cisco.nd.nd_interface_port_channel_access:
+        output_level: "{{ nd_pc_output_level }}"
+        fabric_name: "{{ nd_pc_fabric_name }}"
+        config: "{{ _nd_pc_delete_config }}"
+        state: deleted
+      register: _nd_pc_delete
+      failed_when: false
+      when: nd_pc_unbundle_apply | bool
+
+    - name: "ENFORCE: Recalculate (config save) the fabric so the unbundle is pushed"
+      cisco.nd.nd_rest:
+        method: post
+        path: "/api/v1/manage/fabrics/{{ nd_pc_fabric_name }}/actions/configSave"
+      register: _nd_pc_configsave
+      failed_when: false
+      when:
+        - nd_pc_unbundle_apply | bool
+        - _nd_pc_delete is changed
+
+    - name: "ENFORCE: Deploy the fabric so the freed members take effect on the switch"
+      cisco.nd.nd_rest:
+        method: post
+        path: "/api/v1/manage/fabrics/{{ nd_pc_fabric_name }}/actions/deploy?forceShowRun=true"
+      register: _nd_pc_deploy
+      failed_when: false
+      when:
+        - nd_pc_unbundle_apply | bool
+        - _nd_pc_delete is changed
+
+    - name: Report the enforce result
+      ansible.builtin.debug:
+        msg: >-
+          NDP_PC_UNBUNDLE_ENFORCE
+          deleted_changed={{ _nd_pc_delete is changed | default(false) }}
+          configSave={{ _nd_pc_configsave.status | default('skipped') }}
+          deploy={{ _nd_pc_deploy.status | default('skipped') }}
+      when: nd_pc_unbundle_apply | bool

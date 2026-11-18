@@ -1,0 +1,45 @@
+---
+# ensure_bfd: turn on the fabric-wide BFD setting when a bfd_required profile
+# finds it disabled. Read-modify-write echoes the controller's own fabric object
+# back with only management.bfd flipped, so no field schema is invented. Mirrors
+# the verify -> configSave -> deploy shape used by apply_change_role.yaml.
+- name: "ensure_bfd GET current fabric {{ _ndp_operation.fabric_ref }}"
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_fabric_name_by_ref[_ndp_operation.fabric_ref] }}"
+    method: get
+  register: _ndp_bfd_current
+  run_once: true
+  no_log: true
+
+- name: "ensure_bfd enable and persist on {{ _ndp_operation.fabric_ref }}"
+  when: not (_ndp_bfd_current.current.management.bfd | default(false) | bool)
+  run_once: true
+  block:
+    - name: "ensure_bfd PUT management with bfd=true"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ _ndp_fabric_name_by_ref[_ndp_operation.fabric_ref] }}"
+        method: put
+        content: "{{ _ndp_bfd_current.current | combine({'management': (_ndp_bfd_current.current.management | combine({'bfd': true}))}, recursive=True) }}"
+      register: _ndp_bfd_put
+      no_log: true
+
+    - name: "ensure_bfd verify PUT accepted"
+      ansible.builtin.assert:
+        that:
+          - not (_ndp_bfd_put.failed | default(false))
+          - (_ndp_bfd_put.status | default(200) | int) != 207
+        fail_msg: "ND rejected or partially applied the BFD enable request for {{ _ndp_operation.fabric_ref }}."
+
+    - name: "ensure_bfd save {{ _ndp_operation.fabric_ref }}"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ _ndp_fabric_name_by_ref[_ndp_operation.fabric_ref] }}/actions/configSave"
+        method: post
+        content: {}
+      no_log: true
+
+    - name: "ensure_bfd deploy {{ _ndp_operation.fabric_ref }}"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ _ndp_fabric_name_by_ref[_ndp_operation.fabric_ref] }}/actions/deploy?forceShowRun=true"
+        method: post
+        content: {}
+      no_log: true

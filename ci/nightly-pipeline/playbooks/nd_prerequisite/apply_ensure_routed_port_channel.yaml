@@ -1,0 +1,204 @@
+---
+# Create a temporary memberless L3 Port-channel parent. CiscoDevNet's NDFC
+# interface contract supports an empty MEMBER_INTERFACES value for
+# int_l3_port_channel; the target needs only the logical routed parent for its
+# subinterface lifecycle. The absent pre-state is journaled before POST.
+- name: "ensure_routed_port_channel guard {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }}"
+  ansible.builtin.assert:
+    that:
+      - _ndp_operation.desired_policy == 'int_l3_port_channel'
+      - _ndp_operation.interface is match('^Port-channel[0-9]+$')
+      - _ndp_operation.member_interfaces | length == 0
+    fail_msg: >-
+      Refusing an unsupported routed port-channel prerequisite for
+      {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }}.
+  run_once: true
+
+- name: "ensure_routed_port_channel recapture current intent {{ _ndp_operation.interface }}"
+  cisco.nd.nd_rest:
+    path: >-
+      /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/interface?serialNumber={{
+        _ndp_operation.serial
+      }}&ifName={{ _ndp_operation.interface }}
+    method: get
+  register: _ndp_port_channel_before
+  no_log: true
+  run_once: true
+
+- name: "ensure_routed_port_channel normalize the pre-change intent"
+  ansible.builtin.set_fact:
+    _ndp_port_channel_before_objects: >-
+      {{
+        _ndp_port_channel_before.current
+        if (_ndp_port_channel_before.current is not mapping)
+        else (_ndp_port_channel_before.current.DATA | default(_ndp_port_channel_before.current.response | default([])))
+      }}
+  run_once: true
+
+- name: "ensure_routed_port_channel refuse a changed or occupied namespace"
+  ansible.builtin.assert:
+    that:
+      - _ndp_port_channel_before_objects | length == 0
+    fail_msg: >-
+      {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }} appeared
+      after planning. Refusing to overwrite the existing logical interface.
+  run_once: true
+
+- name: "ensure_routed_port_channel append the pre-change snapshot to the restore journal"
+  ansible.builtin.set_fact:
+    _ndp_prerequisite_restore_operations: >-
+      {{ _ndp_prerequisite_restore_operations + [{
+        'action': 'delete_created_port_channel',
+        'switch_ref': _ndp_operation.switch_ref,
+        'serial': _ndp_operation.serial,
+        'switch_ip': _ndp_operation.switch_ip,
+        'fabric_name': _ndp_operation.fabric_name,
+        'interface': _ndp_operation.interface,
+        'pre_change_intent_exists': false
+      }] }}
+  run_once: true
+
+- name: "ensure_routed_port_channel persist the restore journal before mutation"
+  ansible.builtin.copy:
+    dest: "{{ _ndp_restore_file }}"
+    content: >-
+      {{ {'schema_version': 1, 'run_id': _ndp_run_id,
+          'execution_id': _ndp_execution_id,
+          'operations': _ndp_prerequisite_restore_operations} | to_nice_yaml }}
+    mode: "0600"
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+
+- name: "ensure_routed_port_channel create {{ _ndp_operation.interface }}"
+  cisco.nd.nd_rest:
+    path: /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/globalInterface
+    method: post
+    content:
+      policy: int_l3_port_channel
+      interfaceType: INTERFACE_PORT_CHANNEL
+      interfaces:
+        - serialNumber: "{{ _ndp_operation.serial }}"
+          interfaceType: INTERFACE_PORT_CHANNEL
+          ifName: "{{ _ndp_operation.interface }}"
+          fabricName: "{{ _ndp_operation.fabric_name }}"
+          nvPairs:
+            FABRIC_NAME: "{{ _ndp_operation.fabric_name }}"
+            PO_ID: "{{ _ndp_operation.interface }}"
+            MEMBER_INTERFACES: "{{ _ndp_operation.member_interfaces | join(',') }}"
+            PC_MODE: "on"
+            INTF_VRF: ""
+            IP: ""
+            PREFIX: ""
+            ROUTING_TAG: ""
+            MTU: "9216"
+            DESC: "Temporary Ansible subinterface prerequisite"
+            CONF: "no shutdown"
+            ADMIN_STATE: "true"
+            SPEED: "Auto"
+      skipResourceCheck: "false"
+  register: _ndp_port_channel_create
+  no_log: true
+  run_once: true
+
+- name: "ensure_routed_port_channel verify create accepted"
+  ansible.builtin.assert:
+    that:
+      - not (_ndp_port_channel_create.failed | default(false))
+      - (_ndp_port_channel_create.status | default(200) | int) not in [207, 400, 500]
+    fail_msg: >-
+      ND rejected temporary routed parent {{ _ndp_operation.interface }} before
+      the subinterface target could run.
+  run_once: true
+
+- name: "ensure_routed_port_channel deploy {{ _ndp_operation.interface }}"
+  cisco.nd.nd_rest:
+    path: /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/globalInterface/deploy
+    method: post
+    content:
+      - serialNumber: "{{ _ndp_operation.serial }}"
+        ifName: "{{ _ndp_operation.interface }}"
+        fabricName: "{{ _ndp_operation.fabric_name }}"
+  register: _ndp_port_channel_deploy
+  no_log: true
+  run_once: true
+
+- name: "ensure_routed_port_channel verify routed intent is visible"
+  cisco.nd.nd_rest:
+    path: >-
+      /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/interface?serialNumber={{
+        _ndp_operation.serial
+      }}&ifName={{ _ndp_operation.interface }}
+    method: get
+  register: _ndp_port_channel_after
+  retries: 3
+  delay: 5
+  until: >-
+    {{
+      ((_ndp_port_channel_after.current
+        if (_ndp_port_channel_after.current is not mapping)
+        else (_ndp_port_channel_after.current.DATA | default(_ndp_port_channel_after.current.response | default([]))))
+       | selectattr('policy', 'equalto', 'int_l3_port_channel') | list | length) == 1
+    }}
+  no_log: true
+  run_once: true
+
+# ND refuses a sub-interface on a parent whose DISCOVERED mode (operData.mode, learned from the switch) is not routed
+# ("... (discovered mode is not routed)"). A new memberless Port-channel is sometimes discovered within seconds and
+# sometimes not at all (live 2026-10-08: operData.mode stayed empty for 2 minutes after the deploy), so wait for it and
+# ask ND to rediscover the switch when it does not show up. A rediscovery leaves an already discovered mode in place.
+- name: "ensure_routed_port_channel wait for ND to discover {{ _ndp_operation.interface }} as routed"
+  run_once: true
+  block:
+    - name: "ensure_routed_port_channel read the discovered mode of {{ _ndp_operation.interface }}"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ _ndp_operation.fabric_name }}/switches/{{ _ndp_operation.serial }}/interfaces/{{
+            _ndp_operation.interface | replace('/', '%2F') }}
+        method: get
+      register: _ndp_pc_mode
+      retries: 6
+      delay: 10
+      until: "(((_ndp_pc_mode.current | default({})).operData | default({})).mode | default('') | string | lower) == 'routed'"
+      failed_when: false
+      no_log: true
+
+    - name: "ensure_routed_port_channel record whether ND discovered {{ _ndp_operation.interface }} as routed"
+      ansible.builtin.set_fact:
+        _ndp_pc_routed: "{{ (((_ndp_pc_mode.current | default({})).operData | default({})).mode | default('') | string | lower) == 'routed' }}"
+
+    # nd_rest raises on the empty 202 body after the request was sent, so the result is ignored.
+    - name: "ensure_routed_port_channel rediscover {{ _ndp_operation.switch_ref }} to refresh the discovered mode"
+      cisco.nd.nd_rest:
+        path: "/api/v1/manage/fabrics/{{ _ndp_operation.fabric_name }}/switchActions/rediscover"
+        method: post
+        content:
+          switchIds:
+            - "{{ _ndp_operation.serial }}"
+      failed_when: false
+      no_log: true
+      when: not (_ndp_pc_routed | bool)
+
+    - name: "ensure_routed_port_channel wait again after the rediscovery"
+      cisco.nd.nd_rest:
+        path: >-
+          /api/v1/manage/fabrics/{{ _ndp_operation.fabric_name }}/switches/{{ _ndp_operation.serial }}/interfaces/{{
+            _ndp_operation.interface | replace('/', '%2F') }}
+        method: get
+      register: _ndp_pc_mode_again
+      retries: 24
+      delay: 10
+      until: "(((_ndp_pc_mode_again.current | default({})).operData | default({})).mode | default('') | string | lower) == 'routed'"
+      failed_when: false
+      no_log: true
+      when: not (_ndp_pc_routed | bool)
+
+    - name: "ensure_routed_port_channel require the discovered mode of {{ _ndp_operation.interface }} to be routed"
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_ndp_pc_routed | bool) or
+            ((((_ndp_pc_mode_again | default({})).current | default({})).operData | default({})).mode | default('') | string | lower) == 'routed'
+        fail_msg: >-
+          NDP_ROUTED_PARENT_NOT_DISCOVERED: ND still does not report {{ _ndp_operation.switch_ref }}/{{ _ndp_operation.interface }}
+          as routed after the deploy and a rediscovery, so it would refuse the target's sub-interfaces on it.

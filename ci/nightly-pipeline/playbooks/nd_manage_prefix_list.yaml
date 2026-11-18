@@ -1,0 +1,44 @@
+---
+# Nightly integration playbook for cisco.nd.nd_manage_prefix_list.
+# Self-contained: creates an IPv4 prefix list, then deletes it.
+- name: cisco.nd nightly - nd_manage_prefix_list
+  hosts: nd
+  gather_facts: false
+  vars:
+    nd_prerequisite:
+      profile: smoke.nd_manage_prefix_list
+      fabric_types: [vxlanIbgp]
+      switch_count: 1
+      switch_roles: [leaf]
+    nd_fabric_name: VXLAN_EVPN_Fabric
+    nd_pl_name: PL_ANSIBLE_NIGHTLY
+  pre_tasks:
+    - name: Prepare and confirm ND topology prerequisites
+      ansible.builtin.import_tasks: nd_prerequisite/nd_prerequisite_wrapper.yaml
+      when: nd_prerequisite_enable | default(false) | bool
+  tasks:
+    - name: Create an IPv4 prefix list
+      cisco.nd.nd_manage_prefix_list:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: merged
+        config:
+          - ip_version: ipv4
+            name: "{{ nd_pl_name }}"
+            description: cisco.nd nightly test prefix list
+            entries:
+              - sequence_number: 10
+                action: permit
+                prefix: 10.0.0.0/8
+              - sequence_number: 20
+                action: permit
+                prefix: 172.16.0.0/12
+                min_prefix_length: 24
+                max_prefix_length: 32
+
+    - name: Delete the test prefix list
+      cisco.nd.nd_manage_prefix_list:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - ip_version: ipv4
+            name: "{{ nd_pl_name }}"

@@ -1,0 +1,34 @@
+--- a/tests/integration/targets/nd_manage_switches/tests/sanity.yaml
++++ b/tests/integration/targets/nd_manage_switches/tests/sanity.yaml
+@@ -72,10 +72,12 @@
+ - name: Sanity TC2 - Gathered - Validate Gathered Count
+   ansible.builtin.assert:
+     that:
+-      - gathered_result.gathered | length == nd_switches_base_conf | length
++      - nd_pipeline_switches_topology | default(nd_switches_base_conf) | length > 0
++      - (gathered_result.gathered | map(attribute='seed_ip') | list) | unique | list | length == gathered_result.gathered | length
++      - ((gathered_result.gathered | map(attribute='seed_ip') | list) | sort | list) in [(nd_switches_base_conf | map(attribute='seed_ip') | sort | list), (nd_pipeline_switches_topology | default(nd_switches_base_conf) | map(attribute='seed_ip') | sort | list)]
+     fail_msg: >-
+       Gathered count {{ gathered_result.gathered | length }} does not match
+-      expected {{ nd_switches_base_conf | length }}
++      expected the exact test fixture ({{ nd_switches_base_conf | length }}) or the exact declared fabric roster ({{ nd_pipeline_switches_topology | default(nd_switches_base_conf) | length }}); missing, duplicate, or unexpected seeds are not allowed
+   tags: sanity
+ 
+ - name: Sanity TC2 - Gathered - Validate Each Switch Present and Role Matches
+--- a/tests/integration/targets/nd_manage_switches/tests/gathered.yaml
++++ b/tests/integration/targets/nd_manage_switches/tests/gathered.yaml
+@@ -34,10 +34,12 @@
+ - name: Query TC1 - Validate Gathered Count
+   ansible.builtin.assert:
+     that:
+-      - query_result.gathered | length == nd_switches_base_conf | length
++      - nd_pipeline_switches_topology | default(nd_switches_base_conf) | length > 0
++      - (query_result.gathered | map(attribute='seed_ip') | list) | unique | list | length == query_result.gathered | length
++      - ((query_result.gathered | map(attribute='seed_ip') | list) | sort | list) in [(nd_switches_base_conf | map(attribute='seed_ip') | sort | list), (nd_pipeline_switches_topology | default(nd_switches_base_conf) | map(attribute='seed_ip') | sort | list)]
+     fail_msg: >-
+       Gathered count {{ query_result.gathered | length }} does not match
+-      expected {{ nd_switches_base_conf | length }}
++      expected the exact test fixture ({{ nd_switches_base_conf | length }}) or the exact declared fabric roster ({{ nd_pipeline_switches_topology | default(nd_switches_base_conf) | length }}); missing, duplicate, or unexpected seeds are not allowed
+   tags: query
+ 
+ - name: Query TC1 - Validate Each Switch Present and Role Matches

@@ -1,0 +1,114 @@
+---
+- name: Validate scoped switch repair and credentials before mutation
+  ansible.builtin.assert:
+    that:
+      - _ndp_repair_operation.operation == 'repair_switch'
+      - _ndp_repair_operation.action in ['onboard', 'move', 'role']
+      - _ndp_repair_operation.serial == _ndp_registry.lab.switches[_ndp_repair_operation.switch_ref].serial
+      - _ndp_repair_operation.switch_ip == _ndp_registry.lab.switches[_ndp_repair_operation.switch_ref].seed_ip
+      - nd_switch_username | default(switch_username | default(''), true) | length > 0
+      - nd_switch_password | default(switch_password | default(''), true) | length > 0
+    fail_msg: "Switch repair scope or credentials are incomplete; no switch was changed."
+  run_once: true
+
+- name: Read the destination before prerequisite switch onboarding
+  cisco.nd.nd_rest:
+    method: get
+    path: "/api/v1/manage/fabrics/{{ _ndp_repair_operation.fabric_name }}"
+  register: _ndp_switch_destination_probe
+  failed_when: false
+  no_log: true
+  run_once: true
+  when: >-
+    _ndp_repair_operation.action != 'role' or
+    ([_ndp_repair_operation.before.role, _ndp_repair_operation.desired_role] | sort) == ['border', 'spine']
+- name: Require a readable destination compatible with preserve_config=false before mutation
+  ansible.builtin.assert:
+    that:
+      - _ndp_switch_destination_probe.status | default(0) | int == 200
+      - _ndp_switch_destination_probe.current is mapping
+      - _ndp_switch_destination_probe.current.management is mapping
+      - _destination_type in ['vxlanibgp', 'vxlanebgp']
+    fail_msg: >-
+      NDP_SWITCH_DESTINATION_BLOCKED: destination must be readable with HTTP 200 and
+      be a supported nightly VXLAN iBGP/eBGP destination with preserve_config=false; no switch was removed or added.
+  vars:
+    _destination: "{{ _ndp_switch_destination_probe.current | default({}) }}"
+    _destination_type: "{{ _destination.management.type | default('') | string | lower if _destination is mapping and _destination.get('management') is mapping else '' }}"
+  run_once: true
+  when: >-
+    _ndp_repair_operation.action != 'role' or
+    ([_ndp_repair_operation.before.role, _ndp_repair_operation.desired_role] | sort) == ['border', 'spine']
+- name: Journal switch repair before changing membership or role
+  ansible.builtin.set_fact:
+    _ndp_baseline_repair_journal: "{{ _ndp_baseline_repair_journal + [_ndp_repair_operation] }}"
+  run_once: true
+  no_log: true
+
+- name: Persist private baseline repair journal
+  ansible.builtin.copy:
+    dest: "{{ _ndp_state_dir }}/baseline-repair-journal.yaml"
+    content: "{{ {'run_id': _ndp_run_id, 'execution_id': _ndp_execution_id, 'operations': _ndp_baseline_repair_journal} | to_nice_yaml }}"
+    mode: "0600"
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Remove a declared switch before rehoming or an unsupported in-place role transition
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ _ndp_repair_operation.source_fabric_name }}"
+    state: deleted
+    config:
+      - seed_ip: "{{ _ndp_repair_operation.switch_ip }}"
+  run_once: true
+  when: >-
+    _ndp_repair_operation.action == 'move' or
+    (_ndp_repair_operation.action == 'role' and
+     ([_ndp_repair_operation.before.role, _ndp_repair_operation.desired_role] | sort) == ['border', 'spine'])
+
+- name: Restore the declared switch membership and role
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ _ndp_repair_operation.fabric_name }}"
+    state: merged
+    config_actions:
+      save: true
+      deploy: true
+    config:
+      - seed_ip: "{{ _ndp_repair_operation.switch_ip }}"
+        role: "{{ _ndp_repair_operation.desired_role }}"
+        username: "{{ nd_switch_username | default(switch_username, true) }}"
+        password: "{{ nd_switch_password | default(switch_password, true) }}"
+        preserve_config: false
+  register: _ndp_repair_switch_result
+  retries: 3
+  delay: 15
+  until: _ndp_repair_switch_result is succeeded
+  no_log: true
+  run_once: true
+  when: >-
+    _ndp_repair_operation.action != 'role' or
+    ([_ndp_repair_operation.before.role, _ndp_repair_operation.desired_role] | sort) == ['border', 'spine']
+
+- name: Restore a supported in-place role through the existing role API
+  ansible.builtin.include_tasks: apply_change_role.yaml
+  vars:
+    _ndp_operation: "{{ _ndp_repair_operation | combine({'current_role': _ndp_repair_operation.before.role}) }}"
+    _ndp_fabric_name_by_ref: "{{ dict([[_ndp_repair_operation.fabric_ref, _ndp_repair_operation.fabric_name]]) }}"
+  when:
+    - _ndp_repair_operation.action == 'role'
+    - ([_ndp_repair_operation.before.role, _ndp_repair_operation.desired_role] | sort) != ['border', 'spine']
+
+- name: Verify restored switch identity membership and role from fresh inventory
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_repair_operation.fabric_name }}/switches"
+    method: get
+  register: _ndp_repair_switch_verify
+  retries: 20
+  delay: 15
+  until: >-
+    (_ndp_repair_switch_verify.current.switches | default([])
+     | selectattr('switchId', 'equalto', _ndp_repair_operation.serial)
+     | selectattr('fabricManagementIp', 'equalto', _ndp_repair_operation.switch_ip)
+     | selectattr('switchRole', 'match', '(?i)^' ~ (_ndp_repair_operation.desired_role | replace('_', '_?')) ~ '$') | list | length) == 1
+  no_log: true
+  run_once: true
