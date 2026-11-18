@@ -166,6 +166,7 @@ class NDStateMachine:
             # are converted above before applying the same masking pass.
             if hasattr(self.module, "no_log_values"):
                 for existing_item in self.before:
+                    self.module.no_log_values |= existing_item.collect_model_secret_values()
                     self.module.no_log_values |= existing_item.collect_replacement_secret_values()
             # Surface controller objects whose type this module does not model. They
             # are preserved as opaque read-only records (see the links tolerant read

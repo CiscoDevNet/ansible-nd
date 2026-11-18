@@ -709,6 +709,20 @@ def test_vrf_parsing_leaves_l3vni_creation_default_until_inventory_lookup(state)
     assert coordinator._parse_config([{"vrf_name": "BLUE", "l3vni_wo_vlan": False}], VrfConfigModel, state)[0]["l3vni_wo_vlan"] is False
 
 
+def test_vrf_parse_keeps_bgp_password_for_request_building():
+    """Parsed config is the request path; display masking must not replace the value."""
+    canary = "c0de359a"
+    coordinator = VrfWorkflowCoordinator(module=_Module({}), strategy=_StandaloneStrategy())
+    parsed = coordinator._parse_config(
+        [{"vrf_name": "BLUE", "bgp_password": canary, "bgp_passwd_encrypt": "type7"}],
+        VrfConfigModel,
+        "merged",
+    )
+    assert parsed[0]["bgp_password"] == canary
+    assert parsed[0]["bgp_passwd_encrypt"] == "type7"
+    assert "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER" not in parsed[0].values()
+
+
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
 def test_vrf_parent_does_not_inject_fabric_l3vni_default(state):
     coordinator = VrfWorkflowCoordinator(module=_Module({}), strategy=_ParentStrategy())
