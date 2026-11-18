@@ -56,21 +56,28 @@ def groovy_runner(request, tmp_path_factory):
 
 
 @pytest.mark.parametrize('prerequisite_only', [False, True])
-def test_switches_run_after_vpc_pairs_and_unstarted_reporting_matches(groovy_runner, prerequisite_only):
+@pytest.mark.parametrize('groovy_runner', (*VARIANTS, 'Jenkinsfile_nd_jenkins_script_comm_list'), indirect=True)
+def test_port_channels_run_after_vpc_pairs_before_switches_and_reporting_matches(groovy_runner, prerequisite_only):
     groovy_runner("context.ND_PREREQUISITE_ONLY_EFFECTIVE = " + json.dumps(str(prerequisite_only).lower()) + "\n" + r'''
 def modules = script.INTEGRATION_MODULES + script.INTERFACE_INTEGRATION_MODULES + script.TRAILING_INTEGRATION_MODULES
+def portChannels = ['nd_interface_port_channel_access', 'nd_interface_port_channel_trunk_host',
+                    'nd_interface_port_channel_routed']
 def start = source.indexOf('def standaloneTargets = vpcPairRows.collect')
 def end = source.indexOf('def plannedResultTargets =', start)
 assert start >= 0 && end > start
 def ordering = source.substring(start, end) + '\nreturn orderedIntegrationTargets'
 for (pairs in [[], [[id:'advanced'], [id:'external']]]) {
     for (selected in [modules, ['nd_manage_switches', 'nd_manage_policy', 'nd_manage_links'],
-                      ['nd_manage_policy', 'nd_manage_links']]) {
+                      ['nd_manage_policy', 'nd_manage_links'], portChannels, [],
+                      ['nd_manage_switches', portChannels[0], 'nd_interface_subinterface_managed',
+                       portChannels[1], 'nd_interface_vpc_access', portChannels[2], 'nd_manage_links'],
+                      [portChannels[2], 'nd_manage_links', portChannels[0]]]) {
         def bindings = new Binding([effectiveIntegrationModules:selected, vpcPairRows:pairs, env:context])
         def actual = new GroovyShell(bindings).evaluate(ordering)
         def expectedPairs = context.ND_PREREQUISITE_ONLY_EFFECTIVE == 'true' ? [] :
             pairs.collect { "nd_vpc_pair.${it.id}".toString() }
-        def expected = selected.findAll { it != 'nd_manage_switches' } + expectedPairs
+        def expected = selected.findAll { it != 'nd_manage_switches' && !portChannels.contains(it) } +
+            expectedPairs + selected.findAll { portChannels.contains(it) }
         if (selected.contains('nd_manage_switches')) {
             expected.add('nd_manage_switches')
             assert actual.last() == 'nd_manage_switches'
@@ -86,10 +93,12 @@ config.vpc_pair_fabric_type = 'vxlanEbgp'
 script.recordUnstartedRound(config, 'fixture round not reached')
 def reported = script.MODULE_ACTIVITY_RESULTS.values().collect { it.module }
 def configuredPairs = script.VPC_PAIR_EXECUTIONS.collect { "nd_vpc_pair.${it.id}".toString() }
-assert reported == modules.findAll { it != 'nd_manage_switches' } + configuredPairs +
+assert reported == modules.findAll { it != 'nd_manage_switches' && !portChannels.contains(it) } + configuredPairs +
+    modules.findAll { portChannels.contains(it) } +
     modules.findAll { it == 'nd_manage_switches' } + script.PLAYBOOK_FILES
 assert script.INTEGRATION_MODULES + script.INTERFACE_INTEGRATION_MODULES + script.TRAILING_INTEGRATION_MODULES == modules
 ''')
+
 
 @pytest.mark.parametrize('phase', ['pre', 'post', 'home'])
 @pytest.mark.parametrize('exit_code, classification', [(0, 'SUCCESS'), (2, 'ANSIBLE_FAILED'), (124, 'TIMEOUT'), (7, 'COMMAND_FAILED')])

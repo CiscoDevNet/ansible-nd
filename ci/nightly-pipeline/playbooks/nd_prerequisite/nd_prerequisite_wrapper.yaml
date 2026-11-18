@@ -212,6 +212,8 @@
 
 # Planner exit code 3 = the lab lacks a declared port/link/vPC substrate. That is a lab limitation,
 # not a regression: report it under a greppable marker and end the play before any mutation.
+# A caller that sets nd_prerequisite_continue_on_failure instead receives a failure it rescues,
+# so its authored target still runs and the module is reported as failed rather than skipped.
 - name: Report a module whose declared lab substrate is unavailable
   ansible.builtin.debug:
     msg: "NDP_MODULE_SKIPPED [{{ _ndp_execution_id }}]: {{ _ndp_plan.stderr | default('') | trim }}"
@@ -219,12 +221,14 @@
   when:
     - _ndp_plan.rc == 3
     - not (nd_prerequisite_only | default(false) | bool)
+    - not (nd_prerequisite_continue_on_failure | default(false) | bool)
 
 - name: Release run-owned resources before skipping unavailable substrate
   ansible.builtin.include_tasks: nd_prerequisite_restore.yaml
   when:
     - _ndp_plan.rc == 3
     - not (nd_prerequisite_only | default(false) | bool)
+    - not (nd_prerequisite_continue_on_failure | default(false) | bool)
     - (_ndp_prerequisite_restore_operations | default([]) | length > 0) or (_ndp_baseline_repair_lock_acquired | default(false) | bool)
 
 - name: End the play cleanly because the declared lab substrate is unavailable
@@ -232,6 +236,16 @@
   when:
     - _ndp_plan.rc == 3
     - not (nd_prerequisite_only | default(false) | bool)
+    - not (nd_prerequisite_continue_on_failure | default(false) | bool)
+
+- name: Fail into the caller's continuation path because the declared lab substrate is unavailable
+  ansible.builtin.fail:
+    msg: "NDP_PREREQUISITE_SUBSTRATE_UNAVAILABLE [{{ _ndp_execution_id }}]: {{ _ndp_plan.stderr | default('') | trim }}"
+  run_once: true
+  when:
+    - _ndp_plan.rc == 3
+    - not (nd_prerequisite_only | default(false) | bool)
+    - nd_prerequisite_continue_on_failure | default(false) | bool
 
 - name: Decode the confirmed ND prerequisite plan
   ansible.builtin.set_fact:

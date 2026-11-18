@@ -38,6 +38,9 @@
       profile: "integration.{{ test_module }}"
     nd_prerequisite_assets_dir: "{{ playbook_dir }}"
     nd_prerequisite_wrapper_path: "{{ playbook_dir }}/nd_prerequisite/nd_prerequisite_wrapper.yaml"
+    # A failed prerequisite or pipeline fixture is recorded and the authored target still runs;
+    # post_tasks then fail the module so the prerequisite failure stays visible in the report.
+    nd_prerequisite_continue_on_failure: true
     testcase: "*"                      # every test-case file in the target
     # Select compatible upstream test directories for network/VRF roles.
     # Keep MSD and MCFG absent from this list unless their fixtures exist.
@@ -308,15 +311,34 @@
         - name: "[{{ test_module }}] run prerequisite preparation lifecycle"
           ansible.builtin.import_tasks: "{{ nd_prerequisite_wrapper_path }}"
       rescue:
-        - name: "[{{ test_module }}] restore any prerequisite interfaces after preparation failure"
-          ansible.builtin.include_tasks: "{{ playbook_dir }}/nd_prerequisite/nd_prerequisite_restore.yaml"
-          when: (_ndp_prerequisite_restore_operations | default([]) | length > 0) or (_ndp_baseline_repair_lock_acquired | default(false) | bool)
+        # Journaled changes and an owned lock stay armed for the forced restore handler, which runs
+        # after the authored target and its cleanup exactly as on the successful path.
+        - name: "[{{ test_module }}] record the prerequisite failure and continue to the authored target"
+          ansible.builtin.set_fact:
+            _ndp_prerequisite_failed: true
+            _ndp_continued_failures: >-
+              {{ _ndp_continued_failures | default([])
+                 + ['prerequisites: ' ~ (ansible_failed_task.name | default('unknown task', true) | string | truncate(200))] }}
 
-        - name: "[{{ test_module }}] fail after prerequisite recovery"
-          ansible.builtin.fail:
+        # Use the planner's values when it produced them, otherwise the registry-declared ones, so the
+        # target never falls back to an undeclared default (for example an underlay uplink parent).
+        - name: "[{{ test_module }}] publish declared runtime variables for the authored target"
+          ansible.builtin.set_fact:
+            "{{ _ndp_item.key }}": "{{ _ndp_item.value }}"
+          loop: >-
+            {{ ((_ndp_selected_profile | default({})).runtime_vars | default({}))
+               | combine((_ndp_result | default({})).runtime_vars | default({}))
+               | dict2items }}
+          loop_control:
+            loop_var: _ndp_item
+            label: "{{ _ndp_item.key }}"
+
+        - name: "[{{ test_module }}] report the prerequisite failure and continue to the authored target"
+          ansible.builtin.debug:
             msg: >-
-              Prerequisite preparation failed and its journaled interface changes
-              were restored: {{ ansible_failed_result.msg | default(ansible_failed_result) }}
+              NDP_PREREQUISITE_FAILED_CONTINUING [{{ test_module }}]: prerequisite preparation failed at
+              '{{ ansible_failed_task.name | default('unknown task', true) }}'; running the authored target anyway.
+              Journaled changes ({{ _ndp_prerequisite_restore_operations | default([]) | length }}) are restored after it.
 
   tasks:
     # Handler notifications emitted from pre_tasks are flushed before normal
@@ -402,6 +424,7 @@
         - not (nd_prerequisite_only | default(false) | bool)
         - not ansible_check_mode
         - _ndp_result is defined
+        - not (_ndp_prerequisite_failed | default(false) | bool)
 
     - name: "[{{ test_module }}] discover optional setup/cleanup task files (names vary)"
       ansible.builtin.stat:
@@ -500,616 +523,632 @@
       ignore_errors: true
       when: test_module == 'nd_manage_vrfs' and not (nd_prerequisite_only | default(false) | bool)
 
-    # -------------------------------------------------------------------------
-    # SETUP (nd_manage_l3out only): the collection's l3out setup.yaml deletes
-    # stale L3Outs but never CREATES the VRFs its merged.yaml references
-    # (test_vrf1_name 'production' on fabric1, test_vrf2_name 'external' on
-    # fabric2). On ND 4.2.1 the L3Out create then 207s "VRF production not found
-    # in fabric VXLAN_EVPN_Fabric" (build #30). Pre-create the VRFs here. The
-    # nd_manage_vrfs MODULE is broken on 4.2.1 (bgpPasswordKeyType), so use raw
-    # REST. A duplicate create is allowed, but the GET checks below are the
-    # authoritative gate: the L3Out module is not started unless each required
-    # VRF is present on its declared fabric.
-    - name: "[{{ test_module }}] SETUP - pre-create L3Out VRF on fabric1"
-      cisco.nd.nd_rest:
-        method: post
-        path: "/api/v1/manage/fabrics/{{ nd_test_fabric1_name }}/vrfs"
-        content:
-          vrfs:
-            - vrfType: vxlanIbgp
-              fabricName: "{{ nd_test_fabric1_name }}"
-              vrfName: "{{ nd_test_vrf1_name | default('production') }}"
-              vrfId: "{{ nd_test_vrf1_id | default(58900) }}"
-              vlanId: "{{ nd_test_vrf1_vlan | default(2290) }}"
-      register: l3out_vrf1_precreate
-      # ND may return a duplicate-object error when the prerequisite already
-      # exists. The GET + assert below decides whether the prerequisite is valid.
-      failed_when: false
-      when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
-
-    - name: "[{{ test_module }}] SETUP - pre-create L3Out VRF on fabric2"
-      cisco.nd.nd_rest:
-        method: post
-        path: "/api/v1/manage/fabrics/{{ nd_test_fabric2_name }}/vrfs"
-        content:
-          vrfs:
-            - vrfType: externalConnectivity
-              fabricName: "{{ nd_test_fabric2_name }}"
-              vrfName: "{{ nd_test_vrf2_name | default('external') }}"
-              vrfId: "{{ nd_test_vrf2_id | default(58901) }}"
-              vlanId: "{{ nd_test_vrf2_vlan | default(2291) }}"
-      register: l3out_vrf2_precreate
-      failed_when: false
-      when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
-
-    - name: "[{{ test_module }}] SETUP - verify L3Out VRF on fabric1"
-      cisco.nd.nd_rest:
-        method: get
-        path: "/api/v1/manage/fabrics/{{ nd_test_fabric1_name }}/vrfs"
-      register: l3out_vrf1_live
-      when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
-
-    - name: "[{{ test_module }}] SETUP - verify L3Out VRF on fabric2"
-      cisco.nd.nd_rest:
-        method: get
-        path: "/api/v1/manage/fabrics/{{ nd_test_fabric2_name }}/vrfs"
-      register: l3out_vrf2_live
-      when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
-
-    - name: "[{{ test_module }}] SETUP - fail closed if L3Out VRFs are missing"
-      ansible.builtin.assert:
-        that:
-          - >-
-            (nd_test_vrf1_name | default('production')) in
-            (l3out_vrf1_live.current.vrfs | default([]) | map(attribute='vrfName') | list)
-          - >-
-            (nd_test_vrf2_name | default('external')) in
-            (l3out_vrf2_live.current.vrfs | default([]) | map(attribute='vrfName') | list)
-        fail_msg: >-
-          NDP_L3OUT_VRF_PREREQUISITE_FAIL: required VRFs were not confirmed before
-          nd_manage_l3out. Expected
-          {{ nd_test_vrf1_name | default('production') }} on {{ nd_test_fabric1_name }} and
-          {{ nd_test_vrf2_name | default('external') }} on {{ nd_test_fabric2_name }}.
-          Check the raw VRF POST response and controller permissions.
-        success_msg: >-
-          NDP_L3OUT_VRF_PREREQUISITE_OK: confirmed
-          {{ nd_test_vrf1_name | default('production') }} on {{ nd_test_fabric1_name }} and
-          {{ nd_test_vrf2_name | default('external') }} on {{ nd_test_fabric2_name }}.
-      when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
-
-    # -------------------------------------------------------------------------
-    # Prepare route maps and supply only a missing external ASN for L3Out BGP cases.
-    - name: "[{{ test_module }}] SETUP - prepare route-map prerequisites for the original L3Out cases"
-      when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
+    # Pipeline fixtures (L3Out VRFs/route maps, L2 DCI endpoints, vPC pairs, peer-link readiness) are
+    # prerequisites, not authored setup: a failure is recorded and the authored target still runs.
+    - name: "[{{ test_module }}] SETUP - prepare module-specific pipeline fixtures"
       block:
-        - name: "[{{ test_module }}] SETUP - read the target's unchanged L3Out variables"
-          ansible.builtin.include_vars:
-            file: "{{ playbook_dir }}/tests/integration/targets/nd_manage_l3out/vars/main.yaml"
-
-        - name: "[{{ test_module }}] SETUP - verify L3Out subinterface names match the authored VLAN"
-          ansible.builtin.assert:
-            that:
-              - l3out_static.connectivity_details.routing_interface_type == 'subInterface'
-              - l3out_static.connectivity_details.links | length == 1
-              - l3out_static.connectivity_details.links[0].vlan_id | int >= 1
-              - l3out_static.connectivity_details.links[0].vlan_id | int <= 4094
-              - (test_switch1_subif | string).endswith('.' ~ (l3out_static.connectivity_details.links[0].vlan_id | string))
-              - (test_switch2_subif | string).endswith('.' ~ (l3out_static.connectivity_details.links[0].vlan_id | string))
-            fail_msg: "NDP_L3OUT_SUBINTERFACE_VLAN_MISMATCH: the configured subinterface names must include the authored VLAN suffix."
-
-        - name: "[{{ test_module }}] SETUP - read external fabric BGP settings"
-          cisco.nd.nd_rest:
-            method: get
-            path: "/api/v1/manage/fabrics/{{ nd_test_fabric2_name }}"
-          register: _ndp_l3out_fabric2
-          failed_when: false
-          no_log: true
-
-        - name: "[{{ test_module }}] SETUP - require external fabric ASN when missing from a BGP case"
-          ansible.builtin.assert:
-            that:
-              - not (_ndp_l3out_fabric2.failed | default(false) | bool)
-              - (_ndp_l3out_fabric2.current.management.bgpAsn | default('', true) | string | trim | length) > 0
-            fail_msg: "NDP_L3OUT_FABRIC2_ASN_MISSING: external fabric BGP ASN could not be verified."
-          loop: [l3out_bgp, l3out_bgp_updated, l3out_svi, l3out_static_replaced]
-          vars:
-            _ndp_l3out_case: "{{ lookup('ansible.builtin.vars', item) }}"
-          when:
-            - _ndp_l3out_case.configured_fabrics | default('') in ['both', 'fabric2']
-            - _ndp_l3out_case.routing_details.routing_protocol | default('') == 'bgp'
-            - _ndp_l3out_case.routing_details.bgp.fabric2_details.local_asn | default('', true) | string | trim | length == 0
-
-        - name: "[{{ test_module }}] SETUP - supply missing external fabric ASN to BGP cases"
-          ansible.builtin.set_fact:
-            "{{ item }}": >-
-              {{ _ndp_l3out_case | combine({'routing_details': {'bgp': {'fabric2_details':
-                 {'local_asn': (_ndp_l3out_fabric2.current.management.bgpAsn | string | trim)}}}}, recursive=True) }}
-          loop: [l3out_bgp, l3out_bgp_updated, l3out_svi, l3out_static_replaced]
-          vars:
-            _ndp_l3out_case: "{{ lookup('ansible.builtin.vars', item) }}"
-          when:
-            - _ndp_l3out_case.configured_fabrics | default('') in ['both', 'fabric2']
-            - _ndp_l3out_case.routing_details.routing_protocol | default('') == 'bgp'
-            - _ndp_l3out_case.routing_details.bgp.fabric2_details.local_asn | default('', true) | string | trim | length == 0
-          no_log: true
-
-        - name: "[{{ test_module }}] SETUP - resolve route maps referenced by the original cases"
-          ansible.builtin.set_fact:
-            _ndp_l3out_route_maps: >-
-              {{ [l3out_bgp.routing_details, l3out_bgp_updated.routing_details, l3out_svi.routing_details] | to_json
-                 | regex_findall('"ipv[46]_route_map_(?:in|out)": ?"([^"]+)"') | unique | list }}
-
-        - name: "[{{ test_module }}] SETUP - list the route maps already in {{ nd_test_fabric1_name }}"
-          cisco.nd.nd_rest:
-            method: get
-            path: "/api/v1/manage/fabrics/{{ nd_test_fabric1_name }}/routeMaps"
-          register: _ndp_l3out_route_maps_live
-          no_log: true
-
-        - name: "[{{ test_module }}] SETUP - create only the missing route maps (existing ones are never modified)"
-          ansible.builtin.set_fact:
-            _ndp_l3out_route_maps_created: >-
-              {{ _ndp_l3out_route_maps | difference(
-                   (_ndp_l3out_route_maps_live.current.routeMaps | default(_ndp_l3out_route_maps_live.current.items | default([])))
-                   | map(attribute='name') | list) }}
-
-        - name: "[{{ test_module }}] SETUP - create the route maps the l3out vars reference"
-          cisco.nd.nd_manage_route_map:
-            fabric_name: "{{ nd_test_fabric1_name }}"
-            config: >-
-              {{ _ndp_l3out_route_maps_created
-                 | map('community.general.dict_kv', 'name') | list
-                 | map('combine', {'entries': [{'sequence_number': 10, 'action': 'permit',
-                                                 'rule_entries': [{'rule_type': 'setLocalPreference', 'value': 100}]}]})
-                 | list }}
-            state: merged
-          when: _ndp_l3out_route_maps_created | length > 0
-
-    # -------------------------------------------------------------------------
-    # SETUP (nd_manage_l3out SVI case): ND accepts an SVI L3Out only over an ext_l2_dci_link
-    # (policy layer2Dci) between the authored switch pair. Scoped build 3 (2026-11-16) had that link
-    # present with trunk intent on both Eth1/4 endpoints, yet the border endpoint was still routed on the
-    # switch and the SVI create failed with 207 "No appropriate link found". Deploy only the trunk intent ND
-    # already stores for that link's endpoints. Nothing here writes intent or fails the target: the routed
-    # and subInterface cases still run, and an SVI failure stays visible in the target's own result.
-    - name: "[{{ test_module }}] SETUP - deploy the stored L2 DCI endpoint intent the SVI case uses"
-      when:
-        - test_module == 'nd_manage_l3out'
-        - not (nd_prerequisite_only | default(false) | bool)
-        - nd_l3out_deploy_l2dci_endpoints | default(true) | bool
-        - (l3out_svi | default({})).connectivity_details.routing_interface_type | default('') == 'svi'
-      block:
-        - name: "[{{ test_module }}] SETUP - resolve the authored SVI switch pair"
-          ansible.builtin.set_fact:
-            _ndp_l2dci_fabric1: "{{ l3out_svi.fabric1_name | default('') | string }}"
-            _ndp_l2dci_fabric_by_switch: >-
-              {{ {(_ndp_l2dci_case_link.switch1_details.switch_id | default('') | string): (l3out_svi.fabric1_name | default('') | string),
-                  (_ndp_l2dci_case_link.switch2_details.switch_id | default('') | string): (l3out_svi.fabric2_name | default('') | string)} }}
-            _ndp_l2dci_matches: []
-            _ndp_l2dci_endpoints: []
-            _ndp_l2dci_state: []
-            _ndp_l2dci_pending: []
-            _ndp_l2dci_unconverged: []
-          vars:
-            _ndp_l2dci_case_link: "{{ l3out_svi.connectivity_details.links | default([], true) | first | default({}, true) }}"
-
-        - name: "[{{ test_module }}] SETUP - require two distinct authored SVI switches with fabrics"
-          ansible.builtin.set_fact:
-            _ndp_l2dci_pair_ok: >-
-              {{ _ndp_l2dci_fabric_by_switch | length == 2
-                 and '' not in (_ndp_l2dci_fabric_by_switch.keys() | list)
-                 and '' not in (_ndp_l2dci_fabric_by_switch.values() | list) }}
-
-        - name: "[{{ test_module }}] SETUP - read the links ND manages for {{ _ndp_l2dci_fabric1 }}"
-          cisco.nd.nd_rest:
-            method: get
-            path: "/api/v1/manage/links?fabricName={{ _ndp_l2dci_fabric1 }}"
-          register: _ndp_l2dci_links
-          failed_when: false
-          no_log: true
-          when: _ndp_l2dci_pair_ok | bool
-
-        - name: "[{{ test_module }}] SETUP - select the layer2Dci link between the authored SVI switches"
-          ansible.builtin.set_fact:
-            _ndp_l2dci_links_readable: "{{ _ndp_l2dci_rows is not string and _ndp_l2dci_rows is iterable and _ndp_l2dci_rows is not mapping }}"
-            _ndp_l2dci_matches: >-
-              {{ ([] if (_ndp_l2dci_rows is string or _ndp_l2dci_rows is not iterable or _ndp_l2dci_rows is mapping) else _ndp_l2dci_rows)
-                 | select('mapping')
-                 | selectattr('configData', 'defined') | selectattr('configData', 'mapping')
-                 | selectattr('configData.policyType', 'defined')
-                 | selectattr('configData.policyType', 'equalto', 'layer2Dci')
-                 | selectattr('srcSwitchId', 'defined') | selectattr('dstSwitchId', 'defined')
-                 | selectattr('srcInterfaceName', 'defined') | selectattr('dstInterfaceName', 'defined')
-                 | selectattr('srcSwitchId', 'in', _ndp_l2dci_fabric_by_switch.keys() | list)
-                 | selectattr('dstSwitchId', 'in', _ndp_l2dci_fabric_by_switch.keys() | list)
-                 | list }}
-          vars:
-            _ndp_l2dci_rows: >-
-              {{ _ndp_l2dci_links.current.links
-                 if ((_ndp_l2dci_links.current | default('')) is mapping and _ndp_l2dci_links.current.links is defined)
-                 else '' }}
-          when: _ndp_l2dci_pair_ok | bool
-
-        - name: "[{{ test_module }}] SETUP - name both endpoints of the single matching link"
-          ansible.builtin.set_fact:
-            _ndp_l2dci_endpoints:
-              - name: "{{ _ndp_l2dci_link.srcSwitchName | default('switch1') }}"
-                fabric: "{{ _ndp_l2dci_fabric_by_switch[_ndp_l2dci_link.srcSwitchId] }}"
-                serial: "{{ _ndp_l2dci_link.srcSwitchId }}"
-                interface: "{{ _ndp_l2dci_link.srcInterfaceName }}"
-              - name: "{{ _ndp_l2dci_link.dstSwitchName | default('switch2') }}"
-                fabric: "{{ _ndp_l2dci_fabric_by_switch[_ndp_l2dci_link.dstSwitchId] }}"
-                serial: "{{ _ndp_l2dci_link.dstSwitchId }}"
-                interface: "{{ _ndp_l2dci_link.dstInterfaceName }}"
-          vars:
-            _ndp_l2dci_link: "{{ _ndp_l2dci_matches | first }}"
-          when:
-            - _ndp_l2dci_matches | length == 1
-            - _ndp_l2dci_matches[0].srcSwitchId != _ndp_l2dci_matches[0].dstSwitchId
-
-        - name: "[{{ test_module }}] SETUP - read each L2 DCI endpoint's stored intent and switch-reported mode"
-          cisco.nd.nd_rest:
-            method: get
-            path: "/api/v1/manage/fabrics/{{ item.fabric }}/switches/{{ item.serial }}/interfaces/{{ item.interface | replace('/', '%2F') }}"
-          loop: "{{ _ndp_l2dci_endpoints }}"
-          register: _ndp_l2dci_before
-          failed_when: false
-          no_log: true
-
-        - name: "[{{ test_module }}] SETUP - classify each L2 DCI endpoint before any deploy"
-          ansible.builtin.set_fact:
-            _ndp_l2dci_state: >-
-              {{ _ndp_l2dci_state + [item.item | combine({
-                   'intent_trunk': _ndp_l2dci_intent_ok | bool,
-                   'converged': (_ndp_l2dci_intent_ok | bool) and (_ndp_l2dci_oper_ok | bool),
-                   'mode': _ndp_l2dci_cur.operData.mode | default('unknown', true) | string,
-                   'admin': _ndp_l2dci_cur.operData.adminStatus | default('unknown', true) | string})] }}
-          loop: "{{ _ndp_l2dci_before.results | default([]) }}"
-          vars:
-            _ndp_l2dci_cur: "{{ item.current if (item.current | default('')) is mapping else {} }}"
-            _ndp_l2dci_intent_ok: >-
-              {{ (_ndp_l2dci_cur.switchId | default('')) == item.item.serial
-                 and (_ndp_l2dci_cur.interfaceName | default('')) == item.item.interface
-                 and (_ndp_l2dci_cur.configData.mode | default('')) == 'trunk'
-                 and (_ndp_l2dci_cur.configData.networkOS.policy.policyType | default('')) == 'l2DciLinkMember'
-                 and (_ndp_l2dci_cur.configData.networkOS.policy.adminState | default(false) | bool) }}
-            _ndp_l2dci_oper_ok: >-
-              {{ (_ndp_l2dci_cur.operData.mode | default('')) == 'trunk'
-                 and (_ndp_l2dci_cur.operData.adminStatus | default('')) == 'up' }}
-          no_log: true
-
-        - name: "[{{ test_module }}] SETUP - select endpoints whose stored trunk intent is not on the switch"
-          ansible.builtin.set_fact:
-            _ndp_l2dci_pending: >-
-              {{ (_ndp_l2dci_state | rejectattr('converged') | list)
-                 if (_ndp_l2dci_state | length == 2 and _ndp_l2dci_state | rejectattr('intent_trunk') | list | length == 0)
-                 else [] }}
-
-        # ND answers interfaceActions/deploy with HTTP 207 and nd_rest raises after ND accepted it, so this
-        # result proves nothing; the switch-reported mode read below is the evidence.
-        - name: "[{{ test_module }}] SETUP - deploy the stored trunk intent of unconverged L2 DCI endpoints"
+        # -------------------------------------------------------------------------
+        # SETUP (nd_manage_l3out only): the collection's l3out setup.yaml deletes
+        # stale L3Outs but never CREATES the VRFs its merged.yaml references
+        # (test_vrf1_name 'production' on fabric1, test_vrf2_name 'external' on
+        # fabric2). On ND 4.2.1 the L3Out create then 207s "VRF production not found
+        # in fabric VXLAN_EVPN_Fabric" (build #30). Pre-create the VRFs here. The
+        # nd_manage_vrfs MODULE is broken on 4.2.1 (bgpPasswordKeyType), so use raw
+        # REST. A duplicate create is allowed, but the GET checks below are the
+        # authoritative gate: the L3Out module is not started unless each required
+        # VRF is present on its declared fabric.
+        - name: "[{{ test_module }}] SETUP - pre-create L3Out VRF on fabric1"
           cisco.nd.nd_rest:
             method: post
-            path: "/api/v1/manage/fabrics/{{ item.fabric }}/interfaceActions/deploy"
+            path: "/api/v1/manage/fabrics/{{ nd_test_fabric1_name }}/vrfs"
             content:
-              interfaces:
-                - interfaceName: "{{ item.interface }}"
-                  switchId: "{{ item.serial }}"
-          loop: "{{ _ndp_l2dci_pending }}"
-          register: _ndp_l2dci_deploy
+              vrfs:
+                - vrfType: vxlanIbgp
+                  fabricName: "{{ nd_test_fabric1_name }}"
+                  vrfName: "{{ nd_test_vrf1_name | default('production') }}"
+                  vrfId: "{{ nd_test_vrf1_id | default(58900) }}"
+                  vlanId: "{{ nd_test_vrf1_vlan | default(2290) }}"
+          register: l3out_vrf1_precreate
+          # ND may return a duplicate-object error when the prerequisite already
+          # exists. The GET + assert below decides whether the prerequisite is valid.
           failed_when: false
-          no_log: true
+          when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
 
-        # The attempts clause ends polling on the last retry without Ansible's exhaustion failure;
-        # convergence is judged by the next task, which never fails the target.
-        - name: "[{{ test_module }}] SETUP - wait for the switch to report the deployed trunk endpoints"
+        - name: "[{{ test_module }}] SETUP - pre-create L3Out VRF on fabric2"
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/manage/fabrics/{{ nd_test_fabric2_name }}/vrfs"
+            content:
+              vrfs:
+                - vrfType: externalConnectivity
+                  fabricName: "{{ nd_test_fabric2_name }}"
+                  vrfName: "{{ nd_test_vrf2_name | default('external') }}"
+                  vrfId: "{{ nd_test_vrf2_id | default(58901) }}"
+                  vlanId: "{{ nd_test_vrf2_vlan | default(2291) }}"
+          register: l3out_vrf2_precreate
+          failed_when: false
+          when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
+
+        - name: "[{{ test_module }}] SETUP - verify L3Out VRF on fabric1"
           cisco.nd.nd_rest:
             method: get
-            path: "/api/v1/manage/fabrics/{{ item.fabric }}/switches/{{ item.serial }}/interfaces/{{ item.interface | replace('/', '%2F') }}"
-          loop: "{{ _ndp_l2dci_pending }}"
-          register: _ndp_l2dci_after
-          retries: "{{ nd_l3out_l2dci_retries | default(12) | int }}"
-          delay: "{{ nd_l3out_l2dci_delay | default(10) | int }}"
-          until: >-
-            ((_ndp_l2dci_after.current | default({})).switchId | default('')) == item.serial
-            and ((_ndp_l2dci_after.current | default({})).interfaceName | default('')) == item.interface
-            and ((_ndp_l2dci_after.current | default({})).operData.mode | default('')) == 'trunk'
-            and ((_ndp_l2dci_after.current | default({})).operData.adminStatus | default('')) == 'up'
-            or (_ndp_l2dci_after.attempts | default(0) | int) >= (nd_l3out_l2dci_retries | default(12) | int)
-          failed_when: false
-          no_log: true
+            path: "/api/v1/manage/fabrics/{{ nd_test_fabric1_name }}/vrfs"
+          register: l3out_vrf1_live
+          when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
 
-        - name: "[{{ test_module }}] SETUP - judge the deployed L2 DCI endpoints from the switch-reported mode"
-          ansible.builtin.set_fact:
-            _ndp_l2dci_unconverged: >-
-              {{ _ndp_l2dci_unconverged + ([] if (
-                   (_ndp_l2dci_cur.switchId | default('')) == item.item.serial
-                   and (_ndp_l2dci_cur.interfaceName | default('')) == item.item.interface
-                   and (_ndp_l2dci_cur.operData.mode | default('')) == 'trunk'
-                   and (_ndp_l2dci_cur.operData.adminStatus | default('')) == 'up')
-                 else [item.item.name ~ ' ' ~ item.item.interface ~ ' mode=' ~ (_ndp_l2dci_cur.operData.mode | default('unknown', true))
-                       ~ ' admin=' ~ (_ndp_l2dci_cur.operData.adminStatus | default('unknown', true))]) }}
-          loop: "{{ _ndp_l2dci_after.results | default([]) }}"
-          vars:
-            _ndp_l2dci_cur: "{{ item.current if (item.current | default('')) is mapping else {} }}"
-          no_log: true
-
-        - name: "[{{ test_module }}] SETUP - report the L2 DCI endpoint state the SVI case depends on"
-          ansible.builtin.debug:
-            msg: >-
-              {{ 'NDP_L3OUT_L2DCI_ENDPOINTS_OK' if _ndp_l2dci_reason == '' else 'NDP_L3OUT_L2DCI_ENDPOINTS_UNVERIFIED' }}:
-              {{ _ndp_l2dci_pair_text or 'no link selected' }};
-              deployed={{ _ndp_l2dci_pending | length }};
-              {{ _ndp_l2dci_reason or 'the switch reports trunk/up on both endpoints' }}.
-          vars:
-            _ndp_l2dci_pair_text: >-
-              {{ _ndp_l2dci_endpoints | map(attribute='name') | zip(_ndp_l2dci_endpoints | map(attribute='interface'))
-                 | map('join', ' ') | join(' <-> ') }}
-            _ndp_l2dci_reason: >-
-              {{ 'the authored SVI switch pair or fabrics are incomplete' if not (_ndp_l2dci_pair_ok | bool)
-                 else ('links of ' ~ _ndp_l2dci_fabric1 ~ ' could not be read') if not (_ndp_l2dci_links_readable | default(false) | bool)
-                 else 'no layer2Dci link exists between the authored SVI switches' if _ndp_l2dci_matches | length == 0
-                 else 'more than one layer2Dci link exists between the authored SVI switches' if _ndp_l2dci_matches | length > 1
-                 else 'the matching layer2Dci link has the same switch on both ends' if _ndp_l2dci_endpoints | length != 2
-                 else ('stored intent is not an enabled l2DciLinkMember trunk on '
-                       ~ (_ndp_l2dci_state | rejectattr('intent_trunk') | map(attribute='name') | join(', ')) ~ '; nothing was deployed')
-                   if (_ndp_l2dci_state | length != 2 or _ndp_l2dci_state | rejectattr('intent_trunk') | list | length > 0)
-                 else ('the switch did not report trunk/up after deploy: ' ~ (_ndp_l2dci_unconverged | join(', ')))
-                   if _ndp_l2dci_unconverged | length > 0
-                 else '' }}
-
-    # -------------------------------------------------------------------------
-    # SETUP (vPC interface targets): prepare the declared physical fixture over the cabled
-    # leaf_1 Eth1/2 <-> leaf_2 Eth1/1 peer-link. The original target retains ownership of its
-    # own setup and teardown; no runner flag bypasses those tasks. The target's multi-pair
-    # scenario asserts a SECOND pair, so the runner also forms leaf_3/leaf_4 over their cabled Eth1/1 + Eth1/2
-    # peer-links. The CLEANUP unpairs what this run created because the destructive nd_manage_switches module
-    # runs later in the same job.
-    - name: "[{{ test_module }}] SETUP - standing physical vPC pair for the vPC interface target"
-      when: test_module in ['nd_interface_vpc_access', 'nd_interface_vpc_trunk_host'] and not (nd_prerequisite_only | default(false) | bool)
-      block:
-        - name: "[{{ test_module }}] SETUP - gather the vPC pairs before the target runs"
-          cisco.nd.nd_manage_vpc_pair:
-            fabric_name: "{{ ansible_it_fabric }}"
-            state: gathered
-          register: _ndp_vpcif_pairs_before
-
-        - name: "[{{ test_module }}] SETUP - record whether the pair pre-existed"
-          ansible.builtin.set_fact:
-            _ndp_vpcif_pair_preexisting: >-
-              {{ ((_ndp_vpcif_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_vpcif_pairs_before.vpc_pairs | default([])))
-                 | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
-                 | selectattr('switchId', 'in', [ansible_sno_1, ansible_sno_2])
-                 | selectattr('peerSwitchId', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0
-                 or ((_ndp_vpcif_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_vpcif_pairs_before.vpc_pairs | default([])))
-                 | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
-                 | selectattr('switch_id', 'in', [ansible_sno_1, ansible_sno_2])
-                 | selectattr('peer_switch_id', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0 }}
-
-        - name: "[{{ test_module }}] SETUP - wait until ND reports the physical peer-link as present"
+        - name: "[{{ test_module }}] SETUP - verify L3Out VRF on fabric2"
           cisco.nd.nd_rest:
             method: get
-            path: "/api/v1/manage/links?fabricName={{ ansible_it_fabric }}"
-          register: _ndp_vpcif_peer_link
-          retries: 12
-          delay: 15
-          until: >-
-            {{ (_ndp_vpcif_peer_link.current.links | default([]))
-               | selectattr('srcSwitchId', 'in', [ansible_sno_1, ansible_sno_2])
-               | selectattr('dstSwitchId', 'in', [ansible_sno_1, ansible_sno_2])
-               | selectattr('linkPresent', 'equalto', true) | list | length > 0 }}
-          failed_when: false
-          no_log: true
-          when: not (_ndp_vpcif_pair_preexisting | bool)
+            path: "/api/v1/manage/fabrics/{{ nd_test_fabric2_name }}/vrfs"
+          register: l3out_vrf2_live
+          when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
 
-        - name: "[{{ test_module }}] SETUP - create the physical vPC pair"
-          cisco.nd.nd_manage_vpc_pair:
-            fabric_name: "{{ ansible_it_fabric }}"
-            state: merged
-            config_actions: {save: true, deploy: true, type: switch}
-            config:
-              - peer1_switch_id: "{{ ansible_sno_1 }}"
-                peer2_switch_id: "{{ ansible_sno_2 }}"
-                use_virtual_peer_link: false
-          when: not (_ndp_vpcif_pair_preexisting | bool)
-
-        # Same convergence pause the targets' own setup uses after forming a pair.
-        - name: "[{{ test_module }}] SETUP - pause for pair-establishment convergence"
-          ansible.builtin.pause:
-            seconds: 30
-          when: not (_ndp_vpcif_pair_preexisting | bool)
-
-        - name: "[{{ test_module }}] SETUP - gather the vPC pairs once the pair is formed"
-          cisco.nd.nd_manage_vpc_pair:
-            fabric_name: "{{ ansible_it_fabric }}"
-            state: gathered
-          register: _ndp_vpcif_pairs_after
-
-        - name: "[{{ test_module }}] SETUP - require the leaf pair before the target starts"
-          ansible.builtin.assert:
-            that: >-
-              ((_ndp_vpcif_pairs_after.gathered.vpc_pairs | default([])) + (_ndp_vpcif_pairs_after.vpc_pairs | default([])))
-              | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
-              | selectattr('switch_id', 'in', [ansible_sno_1, ansible_sno_2])
-              | selectattr('peer_switch_id', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0
-              or ((_ndp_vpcif_pairs_after.gathered.vpc_pairs | default([])) + (_ndp_vpcif_pairs_after.vpc_pairs | default([])))
-              | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
-              | selectattr('switchId', 'in', [ansible_sno_1, ansible_sno_2])
-              | selectattr('peerSwitchId', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0
-            fail_msg: >-
-              The physical vPC pair {{ ansible_sno_1 }}/{{ ansible_sno_2 }} does not exist in {{ ansible_it_fabric }} after the
-              runner formed it; the vPC interface target needs it as substrate.
-
-        - name: "[{{ test_module }}] SETUP - map the declared vPC peer management IPs"
-          ansible.builtin.set_fact:
-            nd_test_vpc_peer1_ip: "{{ ansible_switch1 }}"
-            nd_test_vpc_peer2_ip: "{{ ansible_switch2 }}"
-
-        # Second pair (leaf_3/leaf_4): the targets' multi-pair scenario asserts that it exists with reciprocal vpcPair records
-        # and never creates it, so the runner forms it exactly like the first pair. Its switches are looked up in the roster
-        # by the nd_test_vpc_pair2_peer*_ip management IPs the target reads, so the pair, the roster and the target agree.
-        - name: "[{{ test_module }}] SETUP - resolve the second vPC pair from the roster"
-          ansible.builtin.set_fact:
-            _ndp_vpcif2_sno_1: >-
-              {{ ((nd_test_fabric_switches[ansible_it_fabric] | default([]))
-                  | selectattr('seed_ip', 'equalto', nd_test_vpc_pair2_peer1_ip)
-                  | map(attribute='serial') | list + ['']) | first }}
-            _ndp_vpcif2_sno_2: >-
-              {{ ((nd_test_fabric_switches[ansible_it_fabric] | default([]))
-                  | selectattr('seed_ip', 'equalto', nd_test_vpc_pair2_peer2_ip)
-                  | map(attribute='serial') | list + ['']) | first }}
-
-        - name: "[{{ test_module }}] SETUP - require two distinct roster switches for the second pair"
+        - name: "[{{ test_module }}] SETUP - fail closed if L3Out VRFs are missing"
           ansible.builtin.assert:
             that:
-              - _ndp_vpcif2_sno_1 | length > 0
-              - _ndp_vpcif2_sno_2 | length > 0
-              - _ndp_vpcif2_sno_1 != _ndp_vpcif2_sno_2
-              - ([_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2] | intersect([ansible_sno_1, ansible_sno_2])) | length == 0
+              - >-
+                (nd_test_vrf1_name | default('production')) in
+                (l3out_vrf1_live.current.vrfs | default([]) | map(attribute='vrfName') | list)
+              - >-
+                (nd_test_vrf2_name | default('external')) in
+                (l3out_vrf2_live.current.vrfs | default([]) | map(attribute='vrfName') | list)
             fail_msg: >-
-              The second vPC pair {{ nd_test_vpc_pair2_peer1_ip }}/{{ nd_test_vpc_pair2_peer2_ip }} must resolve to two distinct
-              {{ ansible_it_fabric }} roster switches that are not the first pair; got serials
-              '{{ _ndp_vpcif2_sno_1 }}'/'{{ _ndp_vpcif2_sno_2 }}'.
+              NDP_L3OUT_VRF_PREREQUISITE_FAIL: required VRFs were not confirmed before
+              nd_manage_l3out. Expected
+              {{ nd_test_vrf1_name | default('production') }} on {{ nd_test_fabric1_name }} and
+              {{ nd_test_vrf2_name | default('external') }} on {{ nd_test_fabric2_name }}.
+              Check the raw VRF POST response and controller permissions.
+            success_msg: >-
+              NDP_L3OUT_VRF_PREREQUISITE_OK: confirmed
+              {{ nd_test_vrf1_name | default('production') }} on {{ nd_test_fabric1_name }} and
+              {{ nd_test_vrf2_name | default('external') }} on {{ nd_test_fabric2_name }}.
+          when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
 
-        - name: "[{{ test_module }}] SETUP - gather the vPC pairs before the second pair is formed"
-          cisco.nd.nd_manage_vpc_pair:
-            fabric_name: "{{ ansible_it_fabric }}"
-            state: gathered
-          register: _ndp_vpcif2_pairs_before
+        # -------------------------------------------------------------------------
+        # Prepare route maps and supply only a missing external ASN for L3Out BGP cases.
+        - name: "[{{ test_module }}] SETUP - prepare route-map prerequisites for the original L3Out cases"
+          when: test_module == 'nd_manage_l3out' and not (nd_prerequisite_only | default(false) | bool)
+          block:
+            - name: "[{{ test_module }}] SETUP - read the target's unchanged L3Out variables"
+              ansible.builtin.include_vars:
+                file: "{{ playbook_dir }}/tests/integration/targets/nd_manage_l3out/vars/main.yaml"
 
-        - name: "[{{ test_module }}] SETUP - record whether the second pair pre-existed"
+            - name: "[{{ test_module }}] SETUP - verify L3Out subinterface names match the authored VLAN"
+              ansible.builtin.assert:
+                that:
+                  - l3out_static.connectivity_details.routing_interface_type == 'subInterface'
+                  - l3out_static.connectivity_details.links | length == 1
+                  - l3out_static.connectivity_details.links[0].vlan_id | int >= 1
+                  - l3out_static.connectivity_details.links[0].vlan_id | int <= 4094
+                  - (test_switch1_subif | string).endswith('.' ~ (l3out_static.connectivity_details.links[0].vlan_id | string))
+                  - (test_switch2_subif | string).endswith('.' ~ (l3out_static.connectivity_details.links[0].vlan_id | string))
+                fail_msg: "NDP_L3OUT_SUBINTERFACE_VLAN_MISMATCH: the configured subinterface names must include the authored VLAN suffix."
+
+            - name: "[{{ test_module }}] SETUP - read external fabric BGP settings"
+              cisco.nd.nd_rest:
+                method: get
+                path: "/api/v1/manage/fabrics/{{ nd_test_fabric2_name }}"
+              register: _ndp_l3out_fabric2
+              failed_when: false
+              no_log: true
+
+            - name: "[{{ test_module }}] SETUP - require external fabric ASN when missing from a BGP case"
+              ansible.builtin.assert:
+                that:
+                  - not (_ndp_l3out_fabric2.failed | default(false) | bool)
+                  - (_ndp_l3out_fabric2.current.management.bgpAsn | default('', true) | string | trim | length) > 0
+                fail_msg: "NDP_L3OUT_FABRIC2_ASN_MISSING: external fabric BGP ASN could not be verified."
+              loop: [l3out_bgp, l3out_bgp_updated, l3out_svi, l3out_static_replaced]
+              vars:
+                _ndp_l3out_case: "{{ lookup('ansible.builtin.vars', item) }}"
+              when:
+                - _ndp_l3out_case.configured_fabrics | default('') in ['both', 'fabric2']
+                - _ndp_l3out_case.routing_details.routing_protocol | default('') == 'bgp'
+                - _ndp_l3out_case.routing_details.bgp.fabric2_details.local_asn | default('', true) | string | trim | length == 0
+
+            - name: "[{{ test_module }}] SETUP - supply missing external fabric ASN to BGP cases"
+              ansible.builtin.set_fact:
+                "{{ item }}": >-
+                  {{ _ndp_l3out_case | combine({'routing_details': {'bgp': {'fabric2_details':
+                     {'local_asn': (_ndp_l3out_fabric2.current.management.bgpAsn | string | trim)}}}}, recursive=True) }}
+              loop: [l3out_bgp, l3out_bgp_updated, l3out_svi, l3out_static_replaced]
+              vars:
+                _ndp_l3out_case: "{{ lookup('ansible.builtin.vars', item) }}"
+              when:
+                - _ndp_l3out_case.configured_fabrics | default('') in ['both', 'fabric2']
+                - _ndp_l3out_case.routing_details.routing_protocol | default('') == 'bgp'
+                - _ndp_l3out_case.routing_details.bgp.fabric2_details.local_asn | default('', true) | string | trim | length == 0
+              no_log: true
+
+            - name: "[{{ test_module }}] SETUP - resolve route maps referenced by the original cases"
+              ansible.builtin.set_fact:
+                _ndp_l3out_route_maps: >-
+                  {{ [l3out_bgp.routing_details, l3out_bgp_updated.routing_details, l3out_svi.routing_details] | to_json
+                     | regex_findall('"ipv[46]_route_map_(?:in|out)": ?"([^"]+)"') | unique | list }}
+
+            - name: "[{{ test_module }}] SETUP - list the route maps already in {{ nd_test_fabric1_name }}"
+              cisco.nd.nd_rest:
+                method: get
+                path: "/api/v1/manage/fabrics/{{ nd_test_fabric1_name }}/routeMaps"
+              register: _ndp_l3out_route_maps_live
+              no_log: true
+
+            - name: "[{{ test_module }}] SETUP - create only the missing route maps (existing ones are never modified)"
+              ansible.builtin.set_fact:
+                _ndp_l3out_route_maps_created: >-
+                  {{ _ndp_l3out_route_maps | difference(
+                       (_ndp_l3out_route_maps_live.current.routeMaps | default(_ndp_l3out_route_maps_live.current.items | default([])))
+                       | map(attribute='name') | list) }}
+
+            - name: "[{{ test_module }}] SETUP - create the route maps the l3out vars reference"
+              cisco.nd.nd_manage_route_map:
+                fabric_name: "{{ nd_test_fabric1_name }}"
+                config: >-
+                  {{ _ndp_l3out_route_maps_created
+                     | map('community.general.dict_kv', 'name') | list
+                     | map('combine', {'entries': [{'sequence_number': 10, 'action': 'permit',
+                                                     'rule_entries': [{'rule_type': 'setLocalPreference', 'value': 100}]}]})
+                     | list }}
+                state: merged
+              when: _ndp_l3out_route_maps_created | length > 0
+
+        # -------------------------------------------------------------------------
+        # SETUP (nd_manage_l3out SVI case): ND accepts an SVI L3Out only over an ext_l2_dci_link
+        # (policy layer2Dci) between the authored switch pair. Scoped build 3 (2026-11-16) had that link
+        # present with trunk intent on both Eth1/4 endpoints, yet the border endpoint was still routed on the
+        # switch and the SVI create failed with 207 "No appropriate link found". Deploy only the trunk intent ND
+        # already stores for that link's endpoints. Nothing here writes intent or fails the target: the routed
+        # and subInterface cases still run, and an SVI failure stays visible in the target's own result.
+        - name: "[{{ test_module }}] SETUP - deploy the stored L2 DCI endpoint intent the SVI case uses"
+          when:
+            - test_module == 'nd_manage_l3out'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - nd_l3out_deploy_l2dci_endpoints | default(true) | bool
+            - (l3out_svi | default({})).connectivity_details.routing_interface_type | default('') == 'svi'
+          block:
+            - name: "[{{ test_module }}] SETUP - resolve the authored SVI switch pair"
+              ansible.builtin.set_fact:
+                _ndp_l2dci_fabric1: "{{ l3out_svi.fabric1_name | default('') | string }}"
+                _ndp_l2dci_fabric_by_switch: >-
+                  {{ {(_ndp_l2dci_case_link.switch1_details.switch_id | default('') | string): (l3out_svi.fabric1_name | default('') | string),
+                      (_ndp_l2dci_case_link.switch2_details.switch_id | default('') | string): (l3out_svi.fabric2_name | default('') | string)} }}
+                _ndp_l2dci_matches: []
+                _ndp_l2dci_endpoints: []
+                _ndp_l2dci_state: []
+                _ndp_l2dci_pending: []
+                _ndp_l2dci_unconverged: []
+              vars:
+                _ndp_l2dci_case_link: "{{ l3out_svi.connectivity_details.links | default([], true) | first | default({}, true) }}"
+
+            - name: "[{{ test_module }}] SETUP - require two distinct authored SVI switches with fabrics"
+              ansible.builtin.set_fact:
+                _ndp_l2dci_pair_ok: >-
+                  {{ _ndp_l2dci_fabric_by_switch | length == 2
+                     and '' not in (_ndp_l2dci_fabric_by_switch.keys() | list)
+                     and '' not in (_ndp_l2dci_fabric_by_switch.values() | list) }}
+
+            - name: "[{{ test_module }}] SETUP - read the links ND manages for {{ _ndp_l2dci_fabric1 }}"
+              cisco.nd.nd_rest:
+                method: get
+                path: "/api/v1/manage/links?fabricName={{ _ndp_l2dci_fabric1 }}"
+              register: _ndp_l2dci_links
+              failed_when: false
+              no_log: true
+              when: _ndp_l2dci_pair_ok | bool
+
+            - name: "[{{ test_module }}] SETUP - select the layer2Dci link between the authored SVI switches"
+              ansible.builtin.set_fact:
+                _ndp_l2dci_links_readable: "{{ _ndp_l2dci_rows is not string and _ndp_l2dci_rows is iterable and _ndp_l2dci_rows is not mapping }}"
+                _ndp_l2dci_matches: >-
+                  {{ ([] if (_ndp_l2dci_rows is string or _ndp_l2dci_rows is not iterable or _ndp_l2dci_rows is mapping) else _ndp_l2dci_rows)
+                     | select('mapping')
+                     | selectattr('configData', 'defined') | selectattr('configData', 'mapping')
+                     | selectattr('configData.policyType', 'defined')
+                     | selectattr('configData.policyType', 'equalto', 'layer2Dci')
+                     | selectattr('srcSwitchId', 'defined') | selectattr('dstSwitchId', 'defined')
+                     | selectattr('srcInterfaceName', 'defined') | selectattr('dstInterfaceName', 'defined')
+                     | selectattr('srcSwitchId', 'in', _ndp_l2dci_fabric_by_switch.keys() | list)
+                     | selectattr('dstSwitchId', 'in', _ndp_l2dci_fabric_by_switch.keys() | list)
+                     | list }}
+              vars:
+                _ndp_l2dci_rows: >-
+                  {{ _ndp_l2dci_links.current.links
+                     if ((_ndp_l2dci_links.current | default('')) is mapping and _ndp_l2dci_links.current.links is defined)
+                     else '' }}
+              when: _ndp_l2dci_pair_ok | bool
+
+            - name: "[{{ test_module }}] SETUP - name both endpoints of the single matching link"
+              ansible.builtin.set_fact:
+                _ndp_l2dci_endpoints:
+                  - name: "{{ _ndp_l2dci_link.srcSwitchName | default('switch1') }}"
+                    fabric: "{{ _ndp_l2dci_fabric_by_switch[_ndp_l2dci_link.srcSwitchId] }}"
+                    serial: "{{ _ndp_l2dci_link.srcSwitchId }}"
+                    interface: "{{ _ndp_l2dci_link.srcInterfaceName }}"
+                  - name: "{{ _ndp_l2dci_link.dstSwitchName | default('switch2') }}"
+                    fabric: "{{ _ndp_l2dci_fabric_by_switch[_ndp_l2dci_link.dstSwitchId] }}"
+                    serial: "{{ _ndp_l2dci_link.dstSwitchId }}"
+                    interface: "{{ _ndp_l2dci_link.dstInterfaceName }}"
+              vars:
+                _ndp_l2dci_link: "{{ _ndp_l2dci_matches | first }}"
+              when:
+                - _ndp_l2dci_matches | length == 1
+                - _ndp_l2dci_matches[0].srcSwitchId != _ndp_l2dci_matches[0].dstSwitchId
+
+            - name: "[{{ test_module }}] SETUP - read each L2 DCI endpoint's stored intent and switch-reported mode"
+              cisco.nd.nd_rest:
+                method: get
+                path: "/api/v1/manage/fabrics/{{ item.fabric }}/switches/{{ item.serial }}/interfaces/{{ item.interface | replace('/', '%2F') }}"
+              loop: "{{ _ndp_l2dci_endpoints }}"
+              register: _ndp_l2dci_before
+              failed_when: false
+              no_log: true
+
+            - name: "[{{ test_module }}] SETUP - classify each L2 DCI endpoint before any deploy"
+              ansible.builtin.set_fact:
+                _ndp_l2dci_state: >-
+                  {{ _ndp_l2dci_state + [item.item | combine({
+                       'intent_trunk': _ndp_l2dci_intent_ok | bool,
+                       'converged': (_ndp_l2dci_intent_ok | bool) and (_ndp_l2dci_oper_ok | bool),
+                       'mode': _ndp_l2dci_cur.operData.mode | default('unknown', true) | string,
+                       'admin': _ndp_l2dci_cur.operData.adminStatus | default('unknown', true) | string})] }}
+              loop: "{{ _ndp_l2dci_before.results | default([]) }}"
+              vars:
+                _ndp_l2dci_cur: "{{ item.current if (item.current | default('')) is mapping else {} }}"
+                _ndp_l2dci_intent_ok: >-
+                  {{ (_ndp_l2dci_cur.switchId | default('')) == item.item.serial
+                     and (_ndp_l2dci_cur.interfaceName | default('')) == item.item.interface
+                     and (_ndp_l2dci_cur.configData.mode | default('')) == 'trunk'
+                     and (_ndp_l2dci_cur.configData.networkOS.policy.policyType | default('')) == 'l2DciLinkMember'
+                     and (_ndp_l2dci_cur.configData.networkOS.policy.adminState | default(false) | bool) }}
+                _ndp_l2dci_oper_ok: >-
+                  {{ (_ndp_l2dci_cur.operData.mode | default('')) == 'trunk'
+                     and (_ndp_l2dci_cur.operData.adminStatus | default('')) == 'up' }}
+              no_log: true
+
+            - name: "[{{ test_module }}] SETUP - select endpoints whose stored trunk intent is not on the switch"
+              ansible.builtin.set_fact:
+                _ndp_l2dci_pending: >-
+                  {{ (_ndp_l2dci_state | rejectattr('converged') | list)
+                     if (_ndp_l2dci_state | length == 2 and _ndp_l2dci_state | rejectattr('intent_trunk') | list | length == 0)
+                     else [] }}
+
+            # ND answers interfaceActions/deploy with HTTP 207 and nd_rest raises after ND accepted it, so this
+            # result proves nothing; the switch-reported mode read below is the evidence.
+            - name: "[{{ test_module }}] SETUP - deploy the stored trunk intent of unconverged L2 DCI endpoints"
+              cisco.nd.nd_rest:
+                method: post
+                path: "/api/v1/manage/fabrics/{{ item.fabric }}/interfaceActions/deploy"
+                content:
+                  interfaces:
+                    - interfaceName: "{{ item.interface }}"
+                      switchId: "{{ item.serial }}"
+              loop: "{{ _ndp_l2dci_pending }}"
+              register: _ndp_l2dci_deploy
+              failed_when: false
+              no_log: true
+
+            # The attempts clause ends polling on the last retry without Ansible's exhaustion failure;
+            # convergence is judged by the next task, which never fails the target.
+            - name: "[{{ test_module }}] SETUP - wait for the switch to report the deployed trunk endpoints"
+              cisco.nd.nd_rest:
+                method: get
+                path: "/api/v1/manage/fabrics/{{ item.fabric }}/switches/{{ item.serial }}/interfaces/{{ item.interface | replace('/', '%2F') }}"
+              loop: "{{ _ndp_l2dci_pending }}"
+              register: _ndp_l2dci_after
+              retries: "{{ nd_l3out_l2dci_retries | default(12) | int }}"
+              delay: "{{ nd_l3out_l2dci_delay | default(10) | int }}"
+              until: >-
+                ((_ndp_l2dci_after.current | default({})).switchId | default('')) == item.serial
+                and ((_ndp_l2dci_after.current | default({})).interfaceName | default('')) == item.interface
+                and ((_ndp_l2dci_after.current | default({})).operData.mode | default('')) == 'trunk'
+                and ((_ndp_l2dci_after.current | default({})).operData.adminStatus | default('')) == 'up'
+                or (_ndp_l2dci_after.attempts | default(0) | int) >= (nd_l3out_l2dci_retries | default(12) | int)
+              failed_when: false
+              no_log: true
+
+            - name: "[{{ test_module }}] SETUP - judge the deployed L2 DCI endpoints from the switch-reported mode"
+              ansible.builtin.set_fact:
+                _ndp_l2dci_unconverged: >-
+                  {{ _ndp_l2dci_unconverged + ([] if (
+                       (_ndp_l2dci_cur.switchId | default('')) == item.item.serial
+                       and (_ndp_l2dci_cur.interfaceName | default('')) == item.item.interface
+                       and (_ndp_l2dci_cur.operData.mode | default('')) == 'trunk'
+                       and (_ndp_l2dci_cur.operData.adminStatus | default('')) == 'up')
+                     else [item.item.name ~ ' ' ~ item.item.interface ~ ' mode=' ~ (_ndp_l2dci_cur.operData.mode | default('unknown', true))
+                           ~ ' admin=' ~ (_ndp_l2dci_cur.operData.adminStatus | default('unknown', true))]) }}
+              loop: "{{ _ndp_l2dci_after.results | default([]) }}"
+              vars:
+                _ndp_l2dci_cur: "{{ item.current if (item.current | default('')) is mapping else {} }}"
+              no_log: true
+
+            - name: "[{{ test_module }}] SETUP - report the L2 DCI endpoint state the SVI case depends on"
+              ansible.builtin.debug:
+                msg: >-
+                  {{ 'NDP_L3OUT_L2DCI_ENDPOINTS_OK' if _ndp_l2dci_reason == '' else 'NDP_L3OUT_L2DCI_ENDPOINTS_UNVERIFIED' }}:
+                  {{ _ndp_l2dci_pair_text or 'no link selected' }};
+                  deployed={{ _ndp_l2dci_pending | length }};
+                  {{ _ndp_l2dci_reason or 'the switch reports trunk/up on both endpoints' }}.
+              vars:
+                _ndp_l2dci_pair_text: >-
+                  {{ _ndp_l2dci_endpoints | map(attribute='name') | zip(_ndp_l2dci_endpoints | map(attribute='interface'))
+                     | map('join', ' ') | join(' <-> ') }}
+                _ndp_l2dci_reason: >-
+                  {{ 'the authored SVI switch pair or fabrics are incomplete' if not (_ndp_l2dci_pair_ok | bool)
+                     else ('links of ' ~ _ndp_l2dci_fabric1 ~ ' could not be read') if not (_ndp_l2dci_links_readable | default(false) | bool)
+                     else 'no layer2Dci link exists between the authored SVI switches' if _ndp_l2dci_matches | length == 0
+                     else 'more than one layer2Dci link exists between the authored SVI switches' if _ndp_l2dci_matches | length > 1
+                     else 'the matching layer2Dci link has the same switch on both ends' if _ndp_l2dci_endpoints | length != 2
+                     else ('stored intent is not an enabled l2DciLinkMember trunk on '
+                           ~ (_ndp_l2dci_state | rejectattr('intent_trunk') | map(attribute='name') | join(', ')) ~ '; nothing was deployed')
+                       if (_ndp_l2dci_state | length != 2 or _ndp_l2dci_state | rejectattr('intent_trunk') | list | length > 0)
+                     else ('the switch did not report trunk/up after deploy: ' ~ (_ndp_l2dci_unconverged | join(', ')))
+                       if _ndp_l2dci_unconverged | length > 0
+                     else '' }}
+
+        # -------------------------------------------------------------------------
+        # SETUP (vPC interface targets): prepare the declared physical fixture over the cabled
+        # leaf_1 Eth1/2 <-> leaf_2 Eth1/1 peer-link. The original target retains ownership of its
+        # own setup and teardown; no runner flag bypasses those tasks. The target's multi-pair
+        # scenario asserts a SECOND pair, so the runner also forms leaf_3/leaf_4 over their cabled Eth1/1 + Eth1/2
+        # peer-links. The CLEANUP unpairs what this run created because the destructive nd_manage_switches module
+        # runs later in the same job.
+        - name: "[{{ test_module }}] SETUP - standing physical vPC pair for the vPC interface target"
+          when: test_module in ['nd_interface_vpc_access', 'nd_interface_vpc_trunk_host'] and not (nd_prerequisite_only | default(false) | bool)
+          block:
+            - name: "[{{ test_module }}] SETUP - gather the vPC pairs before the target runs"
+              cisco.nd.nd_manage_vpc_pair:
+                fabric_name: "{{ ansible_it_fabric }}"
+                state: gathered
+              register: _ndp_vpcif_pairs_before
+
+            - name: "[{{ test_module }}] SETUP - record whether the pair pre-existed"
+              ansible.builtin.set_fact:
+                _ndp_vpcif_pair_preexisting: >-
+                  {{ ((_ndp_vpcif_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_vpcif_pairs_before.vpc_pairs | default([])))
+                     | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
+                     | selectattr('switchId', 'in', [ansible_sno_1, ansible_sno_2])
+                     | selectattr('peerSwitchId', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0
+                     or ((_ndp_vpcif_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_vpcif_pairs_before.vpc_pairs | default([])))
+                     | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
+                     | selectattr('switch_id', 'in', [ansible_sno_1, ansible_sno_2])
+                     | selectattr('peer_switch_id', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0 }}
+
+            - name: "[{{ test_module }}] SETUP - wait until ND reports the physical peer-link as present"
+              cisco.nd.nd_rest:
+                method: get
+                path: "/api/v1/manage/links?fabricName={{ ansible_it_fabric }}"
+              register: _ndp_vpcif_peer_link
+              retries: 12
+              delay: 15
+              until: >-
+                {{ (_ndp_vpcif_peer_link.current.links | default([]))
+                   | selectattr('srcSwitchId', 'in', [ansible_sno_1, ansible_sno_2])
+                   | selectattr('dstSwitchId', 'in', [ansible_sno_1, ansible_sno_2])
+                   | selectattr('linkPresent', 'equalto', true) | list | length > 0 }}
+              failed_when: false
+              no_log: true
+              when: not (_ndp_vpcif_pair_preexisting | bool)
+
+            - name: "[{{ test_module }}] SETUP - create the physical vPC pair"
+              cisco.nd.nd_manage_vpc_pair:
+                fabric_name: "{{ ansible_it_fabric }}"
+                state: merged
+                config_actions: {save: true, deploy: true, type: switch}
+                config:
+                  - peer1_switch_id: "{{ ansible_sno_1 }}"
+                    peer2_switch_id: "{{ ansible_sno_2 }}"
+                    use_virtual_peer_link: false
+              when: not (_ndp_vpcif_pair_preexisting | bool)
+
+            # Same convergence pause the targets' own setup uses after forming a pair.
+            - name: "[{{ test_module }}] SETUP - pause for pair-establishment convergence"
+              ansible.builtin.pause:
+                seconds: 30
+              when: not (_ndp_vpcif_pair_preexisting | bool)
+
+            - name: "[{{ test_module }}] SETUP - gather the vPC pairs once the pair is formed"
+              cisco.nd.nd_manage_vpc_pair:
+                fabric_name: "{{ ansible_it_fabric }}"
+                state: gathered
+              register: _ndp_vpcif_pairs_after
+
+            - name: "[{{ test_module }}] SETUP - require the leaf pair before the target starts"
+              ansible.builtin.assert:
+                that: >-
+                  ((_ndp_vpcif_pairs_after.gathered.vpc_pairs | default([])) + (_ndp_vpcif_pairs_after.vpc_pairs | default([])))
+                  | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
+                  | selectattr('switch_id', 'in', [ansible_sno_1, ansible_sno_2])
+                  | selectattr('peer_switch_id', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0
+                  or ((_ndp_vpcif_pairs_after.gathered.vpc_pairs | default([])) + (_ndp_vpcif_pairs_after.vpc_pairs | default([])))
+                  | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
+                  | selectattr('switchId', 'in', [ansible_sno_1, ansible_sno_2])
+                  | selectattr('peerSwitchId', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0
+                fail_msg: >-
+                  The physical vPC pair {{ ansible_sno_1 }}/{{ ansible_sno_2 }} does not exist in {{ ansible_it_fabric }} after the
+                  runner formed it; the vPC interface target needs it as substrate.
+
+            - name: "[{{ test_module }}] SETUP - map the declared vPC peer management IPs"
+              ansible.builtin.set_fact:
+                nd_test_vpc_peer1_ip: "{{ ansible_switch1 }}"
+                nd_test_vpc_peer2_ip: "{{ ansible_switch2 }}"
+
+            # Second pair (leaf_3/leaf_4): the targets' multi-pair scenario asserts that it exists with reciprocal vpcPair records
+            # and never creates it, so the runner forms it exactly like the first pair. Its switches are looked up in the roster
+            # by the nd_test_vpc_pair2_peer*_ip management IPs the target reads, so the pair, the roster and the target agree.
+            - name: "[{{ test_module }}] SETUP - resolve the second vPC pair from the roster"
+              ansible.builtin.set_fact:
+                _ndp_vpcif2_sno_1: >-
+                  {{ ((nd_test_fabric_switches[ansible_it_fabric] | default([]))
+                      | selectattr('seed_ip', 'equalto', nd_test_vpc_pair2_peer1_ip)
+                      | map(attribute='serial') | list + ['']) | first }}
+                _ndp_vpcif2_sno_2: >-
+                  {{ ((nd_test_fabric_switches[ansible_it_fabric] | default([]))
+                      | selectattr('seed_ip', 'equalto', nd_test_vpc_pair2_peer2_ip)
+                      | map(attribute='serial') | list + ['']) | first }}
+
+            - name: "[{{ test_module }}] SETUP - require two distinct roster switches for the second pair"
+              ansible.builtin.assert:
+                that:
+                  - _ndp_vpcif2_sno_1 | length > 0
+                  - _ndp_vpcif2_sno_2 | length > 0
+                  - _ndp_vpcif2_sno_1 != _ndp_vpcif2_sno_2
+                  - ([_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2] | intersect([ansible_sno_1, ansible_sno_2])) | length == 0
+                fail_msg: >-
+                  The second vPC pair {{ nd_test_vpc_pair2_peer1_ip }}/{{ nd_test_vpc_pair2_peer2_ip }} must resolve to two distinct
+                  {{ ansible_it_fabric }} roster switches that are not the first pair; got serials
+                  '{{ _ndp_vpcif2_sno_1 }}'/'{{ _ndp_vpcif2_sno_2 }}'.
+
+            - name: "[{{ test_module }}] SETUP - gather the vPC pairs before the second pair is formed"
+              cisco.nd.nd_manage_vpc_pair:
+                fabric_name: "{{ ansible_it_fabric }}"
+                state: gathered
+              register: _ndp_vpcif2_pairs_before
+
+            - name: "[{{ test_module }}] SETUP - record whether the second pair pre-existed"
+              ansible.builtin.set_fact:
+                _ndp_vpcif2_pair_preexisting: >-
+                  {{ ((_ndp_vpcif2_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_vpcif2_pairs_before.vpc_pairs | default([])))
+                     | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
+                     | selectattr('switchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
+                     | selectattr('peerSwitchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2]) | list | length > 0
+                     or ((_ndp_vpcif2_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_vpcif2_pairs_before.vpc_pairs | default([])))
+                     | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
+                     | selectattr('switch_id', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
+                     | selectattr('peer_switch_id', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2]) | list | length > 0 }}
+
+            - name: "[{{ test_module }}] SETUP - wait until ND reports the second pair's physical peer-link as present"
+              cisco.nd.nd_rest:
+                method: get
+                path: "/api/v1/manage/links?fabricName={{ ansible_it_fabric }}"
+              register: _ndp_vpcif2_peer_link
+              retries: 12
+              delay: 15
+              until: >-
+                {{ (_ndp_vpcif2_peer_link.current.links | default([]))
+                   | selectattr('srcSwitchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
+                   | selectattr('dstSwitchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
+                   | selectattr('linkPresent', 'equalto', true) | list | length > 0 }}
+              failed_when: false
+              no_log: true
+              when: not (_ndp_vpcif2_pair_preexisting | bool)
+
+            - name: "[{{ test_module }}] SETUP - create the second physical vPC pair"
+              cisco.nd.nd_manage_vpc_pair:
+                fabric_name: "{{ ansible_it_fabric }}"
+                state: merged
+                config_actions: {save: true, deploy: true, type: switch}
+                config:
+                  - peer1_switch_id: "{{ _ndp_vpcif2_sno_1 }}"
+                    peer2_switch_id: "{{ _ndp_vpcif2_sno_2 }}"
+                    use_virtual_peer_link: false
+              when: not (_ndp_vpcif2_pair_preexisting | bool)
+
+            - name: "[{{ test_module }}] SETUP - pause for second-pair establishment convergence"
+              ansible.builtin.pause:
+                seconds: 30
+              when: not (_ndp_vpcif2_pair_preexisting | bool)
+
+            - name: "[{{ test_module }}] SETUP - gather the vPC pairs once the second pair is formed"
+              cisco.nd.nd_manage_vpc_pair:
+                fabric_name: "{{ ansible_it_fabric }}"
+                state: gathered
+              register: _ndp_vpcif2_pairs_after
+
+            - name: "[{{ test_module }}] SETUP - require the second leaf pair before the target starts"
+              ansible.builtin.assert:
+                that: >-
+                  ((_ndp_vpcif2_pairs_after.gathered.vpc_pairs | default([])) + (_ndp_vpcif2_pairs_after.vpc_pairs | default([])))
+                  | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
+                  | selectattr('switch_id', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
+                  | selectattr('peer_switch_id', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2]) | list | length > 0
+                  or ((_ndp_vpcif2_pairs_after.gathered.vpc_pairs | default([])) + (_ndp_vpcif2_pairs_after.vpc_pairs | default([])))
+                  | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
+                  | selectattr('switchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
+                  | selectattr('peerSwitchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2]) | list | length > 0
+                fail_msg: >-
+                  The physical vPC pair {{ _ndp_vpcif2_sno_1 }}/{{ _ndp_vpcif2_sno_2 }} does not exist in {{ ansible_it_fabric }} after
+                  the runner formed it; the vPC interface target's multi-pair scenario needs it as its second pair.
+
+            - name: "[{{ test_module }}] SETUP - wait for all four vPC peers to be inSync before interface tests"
+              cisco.nd.nd_rest:
+                method: get
+                path: "/api/v1/manage/fabrics/{{ ansible_it_fabric }}/switches"
+              register: _ndp_vpcif_device_convergence
+              retries: 24
+              delay: 15
+              until:
+                - not (_ndp_vpcif_device_convergence.failed | default(false))
+                - >-
+                  (_ndp_vpcif_device_convergence.current.switches | default([])
+                   | selectattr('switchId', 'defined')
+                   | selectattr('switchId', 'in', [ansible_sno_1, ansible_sno_2, _ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
+                   | selectattr('additionalData', 'defined')
+                   | selectattr('additionalData.configSyncStatus', 'defined')
+                   | selectattr('additionalData.configSyncStatus', 'equalto', 'inSync')
+                   | map(attribute='switchId') | unique | list | sort)
+                  == ([ansible_sno_1, ansible_sno_2, _ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2] | unique | list | sort)
+              no_log: true
+
+        # -------------------------------------------------------------------------
+        # SETUP (nd_resource_manager only): the target forms a PHYSICAL vPC pair itself (ND 4.3 rejects a virtual
+        # peer-link on N9K-C9300v). Before it starts, remember whether the pair already existed and give ND time to
+        # report the leaf peer-link as present (the prerequisite admin-ups its two ports just before this).
+        - name: "[{{ test_module }}] SETUP - vPC pair and peer-link readiness"
+          when: test_module == 'nd_resource_manager' and not (nd_prerequisite_only | default(false) | bool)
+          block:
+            - name: "[{{ test_module }}] SETUP - gather the vPC pairs before the target runs"
+              cisco.nd.nd_manage_vpc_pair:
+                fabric_name: "{{ ansible_it_fabric }}"
+                state: gathered
+              register: _ndp_rm_pairs_before
+
+            - name: "[{{ test_module }}] SETUP - record whether the pair pre-existed"
+              ansible.builtin.set_fact:
+                _ndp_rm_pair_preexisting: >-
+                  {{ ((_ndp_rm_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_rm_pairs_before.vpc_pairs | default([])))
+                     | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
+                     | selectattr('switchId', 'in', [ansible_sno_1, ansible_sno_2])
+                     | selectattr('peerSwitchId', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0
+                     or ((_ndp_rm_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_rm_pairs_before.vpc_pairs | default([])))
+                     | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
+                     | selectattr('switch_id', 'in', [ansible_sno_1, ansible_sno_2])
+                     | selectattr('peer_switch_id', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0 }}
+
+            - name: "[{{ test_module }}] SETUP - wait until ND reports the physical peer-link as present"
+              cisco.nd.nd_rest:
+                method: get
+                path: "/api/v1/manage/links?fabricName={{ ansible_it_fabric }}"
+              register: _ndp_rm_peer_link
+              retries: 12
+              delay: 15
+              until: >-
+                {{ (_ndp_rm_peer_link.current.links | default([]))
+                   | selectattr('srcSwitchId', 'in', [ansible_sno_1, ansible_sno_2])
+                   | selectattr('dstSwitchId', 'in', [ansible_sno_1, ansible_sno_2])
+                   | selectattr('linkPresent', 'equalto', true) | list | length > 0 }}
+              failed_when: false
+              no_log: true
+              when: not (_ndp_rm_pair_preexisting | bool)
+
+            - name: "[{{ test_module }}] SETUP - peer-link readiness verdict"
+              ansible.builtin.debug:
+                msg: >-
+                  NDP_RM_PEER_LINK {{ 'present' if ((_ndp_rm_peer_link.current.links | default([]))
+                  | selectattr('linkPresent', 'equalto', true) | list | length > 0) else 'NOT reported present by ND (the target may fail creating the pair)' }}
+                  (pair pre-existing: {{ _ndp_rm_pair_preexisting }}).
+              when: not (_ndp_rm_pair_preexisting | bool)
+      rescue:
+        - name: "[{{ test_module }}] SETUP - record the failed pipeline fixture and continue to the authored target"
           ansible.builtin.set_fact:
-            _ndp_vpcif2_pair_preexisting: >-
-              {{ ((_ndp_vpcif2_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_vpcif2_pairs_before.vpc_pairs | default([])))
-                 | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
-                 | selectattr('switchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
-                 | selectattr('peerSwitchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2]) | list | length > 0
-                 or ((_ndp_vpcif2_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_vpcif2_pairs_before.vpc_pairs | default([])))
-                 | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
-                 | selectattr('switch_id', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
-                 | selectattr('peer_switch_id', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2]) | list | length > 0 }}
+            _ndp_continued_failures: >-
+              {{ _ndp_continued_failures | default([])
+                 + ['fixture: ' ~ (ansible_failed_task.name | default('unknown task', true) | string | truncate(200))] }}
 
-        - name: "[{{ test_module }}] SETUP - wait until ND reports the second pair's physical peer-link as present"
-          cisco.nd.nd_rest:
-            method: get
-            path: "/api/v1/manage/links?fabricName={{ ansible_it_fabric }}"
-          register: _ndp_vpcif2_peer_link
-          retries: 12
-          delay: 15
-          until: >-
-            {{ (_ndp_vpcif2_peer_link.current.links | default([]))
-               | selectattr('srcSwitchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
-               | selectattr('dstSwitchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
-               | selectattr('linkPresent', 'equalto', true) | list | length > 0 }}
-          failed_when: false
-          no_log: true
-          when: not (_ndp_vpcif2_pair_preexisting | bool)
-
-        - name: "[{{ test_module }}] SETUP - create the second physical vPC pair"
-          cisco.nd.nd_manage_vpc_pair:
-            fabric_name: "{{ ansible_it_fabric }}"
-            state: merged
-            config_actions: {save: true, deploy: true, type: switch}
-            config:
-              - peer1_switch_id: "{{ _ndp_vpcif2_sno_1 }}"
-                peer2_switch_id: "{{ _ndp_vpcif2_sno_2 }}"
-                use_virtual_peer_link: false
-          when: not (_ndp_vpcif2_pair_preexisting | bool)
-
-        - name: "[{{ test_module }}] SETUP - pause for second-pair establishment convergence"
-          ansible.builtin.pause:
-            seconds: 30
-          when: not (_ndp_vpcif2_pair_preexisting | bool)
-
-        - name: "[{{ test_module }}] SETUP - gather the vPC pairs once the second pair is formed"
-          cisco.nd.nd_manage_vpc_pair:
-            fabric_name: "{{ ansible_it_fabric }}"
-            state: gathered
-          register: _ndp_vpcif2_pairs_after
-
-        - name: "[{{ test_module }}] SETUP - require the second leaf pair before the target starts"
-          ansible.builtin.assert:
-            that: >-
-              ((_ndp_vpcif2_pairs_after.gathered.vpc_pairs | default([])) + (_ndp_vpcif2_pairs_after.vpc_pairs | default([])))
-              | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
-              | selectattr('switch_id', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
-              | selectattr('peer_switch_id', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2]) | list | length > 0
-              or ((_ndp_vpcif2_pairs_after.gathered.vpc_pairs | default([])) + (_ndp_vpcif2_pairs_after.vpc_pairs | default([])))
-              | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
-              | selectattr('switchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
-              | selectattr('peerSwitchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2]) | list | length > 0
-            fail_msg: >-
-              The physical vPC pair {{ _ndp_vpcif2_sno_1 }}/{{ _ndp_vpcif2_sno_2 }} does not exist in {{ ansible_it_fabric }} after
-              the runner formed it; the vPC interface target's multi-pair scenario needs it as its second pair.
-
-        - name: "[{{ test_module }}] SETUP - wait for all four vPC peers to be inSync before interface tests"
-          cisco.nd.nd_rest:
-            method: get
-            path: "/api/v1/manage/fabrics/{{ ansible_it_fabric }}/switches"
-          register: _ndp_vpcif_device_convergence
-          retries: 24
-          delay: 15
-          until:
-            - not (_ndp_vpcif_device_convergence.failed | default(false))
-            - >-
-              (_ndp_vpcif_device_convergence.current.switches | default([])
-               | selectattr('switchId', 'defined')
-               | selectattr('switchId', 'in', [ansible_sno_1, ansible_sno_2, _ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
-               | selectattr('additionalData', 'defined')
-               | selectattr('additionalData.configSyncStatus', 'defined')
-               | selectattr('additionalData.configSyncStatus', 'equalto', 'inSync')
-               | map(attribute='switchId') | unique | list | sort)
-              == ([ansible_sno_1, ansible_sno_2, _ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2] | unique | list | sort)
-          no_log: true
-
-    # -------------------------------------------------------------------------
-    # SETUP (nd_resource_manager only): the target forms a PHYSICAL vPC pair itself (ND 4.3 rejects a virtual
-    # peer-link on N9K-C9300v). Before it starts, remember whether the pair already existed and give ND time to
-    # report the leaf peer-link as present (the prerequisite admin-ups its two ports just before this).
-    - name: "[{{ test_module }}] SETUP - vPC pair and peer-link readiness"
-      when: test_module == 'nd_resource_manager' and not (nd_prerequisite_only | default(false) | bool)
-      block:
-        - name: "[{{ test_module }}] SETUP - gather the vPC pairs before the target runs"
-          cisco.nd.nd_manage_vpc_pair:
-            fabric_name: "{{ ansible_it_fabric }}"
-            state: gathered
-          register: _ndp_rm_pairs_before
-
-        - name: "[{{ test_module }}] SETUP - record whether the pair pre-existed"
-          ansible.builtin.set_fact:
-            _ndp_rm_pair_preexisting: >-
-              {{ ((_ndp_rm_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_rm_pairs_before.vpc_pairs | default([])))
-                 | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
-                 | selectattr('switchId', 'in', [ansible_sno_1, ansible_sno_2])
-                 | selectattr('peerSwitchId', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0
-                 or ((_ndp_rm_pairs_before.gathered.vpc_pairs | default([])) + (_ndp_rm_pairs_before.vpc_pairs | default([])))
-                 | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
-                 | selectattr('switch_id', 'in', [ansible_sno_1, ansible_sno_2])
-                 | selectattr('peer_switch_id', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0 }}
-
-        - name: "[{{ test_module }}] SETUP - wait until ND reports the physical peer-link as present"
-          cisco.nd.nd_rest:
-            method: get
-            path: "/api/v1/manage/links?fabricName={{ ansible_it_fabric }}"
-          register: _ndp_rm_peer_link
-          retries: 12
-          delay: 15
-          until: >-
-            {{ (_ndp_rm_peer_link.current.links | default([]))
-               | selectattr('srcSwitchId', 'in', [ansible_sno_1, ansible_sno_2])
-               | selectattr('dstSwitchId', 'in', [ansible_sno_1, ansible_sno_2])
-               | selectattr('linkPresent', 'equalto', true) | list | length > 0 }}
-          failed_when: false
-          no_log: true
-          when: not (_ndp_rm_pair_preexisting | bool)
-
-        - name: "[{{ test_module }}] SETUP - peer-link readiness verdict"
+        - name: "[{{ test_module }}] SETUP - report the failed pipeline fixture and continue to the authored target"
           ansible.builtin.debug:
             msg: >-
-              NDP_RM_PEER_LINK {{ 'present' if ((_ndp_rm_peer_link.current.links | default([]))
-              | selectattr('linkPresent', 'equalto', true) | list | length > 0) else 'NOT reported present by ND (the target may fail creating the pair)' }}
-              (pair pre-existing: {{ _ndp_rm_pair_preexisting }}).
-          when: not (_ndp_rm_pair_preexisting | bool)
+              NDP_PREREQUISITE_FAILED_CONTINUING [{{ test_module }}]: pipeline fixture failed at
+              '{{ ansible_failed_task.name | default('unknown task', true) }}'; running the authored target anyway.
 
     # -------------------------------------------------------------------------
     # SETUP (nd_local_user only, read-only): the target's overridden step deletes every controller local user that is not in its
@@ -1189,6 +1228,18 @@
             success_msg: >-
               NDP_MAINT_PRECHECK_OK {{ nd_test_maintenance_mode_switch_ip_a }} and {{ nd_test_maintenance_mode_switch_ip_b }} are present in
               {{ nd_test_maintenance_mode_fabric_name }} and not migrating; the target forces both to normal first.
+      rescue:
+        - name: "[{{ test_module }}] SETUP - record the failed maintenance-mode precheck and continue to the authored target"
+          ansible.builtin.set_fact:
+            _ndp_continued_failures: >-
+              {{ _ndp_continued_failures | default([])
+                 + ['fixture: ' ~ (ansible_failed_task.name | default('unknown task', true) | string | truncate(200))] }}
+
+        - name: "[{{ test_module }}] SETUP - report the failed maintenance-mode precheck and continue to the authored target"
+          ansible.builtin.debug:
+            msg: >-
+              NDP_PREREQUISITE_FAILED_CONTINUING [{{ test_module }}]: pipeline precheck failed at
+              '{{ ansible_failed_task.name | default('unknown task', true) }}'; running the authored target anyway.
 
     # -------------------------------------------------------------------------
     # SETUP (nd_fabric_update_group only, read-only): the target's overridden and auto-assign steps act on EVERY update group of the
@@ -1550,6 +1601,15 @@
             - test_module == 'nd_maintenance_mode'
             - not (nd_prerequisite_only | default(false) | bool)
             - _ndp_mm_switches is defined
+
+  post_tasks:
+    # Handlers notified in tasks flush before this section, so restoration has already run.
+    - name: "[{{ test_module }}] fail because prerequisites or pipeline fixtures failed before the authored target"
+      ansible.builtin.fail:
+        msg: >-
+          NDP_PREREQUISITE_CONTINUED_FAILURES [{{ test_module }}]: the authored target ran, but these
+          prerequisite or fixture steps failed first: {{ _ndp_continued_failures | join('; ') }}
+      when: _ndp_continued_failures | default([]) | length > 0
 
   handlers:
     - name: Restore prerequisite interface changes

@@ -140,7 +140,8 @@ def test_baseline_repair_lock_and_readonly_modes(tmp_path, mode, occupied, targe
         del task["ansible.builtin.include_tasks"]
         task["ansible.builtin.debug"] = {"msg": "REPAIR_ENABLED"}
     restore = yaml.safe_load((ROOT / "playbooks/nd_prerequisite/nd_prerequisite_restore.yaml").read_text())
-    release = [task for task in restore if "baseline repair lock" in task["name"]]
+    release = [task for block in restore for task in block.get("always", [])
+               if "baseline repair lock" in task["name"]]
     release_file = tmp_path / "release.yaml"
     release_file.write_text(yaml.safe_dump(release, sort_keys=False))
     lock_dir = tmp_path / "nd-prerequisite-baseline.lock"
@@ -765,7 +766,7 @@ def test_subinterface_parent_lifecycle_is_owned_by_typed_prerequisites():
     assert "SUBIF SETUP - provision routed parent" not in runner_text
     assert "_subif_parent_is_underlay" not in runner_text
     assert "force_handlers: true" in runner_text
-    assert "restore any prerequisite interfaces after preparation failure" in runner_text
+    assert "record the prerequisite failure and continue to the authored target" in runner_text
     assert "notify: Restore prerequisite interface changes" in runner_text
     assert "nd_prerequisite_restore.yaml" in runner_text
 
@@ -847,13 +848,26 @@ def test_runner_rejects_cross_fabric_positional_switch_mapping():
     assert "canonical switch pre-flight is unavailable; refusing to run" in jenkins_text
 
 
-def test_jenkins_runs_switches_after_links_and_vpc_pairs():
-    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+@pytest.mark.parametrize("variant", [
+    "Jenkinsfile_nd_jenkins_script",
+    "Jenkinsfile_nd_jenkins_script_temp_switches",
+    "Jenkinsfile_nd_jenkins_script_comm_list",
+])
+def test_jenkins_runs_port_channels_after_vpc_pairs_before_switches(variant):
+    jenkins_text = (ROOT / variant).read_text()
     ordering = jenkins_text.split("def orderedIntegrationTargets = []", 1)[1].split("def integrationForShell", 1)[0]
     assert (
-        ordering.index("orderedIntegrationTargets.addAll(effectiveIntegrationModules.findAll { it != 'nd_manage_switches' })")
+        ordering.index("orderedIntegrationTargets.addAll(effectiveIntegrationModules.findAll { it != 'nd_manage_switches' && !it.startsWith('nd_interface_port_channel_') })")
         < ordering.index("orderedIntegrationTargets.addAll(standaloneTargets)")
+        < ordering.index("orderedIntegrationTargets.addAll(effectiveIntegrationModules.findAll { it.startsWith('nd_interface_port_channel_') })")
         < ordering.index("orderedIntegrationTargets.addAll(effectiveIntegrationModules.findAll { it == 'nd_manage_switches' })")
+    )
+    unstarted = jenkins_text.split("def recordUnstartedRound(", 1)[1].split("\n}\n", 1)[0]
+    assert (
+        unstarted.index("def targets = integrationTargets.findAll { it != 'nd_manage_switches' && !it.startsWith('nd_interface_port_channel_') }")
+        < unstarted.index('targets.addAll(pairRows.collect { "nd_vpc_pair.${it.id}".toString() })')
+        < unstarted.index("targets.addAll(integrationTargets.findAll { it.startsWith('nd_interface_port_channel_') })")
+        < unstarted.index("targets.addAll(integrationTargets.findAll { it == 'nd_manage_switches' })")
     )
     assert "if (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true')" in ordering
     assert "ORDERED_INTEGRATION_LIST=${orderedIntegrationTargets.join(' ')}" in jenkins_text

@@ -379,6 +379,25 @@ def test_the_skip_ends_the_play_before_any_target_task_so_no_account_is_touched(
     assert inner["ansible.builtin.meta"] == "end_play"
 
 
+def test_continuing_rescues_never_wrap_the_guards_that_protect_foreign_objects():
+    play = runner_play()
+    names = [str(item.get("name", "")) for item in play["tasks"]]
+    for guard in ("read the controller local users", "end the play cleanly before any local user is touched",
+                  "precheck the update-group topology"):
+        index = next(i for i, name in enumerate(names) if guard in name)
+        assert "rescue" not in play["tasks"][index], guard
+    continuing = [item for item in play["pre_tasks"] + play["tasks"] if "rescue" in item]
+    assert {item["name"].split("] ", 1)[1] for item in continuing} == {
+        "prepare and verify declared prerequisites",
+        "SETUP - prepare module-specific pipeline fixtures",
+        "SETUP - precheck the maintenance-mode switches",
+    }
+    for item in continuing:
+        assert not any("ansible.builtin.fail" in step or "ansible.builtin.meta" in step for step in item["rescue"])
+    final = play["post_tasks"][0]
+    assert "_ndp_continued_failures" in final["when"] and "ansible.builtin.fail" in final
+
+
 def test_the_local_user_cleanup_deletes_only_the_three_test_logins_and_only_after_a_passed_guard():
     cleanup = task("CLEANUP - delete the test local users this run may have left")
     module = cleanup["cisco.nd.nd_local_user"]
