@@ -70,7 +70,7 @@ def _attachment_spec():
     """Argument spec for one entry inside attach."""
     return dict(
         ip_address=dict(type="str", required=True),
-        freeform_config=dict(type="str"),
+        freeform_config=dict(type="str", no_log=True),
         attachment_options=dict(
             type="dict",
             options=_attachment_options_spec(),
@@ -88,7 +88,7 @@ def vrf_base_argument_spec():
         vrf_template_name=dict(type="str"),
         vrf_extension_template_name=dict(type="str"),
         service_vrf_template_name=dict(type="str"),
-        vrf_template_config=dict(type="dict"),
+        vrf_template_config=dict(type="dict", no_log=True),
         # Security group
         default_security_action=dict(
             type="str",

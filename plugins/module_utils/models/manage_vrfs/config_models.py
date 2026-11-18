@@ -179,6 +179,7 @@ class VrfAttachmentConfigModel(NDNestedModel):
     freeform_config: str | None = Field(
         default=None,
         description="Additional free-form CLI configuration mapped to API extraConfig",
+        json_schema_extra={"sensitive_container": True},
     )
     attachment_options: VrfAttachmentOptionsConfigModel | None = Field(
         default=None,
@@ -317,6 +318,7 @@ class VrfChildConfigModel(NDNestedModel):
         max_length=32,
         pattern=r"^[a-fA-F0-9]+$",
         description="Hexadecimal BGP neighbour password (4-32 characters)",
+        json_schema_extra={"secret": True},
     )
     bgp_passwd_encrypt: str | None = Field(
         default=None,
@@ -544,6 +546,7 @@ class VrfConfigModel(NDBaseModel):
         default=None,
         alias="vrfTemplateConfig",
         description=("Template parameter values for userDefined VRFs. Schema requires " "a JSON object with string values"),
+        json_schema_extra={"sensitive_container": True},
     )
 
     # --- Security group ---
@@ -833,6 +836,7 @@ class VrfConfigModel(NDBaseModel):
         max_length=32,
         pattern=r"^[a-fA-F0-9]+$",
         description="Hexadecimal BGP neighbour password (4-32 characters)",
+        json_schema_extra={"secret": True},
     )
     bgp_passwd_encrypt: str | None = Field(
         default=None,
@@ -1182,6 +1186,7 @@ class VrfParentConfigModel(NDBaseModel):
         default=None,
         alias="vrfTemplateConfig",
         description=("Template parameter values for userDefined VRFs. Schema requires " "a JSON object with string values"),
+        json_schema_extra={"sensitive_container": True},
     )
 
     # --- Security group ---
@@ -1398,6 +1403,7 @@ class VrfParentConfigModel(NDBaseModel):
         min_length=4,
         max_length=32,
         description="BGP neighbour password (4–32 characters)",
+        json_schema_extra={"secret": True},
     )
     bgp_passwd_encrypt: str | None = Field(
         default=None,

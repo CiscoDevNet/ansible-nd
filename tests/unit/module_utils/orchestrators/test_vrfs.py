@@ -1081,12 +1081,12 @@ def test_public_vrf_type6_is_rejected_before_nd42_writes_and_retained_on_nd43(ve
         public_input = {"vrf_name": "BLUE", "child_fabric_config": [child]}
         spec = vrf_parent_argument_spec()
         VrfParentConfigModel.from_config(public_input, context={"state": "merged"})
-        public = VrfChildConfigModel.from_config(child, context={"state": "merged"}).to_config(exclude_unset=True)
+        public = VrfChildConfigModel.from_config(child, context={"state": "merged"}).to_internal_config(exclude_unset=True)
         public["vrf_name"] = entry["vrf_name"]
     else:
         public_input = entry
         spec = vrf_standalone_argument_spec()
-        public = VrfConfigModel.from_config(entry, context={"state": "merged"}).to_config(exclude_unset=True)
+        public = VrfConfigModel.from_config(entry, context={"state": "merged"}).to_internal_config(exclude_unset=True)
     validation = ArgumentSpecValidator({"config": {"type": "list", "elements": "dict", "options": spec}}).validate({"config": [public_input]})
     assert not validation.error_messages
 
@@ -1134,8 +1134,10 @@ def test_vrf_bgp_readback_is_canonical_and_replayable_without_mutating_the_respo
     assert raw == snapshot
     assert response["fabricData"]["bgpPasswordKeyType"] == key_type
     gathered = VrfDataModel.from_response(response).to_gathered_config()
-    assert gathered["bgp_password"] == str(password)
-    assert VrfConfigModel.from_config(gathered).bgp_passwd_encrypt == key_type
+    assert "bgp_password" not in gathered
+    assert gathered["bgp_passwd_encrypt"] == key_type
+    replay = VrfConfigModel.from_config(gathered, context={"defer_dependencies": True})
+    assert replay.bgp_passwd_encrypt == key_type
     proposed = VrfDataModel.from_config(_transform({"vrf_name": "BLUE", "bgp_password": str(password), "bgp_passwd_encrypt": key_type}))
     current = VrfDataModel.from_response(response)
     assert current.get_diff(proposed, exclude_unset=True)
@@ -1742,8 +1744,10 @@ def test_vrfs_00025_config_model_accepts_supported_attachment_fields():
         ],
     }
 
-    standalone = VrfConfigModel.from_config(config).to_config()
-    parent = VrfParentConfigModel.from_config(dict(config, child_fabric_config=[{"fabric_name": "AK-VXLAN"}])).to_config()
+    standalone = VrfConfigModel.from_config(config).to_internal_config()
+    parent = VrfParentConfigModel.from_config(dict(config, child_fabric_config=[{"fabric_name": "AK-VXLAN"}])).to_internal_config()
+    standalone_display = VrfConfigModel.from_config(config).to_config()
+    assert standalone_display["attach"][0]["freeform_config"] == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
 
     for parsed in (standalone, parent):
         assert parsed["deploy"] is False

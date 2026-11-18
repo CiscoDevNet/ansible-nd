@@ -430,6 +430,11 @@ class VrfWorkflowCoordinator:
             public = VrfDataModel.from_config(effective_payload).to_gathered_config()
             public_fields = set(getattr(VrfConfigModel, "model_fields", {}))
             public = {key: value for key, value in public.items() if key in public_fields}
+            # Gathered omits the write-only password. Restore it only for the
+            # pair/dependency check so encrypt-without-password is still rejected.
+            password = effective._fabric_bgp_password()  # pylint: disable=protected-access
+            if password is not None:
+                public["bgp_password"] = password
             if "bgp_password" not in public and "bgp_passwd_encrypt" not in entry:
                 public.pop("bgp_passwd_encrypt", None)
             VrfConfigModel.from_config(public, context={"state": state})
@@ -459,6 +464,9 @@ class VrfWorkflowCoordinator:
             child_fields = set(getattr(VrfChildConfigModel, "model_fields", {}))
             public = {key: value for key, value in public.items() if key in child_fields}
             public["fabric_name"] = strategy.fabric_name
+            password = effective._fabric_bgp_password()  # pylint: disable=protected-access
+            if password is not None:
+                public["bgp_password"] = password
             if "bgp_password" not in public and "bgp_passwd_encrypt" not in entry:
                 public.pop("bgp_passwd_encrypt", None)
             VrfChildConfigModel.from_config(
@@ -479,13 +487,17 @@ class VrfWorkflowCoordinator:
         Omitted L3VNI mode stays unset until existing-state lookup distinguishes
         a new VRF's creation default from an existing VRF's current mode.
 
+        Use ``to_internal_config()`` so tagged secrets keep their real values for
+        later request building. ``to_config()`` is display-only and would replace
+        those values with the no-log placeholder.
+
         Validation errors are reported immediately via ``module.fail_json``.
         """
         parsed = []
         for idx, entry in enumerate(config):
             try:
                 model = model_cls.from_config(entry, context={"state": state, "defer_dependencies": model_cls is VrfConfigModel and state == "merged"})
-                parsed.append(model.to_config(exclude_unset=True))
+                parsed.append(model.to_internal_config(exclude_unset=True))
             except ValidationError as exc:
                 self.module.fail_json(msg=(f"config[{idx}] validation failed " f"({model_cls.__name__}, state={state!r}): {exc}"))
         return parsed

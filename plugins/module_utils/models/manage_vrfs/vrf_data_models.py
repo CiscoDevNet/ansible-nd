@@ -378,6 +378,7 @@ class VxlanFabricInstance(NDNestedModel):
         min_length=4,
         max_length=32,
         description="VRF Lite BGP neighbor password",
+        json_schema_extra={"secret": True},
     )
     bgp_password_key_type: str | None = Field(
         default="3des",
@@ -570,6 +571,7 @@ class VrfDataModel(NDBaseModel):
         default=None,
         alias="vrfTemplateConfig",
         description=("Template parameter values for userDefined VRFs. Schema requires " "a JSON object with string values"),
+        json_schema_extra={"sensitive_container": True},
     )
     core_data: Any | None = Field(
         default=None,
@@ -658,11 +660,95 @@ class VrfDataModel(NDBaseModel):
 
         self._flatten_core_data(data, core_data)
         self._flatten_fabric_data(data, fabric_data)
+        # Write-only in gathered output: ND may echo bgpPassword, but replaying the
+        # display placeholder would send it as the real password. Omit the key so
+        # gather-and-reapply stays idempotent and does not leak the value.
+        data.pop("bgp_password", None)
+        self._omit_sensitive_containers_in_mapping(data)
         return data
+
+    @classmethod
+    def collect_secret_values(cls, config_item: dict[str, Any]) -> set[str]:
+        """Include playbook-shaped and fabric_data-nested BGP passwords.
+
+        ``fabric_data`` is typed as ``Any``, so the generic nested-model walk
+        cannot see ``bgpPassword``. Playbook config keeps the field at the top
+        level or under ``child_fabric_config``.
+        """
+        values = super().collect_secret_values(config_item)
+        if not isinstance(config_item, dict):
+            return values
+        values.update(VxlanFabricInstance.collect_secret_values(config_item))
+        fabric = config_item.get("fabric_data") or config_item.get("fabricData") or {}
+        if isinstance(fabric, dict):
+            values.update(VxlanFabricInstance.collect_secret_values(fabric))
+        for child in config_item.get("child_fabric_config") or config_item.get("childFabricConfig") or []:
+            if isinstance(child, dict):
+                values.update(VxlanFabricInstance.collect_secret_values(child))
+        for attach in config_item.get("attach") or []:
+            if isinstance(attach, dict):
+                values.update(NDBaseModel._secret_strings(attach.get("freeform_config") or attach.get("extraConfig")))  # pylint: disable=protected-access
+        return values
+
+    def collect_model_secret_values(self) -> set[str]:
+        """Include GET-echoed bgpPassword stored in dict or nested fabric_data."""
+        values = super().collect_model_secret_values()
+        fabric = self.fabric_data
+        if isinstance(fabric, dict):
+            values.update(VxlanFabricInstance.collect_secret_values(fabric))
+        elif isinstance(fabric, NDBaseModel):
+            values.update(fabric.collect_model_secret_values())
+        return values
+
+    def _dump_config(self, *, mask_secrets: bool, **kwargs) -> dict[str, Any]:
+        """Mask bgp_password inside free-form fabric_data dicts as well."""
+        data = super()._dump_config(mask_secrets=mask_secrets, **kwargs)
+        if mask_secrets:
+            fabric = data.get("fabric_data")
+            if isinstance(fabric, dict):
+                VxlanFabricInstance.mask_secrets_in_mapping(fabric)
+        return data
+
+    def _fabric_bgp_password(self) -> str | None:
+        """Return the BGP password from typed or dict fabric_data."""
+        fabric = self.fabric_data
+        if isinstance(fabric, VxlanFabricInstance):
+            value = fabric.bgp_password
+        elif isinstance(fabric, dict):
+            value = fabric.get("bgp_password", fabric.get("bgpPassword"))
+        else:
+            return None
+        if value is None or value == "":
+            return None
+        return str(value)
+
+    def _has_explicit_bgp_password(self) -> bool:
+        """True when the proposed model carries a non-empty BGP password."""
+        return self._fabric_bgp_password() is not None
+
+    def get_diff(self, other: NDBaseModel, exclude_unset: bool = False) -> bool:
+        """Compare public fields, then BGP passwords privately.
+
+        Tagged secrets are stripped from public diff output. ND still echoes
+        bgpPassword, so the same value must remain idempotent and a new value
+        must still count as an update.
+        """
+        public_match = super().get_diff(other, exclude_unset=exclude_unset)
+        if not public_match:
+            return False
+        if not isinstance(other, VrfDataModel):
+            return public_match
+        if exclude_unset and not other._has_explicit_bgp_password():  # pylint: disable=protected-access
+            return True
+        return self._fabric_bgp_password() == other._fabric_bgp_password()
 
     def to_diff_dict(self, **kwargs) -> dict[str, Any]:
         """Compare cleared route targets without expanding sparse intent."""
         data = super().to_diff_dict(**kwargs)
+        fabric = data.get("fabricData")
+        if isinstance(fabric, dict):
+            fabric.pop("bgpPassword", None)
+            fabric.pop("bgp_password", None)
         if self.vrf_type in VXLAN_VRF_TYPES and not kwargs.get("exclude_unset", False):
             core = data.get("coreData") or {}
             data["coreData"] = core
