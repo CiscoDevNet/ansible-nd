@@ -1,0 +1,102 @@
+---
+# TEST: Create L3Out with dual-stack (IPv4 + IPv6), multi-link, IP resolution
+# Scenario: Create with ip_version=both, 2 links (BGW1 serial + BGW2 mgmt IP),
+#           PIM, admin state, descriptions. Tests IP resolution for switch3_id.
+# Validates: Multi-link creation, IP-to-serial resolution, dual-stack addressing.
+- name: "MERGED: Create dual-stack multi-link with IP resolution"
+  hosts: nd
+  gather_facts: false
+  vars_files:
+    - ../vars.yaml
+  tasks:
+    - name: Create dual-stack L3Out with 2 links (BGW1 + BGW2 via IP)
+      cisco.nd.nd_manage_l3out:
+        fabric_name: "{{ test_fabric }}"
+        state: merged
+        config:
+          - name: "{{ l3out_dualstack }}"
+            fabric1_name: "{{ fabric1_name }}"
+            fabric2_name: "{{ fabric2_name }}"
+            vrf1_name: "{{ vrf1_name }}"
+            vrf2_name: "{{ vrf2_name }}"
+            configured_fabrics: both
+            ip_version: both
+            connectivity_details:
+              routing_interface_type: subInterface
+              links:
+                # Link 1: A-BGW1 (serial) <-> A-Ext-EdgeRouter Eth1/2
+                - mtu: "{{ mtu_jumbo }}"
+                  ipv4_mask_length: "{{ link5_ipv4_mask }}"
+                  ipv6_prefix_length: "{{ link5_ipv6_prefix }}"
+                  vlan_id: 200
+                  ipv4_pim: true
+                  ipv6_pim: true
+                  switch1_details:
+                    switch_id: "{{ switch1_id }}"
+                    interface_name: "{{ subint_parent_sw1 }}.200"
+                    interface_ipv4_address: "{{ link5_ipv4_sw1 }}"
+                    interface_ipv6_address: "{{ link5_ipv6_sw1 }}"
+                    interface_admin_state: true
+                    interface_description: "Dual-stack link BGW1 - fabric1"
+                  switch2_details:
+                    switch_id: "{{ switch2_id }}"
+                    interface_name: "{{ subint_parent_sw2 }}.200"
+                    interface_ipv4_address: "{{ link5_ipv4_sw2 }}"
+                    interface_ipv6_address: "{{ link5_ipv6_sw2 }}"
+                    interface_admin_state: true
+                    interface_description: "Dual-stack link BGW1 - fabric2"
+                # Link 2: A-BGW2 (mgmt IP resolution) <-> A-Ext-EdgeRouter Eth1/1
+                - mtu: "{{ mtu_jumbo }}"
+                  ipv4_mask_length: "{{ link5_ipv4_mask }}"
+                  ipv6_prefix_length: "{{ link5_ipv6_prefix }}"
+                  vlan_id: 2
+                  switch1_details:
+                    switch_id: "{{ switch3_id }}"
+                    interface_name: "Ethernet1/6.2"
+                    interface_ipv4_address: "10.33.0.5"
+                    interface_ipv6_address: "fd00::a33:1"
+                  switch2_details:
+                    switch_id: "{{ switch2_id }}"
+                    interface_name: "Ethernet1/1.2"
+                    interface_ipv4_address: "10.33.0.6"
+                    interface_ipv6_address: "fd00::a33:2"
+            routing_details:
+              routing_protocol: bgp
+              bgp:
+                bfd: false
+                fabric1_details:
+                  local_asn: "{{ local_asn_fabric1 }}"
+                  advertise_host_routes: false
+                  ipv4_peering_details:
+                    ipv4_route_map_in: "{{ ipv4_route_map_in }}"
+                    ipv4_route_map_out: "{{ ipv4_route_map_out }}"
+                  ipv6_peering_details:
+                    ipv6_route_map_in: "{{ ipv6_route_map_in }}"
+                    ipv6_route_map_out: "{{ ipv6_route_map_out }}"
+                fabric2_details:
+                  local_asn: "{{ local_asn_fabric2 }}"
+                  ipv4_peering_details:
+                    ipv4_route_map_in: "{{ ipv4_route_map_in_2 }}"
+                    ipv4_route_map_out: "{{ ipv4_route_map_out_2 }}"
+                  ipv6_peering_details:
+                    ipv6_route_map_in: "{{ ipv6_route_map_in_2 }}"
+                    ipv6_route_map_out: "{{ ipv6_route_map_out_2 }}"
+      register: result
+
+    - name: Assert dual-stack L3Out created
+      ansible.builtin.assert:
+        that:
+          - result is changed
+          - result.after | selectattr('name', 'equalto', l3out_dualstack) | list | length == 1
+        fail_msg: "FAILED: Dual-stack L3Out was not created"
+        success_msg: "PASSED: Dual-stack L3Out created"
+
+    - name: Assert dual-stack has 2 links (both BGWs)
+      vars:
+        l3out: "{{ result.after | selectattr('name', 'equalto', l3out_dualstack) | first }}"
+      ansible.builtin.assert:
+        that:
+          - l3out.ip_version == "both"
+          - l3out.connectivity_details.links | length == 2
+        fail_msg: "FAILED: Expected 2 links but got {{ l3out.connectivity_details.links | length }}"
+        success_msg: "PASSED: Dual-stack L3Out has 2 links (BGW1 + BGW2)"
