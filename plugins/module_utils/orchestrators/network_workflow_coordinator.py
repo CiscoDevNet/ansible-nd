@@ -738,7 +738,7 @@ class NetworkWorkflowCoordinator:
 
         ### NDStateMachineError
 
-        - An operational-only Network is absent or has an unsupported policy.
+        - An operational-only Network is absent or has an unsupported policy, or an omitted existing layer cannot be resolved.
 
         ### ValidationError
 
@@ -770,7 +770,9 @@ class NetworkWorkflowCoordinator:
             validated = None
             if not strategy.is_child and (entry.get("vlan_network_type") is None or NDNetworkOrchestrator.should_defer_omitted_layer(entry, state)):
                 context = {"state": state, "default_network_type": NDNetworkOrchestrator.default_network_type(strategy.fabric_data)}
-                if current is not None and state == "merged":
+                if current is not None and entry.get("layer") is None:
+                    if current.layer is None and not operational_only:
+                        raise NDStateMachineError(f"Cannot resolve the existing layer for Network '{name}'; specify layer explicitly.")
                     context.update(existing_layer=current.layer, existing_vrf_name=current.vrf_name)
                 validated = strategy.config_model_cls.from_config(effective_entry, context=context)
             if operational_only:
@@ -815,6 +817,8 @@ class NetworkWorkflowCoordinator:
                 continue
             if validated is not None and validated.layer is not None:
                 proposed.layer = validated.layer
+                if current is not None and entry.get("layer") is None and entry.get("vrf_name") is None:
+                    proposed.vrf_name = current.vrf_name
                 if current is None and validated.layer == NetworkLayer.LAYER2.value and proposed.vrf_name is None:
                     proposed.vrf_name = "NA"
 

@@ -491,14 +491,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             return False
         if state in ("deleted", "gathered"):
             return True
-        if not cls.has_network_definition_intent(config):
-            return False
-        vlan_network_type = config.get("vlan_network_type") or config.get("vlanNetworkType")
-        if vlan_network_type in _VLAN_NETWORK_TYPE_ALIASES:
-            vlan_network_type = _VLAN_NETWORK_TYPE_ALIASES[vlan_network_type]
-        if vlan_network_type in _PRIVATE_SECONDARY_TEMPLATE_BY_TYPE:
-            return False
-        return state == "merged" or vlan_network_type is None
+        return cls.has_network_definition_intent(config)
 
     def preflight_create(self, model_instances: Sequence[NDNetworkModel]) -> None:
         """

@@ -458,13 +458,13 @@ class NetworkConfigModel(NDBaseModel):
             return existing_layer
         if not NetworkConfigModel._has_definition_intent_for_layer(data):
             return None
+        if defer_omitted_layer:
+            return None
         vlan_network_type = data.get("vlan_network_type") or data.get("vlanNetworkType")
         if vlan_network_type in _VLAN_NETWORK_TYPE_ALIASES:
             vlan_network_type = _VLAN_NETWORK_TYPE_ALIASES[vlan_network_type]
         if vlan_network_type in _PRIVATE_SECONDARY_VLAN_NETWORK_TYPES:
             return NetworkLayer.LAYER2.value
-        if defer_omitted_layer:
-            return None
         if default_network_type == NetworkType.EXTERNAL_CONNECTIVITY.value:
             return NetworkLayer.LAYER2.value
         if vlan_network_type == VlanNetworkType.PRIVATE_PRIMARY.value and not has_l3_definition_intent_for_layer(data):

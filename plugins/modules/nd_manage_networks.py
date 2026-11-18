@@ -127,8 +127,11 @@ options:
       layer:
         description:
           - Network layer.
-          - When omitted in C(state=merged), existing Networks inherit their current layer before sparse updates are applied.
-          - New Networks and authoritative states require enough context to derive the layer. Layer 3 and Layer 2 with VRF require C(vrf_name).
+          - When omitted, existing Networks retain their current layer in V(merged), V(replaced), V(overridden), and V(staged).
+          - Their existing VRF association is also retained when both C(layer) and C(vrf_name) are omitted.
+          - Specify C(layer) explicitly to request a layer change, or if the existing layer cannot be determined from controller readback.
+          - New ordinary Networks default to Layer 3. New primary PVLANs without L3 properties and secondary PVLANs resolve to Layer 2.
+          - New Layer 3 and Layer 2 with VRF Networks require C(vrf_name).
           - Layer 2 with VRF requires fabric Security Groups and MAC segmentation.
           - External fabrics support only Layer 2 definitions. Omitted C(layer) resolves to Layer 2.
           - External definition options are C(network_name), C(vlan_id), optional C(vlan_name), and optional C(network_id).
