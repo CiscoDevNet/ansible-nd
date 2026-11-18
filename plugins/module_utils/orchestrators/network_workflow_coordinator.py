@@ -42,7 +42,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_att
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_config_utils import (
     configured_network_names,
     deploy_enabled_by_network,
-    deploy_scope_by_network,
     network_name_filter,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_dependency_checker import (
@@ -1053,10 +1052,6 @@ class NetworkWorkflowCoordinator:
     def _deploy_enabled_by_network(self, config: list[dict]) -> dict[str, bool]:
         """Return per-Network deploy intent; omitted deploy defaults to True."""
         return deploy_enabled_by_network(config, getattr(self, "config_actions", None))
-
-    def _deploy_scope_by_network(self, config: list[dict]) -> dict[str, str]:
-        """Return the module-level deploy scope for each Network."""
-        return deploy_scope_by_network(config, getattr(self, "config_actions", None))
 
     def _run_network_config_actions(self, module_args: dict, strategy: BaseNetworkStrategy, deploy_payload: dict[str, Any]) -> dict[str, Any]:
         """Execute or plan one optional Network deploy through the shared controller."""

@@ -42,8 +42,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_attachm
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_config_utils import (
     configured_vrf_names,
-    deploy_enabled_by_vrf,
-    deploy_scope_by_vrf,
     vrf_name_filter,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_dependency_checker import (
@@ -1093,14 +1091,6 @@ class VrfWorkflowCoordinator:
     def _configured_vrf_names(self, config: list[dict]) -> list[str]:
         """Return configured VRF names in stable order."""
         return configured_vrf_names(config)
-
-    def _deploy_enabled_by_vrf(self, config: list[dict]) -> dict[str, bool]:
-        """Return per-VRF deploy intent; omitted deploy defaults to True."""
-        return deploy_enabled_by_vrf(config, getattr(self, "config_actions", None))
-
-    def _deploy_scope_by_vrf(self, config: list[dict]) -> dict[str, str]:
-        """Return the module-level deploy scope for each VRF."""
-        return deploy_scope_by_vrf(config, getattr(self, "config_actions", None))
 
     def _desired_attachment_map(
         self,

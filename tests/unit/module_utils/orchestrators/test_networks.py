@@ -6067,9 +6067,6 @@ def test_network_attachment_only_detach_without_switch_id_rejects_network_fallba
     class Coordinator:
         config_actions = ConfigActions(save=False, deploy=True, type="switch", provided=True)
 
-        def _build_deploy_payloads(self, *_args):
-            return []
-
         def _build_delete_deploy_payloads(self, config, *target_maps, strategy=None):
             return NetworkAttachmentManager.build_delete_deploy_payloads(config, *target_maps, strategy=strategy, actions=self.config_actions)
 
@@ -8405,3 +8402,115 @@ def test_network_attachment_pre_detach_retains_mandatory_targets_when_deploy_dis
     )
     assert trace["deploy_targets"] == {"BLUE": {"SW1"}}
     assert trace["payloads"] == [{"networkName": "BLUE", "switchId": "SW1", "vlanId": 100, "attach": False}]
+
+
+def test_network_workflow_rejects_item_deploy_under_switch_scope_before_mutation(monkeypatch):
+    params = {
+        "fabric_name": "FAB1",
+        "state": "merged",
+        "config_actions": {"deploy": True, "type": "switch"},
+        "config": [{"network_name": "BLUE", "deploy": False}],
+    }
+    strategy = StandaloneNetworkStrategy(fabric_name="FAB1", fabric_data={"managementType": "vxlanIbgp"})
+    coordinator = NetworkWorkflowCoordinator(_Module(params), strategy)
+    monkeypatch.setattr(coordinator_mod, "get_raw_module_args", lambda: params)
+    monkeypatch.setattr(coordinator, "_handle_standalone_workflow", lambda *args: pytest.fail("invalid input must not start the workflow"))
+
+    with pytest.raises(AssertionError, match="Invalid config_actions"):
+        coordinator.run()
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_network_coordinator_switch_deploy_respects_check_mode(check_mode, monkeypatch):
+    module = _Module({"fabric_name": "FAB1", "state": "merged", "config": []})
+    module.check_mode = check_mode
+    strategy = StandaloneNetworkStrategy(fabric_name="FAB1", fabric_data={"managementType": "vxlanIbgp"})
+    coordinator = NetworkWorkflowCoordinator(module, strategy)
+    payload = {"switchIds": ["SW1"]}
+    requests = []
+    monkeypatch.setattr(
+        coordinator.attachments, "deploy_network_switches", lambda args, fabric, body: requests.append((args, fabric, body)) or {"changed": True}
+    )
+
+    result = coordinator._deploy_network_switches(module.params, strategy, payload)
+
+    if check_mode:
+        assert requests == []
+        assert result == {"changed": True, "failed": False, "check_mode_deploy_payloads": [payload]}
+    else:
+        assert requests == [(module.params, strategy, payload)]
+        assert result == {"changed": True}
+
+
+@pytest.mark.parametrize("payload", [{}, {"switchIds": []}])
+def test_network_switch_deploy_rejects_empty_targets_before_request(payload):
+    manager = NetworkAttachmentManager(coordinator=None)
+
+    with pytest.raises(ValueError, match="Switch deployment requires affected switch IDs"):
+        manager.deploy_network_switches({}, None, payload)
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_network_changed_definition_switch_scope_limits_deploy_to_requested_attachment(check_mode):
+    config = [{"network_name": "BLUE", "attach": [{"ip_address": "192.0.2.1"}]}, {"network_name": "RED"}]
+    args = {"fabric_name": "FAB1", "state": "merged", "config": config}
+    module = _Module(args)
+    module.check_mode = check_mode
+    strategy = StandaloneNetworkStrategy(fabric_name="FAB1", fabric_data={"managementType": "vxlanIbgp"})
+    coordinator = NetworkWorkflowCoordinator(module, strategy)
+    coordinator.config_actions = ConfigActions(save=False, deploy=True, type="switch", provided=True)
+    coordinator.attachments.current_attachment_details_ignore_missing = lambda *args: [
+        {"networkName": "BLUE", "switchId": "SW1", "attach": True, "status": "inSync"},
+        {"networkName": "BLUE", "switchId": "SW2", "attach": True, "status": "inSync"},
+        {"networkName": "RED", "switchId": "SW3", "attach": True, "status": "inSync"},
+    ]
+    calls = []
+    coordinator._deploy_network_switches = lambda args, fabric, payload: calls.append(payload) or {"changed": True, "failed": False}
+    result = NetworkStateMachine(coordinator)._deploy_after_attachment_changes(
+        {"changed": True, "after": [{"network_name": "BLUE", "network_status": "deployed"}, {"network_name": "RED", "network_status": "deployed"}]},
+        config,
+        args,
+        strategy,
+        {},
+        {},
+        False,
+        existing_names={"BLUE", "RED"},
+        requested_attachments={("BLUE", "SW1"): {"networkName": "BLUE", "switchId": "SW1", "attach": True}},
+        changed_network_names={"BLUE"},
+    )
+
+    if check_mode:
+        assert calls == []
+        assert result["check_mode_deploy_payloads"] == [{"switchIds": ["SW1"]}]
+    else:
+        assert calls == [{"switchIds": ["SW1"]}]
+
+
+def test_pending_network_payloads_keep_affected_switches_on_resource_scope():
+    config = [{"network_name": "BLUE"}]
+    args = {"fabric_name": "FAB1", "state": "merged", "config": config}
+    strategy = StandaloneNetworkStrategy(fabric_name="FAB1", fabric_data={"managementType": "vxlanIbgp"})
+    coordinator = NetworkWorkflowCoordinator(_Module(args), strategy)
+    coordinator.config_actions = ConfigActions(save=False, deploy=True, type="resource", provided=True)
+    coordinator.attachments.current_attachment_details_ignore_missing = lambda *args: [
+        {"networkName": "BLUE", "switchId": "SW1", "attach": True, "status": "pending"}
+    ]
+
+    payloads = coordinator._build_pending_network_deploy_payloads(
+        {"after": [{"network_name": "BLUE", "network_status": "pending"}]}, config, args, strategy, existing_names={"BLUE"}
+    )
+
+    assert payloads == [{"networkNames": ["BLUE"], "switchIds": ["SW1"]}]
+
+
+def test_resource_payloads_exclude_network_with_disabled_item_deploy():
+    config = [{"network_name": "BLUE"}, {"network_name": "RED", "deploy": False}]
+    actions = ConfigActions(save=False, deploy=True, type="resource", provided=True, resource_deploy_overrides=(None, False))
+
+    payloads = NetworkAttachmentManager.build_deploy_payloads(
+        config,
+        {"BLUE": {"SW1"}, "RED": {"SW2"}},
+        actions=actions,
+    )
+
+    assert payloads == [{"networkNames": ["BLUE"], "switchIds": ["SW1"]}]

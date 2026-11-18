@@ -3,11 +3,14 @@
 """VRF resource targets and resource-filtered delete readiness."""
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
 from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActions
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_attachment_manager import VrfAttachmentManager
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.multisite_parent_vrf import MultisiteParentVrfStrategy
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_workflow_coordinator import VrfWorkflowCoordinator
 
 
 def _manager(scope="resource"):
@@ -273,3 +276,115 @@ def test_pending_unattached_vrf_before_delete_does_not_send_placeholder():
     traces = VrfStateMachine(coordinator)._deploy_pending_vrfs_before_delete({}, SimpleNamespace(), [model], ["BLUE"])
 
     assert traces == []
+
+
+def _module(check_mode=False, params=None):
+    return SimpleNamespace(params=params or {"state": "merged", "config": []}, check_mode=check_mode, _verbosity=0, fail_json=Mock())
+
+
+def test_invalid_per_item_deploy_is_rejected_before_the_vrf_workflow(monkeypatch):
+    args = {"fabric_name": "FAB1", "state": "merged", "config_actions": {"type": "switch"}, "config": [{"vrf_name": "BLUE", "deploy": False}]}
+    module = _module(params=args)
+    coordinator = VrfWorkflowCoordinator(module, SimpleNamespace())
+    coordinator._handle_standalone_workflow = Mock()
+    monkeypatch.setattr("ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_workflow_coordinator.get_raw_module_args", lambda: args)
+
+    with pytest.raises(ValueError, match="allowed only when config_actions.type='resource'"):
+        coordinator.run()
+
+    assert module.fail_json.call_count == 1
+    assert "Invalid config_actions" in module.fail_json.call_args.kwargs["msg"]
+    coordinator._handle_standalone_workflow.assert_not_called()
+
+
+def test_merged_workflow_does_not_append_staged_action_result(monkeypatch):
+    args = {"fabric_name": "FAB1", "state": "merged", "config": []}
+    module = _module(params=args)
+    strategy = SimpleNamespace(fabric_type="standalone", is_child=False, is_parent=False)
+    coordinator = VrfWorkflowCoordinator(module, strategy)
+    coordinator._validate_topology_argument_scope = Mock()
+    coordinator._handle_standalone_workflow = Mock(return_value={"changed": False, "failed": False})
+    monkeypatch.setattr("ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_workflow_coordinator.get_raw_module_args", lambda: args)
+
+    result = coordinator.run()
+
+    assert result == {"changed": False, "failed": False}
+    coordinator._handle_standalone_workflow.assert_called_once_with(args, "standalone")
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_switch_deploy_facade_only_calls_endpoint_outside_check_mode(check_mode):
+    module = _module(check_mode=check_mode)
+    coordinator = VrfWorkflowCoordinator(module, SimpleNamespace(fabric_name="FAB1"))
+    coordinator.attachments.deploy_vrf_switches = Mock(return_value={"changed": True, "failed": False})
+    payload = {"switchIds": ["SW1", "SW2"]}
+
+    result = coordinator._deploy_vrf_switches(module.params, coordinator.strategy, payload)
+
+    if check_mode:
+        assert result == {"changed": True, "failed": False, "check_mode_deploy_payloads": [payload]}
+        coordinator.attachments.deploy_vrf_switches.assert_not_called()
+    else:
+        assert result == {"changed": True, "failed": False}
+        coordinator.attachments.deploy_vrf_switches.assert_called_once_with(module.params, coordinator.strategy, payload)
+
+
+def test_controller_deploy_failure_is_reported_by_vrf_facade():
+    module = _module()
+    coordinator = VrfWorkflowCoordinator(module, SimpleNamespace(fabric_name="FAB1"))
+    coordinator.config_actions = ConfigActions(save=False, deploy=True, type="resource", provided=True)
+    coordinator._deploy_vrf_attachments = Mock(side_effect=RuntimeError("controller rejected VRF deployment"))
+
+    with pytest.raises(RuntimeError, match="VRF config action deploy failed: controller rejected VRF deployment"):
+        coordinator._run_vrf_config_actions(module.params, coordinator.strategy, {"vrfNames": ["BLUE"], "switchIds": ["SW1"]})
+
+
+@pytest.mark.parametrize("targets", [{"BLUE": set()}, {"BLUE": {""}}, {"": {"SW1"}}])
+def test_vrf_detach_cleanup_rejects_missing_resource_or_switch_targets(targets):
+    with pytest.raises(ValueError, match="without VRF names and affected switch IDs"):
+        VrfAttachmentManager.build_detach_deploy_payloads(targets)
+
+
+def test_vrf_switch_deploy_rejects_missing_switch_targets_without_endpoint_request():
+    coordinator = SimpleNamespace(_new_vrf_orchestrator=Mock())
+    manager = VrfAttachmentManager(coordinator)
+    with pytest.raises(ValueError, match="requires affected switch IDs"):
+        manager.deploy_vrf_switches({}, SimpleNamespace(), {"switchIds": []})
+    coordinator._new_vrf_orchestrator.assert_not_called()
+
+
+def test_pending_vrf_attachment_without_switch_id_is_not_deployed():
+    coordinator = SimpleNamespace(config_actions=ConfigActions(save=False, deploy=True, type="resource", provided=True))
+    coordinator._current_attachment_details = lambda *_args: [{"vrfName": "BLUE", "attach": True, "status": "pending"}]
+    manager = VrfAttachmentManager(coordinator)
+    config = [{"vrf_name": "BLUE"}]
+    result = {"after": [{"vrf_name": "BLUE", "vrf_status": "pending"}]}
+
+    targets = manager.build_pending_vrf_deploy_targets(result, config, {}, SimpleNamespace())
+
+    assert targets == {"BLUE": set()}
+    assert manager.build_deploy_payloads(config, targets) == [{"vrfNames": ["BLUE"]}]
+
+
+def test_parent_check_mode_reports_deferred_detach_without_calling_deploy():
+    args = {"fabric_name": "PARENT", "state": "replaced", "config": [{"vrf_name": "BLUE"}], "output_level": "normal"}
+    module = _module(check_mode=True, params=args)
+    strategy = MultisiteParentVrfStrategy(fabric_name="PARENT", fabric_data={"managementType": "vxlanIbgp", "members": []})
+    coordinator = VrfWorkflowCoordinator(module, strategy)
+    coordinator._parse_config = lambda entries, *_args: entries
+    coordinator._preflight_child_feature_tasks = Mock()
+    coordinator._run_state_machine_with_attachments = Mock(
+        return_value={
+            "changed": True,
+            "failed": False,
+            "_deferred_deploy_payloads": [{"_vrf_detach_cleanup": True, "vrfNames": ["BLUE"], "switchIds": ["SW1"]}],
+        }
+    )
+    coordinator._deploy_vrf_attachments = Mock()
+    coordinator._run_vrf_config_actions = Mock()
+
+    result = coordinator._handle_parent_workflow(args, strategy.fabric_type)
+
+    assert result["check_mode_deploy_payloads"] == [{"vrfNames": ["BLUE"], "switchIds": ["SW1"]}]
+    coordinator._deploy_vrf_attachments.assert_not_called()
+    coordinator._run_vrf_config_actions.assert_not_called()
