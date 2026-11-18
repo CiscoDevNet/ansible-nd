@@ -1,0 +1,44 @@
+---
+# Serialize mutating harness runs that target the same ND controller.  The
+# directory creation is atomic, unlike a check-then-create sequence.  The
+# lock lives on the Ansible controller so separate test processes cannot
+# overlap merely because they use different managed-host connections.
+
+- name: Initialize ND4X nd_manage_links scope lock state
+  ansible.builtin.set_fact:
+    nd4x_scope_lock_acquired: false
+
+- name: Acquire atomic ND4X nd_manage_links scope lock
+  ansible.builtin.command:
+    argv:
+      - mkdir
+      - "{{ nd4x_scope_lock_path }}"
+  delegate_to: localhost
+  register: nd4x_scope_lock_attempt
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Record ND4X nd_manage_links scope lock ownership
+  ansible.builtin.set_fact:
+    nd4x_scope_lock_acquired: "{{ nd4x_scope_lock_attempt.rc | int == 0 }}"
+
+- name: Fail when another ND4X nd_manage_links run owns the scope
+  ansible.builtin.assert:
+    that:
+      - nd4x_scope_lock_acquired | bool
+    fail_msg: >-
+      Another nd_manage_links harness run appears to own
+      {{ nd4x_scope_lock_path }}. Verify that run is complete before retrying.
+      If it crashed, inspect {{ nd4x_scope_lock_path }}/owner and remove the
+      stale lock only after confirming no harness run is active.
+
+- name: Write ND4X nd_manage_links scope ownership marker
+  ansible.builtin.copy:
+    dest: "{{ nd4x_scope_lock_path }}/owner"
+    content: |
+      owner={{ nd4x_links_scope_owner }}
+      host={{ ansible_host | default(inventory_hostname) }}
+    mode: "0600"
+  delegate_to: localhost
+  when: nd4x_scope_lock_acquired | bool
