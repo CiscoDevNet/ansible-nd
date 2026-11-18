@@ -15,7 +15,9 @@ while the Ansible-facing argument spec exposes the more idiomatic snake_case
 *wire* (camelCase) value, and ``PORT_ACTION_SNAKE_TO_WIRE`` lets the model's
 ``mode="before"`` validator accept snake_case input and normalise it to the
 wire value before enum validation. API responses (already camelCase) validate
-directly. Module output consequently reflects the controller's camelCase form.
+directly. The internal model therefore retains the controller representation,
+while ``AclModel.to_gathered_config()`` converts gathered output back to the
+Ansible-facing snake_case representation.
 """
 
 from __future__ import annotations
@@ -83,3 +85,6 @@ PORT_ACTION_SNAKE_TO_WIRE: dict[str, str] = {
     "not_equal_to": "notEqualTo",
     "port_range": "portRange",
 }
+
+# Maps API camelCase port-action values to replay-safe Ansible snake_case.
+PORT_ACTION_WIRE_TO_SNAKE: dict[str, str] = {wire_value: snake_value for snake_value, wire_value in PORT_ACTION_SNAKE_TO_WIRE.items()}

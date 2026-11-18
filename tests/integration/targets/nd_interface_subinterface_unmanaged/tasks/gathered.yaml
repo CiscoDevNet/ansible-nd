@@ -1,0 +1,162 @@
+---
+# Gathered state tests for nd_interface_subinterface_unmanaged
+# Copyright: (c) 2026, Deeksha Pandey (@deekpand)
+#
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+#
+# These tests run after merged.yaml, which creates the unmanaged test
+# subinterfaces defined in vars/main.yaml.
+
+- name: "GATHERED: Gather all unmanaged subinterfaces"
+  cisco.nd.nd_interface_subinterface_unmanaged:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+  register: nm_gathered_all
+
+- name: "GATHERED: Verify read-only gather-all output"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_all is not changed
+      - nm_gathered_all.gathered is defined
+      - nm_gathered_all.gathered | type_debug == "list"
+      - nm_gathered_all.before == []
+      - nm_gathered_all.after == []
+      - nm_gathered_all.diff is not defined
+      - nm_gathered_all.proposed is not defined
+
+- name: "GATHERED: Select the known Eth.20 test subinterface"
+  ansible.builtin.set_fact:
+    gathered_eth_20: >-
+      {{
+        nm_gathered_all.gathered
+        | selectattr('switch_ip', 'equalto', test_switch_ip)
+        | selectattr(
+            'interface_name',
+            'equalto',
+            ethernet_parent ~ '.20'
+          )
+        | list
+      }}
+
+- name: "GATHERED: Verify known test subinterfaces were gathered"
+  ansible.builtin.assert:
+    that:
+      - gathered_eth_20 | length == 1
+      - >-
+        nm_gathered_all.gathered
+        | selectattr('switch_ip', 'equalto', test_switch_ip)
+        | selectattr(
+            'interface_name',
+            'equalto',
+            ethernet_parent ~ '.21'
+          )
+        | list
+        | length == 1
+      - >-
+        nm_gathered_all.gathered
+        | selectattr('switch_ip', 'equalto', test_switch_ip)
+        | selectattr(
+            'interface_name',
+            'equalto',
+            ethernet_parent ~ '.22'
+          )
+        | list
+        | length == 1
+      - >-
+        nm_gathered_all.gathered
+        | selectattr('switch_ip', 'equalto', test_switch_ip)
+        | selectattr(
+            'interface_name',
+            'equalto',
+            port_channel_parent ~ '.25'
+          )
+        | list
+        | length == 1
+
+- name: "GATHERED: Verify unmanaged output contains reusable identifiers only"
+  ansible.builtin.assert:
+    that:
+      - gathered_eth_20[0].switch_ip == test_switch_ip
+      - gathered_eth_20[0].interface_name == ethernet_parent ~ '.20'
+      - gathered_eth_20[0].config_data is not defined
+      - >-
+        nm_gathered_all.gathered
+        | selectattr('config_data', 'defined')
+        | list
+        | length == 0
+
+- name: "GATHERED: Verify every item has its composite identifier"
+  ansible.builtin.assert:
+    that:
+      - >-
+        nm_gathered_all.gathered
+        | selectattr('switch_ip', 'defined')
+        | list
+        | length == nm_gathered_all.gathered | length
+      - >-
+        nm_gathered_all.gathered
+        | selectattr('interface_name', 'defined')
+        | list
+        | length == nm_gathered_all.gathered | length
+
+- name: "GATHERED: Gather all with explicit empty config"
+  cisco.nd.nd_interface_subinterface_unmanaged:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: []
+    state: gathered
+  register: nm_gathered_empty_config
+
+- name: "GATHERED: Verify empty config is equivalent to omitted config"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_empty_config is not changed
+      - nm_gathered_empty_config.gathered == nm_gathered_all.gathered
+
+- name: "GATHERED: Gather all in check mode"
+  cisco.nd.nd_interface_subinterface_unmanaged:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+  check_mode: true
+  register: cm_gathered_all
+
+- name: "GATHERED: Verify check mode is identical and read-only"
+  ansible.builtin.assert:
+    that:
+      - cm_gathered_all is not changed
+      - cm_gathered_all.gathered == nm_gathered_all.gathered
+
+- name: "GATHERED: Reuse gathered Eth.20 as merged config in check mode"
+  cisco.nd.nd_interface_subinterface_unmanaged:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: "{{ gathered_eth_20 }}"
+    state: merged
+  check_mode: true
+  register: cm_reuse_gathered
+
+- name: "GATHERED: Verify gathered output is reusable"
+  ansible.builtin.assert:
+    that:
+      - cm_reuse_gathered is not changed
+
+- name: "GATHERED: Reject nonempty config because filtering is unsupported"
+  cisco.nd.nd_interface_subinterface_unmanaged:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: "{{ ethernet_parent }}.20"
+    state: gathered
+  register: nm_gathered_with_config
+  ignore_errors: true
+
+- name: "GATHERED: Verify nonempty config is rejected"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_with_config is failed
+      - >-
+        'currently supports gather-all only'
+        in nm_gathered_with_config.msg

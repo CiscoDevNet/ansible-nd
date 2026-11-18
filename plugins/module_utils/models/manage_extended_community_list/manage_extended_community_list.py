@@ -229,6 +229,63 @@ class ExtendedCommunityListEntryModel(NDNestedModel):
         return v
 
 
+class ExtendedCommunityListGatheredFilterModel(NDNestedModel):
+    """Validate scalar fields supported by partial gathered filters."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=115)
+    type: ExtendedCommunityListTypeEnum | None = Field(default=None)
+    tenant_name: str | None = Field(default=None, alias="tenantName", max_length=63)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_tenant_qualified_name(cls, data: Any) -> Any:
+        """Normalize tenant~name filters to separate tenant_name and name fields."""
+        if not isinstance(data, dict):
+            return data
+
+        name = data.get("name")
+        if not isinstance(name, str) or "~" not in name:
+            return data
+        qualified_tenant, bare_name = name.split("~", 1)
+        supplied_tenant = data.get("tenant_name", data.get("tenantName"))
+        if supplied_tenant is not None and supplied_tenant != qualified_tenant:
+            raise ValueError(f"tenant_name '{supplied_tenant}' conflicts with " f"tenant-qualified name '{name}'.")
+
+        normalized = dict(data)
+        normalized["name"] = bare_name
+        normalized["tenant_name"] = qualified_tenant
+        normalized.pop("tenantName", None)
+        return normalized
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[a-zA-Z0-9~_-]+", value):
+            raise ValueError(f"name '{value}' contains invalid characters. Allowed: [a-zA-Z0-9~_-].")
+        return value
+
+    @field_validator("tenant_name")
+    @classmethod
+    def validate_tenant_name(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[A-Za-z0-9_-]+", value):
+            raise ValueError(f"tenant_name '{value}' contains invalid characters. Allowed: [A-Za-z0-9_-].")
+        return value
+
+    @model_validator(mode="after")
+    def validate_qualified_name_length(self) -> "ExtendedCommunityListGatheredFilterModel":
+        """Validate the combined tenant-qualified API name length."""
+        if self.tenant_name is None or self.name is None:
+            return self
+
+        qualified_name = f"{self.tenant_name}~{self.name}"
+        if len(qualified_name) > TENANT_EXTENDED_COMMUNITY_LIST_API_NAME_MAX_LENGTH:
+            raise ValueError(
+                f"tenant-qualified extended community list name '{qualified_name}' must be "
+                f"{TENANT_EXTENDED_COMMUNITY_LIST_API_NAME_MAX_LENGTH} characters or fewer."
+            )
+        return self
+
+
 class ExtendedCommunityListModel(NDBaseModel):
     """
     Model for a Nexus Dashboard extended community list resource.
@@ -253,6 +310,28 @@ class ExtendedCommunityListModel(NDBaseModel):
         "numberOfAssociations",
         "associations",
     ]
+
+    # --- Gathered filtering Configuration ---
+    supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "name",
+        "type",
+        "tenant_name",
+    )
+
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """Validate and normalize one partial gathered-state filter."""
+        validated = ExtendedCommunityListGatheredFilterModel.model_validate(
+            filter_item,
+            by_name=True,
+            context={"mode": "config", "state": "gathered"},
+        )
+        return validated.model_dump(
+            by_alias=False,
+            exclude_none=True,
+            context={"mode": "config"},
+        )
 
     # --- Top-level fields ---
     name: str = Field(
@@ -413,9 +492,9 @@ class ExtendedCommunityListModel(NDBaseModel):
             config=dict(
                 type="list",
                 elements="dict",
-                required=True,
+                required=False,
                 options=dict(
-                    name=dict(type="str", required=True),
+                    name=dict(type="str", required=False),
                     type=dict(
                         type="str",
                         choices=["standard", "expanded"],
@@ -474,6 +553,6 @@ class ExtendedCommunityListModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
         )

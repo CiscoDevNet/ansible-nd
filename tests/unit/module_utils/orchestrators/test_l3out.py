@@ -58,7 +58,7 @@ def responses_l3out(key: str):
     return load_fixture("test_l3out")[key]
 
 
-def _build_rest_send(gen_responses: ResponseGenerator) -> RestSend:
+def _build_rest_send(gen_responses: ResponseGenerator, state: str = "merged") -> RestSend:
     """Build a `RestSend` wired to a file-based `Sender` and `ResponseHandler`."""
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
@@ -69,7 +69,7 @@ def _build_rest_send(gen_responses: ResponseGenerator) -> RestSend:
     response_handler.verb = HttpVerbEnum.GET
     response_handler.commit()
 
-    rest_send = RestSend({"check_mode": False, "fabric_name": "test_fabric"})
+    rest_send = RestSend({"check_mode": False, "fabric_name": "test_fabric", "state": state})
     rest_send.sender = sender
     rest_send.response_handler = response_handler
     rest_send.unit_test = True
@@ -700,6 +700,7 @@ def test_l3out_00700() -> None:
         result = instance.query_all()
 
     assert rest_send.path == "/api/v1/manage/l3Outs?fabricName=test_fabric"
+    assert rest_send.verb == HttpVerbEnum.GET.value
     assert isinstance(result, list)
     assert len(result) == 2
     names = [item["name"] for item in result]
@@ -794,6 +795,353 @@ def test_l3out_00730() -> None:
         result = instance.query_all()
 
     assert result == []
+
+
+def test_l3out_00740_gathered_paginates_using_total(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    # Summary
+
+    Verify gathered state follows controller-provided total-count pagination.
+
+    ## Test
+
+    - Gathered state requests the L3Out collection with max and offset.
+    - The first page reports three total records and returns two.
+    - The second request advances the offset by the number of returned rows.
+    - All three unique L3Outs are returned.
+    - Every request uses GET.
+
+    ## Classes and Methods
+
+    - L3OutOrchestrator.query_all()
+    - L3OutOrchestrator._query_all_for_gathered()
+    - L3OutOrchestrator._has_next_page()
+    """
+
+    def responses():
+        yield {}
+
+    rest_send = _build_rest_send(
+        ResponseGenerator(responses()),
+        state="gathered",
+    )
+    instance = L3OutOrchestrator(rest_send=rest_send)
+
+    monkeypatch.setattr(L3OutOrchestrator, "query_all_page_size", 2)
+
+    pages = [
+        {
+            "l3Outs": [
+                {"name": "L3OUT1"},
+                {"name": "L3OUT2"},
+            ],
+            "meta": {"counts": {"total": 3}},
+        },
+        {
+            "l3Outs": [{"name": "L3OUT3"}],
+            "meta": {"counts": {"total": 3}},
+        },
+    ]
+    requested_paths = []
+    requested_verbs = []
+
+    def fake_request(**kwargs):
+        requested_paths.append(kwargs["path"])
+        requested_verbs.append(kwargs["verb"])
+        return pages.pop(0)
+
+    monkeypatch.setattr(instance, "_request", fake_request)
+
+    result = instance.query_all()
+
+    assert [item["name"] for item in result] == [
+        "L3OUT1",
+        "L3OUT2",
+        "L3OUT3",
+    ]
+    assert requested_paths == [
+        "/api/v1/manage/l3Outs?fabricName=test_fabric&max=2&offset=0",
+        "/api/v1/manage/l3Outs?fabricName=test_fabric&max=2&offset=2",
+    ]
+    assert requested_verbs == [
+        HttpVerbEnum.GET,
+        HttpVerbEnum.GET,
+    ]
+
+
+@pytest.mark.parametrize(
+    (
+        "result",
+        "page_count",
+        "offset",
+        "page_size",
+        "expected",
+    ),
+    [
+        (
+            {"meta": {"counts": {"total": 3}}},
+            2,
+            0,
+            2,
+            True,
+        ),
+        (
+            {"meta": {"counts": {"total": 3}}},
+            1,
+            2,
+            2,
+            False,
+        ),
+        (
+            {"meta": {"counts": {"remaining": 1}}},
+            2,
+            0,
+            2,
+            True,
+        ),
+        (
+            {"meta": {"counts": {"remaining": 0}}},
+            2,
+            0,
+            2,
+            False,
+        ),
+        ({}, 2, 0, 2, True),
+        ({}, 1, 0, 2, False),
+        ({}, 0, 0, 2, False),
+    ],
+    ids=[
+        "total-more-results",
+        "total-complete",
+        "remaining-more-results",
+        "remaining-complete",
+        "full-page-fallback",
+        "short-page-fallback",
+        "empty-page-fallback",
+    ],
+)
+def test_l3out_00750_has_next_page(
+    result,
+    page_count,
+    offset,
+    page_size,
+    expected,
+) -> None:
+    """
+    # Summary
+
+    Verify L3Out pagination uses total, remaining, and page-size fallback
+    in the documented precedence order.
+
+    ## Classes and Methods
+
+    - L3OutOrchestrator._has_next_page()
+    """
+
+    assert (
+        L3OutOrchestrator._has_next_page(
+            result=result,
+            page_count=page_count,
+            offset=offset,
+            page_size=page_size,
+        )
+        is expected
+    )
+
+
+def test_l3out_00760_gathered_rejects_empty_page_with_remaining(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    # Summary
+
+    Verify gathered state fails instead of returning incomplete data when
+    the controller returns an empty page while reporting remaining records.
+
+    ## Classes and Methods
+
+    - L3OutOrchestrator._query_all_for_gathered()
+    """
+
+    def responses():
+        yield {}
+
+    instance = L3OutOrchestrator(
+        rest_send=_build_rest_send(
+            ResponseGenerator(responses()),
+            state="gathered",
+        )
+    )
+
+    monkeypatch.setattr(
+        instance,
+        "_request",
+        lambda **kwargs: {
+            "l3Outs": [],
+            "meta": {"counts": {"remaining": 1}},
+        },
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="empty page.*additional results",
+    ):
+        instance.query_all()
+
+
+def test_l3out_00770_gathered_rejects_duplicate_only_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    # Summary
+
+    Verify pagination fails when a later page contains no new L3Outs while
+    the controller continues to report additional results.
+
+    ## Classes and Methods
+
+    - L3OutOrchestrator._query_all_for_gathered()
+    """
+
+    def responses():
+        yield {}
+
+    instance = L3OutOrchestrator(
+        rest_send=_build_rest_send(
+            ResponseGenerator(responses()),
+            state="gathered",
+        )
+    )
+    monkeypatch.setattr(L3OutOrchestrator, "query_all_page_size", 1)
+
+    pages = [
+        {
+            "l3Outs": [{"name": "L3OUT1"}],
+            "meta": {"counts": {"remaining": 1}},
+        },
+        {
+            "l3Outs": [{"name": "L3OUT1"}],
+            "meta": {"counts": {"remaining": 1}},
+        },
+    ]
+
+    monkeypatch.setattr(
+        instance,
+        "_request",
+        lambda **kwargs: pages.pop(0),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="pagination did not advance",
+    ):
+        instance.query_all()
+
+
+def test_l3out_00780_gathered_page_limit_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    # Summary
+
+    Verify reaching the gathered pagination limit raises instead of
+    returning an incomplete L3Out inventory.
+
+    ## Classes and Methods
+
+    - L3OutOrchestrator._query_all_for_gathered()
+    """
+
+    def responses():
+        yield {}
+
+    instance = L3OutOrchestrator(
+        rest_send=_build_rest_send(
+            ResponseGenerator(responses()),
+            state="gathered",
+        )
+    )
+
+    monkeypatch.setattr(L3OutOrchestrator, "query_all_page_size", 1)
+    monkeypatch.setattr(L3OutOrchestrator, "query_all_max_pages", 1)
+    monkeypatch.setattr(
+        instance,
+        "_request",
+        lambda **kwargs: {
+            "l3Outs": [{"name": "L3OUT1"}],
+            "meta": {"counts": {"remaining": 1}},
+        },
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="pagination reached the safety limit",
+    ):
+        instance.query_all()
+
+
+@pytest.mark.parametrize(
+    ("response", "expected_error"),
+    [
+        (
+            [],
+            "unexpected response type",
+        ),
+        (
+            {"l3Outs": {}},
+            "expected a list",
+        ),
+        (
+            {"l3Outs": [None]},
+            "non-object entry",
+        ),
+        (
+            {"l3Outs": [{"name": ""}]},
+            "valid L3Out name",
+        ),
+    ],
+    ids=[
+        "non-dict-response",
+        "non-list-l3outs",
+        "non-object-entry",
+        "invalid-name",
+    ],
+)
+def test_l3out_00790_gathered_rejects_invalid_pages(
+    monkeypatch: pytest.MonkeyPatch,
+    response,
+    expected_error,
+) -> None:
+    """
+    # Summary
+
+    Verify gathered state fails closed when the List L3Outs endpoint returns
+    a malformed response.
+    """
+
+    def responses():
+        yield {}
+
+    instance = L3OutOrchestrator(
+        rest_send=_build_rest_send(
+            ResponseGenerator(responses()),
+            state="gathered",
+        )
+    )
+
+    monkeypatch.setattr(
+        instance,
+        "_request",
+        lambda **kwargs: response,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=expected_error,
+    ):
+        instance.query_all()
 
 
 # =============================================================================

@@ -98,7 +98,28 @@ class ManageRouteMapOrchestrator(NDBaseOrchestrator[RouteMapModel]):
     # Query helpers
     # -------------------------------------------------------------------------
 
-    def query_all(self) -> ResponseType:
+    def query_all(
+        self,
+        model_instance: RouteMapModel | None = None,
+        **kwargs,
+    ) -> ResponseType:
+        """
+        Query route maps.
+
+        All states use the complete paginated collection. Gathered name
+        matching remains local because tenant-scoped names are qualified on the
+        wire and normalized to bare Ansible names in model output.
+        """
+        try:
+            return self._query_all_for_management_states()
+
+        except Exception as e:
+            raise Exception(f"Query all failed: {e}") from e
+
+    def _query_all_for_management_states(
+        self,
+        expression: str | None = None,
+    ) -> list[dict]:
         """
         List all route maps for the configured fabric.
 
@@ -108,38 +129,66 @@ class ManageRouteMapOrchestrator(NDBaseOrchestrator[RouteMapModel]):
         forever, and ``query_all_max_pages`` bounds the walk as a final safety
         net.
         """
-        try:
-            page_size = self.query_all_page_size
-            collected: list[dict] = []
-            seen: set[str] = set()
-            offset = 0
-            pages_fetched = 0
-            while pages_fetched < self.query_all_max_pages:
-                pages_fetched += 1
-                api_endpoint = self._configure_endpoint(self.query_all_endpoint())
-                api_endpoint.lucene_params.max = page_size
-                api_endpoint.lucene_params.offset = offset
-                result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-                page = result.get(_LIST_KEY, []) or [] if isinstance(result, dict) else (result or [])
-                if not page:
-                    break
+        page_size = self.query_all_page_size
+        collected: list[dict] = []
+        seen: set[str] = set()
+        offset = 0
+        pages_fetched = 0
+        while pages_fetched < self.query_all_max_pages:
+            pages_fetched += 1
+            api_endpoint = self._configure_endpoint(self.query_all_endpoint())
+            api_endpoint.lucene_params.max = page_size
+            api_endpoint.lucene_params.offset = offset
 
-                new_rows = 0
-                for row in page:
-                    name = row.get("name") if isinstance(row, dict) else None
-                    if name is not None:
-                        if name in seen:
-                            continue
-                        seen.add(name)
-                    collected.append(row)
-                    new_rows += 1
+            if expression is not None:
+                api_endpoint.lucene_params.filter = expression
 
-                if len(page) < page_size or new_rows == 0:
-                    break
-                offset += page_size
-            return collected
-        except Exception as e:
-            raise Exception(f"Query all failed: {e}") from e
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+            page = result.get(_LIST_KEY, []) or [] if isinstance(result, dict) else (result or [])
+            if not page:
+                break
+
+            new_rows = 0
+            for row in page:
+                name = row.get("name") if isinstance(row, dict) else None
+                if name is not None:
+                    if name in seen:
+                        continue
+                    seen.add(name)
+                collected.append(row)
+                new_rows += 1
+
+            if not self._has_next_page(result, len(page), offset, page_size):
+                break
+            if new_rows == 0:
+                raise RuntimeError("Pagination did not advance while the controller reported additional route maps.")
+            offset += len(page)
+        else:
+            raise RuntimeError(
+                f"Pagination limit reached ({self.query_all_max_pages} pages, " f"{len(collected)} route maps collected). Results may be incomplete."
+            )
+        return collected
+
+    @staticmethod
+    def _has_next_page(result: object, page_count: int, offset: int, page_size: int) -> bool:
+        """Return whether controller metadata or page size indicates another page."""
+        if page_count == 0:
+            return False
+        if isinstance(result, dict):
+            counts = (result.get("meta") or {}).get("counts") or {}
+            try:
+                total = int(counts["total"])
+            except (KeyError, TypeError, ValueError):
+                total = None
+            if total is not None:
+                return offset + page_count < total
+            try:
+                remaining = int(counts["remaining"])
+            except (KeyError, TypeError, ValueError):
+                remaining = None
+            if remaining is not None:
+                return remaining > 0
+        return page_count == page_size
 
     def query_one(self, model_instance: RouteMapModel, **kwargs) -> ResponseType:
         """Retrieve a single route map by name."""

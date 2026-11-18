@@ -40,8 +40,9 @@ def _build_rest_send(
 ) -> RestSend:
     """Build a `RestSend` wired to a file-based `Sender` and `ResponseHandler`.
 
-    `state` and `config` populate `rest_send.params` so `query_all`'s `_switches_to_query` scoping
-    (fabric-wide for `overridden`, config-scoped otherwise) can be exercised.
+    `state` and `config` populate `rest_send.params` so `query_all` switch
+    scoping can be exercised. Overridden and gathered are fabric-wide;
+    other mutation states are scoped to switches in config.
     """
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
@@ -570,17 +571,18 @@ def test_subinterface_unmanaged_interface_00601(monkeypatch) -> None:
 # =============================================================================
 
 
-def test_subinterface_unmanaged_interface_00700(monkeypatch) -> None:
+@pytest.mark.parametrize("state", ["overridden", "gathered"])
+def test_subinterface_unmanaged_interface_00700(monkeypatch, state: str) -> None:
     """
     # Summary
 
-    Verify `query_all` validates prerequisites, iterates all switches in the fabric (`state: overridden` is
-    fabric-wide per `_switches_to_query`), filters for `monitorSubinterface` policyType, and enriches each
-    result with `switchIp`.
+    Verify `query_all` validates prerequisites and queries all switches for
+    `state: overridden` and `state: gathered`. Both paths filter for
+    `monitorSubinterface` policyType and enrich each result with `switchIp`.
 
     ## Test
 
-    - state is `overridden`, so `_switches_to_query` returns the full switch map
+    - Overridden and gathered both query the complete fabric switch map
     - Fabric summary fetched once (validate_prerequisites)
     - Switches-list fetched once (switch_map)
     - Switch A returns a mix: one managed subinterface (policyType=subinterface) + one unmanaged (policyType=monitorSubinterface)
@@ -602,7 +604,7 @@ def test_subinterface_unmanaged_interface_00700(monkeypatch) -> None:
         yield responses_subinterface_unmanaged_interface(f"{method_name}d")
 
     gen = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen, state="overridden")
+    rest_send = _build_rest_send(gen, state=state)
 
     orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
 

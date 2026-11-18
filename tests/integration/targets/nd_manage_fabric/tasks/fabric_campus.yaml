@@ -121,6 +121,83 @@
   tags: [test_merged, test_merged_update]
 
 #############################################################################
+# TEST GATHERED: Read-only Campus gather-all without filtering
+#############################################################################
+- name: "GATHERED: Read all Campus fabrics"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: gathered
+  register: campus_gathered_all
+  tags: [test_gathered]
+
+- name: "GATHERED: Verify read-only output and expected fabric"
+  ansible.builtin.assert:
+    that:
+      - campus_gathered_all is not changed
+      - campus_gathered_all.gathered | type_debug == "list"
+      - campus_gathered_all.before == []
+      - campus_gathered_all.after == []
+      - campus_gathered_all.diff is not defined
+      - campus_gathered_all.proposed is not defined
+      - >-
+        campus_gathered_all.gathered
+        | selectattr('fabric_name', 'equalto', campus_test_fabric_merged)
+        | list | length == 1
+  tags: [test_gathered]
+
+- name: "GATHERED: Read all Campus fabrics with empty config"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: gathered
+    config: []
+  register: campus_gathered_empty
+  tags: [test_gathered]
+
+- name: "GATHERED: Verify complete empty-config result"
+  ansible.builtin.assert:
+    that:
+      - campus_gathered_empty is not changed
+      - >-
+        (campus_gathered_empty.gathered | sort(attribute='fabric_name'))
+        ==
+        (campus_gathered_all.gathered | sort(attribute='fabric_name'))
+  tags: [test_gathered]
+
+- name: "GATHERED: Read all Campus fabrics in check mode"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    <<: *nd_info
+    state: gathered
+  check_mode: true
+  register: campus_gathered_check
+  tags: [test_gathered]
+
+- name: "GATHERED: Verify complete check-mode result"
+  ansible.builtin.assert:
+    that:
+      - campus_gathered_check is not changed
+      - >-
+        (campus_gathered_check.gathered | sort(attribute='fabric_name'))
+        ==
+        (campus_gathered_all.gathered | sort(attribute='fabric_name'))
+  tags: [test_gathered]
+
+- name: "GATHERED: Reject nonempty config"
+  cisco.nd.nd_manage_fabric_campus_ibgp_vxlan:
+    state: gathered
+    config:
+      - fabric_name: "{{ campus_test_fabric_merged }}"
+  register: campus_gathered_rejected
+  ignore_errors: true
+  tags: [test_gathered]
+
+- name: "GATHERED: Verify filtering is rejected"
+  ansible.builtin.assert:
+    that:
+      - campus_gathered_rejected is failed
+      - "'gather-all only' in campus_gathered_rejected.msg"
+  tags: [test_gathered]
+
+#############################################################################
 # VALIDATION: Query campus_test_fabric_merged and validate expected changes
 #############################################################################
 - name: "VALIDATION 1: Authenticate with ND to get token"

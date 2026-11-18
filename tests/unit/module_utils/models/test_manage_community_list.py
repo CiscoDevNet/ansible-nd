@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_community_list.manage_community_list import CommunityListModel
 
 STANDARD_API_RESPONSE = {
@@ -102,7 +103,7 @@ def test_manage_community_list_00040() -> None:
     spec = CommunityListModel.get_argument_spec()
     config_options = spec["config"]["options"]
 
-    assert config_options["name"]["required"] is True
+    assert config_options["name"].get("required", False) is False
     assert spec["cluster_name"]["type"] == "str"
     assert "required" not in config_options["type"]
     assert "required" not in config_options["entries"]
@@ -345,3 +346,194 @@ def test_manage_community_list_00140() -> None:
     )
 
     assert instance.entries[0].sequence_number == 10
+
+
+# =============================================================================
+# Gathered state and filtering tests
+# =============================================================================
+
+
+def test_manage_community_list_00200_gathered_state_in_choices() -> None:
+    """
+    # Summary
+
+    Verify state choices include ``gathered`` and default is ``merged``.
+
+    ## Test
+
+    - state choices: ["merged", "replaced", "overridden", "deleted", "gathered"]
+    - state default: "merged"
+
+    ## Classes and Methods
+
+    - CommunityListModel.get_argument_spec()
+    """
+    spec = CommunityListModel.get_argument_spec()
+    state_spec = spec["state"]
+    assert state_spec["choices"] == [
+        "merged",
+        "replaced",
+        "overridden",
+        "deleted",
+        "gathered",
+    ]
+    assert state_spec["default"] == "merged"
+
+
+def test_manage_community_list_00210_config_optional_for_gathered() -> None:
+    """
+    # Summary
+
+    Verify ``config`` is optional so ``state=gathered`` can run without input.
+
+    ## Test
+
+    - config required is False
+    - name within config is not required
+
+    ## Classes and Methods
+
+    - CommunityListModel.get_argument_spec()
+    """
+    spec = CommunityListModel.get_argument_spec()
+    assert spec["config"].get("required", False) is False
+    config_options = spec["config"]["options"]
+    assert config_options["name"].get("required", False) is False
+
+
+def test_manage_community_list_00220_supports_gathered_filtering() -> None:
+    """
+    # Summary
+
+    Verify ``supports_gathered_filtering`` is ``True`` on ``CommunityListModel``
+    and ``False`` on the base ``NDBaseModel``.
+
+    ## Test
+
+    - NDBaseModel.supports_gathered_filtering is False
+    - CommunityListModel.supports_gathered_filtering is True
+
+    ## Classes and Methods
+
+    - NDBaseModel.supports_gathered_filtering
+    - CommunityListModel.supports_gathered_filtering
+    """
+    from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+
+    assert NDBaseModel.supports_gathered_filtering is False
+    assert CommunityListModel.supports_gathered_filtering is True
+
+
+def test_manage_community_list_00230_gathered_filter_properties() -> None:
+    """
+    # Summary
+
+    Verify ``gathered_filter_properties`` contains the expected three properties.
+
+    ## Test
+
+    - gathered_filter_properties tuple has exactly three entries.
+    - Entries are ``name``, ``type``, and ``tenant_name``.
+
+    ## Classes and Methods
+
+    - CommunityListModel.gathered_filter_properties
+    """
+    assert CommunityListModel.gathered_filter_properties == ("name", "type", "tenant_name")
+
+
+def test_manage_community_list_00240_normalize_gathered_filter_passthrough() -> None:
+    """
+    # Summary
+
+    Verify bare-name, type-only, and empty gathered filters remain unchanged.
+
+    ## Test
+
+    - A filter with name is returned unchanged
+    - A filter with type is returned unchanged
+    - An empty filter is returned unchanged
+
+    ## Classes and Methods
+
+    - CommunityListModel.normalize_gathered_filter()
+    """
+    assert CommunityListModel.normalize_gathered_filter({"name": "CL1"}) == {"name": "CL1"}
+    assert CommunityListModel.normalize_gathered_filter({"type": "standard"}) == {"type": "standard"}
+    assert CommunityListModel.normalize_gathered_filter({}) == {}
+
+
+@pytest.mark.parametrize(
+    "filter_item",
+    [
+        {"name": "invalid/name"},
+        {"type": "invalid"},
+        {"tenant_name": "invalid/tenant"},
+    ],
+)
+def test_manage_community_list_00250_invalid_gathered_filter_values(filter_item) -> None:
+    """Verify invalid supported values fail during filter normalization."""
+    with pytest.raises(ValidationError):
+        CommunityListModel.normalize_gathered_filter(filter_item)
+
+
+@pytest.mark.parametrize(
+    ("filter_item", "expected"),
+    [
+        ({"tenant_name": "tenantA"}, {"tenant_name": "tenantA"}),
+        ({"name": "tenantA~CL1"}, {"name": "CL1", "tenant_name": "tenantA"}),
+        ({"name": "CL1", "tenant_name": "tenantA"}, {"name": "CL1", "tenant_name": "tenantA"}),
+        ({"name": "CL1", "tenantName": "tenantA"}, {"name": "CL1", "tenant_name": "tenantA"}),
+    ],
+)
+def test_manage_community_list_00260_normalize_tenant_gathered_filter(filter_item, expected) -> None:
+    """Verify tenant-qualified and explicit tenant filters normalize identically."""
+    assert CommunityListModel.normalize_gathered_filter(filter_item) == expected
+
+
+def test_manage_community_list_00270_reject_conflicting_tenant_filter() -> None:
+    """Verify conflicting explicit and qualified tenant names are rejected."""
+    with pytest.raises(ValidationError, match="conflicts"):
+        CommunityListModel.normalize_gathered_filter(
+            {
+                "name": "tenantA~CL1",
+                "tenant_name": "tenantB",
+            }
+        )
+
+
+def test_manage_community_list_00280_match_name_and_tenant_pair() -> None:
+    """Verify tenant-aware filters do not match the same bare name in another tenant."""
+    criteria = CommunityListModel.normalize_gathered_filter({"name": "tenantA~CL1"})
+
+    assert CommunityListModel.matches_gathered_filter(
+        criteria,
+        {"name": "CL1", "tenant_name": "tenantA"},
+    )
+    assert not CommunityListModel.matches_gathered_filter(
+        criteria,
+        {"name": "CL1", "tenant_name": "tenantB"},
+    )
+    tenant_only_criteria = CommunityListModel.normalize_gathered_filter(
+        {
+            "tenant_name": "tenantA",
+        }
+    )
+    assert CommunityListModel.matches_gathered_filter(
+        tenant_only_criteria,
+        {"name": "CL1", "tenant_name": "tenantA"},
+    )
+    assert not CommunityListModel.matches_gathered_filter(
+        tenant_only_criteria,
+        {"name": "CL1", "tenant_name": "tenantB"},
+    )
+
+
+def test_manage_community_list_00290_reject_overlong_qualified_filter() -> None:
+    """Verify the combined tenant-qualified name respects the API limit."""
+    with pytest.raises(ValidationError, match="115 characters or fewer"):
+        CommunityListModel.normalize_gathered_filter(
+            {
+                "name": f"{'T' * 63}~{'N' * 115}",
+            }
+        )

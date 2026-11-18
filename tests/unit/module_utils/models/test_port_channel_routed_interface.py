@@ -563,7 +563,8 @@ def test_port_channel_routed_interface_00300():
     # Summary
 
     Verify the argument spec: `network_os_type` is required with both choices, `policy_type` offers both managed types, the port-channel
-    mode choices are the IOS-XE superset, every model field has an option, and the four write states are offered.
+    mode choices are the IOS-XE superset, every model field has an option, config is optional at the top level, and the four write states
+    plus gathered are offered.
 
     ## Test
 
@@ -582,7 +583,9 @@ def test_port_channel_routed_interface_00300():
     assert policy["mtu"] == {"type": "int"}
     model_fields = set(PortChannelRoutedPolicyModel.model_fields) | set(XePortChannelRoutedPolicyModel.model_fields)
     assert set(policy) == model_fields
-    assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted"]
+    assert spec["config"]["required"] is False
+    assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted", "gathered"]
+    assert PortChannelRoutedInterfaceModel.supports_gathered_filtering is False
 
 
 # =============================================================================

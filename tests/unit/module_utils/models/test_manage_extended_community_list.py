@@ -9,9 +9,8 @@
 from __future__ import annotations
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_extended_community_list.manage_extended_community_list import (
-    ExtendedCommunityListModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_extended_community_list.manage_extended_community_list import ExtendedCommunityListModel
 
 STANDARD_API_RESPONSE = {
     "name": "ECL-STANDARD",
@@ -104,7 +103,7 @@ def test_manage_extended_community_list_00040() -> None:
     spec = ExtendedCommunityListModel.get_argument_spec()
     config_options = spec["config"]["options"]
 
-    assert config_options["name"]["required"] is True
+    assert config_options["name"].get("required", False) is False
     assert spec["cluster_name"]["type"] == "str"
     assert "required" not in config_options["type"]
     assert "required" not in config_options["entries"]
@@ -384,3 +383,160 @@ def test_manage_extended_community_list_00170(selector: str, value: str) -> None
     )
 
     assert getattr(instance.entries[0], selector) == [value]
+
+
+# =============================================================================
+# Gathered state and filtering tests
+# =============================================================================
+
+
+def test_manage_extended_community_list_00200_gathered_state_in_choices() -> None:
+    """
+    # Summary
+
+    Verify state choices include ``gathered`` and default is ``merged``.
+
+    ## Classes and Methods
+
+    - ExtendedCommunityListModel.get_argument_spec()
+    """
+    spec = ExtendedCommunityListModel.get_argument_spec()
+    state_spec = spec["state"]
+    assert state_spec["choices"] == ["merged", "replaced", "overridden", "deleted", "gathered"]
+    assert state_spec["default"] == "merged"
+
+
+def test_manage_extended_community_list_00210_config_optional_for_gathered() -> None:
+    """
+    # Summary
+
+    Verify ``config`` is optional so ``state=gathered`` can run without input.
+
+    ## Classes and Methods
+
+    - ExtendedCommunityListModel.get_argument_spec()
+    """
+    spec = ExtendedCommunityListModel.get_argument_spec()
+    assert spec["config"].get("required", False) is False
+    assert spec["config"]["options"]["name"].get("required", False) is False
+
+
+def test_manage_extended_community_list_00220_supports_gathered_filtering() -> None:
+    """
+    # Summary
+
+    Verify ``supports_gathered_filtering`` is ``True`` on ``ExtendedCommunityListModel``.
+
+    ## Classes and Methods
+
+    - ExtendedCommunityListModel.supports_gathered_filtering
+    """
+    from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+
+    assert NDBaseModel.supports_gathered_filtering is False
+    assert ExtendedCommunityListModel.supports_gathered_filtering is True
+
+
+def test_manage_extended_community_list_00230_gathered_filter_properties() -> None:
+    """
+    # Summary
+
+    Verify ``gathered_filter_properties`` contains ``name``, ``type``, and ``tenant_name``.
+
+    ## Classes and Methods
+
+    - ExtendedCommunityListModel.gathered_filter_properties
+    """
+    assert ExtendedCommunityListModel.gathered_filter_properties == ("name", "type", "tenant_name")
+
+
+def test_manage_extended_community_list_00240_normalize_gathered_filter_passthrough() -> None:
+    """
+    # Summary
+
+    Verify bare-name, type-only, and empty gathered filters remain unchanged.
+
+    ## Classes and Methods
+
+    - ExtendedCommunityListModel.normalize_gathered_filter()
+    """
+    assert ExtendedCommunityListModel.normalize_gathered_filter({"name": "ECL1"}) == {"name": "ECL1"}
+    assert ExtendedCommunityListModel.normalize_gathered_filter({"type": "standard"}) == {"type": "standard"}
+    assert ExtendedCommunityListModel.normalize_gathered_filter({}) == {}
+
+
+@pytest.mark.parametrize(
+    "filter_item",
+    [
+        {"name": "invalid/name"},
+        {"type": "invalid"},
+        {"tenant_name": "invalid/tenant"},
+    ],
+)
+def test_manage_extended_community_list_00250_invalid_gathered_filter_values(filter_item) -> None:
+    """Verify invalid supported values fail during filter normalization."""
+    with pytest.raises(ValidationError):
+        ExtendedCommunityListModel.normalize_gathered_filter(filter_item)
+
+
+@pytest.mark.parametrize(
+    ("filter_item", "expected"),
+    [
+        ({"tenant_name": "tenantA"}, {"tenant_name": "tenantA"}),
+        ({"name": "tenantA~ECL1"}, {"name": "ECL1", "tenant_name": "tenantA"}),
+        ({"name": "ECL1", "tenant_name": "tenantA"}, {"name": "ECL1", "tenant_name": "tenantA"}),
+        ({"name": "ECL1", "tenantName": "tenantA"}, {"name": "ECL1", "tenant_name": "tenantA"}),
+    ],
+)
+def test_manage_extended_community_list_00260_normalize_tenant_gathered_filter(filter_item, expected) -> None:
+    """Verify tenant-qualified and explicit tenant filters normalize identically."""
+    assert ExtendedCommunityListModel.normalize_gathered_filter(filter_item) == expected
+
+
+def test_manage_extended_community_list_00270_reject_conflicting_tenant_filter() -> None:
+    """Verify conflicting explicit and qualified tenant names are rejected."""
+    with pytest.raises(ValidationError, match="conflicts"):
+        ExtendedCommunityListModel.normalize_gathered_filter(
+            {
+                "name": "tenantA~ECL1",
+                "tenant_name": "tenantB",
+            }
+        )
+
+
+def test_manage_extended_community_list_00280_match_name_and_tenant_pair() -> None:
+    """Verify tenant-aware filters do not match the same bare name in another tenant."""
+    criteria = ExtendedCommunityListModel.normalize_gathered_filter({"name": "tenantA~ECL1"})
+
+    assert ExtendedCommunityListModel.matches_gathered_filter(
+        criteria,
+        {"name": "ECL1", "tenant_name": "tenantA"},
+    )
+    assert not ExtendedCommunityListModel.matches_gathered_filter(
+        criteria,
+        {"name": "ECL1", "tenant_name": "tenantB"},
+    )
+    tenant_only_criteria = ExtendedCommunityListModel.normalize_gathered_filter(
+        {
+            "tenant_name": "tenantA",
+        }
+    )
+
+    assert ExtendedCommunityListModel.matches_gathered_filter(
+        tenant_only_criteria,
+        {"name": "ECL1", "tenant_name": "tenantA"},
+    )
+    assert not ExtendedCommunityListModel.matches_gathered_filter(
+        tenant_only_criteria,
+        {"name": "ECL1", "tenant_name": "tenantB"},
+    )
+
+
+def test_manage_extended_community_list_00290_reject_overlong_qualified_filter() -> None:
+    """Verify the combined tenant-qualified name respects the API limit."""
+    with pytest.raises(ValidationError, match="115 characters or fewer"):
+        ExtendedCommunityListModel.normalize_gathered_filter(
+            {
+                "name": f"{'T' * 63}~{'N' * 115}",
+            }
+        )
