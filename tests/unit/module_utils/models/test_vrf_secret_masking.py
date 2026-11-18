@@ -94,9 +94,7 @@ def test_parent_child_secret_discovery_is_recursive():
 def test_vrf_data_model_discovers_playbook_and_fabric_data_passwords():
     assert VrfDataModel.collect_secret_values({"vrf_name": "BLUE", "bgp_password": CANARY}) == {CANARY}
     assert VrfDataModel.collect_secret_values({"fabricData": {"bgpPassword": ECHO}}) == {ECHO}
-    assert VrfDataModel.collect_secret_values(
-        {"child_fabric_config": [{"fabric_name": "AK-VXLAN", "bgp_password": CANARY}]}
-    ) == {CANARY}
+    assert VrfDataModel.collect_secret_values({"child_fabric_config": [{"fabric_name": "AK-VXLAN", "bgp_password": CANARY}]}) == {CANARY}
 
 
 def test_get_echoed_password_is_registered_and_omitted_from_gathered():
