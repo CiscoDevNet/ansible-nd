@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ConfigDict, Field
 
@@ -12,6 +12,9 @@ from .base import LinkTemplateBase
 
 class UserDefinedTemplateInputs(LinkTemplateBase):
     """Template inputs for policy_type=userDefined; shape is open (custom template_name)."""
+
+    # Free-form template inputs are the user's configuration, not controller metadata: keep them in `get_diff` (issue #531).
+    extras_are_user_intent: ClassVar[bool] = True
 
     model_config = ConfigDict(
         extra="allow",
