@@ -28,13 +28,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNe
 # Retain enabled negotiation when ND's reset preview would generate invalid
 # "no negotiate auto" cleanup; the orchestrator requires fresh scoped proof.
 RETAIN_AUTO_NEGOTIATION_CONFIG = "negotiate auto"
-# TODO(4.3.1) TBD
+# TODO(4.2.1) normalize-retains-routed-fields
 # Known routed sibling fields can remain in the trunk policy after normalize.
 # Their presence selects a guarded corrective replacement.
-ROUTED_SIBLING_RESET_FIELDS = frozenset({"ip", "prefix", "routingTag", "ipRedirects", "pimSparse", "vrfInterface"})
+ROUTED_SIBLING_RESET_FIELDS = frozenset({"ip", "prefix", "routingTag", "ipRedirects", "pimSparse", "pimDrPriority", "vrfInterface"})
 
 
-# TODO(4.3.1) TBD
+# TODO(4.2.1) normalize-retains-routed-fields
 def has_typed_routed_sibling_residue(config_data: dict) -> bool:
     """Select a corrective PUT for known routed echoes on a current NX trunk.
 
@@ -70,7 +70,7 @@ def has_typed_routed_sibling_residue(config_data: dict) -> bool:
                 return False
         except ipaddress.AddressValueError:
             return False
-    for field, minimum, maximum in (("prefix", 1, 31), ("routingTag", 0, 4294967295)):
+    for field, minimum, maximum in (("prefix", 1, 31), ("routingTag", 0, 4294967295), ("pimDrPriority", 1, 4294967295)):
         if field not in residue:
             continue
         value = policy[field]
