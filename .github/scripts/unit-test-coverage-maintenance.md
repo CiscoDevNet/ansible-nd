@@ -1,6 +1,7 @@
-# Unit coverage CI
+# Unit test coverage maintenance
 
-The coverage-enabled unit job uses `run_unit_coverage.py` to run the complete
+The coverage-enabled unit job in [ansible-test.yml](../workflows/ansible-test.yml) uses
+[`run_unit_coverage.py`](run_unit_coverage.py) to run the complete
 selection in batches of 20 unit files. Pytest parametrization and Ansible's
 per-test fork isolation are unchanged. The other unit matrix entries use the
 normal `ansible-test units` command.
@@ -29,7 +30,7 @@ and a real Docker coverage run followed by `ansible-test coverage xml
 preservation before updating these assumptions. Do not bypass an integrity
 error or delete raw inputs to make an export appear valid.
 
-Keep this directory in collection artifacts: CI runs the helper from the
+Keep `.github/scripts/` in collection artifacts: CI runs the helper from the
 installed collection, and its unit tests load it from this location. The script
 is invoked with Python and intentionally has no executable shebang.
 

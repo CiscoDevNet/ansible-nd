@@ -229,6 +229,7 @@ jobs:
 
       # Keep every test and its fork isolation. Compact coverage between file batches so the
       # coverage-enabled cell does not retain one large raw data file per test for the entire suite.
+      # Maintenance: .github/scripts/unit-test-coverage-maintenance.md
       - name: Run unit tests
         run: |
           if [[ "${{ matrix.coverage || false }}" == "true" ]]; then

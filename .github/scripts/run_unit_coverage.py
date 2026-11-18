@@ -7,7 +7,8 @@ Only file selection is batched: pytest parametrization and ansible-test's
 per-test fork isolation stay intact. Each batch's reusable coverage export is
 verified before replacing its inputs. Compatibility failures fall back to
 native coverage without replaying completed batches. Test and integrity
-failures remain failures. See README.md for upgrade and recovery guidance.
+failures remain failures. See .github/scripts/unit-test-coverage-maintenance.md
+for upgrade and recovery guidance.
 """
 
 from __future__ import annotations
