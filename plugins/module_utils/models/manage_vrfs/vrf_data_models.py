@@ -185,10 +185,15 @@ class TrmData(NDNestedModel):
     def validate_v4_rp_address(cls, v: str | None) -> str | None:
         return VrfValidators.validate_ipv4_address(v)
 
-    @field_validator("l3_vni_multicast_group", "v4_multicast_group", mode="before")
+    @field_validator("l3_vni_multicast_group", mode="before")
     @classmethod
     def validate_ipv4_fields(cls, v: str | None) -> str | None:
         return VrfValidators.validate_ipv4_address(v)
+
+    @field_validator("v4_multicast_group", mode="before")
+    @classmethod
+    def validate_v4_multicast(cls, v: str | None) -> str | None:
+        return VrfValidators.validate_overlay_mcast_group(v)
 
     @field_validator("v6_rp_address", mode="before")
     @classmethod
@@ -659,6 +664,28 @@ class VrfDataModel(NDBaseModel):
         self._flatten_core_data(data, core_data)
         self._flatten_fabric_data(data, fabric_data)
         return data
+
+    @classmethod
+    def collect_secret_values(cls, config_item: dict[str, Any]) -> set[str]:
+        """Register BGP passwords in flat input and opaque VRF fabric data."""
+        values = super().collect_secret_values(config_item)
+        if not isinstance(config_item, dict):
+            return values
+        for key in ("bgp_password", "bgpPassword"):
+            value = config_item.get(key)
+            if isinstance(value, str) and value:
+                values.add(value)
+        for key in ("fabric_data", "fabricData"):
+            nested = config_item.get(key)
+            if isinstance(nested, NDBaseModel):
+                nested = nested.to_payload()
+            if isinstance(nested, dict):
+                values.update(cls.collect_secret_values(nested))
+        return values
+
+    def collect_replacement_secret_values(self) -> set[str]:
+        """Register controller-returned passwords with the state machine scrubber."""
+        return super().collect_replacement_secret_values() | type(self).collect_secret_values({"fabric_data": self.fabric_data})
 
     def to_diff_dict(self, **kwargs) -> dict[str, Any]:
         """Compare cleared route targets without expanding sparse intent."""

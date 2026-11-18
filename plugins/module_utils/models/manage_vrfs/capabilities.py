@@ -9,6 +9,10 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.versions import (
+    parse_controller_product_version,
+)
+
 _RELEASE_FIELDS = (
     ("route_distinguisher_id", "core_data", "coreData", "routeDistinguisherId"),
     ("enable_vrf_vpn_route_leaking", "fabric_data", "fabricData", "enableVrfVpnRouteLeaking"),
@@ -17,18 +21,13 @@ _RELEASE_FIELDS = (
 
 def _supports_release_fields(version: str | None) -> bool:
     """Require a known ND release at or above 4.3.1."""
-    if not isinstance(version, str):
-        return False
-    try:
-        release = tuple(int(part) for part in version.split(".")[:3])
-    except ValueError:
-        return False
-    return len(release) == 3 and release >= (4, 3, 1)
+    release = parse_controller_product_version(version)
+    return release is not None and release >= (4, 3, 1, 0)
 
 
 @dataclass(frozen=True)
 class VrfWriteCapabilities:
-    """The connected controller's VRF contract for Manage and OneManage writes."""
+    """The controller product release's VRF contract for Manage/OneManage writes."""
 
     controller_version: str | None
 

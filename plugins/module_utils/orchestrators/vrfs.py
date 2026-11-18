@@ -59,6 +59,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.enums 
     VrfType,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.capabilities import VrfWriteCapabilities
+from ansible_collections.cisco.nd.plugins.module_utils.common.versions import (
+    parse_controller_product_version,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
     NDBaseOrchestrator,
@@ -128,7 +131,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
     @cached_property
     def write_capabilities(self) -> VrfWriteCapabilities:
         """Reuse the cached connection release for every fabric topology."""
-        return VrfWriteCapabilities(self.rest_send.controller_version)
+        return VrfWriteCapabilities(self.rest_send.controller_product_version)
 
     def configure_write_models(self, proposed: NDVrfModel, current: NDVrfModel | None) -> None:
         """Use the same policy for both sides of the existing reconciliation pass."""
@@ -997,15 +1000,12 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         """
         if model_instance.vrf_type not in _EXTERNAL_VRF_TYPES or (not updating and "description" not in model_instance.model_fields_set):
             return
-        version = self.rest_send.controller_version
-        try:
-            release = tuple(int(part) for part in (version or "").split(".")[:3])
-        except ValueError:
-            release = ()
+        version = self.rest_send.controller_product_version
+        release = parse_controller_product_version(version)
         # TODO(4.2.1) external-vrf-update-500-description-not-echoed
         # ND 4.2.1 omits even nonempty descriptions from GET and rejects External PUT with HTTP 500.
         # Lab evidence on 4.3.1.175 confirms readable descriptions and successful updates for both types.
-        if len(release) < 3 or release < (4, 3, 1):
+        if release is None or release < (4, 3, 1, 0):
             operation = "an in-place update" if updating else "vrf_description"
             raise ValueError(
                 f"External VRF '{model_instance.vrf_name}': {operation} requires ND 4.3.1 or later (detected: {version or 'unknown'}). "
@@ -1021,15 +1021,10 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         key_type = fabric_data.get("bgpPasswordKeyType")
         if not isinstance(key_type, str) or key_type not in _BGP_KEY_TYPE_NUMBERS:
             return payload
-        version = self.rest_send.controller_version
-        if not isinstance(version, str):
-            return payload
-        try:
-            release = tuple(int(part) for part in version.split(".")[:3])
-        except ValueError:
-            release = ()
+        version = self.rest_send.controller_product_version
+        release = parse_controller_product_version(version)
         # Unknown releases retain the existing string representation.
-        if len(release) < 3 or release[:2] != (4, 2):
+        if release is None or release[:2] != (4, 2):
             return payload
         if key_type == "type6":
             raise ValueError(

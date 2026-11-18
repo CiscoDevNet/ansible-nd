@@ -166,8 +166,8 @@ class VrfWorkflowCoordinator:
         rest_send = RestSend(rest_send_params)
         rest_send.sender = sender
         rest_send.response_handler = ResponseHandler()
-        if hasattr(self, "_controller_version"):
-            rest_send.controller_version = self._controller_version
+        if hasattr(self, "_controller_product_version"):
+            rest_send.controller_product_version = self._controller_product_version
         if timeout is not None:
             rest_send.timeout = timeout
         if send_interval is not None:
@@ -762,9 +762,9 @@ class VrfWorkflowCoordinator:
             rest_send_params = dict(self.module.params)
             rest_send = self._new_rest_send(rest_send_params)
             if state in ("merged", "replaced", "overridden", "staged"):
-                if not hasattr(self, "_controller_version"):
-                    self._controller_version = rest_send.controller_version
-                rest_send.controller_version = self._controller_version
+                if not hasattr(self, "_controller_product_version"):
+                    self._controller_product_version = rest_send.controller_product_version
+                rest_send.controller_product_version = self._controller_product_version
             orchestrator = NDVrfOrchestrator(
                 rest_send=rest_send,
                 strategy=active_strategy,

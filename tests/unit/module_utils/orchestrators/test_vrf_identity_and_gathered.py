@@ -10,7 +10,10 @@ import pytest
 from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import PARENT_CHILD_ONLY_VRF_FIELDS, VrfParentConfigModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import (
+    PARENT_CHILD_ONLY_VRF_FIELDS,
+    VrfParentConfigModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_data_models import VrfDataModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.child_vrf import ChildVrfStrategy
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.multicluster_parent_vrf import MulticlusterParentVrfStrategy
@@ -49,7 +52,7 @@ def _coordinator(monkeypatch, strategy, state, observed, *, check=False, version
 
     def rest_send(params):
         runtime = RestSend(params)
-        runtime.controller_version = version
+        runtime.controller_product_version = version
         return runtime
 
     monkeypatch.setattr(coordinator, "_new_rest_send", rest_send)
@@ -84,7 +87,7 @@ def _manage(coordinator, intent, state):
 
 
 @pytest.mark.parametrize("topology", ["standalone", "msd_child", "mcfg_child"])
-@pytest.mark.parametrize("version", ["4.2.1.10", "4.3.1.175"])
+@pytest.mark.parametrize("version", ["4.2.1", "4.3.1"])
 @pytest.mark.parametrize("key_type,number", [("3des", 3), ("type6", 6), ("type7", 7)])
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
 def test_bgp_pair_and_sparse_updates_converge_through_actual_state_preparation(monkeypatch, topology, version, key_type, number, state):
@@ -310,7 +313,12 @@ def test_explicit_ipv6_route_map_does_not_skip_id_resolution(monkeypatch, topolo
 def test_parent_gathered_uses_parent_spec_and_replays_without_child_fields(monkeypatch, topology, check):
     strategy = _strategy(topology)
     observed = _readback(strategy)
-    observed["fabricData"] = {"advertiseHostRoute": True, "advertiseDefaultRoute": False, "configureStaticDefaultRoute": True, "bgpLogNeighborChange": True}
+    observed["fabricData"] = {
+        "advertiseHostRoute": True,
+        "advertiseDefaultRoute": False,
+        "configureStaticDefaultRoute": True,
+        "bgpLogNeighborChange": True,
+    }
     coordinator, calls = _coordinator(monkeypatch, strategy, "gathered", [observed], check=check)
     result = coordinator._handle_parent_workflow({"fabric_name": "FAB", "state": "gathered", "config": []}, strategy.fabric_type)
     assert len(calls) == 1

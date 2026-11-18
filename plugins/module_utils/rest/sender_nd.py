@@ -171,6 +171,18 @@ class Sender:
             self._connection.set_params(self.ansible_module.params)
         return self._connection.get_version("nd")
 
+    def get_build_version(self) -> Optional[str]:
+        """Return the build using the existing connection version contract."""
+        return self.get_version()
+
+    def get_product_version(self) -> Optional[str]:
+        """Return a reported product release; older providers may omit it."""
+        if self._connection is None:
+            self._connection = Connection(self.ansible_module._socket_path)  # pylint: disable=protected-access
+            self._connection.set_params(self.ansible_module.params)
+        getter = getattr(self._connection, "get_product_version", None)
+        return getter("nd") if callable(getter) else None
+
     def _normalize_response(self, response: dict) -> dict:
         """
         # Summary

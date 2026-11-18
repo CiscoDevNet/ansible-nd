@@ -121,6 +121,8 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self._committed_payload: Optional[Union[dict, list]] = None
         self._controller_version: Optional[str] = None
         self._controller_version_resolved: bool = False
+        self._controller_product_version: Optional[str] = None
+        self._controller_product_version_resolved: bool = False
         self._path: Optional[str] = None
         self._payload: Optional[Union[dict, list]] = None
         self._response: list[dict[str, Any]] = []
@@ -913,6 +915,8 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self._sender = value
         if self._controller_version is None:
             self._controller_version_resolved = False
+        if self._controller_product_version is None:
+            self._controller_product_version_resolved = False
 
     @property
     def controller_version(self) -> Optional[str]:
@@ -937,6 +941,33 @@ class RestSend:  # pylint: disable=too-many-public-methods
     def controller_version(self, value: Optional[str]):
         self._controller_version = value
         self._controller_version_resolved = True
+
+    @property
+    def controller_build_version(self) -> Optional[str]:
+        """Explicit build alias for the retained controller_version property."""
+        return self.controller_version
+
+    @controller_build_version.setter
+    def controller_build_version(self, value: Optional[str]):
+        self.controller_version = value
+
+    @property
+    def controller_product_version(self) -> Optional[str]:
+        """Return the cached product release without deriving it from a build."""
+        if not self._controller_product_version_resolved:
+            self._controller_product_version_resolved = True
+            getter = getattr(self._sender, "get_product_version", None)
+            if callable(getter):
+                try:
+                    self._controller_product_version = getter()
+                except Exception:  # pragma: no cover - provider errors are negatively cached
+                    self._controller_product_version = None
+        return self._controller_product_version
+
+    @controller_product_version.setter
+    def controller_product_version(self, value: Optional[str]):
+        self._controller_product_version = value
+        self._controller_product_version_resolved = True
 
     @property
     def timeout(self) -> int:

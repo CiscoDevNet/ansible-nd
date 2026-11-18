@@ -42,7 +42,14 @@ class _Controller:
         self.version_reads = 0
         self.rows = {
             strategy.fabric_name: [
-                {"fabricName": strategy.fabric_name, "vrfName": "OLD", "vrfId": 30211, "vlanId": 211, "vrfType": "vxlanIbgp", "vrfStatus": "notApplicable"}
+                {
+                    "fabricName": strategy.fabric_name,
+                    "vrfName": "OLD",
+                    "vrfId": 30211,
+                    "vlanId": 211,
+                    "vrfType": "vxlanIbgp",
+                    "vrfStatus": "notApplicable",
+                }
             ]
         }
         self.attachments = (
@@ -98,7 +105,7 @@ def invoke(monkeypatch):
     monkeypatch.setattr(nd_manage_vrfs, "AnsibleModule", _ArgumentModule)
     monkeypatch.setattr(nd_manage_vrfs, "setup_logging", lambda *_args: None)
 
-    def run(config, *, state="staged", check=False, version="4.2.1.10", strategy=None, controller=None):
+    def run(config, *, state="staged", check=False, version="4.2.1", strategy=None, controller=None):
         strategy = strategy or StandaloneVrfStrategy(fabric_name="FAB", fabric_data={"managementType": "vxlanIbgp"})
         controller = controller or _Controller(strategy)
         monkeypatch.setattr(VrfFabricResolver, "resolve", lambda _self: strategy)
@@ -108,11 +115,11 @@ def invoke(monkeypatch):
 
         monkeypatch.setattr(Sender, "commit", commit)
 
-        def get_version(_self):
+        def get_product_version(_self):
             controller.version_reads += 1
             return version
 
-        monkeypatch.setattr(Sender, "get_version", get_version)
+        monkeypatch.setattr(Sender, "get_product_version", get_product_version)
         args = {
             "host": "offline.invalid",
             "username": "fixture",
@@ -134,7 +141,15 @@ def invoke(monkeypatch):
 
 
 def _new(key_type="type6", **kwargs):
-    return {"vrf_name": "NEW", "vrf_id": 30212, "vlan_id": 212, "bgp_password": "aabbccdd", "bgp_passwd_encrypt": key_type, "deploy": False, **kwargs}
+    return {
+        "vrf_name": "NEW",
+        "vrf_id": 30212,
+        "vlan_id": 212,
+        "bgp_password": "aabbccdd",
+        "bgp_passwd_encrypt": key_type,
+        "deploy": False,
+        **kwargs,
+    }
 
 
 def _assert_rejected(result, controller):
@@ -173,11 +188,11 @@ def test_type6_rejected_before_explicit_detach_of_another_vrf(invoke, state, che
 @pytest.mark.parametrize(
     "version,key_type,wire_type",
     [
-        ("4.2.1.10", "3des", 3),
-        ("4.2.1.10", "type7", 7),
-        ("4.3.1.175", "3des", "3des"),
-        ("4.3.1.175", "type7", "type7"),
-        ("4.3.1.175", "type6", "type6"),
+        ("4.2.1", "3des", 3),
+        ("4.2.1", "type7", 7),
+        ("4.3.1", "3des", "3des"),
+        ("4.3.1", "type7", "type7"),
+        ("4.3.1", "type6", "type6"),
     ],
 )
 @pytest.mark.parametrize("check", [False, True])
@@ -205,7 +220,11 @@ def test_merged_update_validates_inherited_type6_in_effective_payload(invoke, ch
     controller = _Controller(strategy)
     controller.rows["FAB"][0]["fabricData"] = {"bgpPassword": "aabbccdd", "bgpPasswordKeyType": "type6"}
     result, controller = invoke(
-        [{"vrf_name": "OLD", "vrf_description": "changed", "deploy": False}], state="merged", check=check, strategy=strategy, controller=controller
+        [{"vrf_name": "OLD", "vrf_description": "changed", "deploy": False}],
+        state="merged",
+        check=check,
+        strategy=strategy,
+        controller=controller,
     )
     _assert_rejected(result, controller)
 
@@ -241,7 +260,11 @@ def test_existing_type6_does_not_block_reads_deletes_or_unrelated_writes(invoke,
 
 def _parent(strategy_cls):
     multicluster = strategy_cls is MulticlusterParentVrfStrategy
-    member = {"fabricName": "CHILD", "fabric_type": "multicluster_child" if multicluster else "multisite_child", "managementType": "vxlanIbgp"}
+    member = {
+        "fabricName": "CHILD",
+        "fabric_type": "multicluster_child" if multicluster else "multisite_child",
+        "managementType": "vxlanIbgp",
+    }
     if multicluster:
         member["clusterName"] = "REMOTE"
     return strategy_cls(fabric_name="PARENT", fabric_data={"managementType": "vxlanIbgp", "members": [member]})
@@ -279,9 +302,9 @@ def test_child_type6_preflight_precedes_all_parent_writes(invoke, strategy_cls, 
 @pytest.mark.parametrize(
     "version,key_type,wire_type",
     [
-        ("4.2.1.10", "3des", 3),
-        ("4.2.1.10", "type7", 7),
-        ("4.3.1.175", "type6", "type6"),
+        ("4.2.1", "3des", 3),
+        ("4.2.1", "type7", 7),
+        ("4.3.1", "type6", "type6"),
     ],
 )
 @pytest.mark.parametrize("check", [False, True])
@@ -341,7 +364,10 @@ def test_later_child_rejection_precedes_earlier_child_and_parent_writes(invoke, 
     config = [{"vrf_name": "NEW", "deploy": False, "child_fabric_config": children}]
     result, controller = invoke(config, strategy=strategy, check=check)
     _assert_rejected(result, controller)
-    assert [path.split("/fabrics/")[1].split("/")[0] for method, path, _payload in controller.calls if method == "GET"] == ["CHILD", "CHILD2"]
+    assert [path.split("/fabrics/")[1].split("/")[0] for method, path, _payload in controller.calls if method == "GET"] == [
+        "CHILD",
+        "CHILD2",
+    ]
 
 
 @pytest.mark.parametrize("check", [False, True])

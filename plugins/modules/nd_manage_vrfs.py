@@ -321,7 +321,7 @@ options:
         description: Underlay IPv4 multicast address. Requires IPv4 or IPv6 TRM. Not applicable on parent fabrics.
         type: str
       overlay_mcast_group:
-        description: Overlay multicast group (224.0.0.0/4 range). Requires C(trm_enable=true). Not applicable on parent fabrics.
+        description: Overlay IPv4 multicast address or prefix in C(224.0.0.0/4). Requires C(trm_enable=true). Not applicable on parent fabrics.
         type: str
       v6_overlay_mcast_group:
         description: Overlay IPv6 multicast group/prefix in CIDR notation. Requires C(ipv6_trm=true); NX-OS only.
@@ -568,7 +568,7 @@ options:
             description: Underlay IPv4 multicast address. Required for IPv4 or IPv6 TRM.
             type: str
           overlay_mcast_group:
-            description: Overlay multicast group (224.0.0.0/4 range). Requires C(trm_enable=true).
+            description: Overlay IPv4 multicast address or prefix in C(224.0.0.0/4). Requires C(trm_enable=true).
             type: str
           v6_overlay_mcast_group:
             description: Overlay IPv6 multicast group/prefix in CIDR notation. Requires C(ipv6_trm=true); NX-OS only.

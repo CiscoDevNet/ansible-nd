@@ -350,7 +350,12 @@ def test_parent_sparse_child_trm_update_inherits_enabled_state_and_converges(
     assert not validated.error_messages
 
     for run, check_mode in enumerate((True, False, False, True)):
-        args = {"fabric_name": "PARENT", "state": state, "config": deepcopy(validated.validated_parameters["config"]), "output_level": "normal"}
+        args = {
+            "fabric_name": "PARENT",
+            "state": state,
+            "config": deepcopy(validated.validated_parameters["config"]),
+            "output_level": "normal",
+        }
         coordinator = VrfWorkflowCoordinator(_Module(args, check_mode=check_mode), strategy)
         result = coordinator._handle_parent_workflow(args, strategy.fabric_type)
         assert result["failed"] is False
@@ -389,9 +394,14 @@ def test_parent_child_leaking_uses_controller_release_and_converges(strategy_cls
     assert not validated.error_messages
 
     for run, check_mode in enumerate((True, False, False, True)):
-        args = {"fabric_name": "PARENT", "state": state, "config": deepcopy(validated.validated_parameters["config"]), "output_level": "normal"}
+        args = {
+            "fabric_name": "PARENT",
+            "state": state,
+            "config": deepcopy(validated.validated_parameters["config"]),
+            "output_level": "normal",
+        }
         coordinator = VrfWorkflowCoordinator(_Module(args, check_mode=check_mode), strategy)
-        coordinator._controller_version = "4.3.1.175"
+        coordinator._controller_product_version = "4.3.1"
         result = coordinator._handle_parent_workflow(args, strategy.fabric_type)
         assert not result["failed"]
         assert result["changed"] is (run < 2)
@@ -440,7 +450,12 @@ def test_parent_child_l3vni_mode_preserves_state_and_reuses_inventory(*, strateg
     expected = existing_mode if explicit_mode is None else explicit_mode
 
     for run, check_mode in enumerate((True, False, False, True)):
-        args = {"fabric_name": "PARENT", "state": state, "config": deepcopy(validated.validated_parameters["config"]), "output_level": "normal"}
+        args = {
+            "fabric_name": "PARENT",
+            "state": state,
+            "config": deepcopy(validated.validated_parameters["config"]),
+            "output_level": "normal",
+        }
         coordinator = VrfWorkflowCoordinator(_Module(args, check_mode=check_mode), strategy)
         result = coordinator._handle_parent_workflow(args, strategy.fabric_type)
         assert not result["failed"]
@@ -562,12 +577,13 @@ def external_vrf_workflow(monkeypatch):
         args = {"fabric_name": "ISN", "state": state, "config": deepcopy(accepted.validated_parameters["config"]), "output_level": "debug"}
         original = deepcopy(args)
         coordinator = VrfWorkflowCoordinator(
-            _Module(deepcopy(args), check_mode=check_mode), StandaloneVrfStrategy(fabric_name="ISN", fabric_data={"management": {"type": vrf_type}})
+            _Module(deepcopy(args), check_mode=check_mode),
+            StandaloneVrfStrategy(fabric_name="ISN", fabric_data={"management": {"type": vrf_type}}),
         )
 
         def rest_send(params):
             rest = RestSend(params)
-            rest.controller_version = version
+            rest.controller_product_version = version
             return rest
 
         def request(_self, **kwargs):
@@ -585,7 +601,7 @@ def external_vrf_workflow(monkeypatch):
                 assert payload["fabricName"] == "ISN"
                 assert payload["vrfType"] == vrf_type
                 assert set(payload) <= {"fabricName", "vrfName", "vrfType", "description"}
-                if version == "4.2.1.10":
+                if version == "4.2.1":
                     assert kwargs["verb"] == HttpVerbEnum.POST, "The known-broken External PUT must never be sent"
                     assert "description" not in payload
                 saved = deepcopy(payload)
@@ -609,7 +625,7 @@ def external_vrf_workflow(monkeypatch):
 
 
 @pytest.mark.parametrize("vrf_type", ["externalConnectivity", "vxlanExternal"])
-@pytest.mark.parametrize("version", ["4.2.1.10", None])
+@pytest.mark.parametrize("version", ["4.2.1", None])
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
 @pytest.mark.parametrize("check_mode", [False, True])
 @pytest.mark.parametrize("description", ["probe", ""])
@@ -632,7 +648,7 @@ def test_external_vrf_unsupported_descriptions_fail_before_any_write(*, external
 
 
 @pytest.mark.parametrize("vrf_type", ["externalConnectivity", "vxlanExternal"])
-@pytest.mark.parametrize("version", ["4.2.1.10", None])
+@pytest.mark.parametrize("version", ["4.2.1", None])
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
 def test_external_vrf_name_only_creation_and_repeats_remain_supported(external_vrf_workflow, vrf_type, version, state):
     run, stored, requests = external_vrf_workflow
@@ -651,7 +667,7 @@ def test_external_vrf_43_description_lifecycle_converges(external_vrf_workflow, 
     for description in ("probe", "probe2", ""):
         config = [{"vrf_name": "BLUE", "vrf_description": description}]
         for check_mode, expected in ((True, True), (False, True), (False, False), (True, False)):
-            assert run(vrf_type=vrf_type, version="4.3.1.175", state=state, config=config, check_mode=check_mode)["changed"] is expected
+            assert run(vrf_type=vrf_type, version="4.3.1", state=state, config=config, check_mode=check_mode)["changed"] is expected
             assert sum(item["verb"] == HttpVerbEnum.GET for item in requests) == 1
             assert sum(item["verb"] != HttpVerbEnum.GET for item in requests) == int(expected and not check_mode)
         assert stored[0].get("description", "") == description
@@ -664,7 +680,7 @@ def test_external_vrf_43_omitted_description_preserves_state_semantics(external_
     stored.append({"fabricName": "ISN", "vrfName": "BLUE", "vrfType": vrf_type, "description": "probe"})
     changed = state != "merged"
     for check_mode, expected in ((True, changed), (False, changed), (False, False), (True, False)):
-        assert run(vrf_type=vrf_type, version="4.3.1.175", state=state, config=[{"vrf_name": "BLUE"}], check_mode=check_mode)["changed"] is expected
+        assert run(vrf_type=vrf_type, version="4.3.1", state=state, config=[{"vrf_name": "BLUE"}], check_mode=check_mode)["changed"] is expected
         assert sum(item["verb"] == HttpVerbEnum.GET for item in requests) == 1
         assert sum(item["verb"] != HttpVerbEnum.GET for item in requests) == int(expected and not check_mode)
     assert stored[0].get("description", "") == ("probe" if state == "merged" else "")
@@ -679,10 +695,10 @@ def test_external_vrf_42_blocks_any_in_place_update(external_vrf_workflow, vrf_t
     stored.append({"fabricName": "ISN", "vrfName": "BLUE", "vrfType": vrf_type, "description": "unexpected readback"})
     before = deepcopy(stored)
     if state == "merged":
-        assert not run(vrf_type=vrf_type, version="4.2.1.10", state=state, config=[{"vrf_name": "BLUE"}], check_mode=check_mode)["changed"]
+        assert not run(vrf_type=vrf_type, version="4.2.1", state=state, config=[{"vrf_name": "BLUE"}], check_mode=check_mode)["changed"]
     else:
         with pytest.raises(ValueError, match="an in-place update requires ND 4.3.1 or later"):
-            run(vrf_type=vrf_type, version="4.2.1.10", state=state, config=[{"vrf_name": "BLUE"}], check_mode=check_mode)
+            run(vrf_type=vrf_type, version="4.2.1", state=state, config=[{"vrf_name": "BLUE"}], check_mode=check_mode)
     assert stored == before
     assert len(requests) == 1 and requests[0]["verb"] == HttpVerbEnum.GET
 
@@ -693,7 +709,13 @@ def test_external_vrf_42_blocks_any_in_place_update(external_vrf_workflow, vrf_t
 def test_external_vrf_42_read_delete_selectors_ignore_description(external_vrf_workflow, vrf_type, state, check_mode):
     run, stored, requests = external_vrf_workflow
     stored.append({"fabricName": "ISN", "vrfName": "BLUE", "vrfType": vrf_type})
-    result = run(vrf_type=vrf_type, version="4.2.1.10", state=state, config=[{"vrf_name": "BLUE", "vrf_description": "unobservable"}], check_mode=check_mode)
+    result = run(
+        vrf_type=vrf_type,
+        version="4.2.1",
+        state=state,
+        config=[{"vrf_name": "BLUE", "vrf_description": "unobservable"}],
+        check_mode=check_mode,
+    )
     assert result["changed"] is (state == "deleted")
     writes = [item for item in requests if item["verb"] != HttpVerbEnum.GET]
     assert len(writes) == int(state == "deleted" and not check_mode)
@@ -742,7 +764,15 @@ def test_vrf_l3vni_workflow_create_update_and_repeat(*, state, check_mode, exist
     stored = (
         []
         if existing_mode is None
-        else [{"fabricName": "AK-VXLAN", "vrfName": "BLUE", "vrfId": 50001, "vrfType": "vxlanIbgp", "fabricData": {"l3VniWithoutVlan": existing_mode}}]
+        else [
+            {
+                "fabricName": "AK-VXLAN",
+                "vrfName": "BLUE",
+                "vrfId": 50001,
+                "vrfType": "vxlanIbgp",
+                "fabricData": {"l3VniWithoutVlan": existing_mode},
+            }
+        ]
     )
     requests = []
 
@@ -765,7 +795,12 @@ def test_vrf_l3vni_workflow_create_update_and_repeat(*, state, check_mode, exist
     strategy = StandaloneVrfStrategy(fabric_name="AK-VXLAN", fabric_data={"management": {"type": "vxlanIbgp", "l3VniNoVlanDefaultOption": fabric_default}})
 
     def run():
-        module_args = {"fabric_name": "AK-VXLAN", "state": state, "config": deepcopy(accepted.validated_parameters["config"]), "output_level": "debug"}
+        module_args = {
+            "fabric_name": "AK-VXLAN",
+            "state": state,
+            "config": deepcopy(accepted.validated_parameters["config"]),
+            "output_level": "debug",
+        }
         coordinator = VrfWorkflowCoordinator(_Module(deepcopy(module_args), check_mode=check_mode), strategy)
         monkeypatch.setattr(coordinator, "_new_rest_send", RestSend)
         monkeypatch.setattr(coordinator, "_current_attachment_details_ignore_missing", lambda *_args: [])
@@ -803,7 +838,14 @@ def test_vrf_l3vni_workflow_create_update_and_repeat(*, state, check_mode, exist
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
 @pytest.mark.parametrize("check_mode", [False, True])
 @pytest.mark.parametrize(
-    "field,value", [("vlan_id", 2001), ("vrf_vlan_name", "BLUE_VLAN"), ("vrf_intf_desc", "BLUE SVI"), ("vrf_int_mtu", 9216), ("ipv6_linklocal_enable", False)]
+    "field,value",
+    [
+        ("vlan_id", 2001),
+        ("vrf_vlan_name", "BLUE_VLAN"),
+        ("vrf_intf_desc", "BLUE SVI"),
+        ("vrf_int_mtu", 9216),
+        ("ipv6_linklocal_enable", False),
+    ],
 )
 def test_vrf_explicit_no_vlan_rejects_svi_before_any_write(state, check_mode, field, value, monkeypatch):
     """Explicit contradictions still fail before CRUD in normal and check mode."""
@@ -3857,7 +3899,7 @@ def test_vrf_sparse_ipv4_map_preserves_existing_ipv6_override(monkeypatch, state
         configure_write_models = coordinator_mod.NDVrfOrchestrator.configure_write_models
 
         def __init__(self, **_kwargs):
-            self.write_capabilities = VrfWriteCapabilities("4.3.1.175")
+            self.write_capabilities = VrfWriteCapabilities("4.3.1")
 
         @staticmethod
         def prepare_config_data(config):
@@ -3909,7 +3951,7 @@ def test_standalone_effective_validation_failure_restores_module_params(monkeypa
         configure_write_models = coordinator_mod.NDVrfOrchestrator.configure_write_models
 
         def __init__(self, **_kwargs):
-            self.write_capabilities = VrfWriteCapabilities("4.3.1.175")
+            self.write_capabilities = VrfWriteCapabilities("4.3.1")
 
         @staticmethod
         def prepare_config_data(_config):

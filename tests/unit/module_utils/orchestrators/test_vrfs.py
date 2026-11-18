@@ -99,7 +99,9 @@ def _validate_child_effective(intent, existing=None, state="merged", vrf_type="v
     )
     key = ("BLUE", "AK-VXLAN")
     sm = SimpleNamespace(
-        proposed={key: proposed}, existing={key: current} if current is not None else {}, model_orchestrator=_orchestrator_for_request_tests({"state": state})
+        proposed={key: proposed},
+        existing={key: current} if current is not None else {},
+        model_orchestrator=_orchestrator_for_request_tests({"state": state}),
     )
     fabric_data = {"management": {"l3VniNoVlanDefaultOption": fabric_default}} if fabric_default is not None else {}
     VrfWorkflowCoordinator._validate_child_vrf_intent(sm, [entry], state, _Strategy(fabric_data=fabric_data, is_child=True, is_multicluster=is_multicluster))
@@ -294,7 +296,12 @@ def test_parent_route_map_fallback_respects_sparse_and_authoritative_states(stat
     config = {"vrf_name": "BLUE", "redist_direct_rmap": "NEW-V4"}
     proposed = VrfDataModel.from_config(_transform(config, is_parent=True))
     current = VrfDataModel.from_response(
-        {"fabricName": "AK-VXLAN", "vrfName": "BLUE", "vrfType": "vxlanIbgp", "coreData": {"vrfRouteMap": "OLD-V4", "v6VrfRouteMap": "OLD-V6"}}
+        {
+            "fabricName": "AK-VXLAN",
+            "vrfName": "BLUE",
+            "vrfType": "vxlanIbgp",
+            "coreData": {"vrfRouteMap": "OLD-V4", "v6VrfRouteMap": "OLD-V6"},
+        }
     )
     sm = SimpleNamespace(existing=NDConfigCollection(VrfDataModel, [current]), proposed=NDConfigCollection(VrfDataModel, [proposed]))
     sm.model_orchestrator = _orchestrator_for_request_tests({"state": state})
@@ -1022,7 +1029,7 @@ class _McfgTopDownStrategy:
 
 
 class _RestSend:
-    controller_version = "4.3.1.175"
+    controller_product_version = "4.3.1"
 
     def __init__(self, params):
         self.params = params
@@ -1041,18 +1048,18 @@ def _orchestrator_for_request_tests(params, is_child=False, is_multicluster=Fals
 
 
 @pytest.mark.parametrize("key_type,number", [("3des", 3), ("type6", 6), ("type7", 7)])
-@pytest.mark.parametrize("version", ["4.2.1.10", "4.3.1.175", "5.0.1.1", None, "unknown", "4.2", "4.2.bad", 42])
+@pytest.mark.parametrize("version", ["4.2.1", "4.3.1", "5.0.1", None, "unknown", "4.2", "4.2.bad", 42])
 @pytest.mark.parametrize("is_child,is_multicluster", [(False, False), (True, False), (True, True)])
 @pytest.mark.parametrize("operation", ["create", "update"])
 def test_vrf_bgp_key_type_is_converted_only_at_the_request_boundary(key_type, number, version, is_child, is_multicluster, operation):
     orchestrator = _orchestrator_for_request_tests({"state": "merged"}, is_child=is_child, is_multicluster=is_multicluster)
-    orchestrator.rest_send.controller_version = version
+    orchestrator.rest_send.controller_product_version = version
     model = VrfDataModel.from_config(_transform({"vrf_name": "BLUE", "bgp_password": "aabbccdd", "bgp_passwd_encrypt": key_type}, is_child=is_child))
     original = model.model_dump()
     calls = []
     object.__setattr__(orchestrator, "_request", lambda **kwargs: calls.append(kwargs) or {})
 
-    if version == "4.2.1.10" and key_type == "type6":
+    if version == "4.2.1" and key_type == "type6":
         with pytest.raises(Exception, match="bgp_passwd_encrypt 'type6' is not supported by the ND 4.2 Manage API"):
             getattr(orchestrator, operation)(model)
         assert calls == []
@@ -1065,13 +1072,13 @@ def test_vrf_bgp_key_type_is_converted_only_at_the_request_boundary(key_type, nu
     assert len(calls) == 1
     assert calls[0]["verb"] == (HttpVerbEnum.PUT if is_child or operation == "update" else HttpVerbEnum.POST)
     payload = calls[0]["data"] if is_child or operation == "update" else calls[0]["data"]["vrfs"][0]
-    assert payload["fabricData"]["bgpPasswordKeyType"] == (number if version == "4.2.1.10" else key_type)
+    assert payload["fabricData"]["bgpPasswordKeyType"] == (number if version == "4.2.1" else key_type)
     assert payload["fabricData"]["bgpPassword"] == "aabbccdd"
     assert model.model_dump() == original
     assert model.to_gathered_config()["bgp_passwd_encrypt"] == key_type
 
 
-@pytest.mark.parametrize("version", ["4.2.0.1", "4.2.1.10", "4.2.9.99", "4.3.1.175"])
+@pytest.mark.parametrize("version", ["4.2.0", "4.2.1", "4.2.9", "4.3.1"])
 @pytest.mark.parametrize("is_child,is_multicluster", [(False, False), (True, False), (True, True)])
 @pytest.mark.parametrize("operation", ["create", "update"])
 def test_public_vrf_type6_is_rejected_before_nd42_writes_and_retained_on_nd43(version, is_child, is_multicluster, operation):
@@ -1093,7 +1100,7 @@ def test_public_vrf_type6_is_rejected_before_nd42_writes_and_retained_on_nd43(ve
     model = VrfDataModel.from_config(_transform(public, is_child=is_child))
     original = model.model_dump()
     orchestrator = _orchestrator_for_request_tests({"state": "merged"}, is_child=is_child, is_multicluster=is_multicluster)
-    orchestrator.rest_send.controller_version = version
+    orchestrator.rest_send.controller_product_version = version
     calls = []
     object.__setattr__(orchestrator, "_request", lambda **kwargs: calls.append(kwargs) or {})
 
@@ -1142,11 +1149,12 @@ def test_vrf_bgp_readback_is_canonical_and_replayable_without_mutating_the_respo
 
 
 @pytest.mark.parametrize(
-    "fabric_data", [None, {}, {"bgpPassword": "aabbccdd"}, {"bgpPasswordKeyType": None}, {"bgpPasswordKeyType": "3"}, {"bgpPasswordKeyType": 8}]
+    "fabric_data",
+    [None, {}, {"bgpPassword": "aabbccdd"}, {"bgpPasswordKeyType": None}, {"bgpPasswordKeyType": "3"}, {"bgpPasswordKeyType": 8}],
 )
 def test_vrf_bgp_conversion_does_not_invent_or_coerce_omitted_or_unknown_key_types(fabric_data):
     orchestrator = _orchestrator_for_request_tests({"state": "merged"})
-    orchestrator.rest_send.controller_version = "4.2.1.10"
+    orchestrator.rest_send.controller_product_version = "4.2.1"
     raw = {"vrfName": "BLUE", **({"fabricData": fabric_data} if fabric_data is not None else {})}
     snapshot = deepcopy(raw)
     assert orchestrator._normalize_query_vrf_items([raw]) == [snapshot]
@@ -1170,12 +1178,12 @@ def test_vrf_bgp_template_readback_is_normalized_after_multicluster_shape_expans
 def test_vrf_bgp_serialization_reuses_existing_connection_version_cache(key_type, wire_value):
     versions = []
 
-    def get_version():
+    def get_product_version():
         versions.append("read")
-        return "4.2.1.10"
+        return "4.2.1"
 
     runtime = RestSend({"state": "merged"})
-    runtime.sender = SimpleNamespace(path="", verb="GET", payload=None, response={}, commit=lambda: None, get_version=get_version)
+    runtime.sender = SimpleNamespace(path="", verb="GET", payload=None, response={}, commit=lambda: None, get_product_version=get_product_version)
     orchestrator = NDVrfOrchestrator(rest_send=runtime, strategy=StandaloneVrfStrategy(fabric_name="FAB"))
     payload = {"vrfName": "BLUE", "fabricData": {"bgpPasswordKeyType": key_type}}
     for _attempt in range(3):
@@ -1192,7 +1200,13 @@ def test_vrf_bgp_serialization_reuses_existing_connection_version_cache(key_type
 def external_vrf_inventory(request):
     """Actual AK-EXT stored shape, including an omitted optional description."""
     return [
-        {"fabricName": "AK-EXT", "vrfName": "MyVRF_50000", "vrfType": request.param, "vrfStatus": "notApplicable", "description": "VRFDESc"},
+        {
+            "fabricName": "AK-EXT",
+            "vrfName": "MyVRF_50000",
+            "vrfType": request.param,
+            "vrfStatus": "notApplicable",
+            "description": "VRFDESc",
+        },
         {
             "fabricName": "AK-EXT",
             "vrfName": "ND_EXT_VRF_20261028",
@@ -1275,7 +1289,7 @@ def test_external_vrf_explicit_description_clear_converges(external_vrf_inventor
         rest_send=RestSend(params),
         strategy=StandaloneVrfStrategy(fabric_name="AK-EXT", fabric_data={"management": {"type": current["vrfType"]}}),
     )
-    orchestrator.rest_send.controller_version = "4.3.1.175"
+    orchestrator.rest_send.controller_product_version = "4.3.1"
     calls = []
 
     def request(**kwargs):
@@ -1285,7 +1299,9 @@ def test_external_vrf_explicit_description_clear_converges(external_vrf_inventor
 
     object.__setattr__(orchestrator, "_request", request)
     sm = NDStateMachine(
-        module=SimpleNamespace(params=params, check_mode=check_mode), model_orchestrator=orchestrator, config=orchestrator.prepare_config_data(config)
+        module=SimpleNamespace(params=params, check_mode=check_mode),
+        model_orchestrator=orchestrator,
+        config=orchestrator.prepare_config_data(config),
     )
     sm.manage_state()
     assert sm.output.format()["changed"] is False
@@ -1443,13 +1459,25 @@ def test_external_vrf_create_and_update_include_fabric_identity(vrf_type, descri
 @pytest.mark.parametrize("vrf_type", ["externalConnectivity", "vxlanExternal"])
 @pytest.mark.parametrize(
     "version,supported",
-    [("4.2.1.10", False), ("4.3.0.9", False), ("4.3.1.0", True), ("4.3.1.175", True), ("4.4.1.1", True), (None, False), ("invalid", False), ("4.3", False)],
+    [
+        ("4.2.1", False),
+        ("4.3.0", False),
+        ("4.3.1", True),
+        ("4.3(1)", True),
+        ("4.3.1a", True),
+        ("4.3(1a)", True),
+        ("4.3.1.175", False),
+        ("4.4.1", True),
+        (None, False),
+        ("invalid", False),
+        ("4.3", False),
+    ],
 )
 @pytest.mark.parametrize("description", [{}, {"description": "probe"}, {"description": ""}])
 @pytest.mark.parametrize("updating", [False, True])
 def test_external_vrf_direct_writes_enforce_release_support(*, vrf_type, version, supported, description, updating):
     orchestrator = _orchestrator_for_request_tests({"state": "merged", "config": []})
-    orchestrator.rest_send.controller_version = version
+    orchestrator.rest_send.controller_product_version = version
     model = VrfDataModel.from_config({"fabricName": "FAB", "vrfName": "BLUE", "vrfType": vrf_type, **description})
     calls = []
     object.__setattr__(orchestrator, "_request", lambda **kwargs: calls.append(kwargs) or {})
@@ -1467,11 +1495,11 @@ def test_external_vrf_release_check_reuses_cached_version_and_skips_unneeded_loo
     rest_send = RestSend({})
     versions = []
 
-    def get_version():
+    def get_product_version():
         versions.append("lookup")
-        return "4.3.1.175"
+        return "4.3.1"
 
-    rest_send._sender = SimpleNamespace(get_version=get_version)
+    rest_send._sender = SimpleNamespace(get_product_version=get_product_version)
     orchestrator = NDVrfOrchestrator(rest_send=rest_send, strategy=StandaloneVrfStrategy(fabric_name="ISN"))
     name_only = VrfDataModel.from_config({"fabricName": "ISN", "vrfName": "BLUE", "vrfType": "externalConnectivity"})
     vxlan = VrfDataModel.from_config({"fabricName": "FAB", "vrfName": "BLUE", "vrfType": "vxlanIbgp"})
@@ -1481,6 +1509,48 @@ def test_external_vrf_release_check_reuses_cached_version_and_skips_unneeded_loo
     for _index in range(3):
         orchestrator.validate_external_vrf_write(name_only, updating=True)
     assert versions == ["lookup"]
+
+
+@pytest.mark.parametrize(
+    "product,build,expected",
+    [
+        ("4.2(1)", "4.3.1.175", 7),
+        ("4.2.1a", "4.3.1.175", 7),
+        ("4.3(1a)", "4.2.1.10", "type7"),
+        (None, "4.2.1.10", "type7"),
+        ("4.2.1.10", "4.2.1.10", "type7"),
+    ],
+)
+def test_vrf_bgp_wire_enum_uses_product_release_without_build_fallback(product, build, expected):
+    """Convert the old wire enum only for a recognized ND4.2 product release."""
+    runtime = RestSend({})
+    runtime.controller_product_version = product
+    runtime.controller_build_version = build
+    orchestrator = NDVrfOrchestrator(rest_send=runtime, strategy=StandaloneVrfStrategy(fabric_name="FAB"))
+    payload = {"vrfName": "BLUE", "fabricData": {"bgpPasswordKeyType": "type7"}}
+    original = deepcopy(payload)
+    assert orchestrator._manage_api_vrf_payload(payload)["fabricData"]["bgpPasswordKeyType"] == expected
+    assert payload == original
+
+
+def test_vrf_capability_product_cache_never_reads_the_build_channel():
+    """A newer build identifier cannot grant support absent a product release."""
+    runtime = RestSend({})
+    lookups = []
+
+    def product():
+        lookups.append("product")
+        return "4.2(1)"
+
+    def build():
+        pytest.fail("VRF capability must not read the build version")
+
+    runtime._sender = SimpleNamespace(get_product_version=product, get_build_version=build)
+    orchestrator = NDVrfOrchestrator(rest_send=runtime, strategy=StandaloneVrfStrategy(fabric_name="FAB"))
+    assert not orchestrator.write_capabilities.supported
+    assert not orchestrator.write_capabilities.supported
+    assert runtime.controller_product_version == "4.2(1)"
+    assert lookups == ["product"]
 
 
 def test_vrfs_00010_transform_standalone_config_to_schema_payload():
@@ -2213,7 +2283,11 @@ def test_child_vrf_explicit_l3vni_mode_overrides_existing_and_fabric(is_multiclu
     [
         ({"import_mvpn_rt": ["65000:1"]}, {"trmData": {"ipv4Trm": True, "v4RpAbsent": True, "l3VniMulticastGroup": "239.1.1.1"}}, True),
         ({"import_mvpn_rt": ["65000:1"]}, {"trmData": {"ipv4Trm": False}}, False),
-        ({"v6_overlay_mcast_group": "ff3e::/16"}, {"trmData": {"ipv6Trm": True, "v6RpAbsent": True, "l3VniMulticastGroup": "239.1.1.1"}}, True),
+        (
+            {"v6_overlay_mcast_group": "ff3e::/16"},
+            {"trmData": {"ipv6Trm": True, "v6RpAbsent": True, "l3VniMulticastGroup": "239.1.1.1"}},
+            True,
+        ),
         ({"trm_enable": True, "no_rp": True, "underlay_mcast_ip": "239.1.1.1"}, None, True),
         ({"trm_enable": True, "underlay_mcast_ip": "239.1.1.1"}, None, False),
         ({"trm_enable": True, "rp_external": True, "rp_address": "192.0.2.1", "underlay_mcast_ip": "239.1.1.1"}, None, True),
