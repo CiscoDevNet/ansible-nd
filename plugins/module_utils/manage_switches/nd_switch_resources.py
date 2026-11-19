@@ -1062,9 +1062,11 @@ class SwitchDiscoveryService:
                         reason,
                     )
 
-            for seed_ip in seed_ips:
-                if seed_ip not in discovered_results:
-                    log.warning("Switch %s not found in discovery response", seed_ip)
+            missing_seed_ips = [seed_ip for seed_ip in seed_ips if seed_ip not in discovered_results]
+            if missing_seed_ips:
+                msg = f"Switch discovery did not return usable data for: {missing_seed_ips}. Cannot add these switches."
+                log.error(msg)
+                nd.module.fail_json(msg=msg)
 
             log.info(
                 "Bulk discovery completed: %s/%s switches successful",
@@ -3422,24 +3424,25 @@ class NDSwitchResourceModule:
 
         - `action`: Action label (e.g. ``"merge"``, ``"override"``).
         - `diff_current`: Diff payload describing what would change.
-        - `save_deploy_serials`: Existing switch serials that would be saved
-                                 and deployed without an inventory change.
+        - `save_deploy_serials`: Existing out-of-sync switch serials that
+                                 trigger save/deploy without an inventory change.
+                                 They are deploy targets only for switch scope.
 
         ## Returns
 
         - None.
         """
         if save_deploy_serials:
-            diff_current["save_deploy_serial_numbers"] = list(save_deploy_serials)
-            self._check_mode_config_actions = [
-                {
-                    "_action": "config_actions",
-                    "save": self.ctx.save_config,
-                    "deploy": self.ctx.deploy_config,
-                    "deploy_type": self.ctx.deploy_type,
-                    "serial_numbers": list(save_deploy_serials),
-                }
-            ]
+            config_action = {
+                "_action": "config_actions",
+                "save": self.ctx.save_config,
+                "deploy": self.ctx.deploy_config,
+                "deploy_type": self.ctx.deploy_type,
+            }
+            if self.ctx.deploy_type == "switch":
+                diff_current["save_deploy_serial_numbers"] = list(save_deploy_serials)
+                config_action["serial_numbers"] = list(save_deploy_serials)
+            self._check_mode_config_actions = [config_action]
         else:
             self._check_mode_config_actions = []
         self.results.action = action

@@ -1998,8 +1998,10 @@ def test_exit_json_check_mode_uses_synthetic_before_after_diff():
     assert final["diff"][0]["_action"] == "added"
 
 
-def test_check_mode_idempotent_out_of_sync_switch_reports_changed_for_config_actions():
-    """Check mode reports changed when an idempotent switch still needs config save/deploy."""
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
+@pytest.mark.parametrize("deploy_type", ["switch", "global"])
+def test_check_mode_idempotent_out_of_sync_switch_reports_changed_for_config_actions(state, deploy_type):
+    """Check mode reports the actual switch or fabric-wide deployment scope."""
     existing = [
         _sw(
             "192.0.2.10",
@@ -2014,33 +2016,31 @@ def test_check_mode_idempotent_out_of_sync_switch_reports_changed_for_config_act
     ]
     cfg = _cfg("192.0.2.10")
     resource = _resource(
-        state="merged",
+        state=state,
         config=[{"seed_ip": "192.0.2.10", "username": "admin", "password": "password", "role": "leaf"}],
         check_mode=True,
         existing=existing,
     )
     resource.ctx.save_config = True
     resource.ctx.deploy_config = True
-    resource.ctx.deploy_type = "switch"
+    resource.ctx.deploy_type = deploy_type
     resource.proposed_cfgs = [cfg]
     resource._plan = _empty_plan(idempotent=[cfg])
 
-    resource._handle_merged_state(resource._plan, {})
+    getattr(resource, f"_handle_{state}_state")(resource._plan, {})
     resource.exit_json()
 
     final = resource.module.exit_kwargs
     assert final["changed"] is True
-    assert final["diff"] == [
-        {
-            "_action": "config_actions",
-            "save": True,
-            "deploy": True,
-            "deploy_type": "switch",
-            "serial_numbers": ["SERIAL1"],
-        }
-    ]
+    expected_action = {"_action": "config_actions", "save": True, "deploy": True, "deploy_type": deploy_type}
+    if deploy_type == "switch":
+        expected_action["serial_numbers"] = ["SERIAL1"]
+    assert final["diff"] == [expected_action]
     assert resource.results.diffs[0]["save_deploy_required"] is True
-    assert resource.results.diffs[0]["save_deploy_serial_numbers"] == ["SERIAL1"]
+    if deploy_type == "switch":
+        assert resource.results.diffs[0]["save_deploy_serial_numbers"] == ["SERIAL1"]
+    else:
+        assert "save_deploy_serial_numbers" not in resource.results.diffs[0]
 
 
 @pytest.mark.parametrize(
