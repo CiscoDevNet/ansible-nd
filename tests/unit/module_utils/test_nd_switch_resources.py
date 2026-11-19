@@ -1995,16 +1995,25 @@ def test_exit_json_normal_requeries_dirty_inventory_and_builds_delete_add_diff(m
     assert final["proposed"][0]["seed_ip"] == "192.0.2.11"
 
 
-def test_exit_json_reports_post_mutation_inventory_refresh_failure(monkeypatch):
-    """A failed final refresh identifies the fabric and preserves the controller error."""
-    resource = _resource(state="merged", existing=[_sw("192.0.2.10", "SERIAL1")])
-    resource.results.action = "create"
-    resource.results.operation_type = OperationType.CREATE
-    resource.results.response_current = {"MESSAGE": "created"}
-    resource.results.result_current = {"success": True, "changed": True}
-    resource.results.diff_current = {"created": ["SERIAL2"]}
-    resource.results.register_api_call()
-    resource.ctx.mark_inventory_refresh_needed()
+@pytest.mark.parametrize("output_level,verbosity", [("normal", 0), ("normal", 2), ("normal", 3), ("debug", 0)])
+def test_exit_json_reports_post_mutation_inventory_refresh_failure(monkeypatch, output_level, verbosity):
+    """A failed refresh preserves changes while respecting API output verbosity and masking."""
+    resource = _resource(state="merged", existing=[_sw("192.0.2.10", "SERIAL1")], output_level=output_level)
+    resource.module._verbosity = verbosity
+    discovery_data = {"switches": [{"ip": "192.0.2.11", "serialNumber": "SERIAL2", "status": "ok"}]}
+    resource.nd._response_current = {"DATA": discovery_data, "RETURN_CODE": 200}
+    SwitchDiscoveryService(resource.ctx).bulk_discover(
+        DiscoveryBatchSpec(switches=[_cfg("192.0.2.11")], username="admin", password="discovery-secret", auth_proto="MD5", platform_type="nx-os")
+    )
+    resource.nd._response_current = {"DATA": {}, "MESSAGE": "created", "RETURN_CODE": 200}
+    resource.ctx.api_call(
+        ApiCallSpec(
+            endpoint=SimpleNamespace(path="/api/add", verb="POST"),
+            payload={"serialNumber": "SERIAL2", "password": "mutation-secret"},
+            action="create",
+            op_type=OperationType.CREATE,
+        )
+    )
     calls = []
 
     def fail_refresh(*, refresh=False):
@@ -2017,13 +2026,31 @@ def test_exit_json_reports_post_mutation_inventory_refresh_failure(monkeypatch):
         resource.exit_json()
 
     assert calls == [True]
-    assert resource.module.fail_kwargs["msg"] == "Failed to query fabric 'FAB1' inventory during finalization: controller unavailable"
-    assert resource.module.fail_kwargs["failed"] is True
-    assert resource.module.fail_kwargs["changed"] is True
-    assert resource.module.fail_kwargs["response"][0]["MESSAGE"] == "created"
-    assert resource.module.fail_kwargs["result"][0]["success"] is True
-    assert resource.module.fail_kwargs["result"][0]["changed"] is True
-    assert resource.module.fail_kwargs["diff"][0]["created"] == ["SERIAL2"]
+    final = resource.module.fail_kwargs
+    assert final["msg"] == "Failed to query fabric 'FAB1' inventory during finalization: controller unavailable"
+    assert final["failed"] is True
+    assert final["changed"] is True
+    assert final["after_status"] == "unknown"
+    assert "after" not in final
+    assert final["diff"][0]["password"] == "********"
+    assert final["diff"][1]["serialNumber"] == "SERIAL2"
+    assert final["diff"][1]["password"] == "********"
+    assert "discovery-secret" not in str(final)
+    assert "mutation-secret" not in str(final)
+    for key in ("path", "verb", "payload", "response", "result", "metadata", "verbosity_level"):
+        assert key not in final
+    effective_verbosity = max(verbosity, 3) if output_level == "debug" else verbosity
+    if effective_verbosity < 2:
+        assert not any(key.startswith("api_") for key in final)
+    elif effective_verbosity == 2:
+        assert final["api_paths"] == ["/api/add"]
+        assert "api_response" not in final
+    else:
+        assert final["api_response"][-1]["MESSAGE"] == "created"
+        assert final["api_result"][-1]["success"] is True
+        assert final["api_result"][-1]["changed"] is True
+        assert final["api_payload"][-1] == {"serialNumber": "SERIAL2", "password": "********"}
+        assert final["api_diff"][-1] == final["diff"][-1]
     assert resource.module.exit_kwargs is None
     assert any(level == "error" and "during finalization" in args[0] for level, args in resource.log.messages)
 

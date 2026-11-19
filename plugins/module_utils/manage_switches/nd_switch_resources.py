@@ -972,7 +972,7 @@ class SwitchDiscoveryService:
             results.operation_type = OperationType.QUERY
             results.response_current = response
             results.result_current = result
-            results.diff_current = payload
+            results.diff_current = mask_password(payload)
             results.register_api_call()
 
             # Extract discovered switches from response
@@ -3110,6 +3110,9 @@ class NDSwitchResourceModule:
         """
         self.results.build_final_result()
         final = {key: self.results.final_result[key] for key in ("changed", "failed")}
+        verbosity = getattr(self.nd.module, "_verbosity", 0)
+        if self.module.params.get("output_level", "normal") == "debug":
+            verbosity = max(verbosity, 3)
 
         if self.state == "gathered":
             # gathered: expose the already-queried inventory in config shape.
@@ -3130,10 +3133,13 @@ class NDSwitchResourceModule:
                 except _FABRIC_OPERATION_ERRORS as exc:
                     msg = f"Failed to query fabric '{self.fabric}' inventory during finalization: {exc}"
                     self.log.error(msg)
-                    final.update(self.results.final_result)
                     final["msg"] = msg
                     final["changed"] = True
                     final["failed"] = True
+                    final["diff"] = self.results.final_result["diff"]
+                    final = self.output.format_with_verbosity(verbosity, results=self.results, **final)
+                    final.pop("after", None)
+                    final["after_status"] = "unknown"
                     self.nd.module.fail_json(**final)
                 self.existing = self.inventory.collection
             # Build diff: deletes (from self.sent) + adds (from self.sent_adds)
@@ -3176,9 +3182,6 @@ class NDSwitchResourceModule:
 
         if self.msg:
             final["msg"] = self.msg
-        verbosity = getattr(self.nd.module, "_verbosity", 0)
-        if self.module.params.get("output_level", "normal") == "debug":
-            verbosity = max(verbosity, 3)
         final = self.output.format_with_verbosity(verbosity, results=self.results, **final)
         final["changed"] = final["changed"] or True in self.results.changed
         if True in self.results.failed:
