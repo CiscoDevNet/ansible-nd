@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActions
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils import (
     PayloadUtils,
@@ -1364,6 +1365,37 @@ def test_fabric_ops_finalize_honors_switch_and_global_deploy_modes():
     assert results.metadata[-1]["action"] == "config_actions"
 
 
+def test_resource_initialization_propagates_normalized_actions_to_finalize():
+    """A real resource initialization uses normalized action scope for controller requests."""
+    nd = FakeND(data=[])
+    nd.module.params = {"fabric": "FAB1", "state": "merged", "config": []}
+    actions = ConfigActions(save=True, deploy=True, type="global", provided=True)
+    results = Results()
+
+    resource = NDSwitchResourceModule(nd, results, logger=ListLogger(), config_actions=actions)
+
+    assert resource.ctx.config_actions is actions
+    assert (resource.ctx.save_config, resource.ctx.deploy_config, resource.ctx.deploy_type) == (True, True, "global")
+    assert resource._check_mode_config_actions == []
+    assert [(call["path"], call["verb"]) for call in nd.calls] == [("/api/v1/manage/fabrics/FAB1/switches", HttpVerbEnum.GET)]
+
+    nd.calls.clear()
+    resource.fabric_ops.finalize(["SERIAL1"])
+    assert [(call["path"], call["data"]) for call in nd.calls] == [
+        ("/api/v1/manage/fabrics/FAB1/actions/configSave", None),
+        ("/api/v1/manage/fabrics/FAB1/actions/configDeploy", None),
+    ]
+    assert [entry["action"] for entry in results.metadata] == ["config_save", "deploy_config"]
+
+
+def test_switch_context_uses_switch_scope_when_action_type_is_unset():
+    """The legacy context exposes the switch default when normalized type is absent."""
+    actions = ConfigActions(save=False, deploy=False, type=None, provided=True)
+    context = SwitchServiceContext(FakeND(), Results(), "FAB1", ListLogger(), config_actions=actions)
+
+    assert (context.save_config, context.deploy_config, context.deploy_type) == (False, False, "switch")
+
+
 def test_idempotent_sync_serials_require_resolved_switch_targets():
     """Idempotent config-sync deploys target resolved serials and fails when targets are missing."""
     resource = NDSwitchResourceModule.__new__(NDSwitchResourceModule)
@@ -1395,6 +1427,9 @@ def test_idempotent_sync_serials_require_resolved_switch_targets():
     plan = _empty_plan(idempotent=[_cfg("192.0.2.10"), _cfg("192.0.2.11")])
 
     assert resource._idempotent_sync_serials(plan, {sw.fabric_management_ip: sw for sw in (out_of_sync, in_sync)}) == ["SERIAL1"]
+
+    duplicate_plan = _empty_plan(idempotent=[_cfg("192.0.2.10"), _cfg("192.0.2.10")])
+    assert resource._idempotent_sync_serials(duplicate_plan, {out_of_sync.fabric_management_ip: out_of_sync}) == ["SERIAL1"]
 
     resource.ctx.deploy_config = False
     assert resource._idempotent_sync_serials(plan, {out_of_sync.fabric_management_ip: out_of_sync}) == []
