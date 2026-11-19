@@ -69,6 +69,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.co
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import (
     FabricSwitchInventory,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_details_cache import (
     FabricDetailsCache,
 )
@@ -248,6 +249,20 @@ class SwitchServiceContext:
     save_config: bool = True
     deploy_config: bool = True
     deploy_type: str = "switch"
+    inventory_refresh_needed: bool = False
+
+    def mark_inventory_refresh_needed(self) -> None:
+        """
+        # Summary
+
+        Mark that a successful controller mutation requires a fresh inventory
+        snapshot before module exit.
+
+        ## Raises
+
+        None
+        """
+        self.inventory_refresh_needed = True
 
     def api_call(
         self,
@@ -295,6 +310,9 @@ class SwitchServiceContext:
             msg = f"{spec.context} failed: {response}" if spec.context else f"API call failed: {response}"
             self.log.error(msg)
             self.nd.module.fail_json(msg=msg)
+
+        if spec.op_type.changes_state():
+            self.mark_inventory_refresh_needed()
 
         return response
 
@@ -954,7 +972,7 @@ class SwitchDiscoveryService:
             results.operation_type = OperationType.QUERY
             results.response_current = response
             results.result_current = result
-            results.diff_current = payload
+            results.diff_current = mask_password(payload)
             results.register_api_call()
 
             # Extract discovered switches from response
@@ -1441,6 +1459,7 @@ class SwitchFabricOps:
         self.ctx.results.payload_current = payload
         self.ctx.results.verbosity_level_current = 2
         self.ctx.results.register_api_call()
+        self.ctx.mark_inventory_refresh_needed()
 
     def finalize(self, serial_numbers: list[str] | None = None) -> None:
         """Run optional save and deploy actions for the fabric.
@@ -2714,11 +2733,12 @@ class NDSwitchResourceModule:
             deploy_config=config_actions.get("deploy", True),
             deploy_type=config_actions.get("type", "switch"),
         )
+        self.fabric_context = FabricContext(self.nd.get_rest_send(), self.fabric)
 
         # Switch collections
         try:
             self.proposed: NDConfigCollection = NDConfigCollection(model_class=SwitchDataModel)
-            self.inventory = FabricSwitchInventory.from_fabric(nd, self.fabric, log, SwitchDataModel)
+            self.inventory = self._load_fabric_switch_inventory()
             self.existing: NDConfigCollection = self.inventory.collection
             self.before: NDConfigCollection = self.existing.copy()
             self.sent: NDConfigCollection = NDConfigCollection(model_class=SwitchDataModel)
@@ -2750,6 +2770,30 @@ class NDSwitchResourceModule:
         self.rma_handler = RMAHandler(self.ctx, self.fabric_ops, self.wait_utils, self.bootstrap_cache)
 
         log.info("Initialized NDSwitchResourceModule for fabric: %s", self.fabric)
+
+    def _load_fabric_switch_inventory(self, *, refresh: bool = False) -> FabricSwitchInventory:
+        """
+        # Summary
+
+        Load parsed switch inventory from the module's cached fabric context.
+
+        ## Parameters
+
+        - `refresh`: Invalidate cached fabric context data before loading.
+
+        ## Returns
+
+        - Parsed and indexed switch inventory.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the switch inventory query fails.
+        """
+        if refresh:
+            self.fabric_context.invalidate()
+        return FabricSwitchInventory.from_context(self.fabric_context, SwitchDataModel)
 
     def _inventory_to_config_list(self, collection: "NDConfigCollection") -> list[dict[str, Any]]:
         """Convert an inventory collection (SwitchDataModel) to gathered-format config dicts.
@@ -3066,6 +3110,9 @@ class NDSwitchResourceModule:
         """
         self.results.build_final_result()
         final = {key: self.results.final_result[key] for key in ("changed", "failed")}
+        verbosity = getattr(self.nd.module, "_verbosity", 0)
+        if self.module.params.get("output_level", "normal") == "debug":
+            verbosity = max(verbosity, 3)
 
         if self.state == "gathered":
             # gathered: expose the already-queried inventory in config shape.
@@ -3078,10 +3125,23 @@ class NDSwitchResourceModule:
         elif self.nd.module.check_mode:
             final.update(self._build_check_mode_output())
         else:
-            # Re-query the fabric to get the actual post-operation inventory so
-            # that "after" reflects real state rather than the pre-op snapshot.
-            if True not in self.results.failed:
-                self.existing = FabricSwitchInventory.from_fabric(self.nd, self.fabric, self.log, SwitchDataModel).collection
+            # Re-query only after a successful mutation. Idempotent runs can
+            # reuse the initial inventory snapshot without another full GET.
+            if True not in self.results.failed and self.ctx.inventory_refresh_needed:
+                try:
+                    self.inventory = self._load_fabric_switch_inventory(refresh=True)
+                except _FABRIC_OPERATION_ERRORS as exc:
+                    msg = f"Failed to query fabric '{self.fabric}' inventory during finalization: {exc}"
+                    self.log.error(msg)
+                    final["msg"] = msg
+                    final["changed"] = True
+                    final["failed"] = True
+                    final["diff"] = self.results.final_result["diff"]
+                    final = self.output.format_with_verbosity(verbosity, results=self.results, **final)
+                    final.pop("after", None)
+                    final["after_status"] = "unknown"
+                    self.nd.module.fail_json(**final)
+                self.existing = self.inventory.collection
             # Build diff: deletes (from self.sent) + adds (from self.sent_adds)
             diff_list: list[dict[str, Any]] = []
             for sw in self.sent:
@@ -3122,9 +3182,6 @@ class NDSwitchResourceModule:
 
         if self.msg:
             final["msg"] = self.msg
-        verbosity = getattr(self.nd.module, "_verbosity", 0)
-        if self.module.params.get("output_level", "normal") == "debug":
-            verbosity = max(verbosity, 3)
         final = self.output.format_with_verbosity(verbosity, results=self.results, **final)
         final["changed"] = final["changed"] or True in self.results.changed
         if True in self.results.failed:

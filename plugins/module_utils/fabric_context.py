@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import EpManageFabricsSummaryGet
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import EpManageSwitchesListGet
@@ -72,6 +72,8 @@ class FabricContext:
     - Via `get_platform_type` if no switch matches the given management IP.
     - Via `fabric_summary` if the summary payload carries an embedded `code` error key.
     - Via the `switches` / `switch_map` accessors if the fabric does not exist.
+    - Via the `switches` / `switch_map` accessors if the switches payload carries an embedded `code` error key.
+    - Via the `switches` / `switch_map` accessors if the switch inventory has an invalid body.
     """
 
     def __init__(self, rest_send: RestSend, fabric_name: str):
@@ -107,11 +109,11 @@ class FabricContext:
         """
         return f"Fabric '{self._fabric_name}' not found. Verify the fabric name and ensure you are targeting the correct ND node."
 
-    def _query_get(self, path: str) -> dict:
+    def _query_get(self, path: str) -> Any:
         """
         # Summary
 
-        Issue a GET request via `RestSend` and return the `DATA` dict from the response. Returns `{}` on HTTP 404.
+        Issue a GET request via `RestSend` and return the `DATA` body from the response. Returns `{}` on HTTP 404.
 
         ## Raises
 
@@ -267,6 +269,8 @@ class FabricContext:
 
         - If the switches API query fails.
         - If the fabric does not exist (switches GET 404 confirmed by an absent `fabric_summary`).
+        - If the switches payload carries an embedded `code` error key instead of switch inventory.
+        - If the switches payload is not a list of records or an object containing a list of records.
         """
         if self._switch_map is not None:
             # Some injected/shared contexts predate the platform index and carry only the two identity maps. Treat their platform
@@ -282,7 +286,20 @@ class FabricContext:
         # letting an empty switch map surface a misleading "switch not found" downstream (issue #399).
         if self._rest_send.return_code == 404 and not self.fabric_exists():
             raise RuntimeError(self._fabric_not_found_message())
-        switches = (result.get("switches") or []) if result else []
+        if isinstance(result, list):
+            switches = result
+        elif isinstance(result, dict):
+            if "code" in result:
+                raise RuntimeError(f"GET {ep.path} returned an embedded error instead of switch inventory: {result.get('message', result)}")
+            switches = result.get("switches")
+            if switches is None:
+                switches = []
+        elif result is None:
+            switches = []
+        else:
+            raise RuntimeError(f"GET {ep.path} returned an invalid switch inventory response")
+        if not isinstance(switches, list) or any(not isinstance(sw, dict) for sw in switches):
+            raise RuntimeError(f"GET {ep.path} returned an invalid switch inventory response")
         self._switches = switches
         self._switch_map = {sw["fabricManagementIp"]: sw["switchId"] for sw in switches if sw.get("fabricManagementIp") and sw.get("switchId")}
         self._switch_map_by_id = {sw["switchId"]: sw["fabricManagementIp"] for sw in switches if sw.get("switchId") and sw.get("fabricManagementIp")}
@@ -328,6 +345,7 @@ class FabricContext:
 
         - If the switches API query fails.
         - If the fabric does not exist.
+        - If the switches payload carries an embedded `code` error key instead of switch inventory.
         """
         self._load_switch_maps()
         if self._switches is None:
@@ -349,6 +367,7 @@ class FabricContext:
 
         - If the switches API query fails.
         - If the fabric does not exist.
+        - If the switches payload carries an embedded `code` error key instead of switch inventory.
         """
         self._load_switch_maps()
         if self._switch_map is None:
@@ -370,6 +389,7 @@ class FabricContext:
 
         - If the switches API query fails.
         - If the fabric does not exist.
+        - If the switches payload carries an embedded `code` error key instead of switch inventory.
         """
         self._load_switch_maps()
         if self._switch_map_by_id is None:
