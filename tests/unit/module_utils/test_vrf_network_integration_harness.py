@@ -173,6 +173,26 @@ def test_primary_pvlan_layer_regression_stays_in_opt_in_suite(topology, release)
         assert templar.template(harness["expected"])["idempotency"] == {"changed": False, "failed": False}
 
 
+@pytest.mark.parametrize("topology", ("msd", "mcfg"))
+@pytest.mark.parametrize("release", RELEASES)
+@pytest.mark.parametrize("state", ("replaced", "overridden"))
+def test_child_only_reset_preserves_the_preceding_parent_routing_tag(topology, release, state):
+    target, variables, _templar = fixture_context("network", topology, release)
+    variables.update(ansible_search_path=[str(target)], nd4x_definition_state=state)
+    templar = Templar(loader=DataLoader(), variables=variables)
+    parent_tasks = yaml.safe_load((target / "tasks/nd4x_definition_state.yaml").read_text())
+    parent_task = next(task for task in parent_tasks if "L3: Retain omitted layer" in task.get("name", ""))
+    parent_config = templar.template(parent_task["cisco.nd.nd4x_module_test"]["config"])[0]
+    child_tasks = yaml.safe_load((target / "tasks/nd4x_child_state.yaml").read_text())
+    child_task = next(task for task in child_tasks if "CHILD RESET: Omitted member fields" in task.get("name", ""))
+    harness = child_task["cisco.nd.nd4x_module_test"]
+    child_config = templar.template(harness["config"])[0]
+    assert child_config["routing_tag"] == parent_config["routing_tag"]
+    assert "child_fabric_config" not in child_config
+    validate_config("network", topology, child_config, state)
+    assert templar.template(harness["expected"])["idempotency"] == {"changed": False, "failed": False}
+
+
 @pytest.mark.parametrize("resource", RESOURCES)
 @pytest.mark.parametrize("topology", TOPOLOGIES)
 @pytest.mark.parametrize("release", RELEASES)
