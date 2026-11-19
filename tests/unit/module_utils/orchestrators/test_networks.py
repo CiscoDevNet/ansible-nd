@@ -3422,8 +3422,10 @@ def inactive_trm_network_readback():
 @pytest.mark.parametrize("topology", ["standalone", "msd", "mcfg"])
 @pytest.mark.parametrize("check_mode", [False, True])
 @pytest.mark.parametrize("controller_version", ["4.2.1.10", "4.3.1.175"])
-def test_unrelated_network_update_with_inactive_trm_readback_converges(topology, check_mode, controller_version, inactive_trm_network_readback):
-    fabric_data = {"managementType": "vxlanIbgp"}
+@pytest.mark.parametrize("network_type", ["vxlanIbgp", "vxlanCampus"])
+def test_unrelated_network_update_with_inactive_trm_readback_converges(topology, check_mode, controller_version, network_type, inactive_trm_network_readback):
+    inactive_trm_network_readback["networkType"] = network_type
+    fabric_data = {"managementType": network_type}
     if topology == "standalone":
         strategy = StandaloneNetworkStrategy(fabric_name="fab1", fabric_data=fabric_data)
         parent_strategy = strategy
@@ -3463,6 +3465,45 @@ def test_unrelated_network_update_with_inactive_trm_readback_converges(topology,
             assert sm.before.get("N").l3_data.fabric_data.gateway_on_border is False
             inventory = deepcopy(inventory)
             inventory[0]["l3Data"]["fabricData"]["gatewayOnBorder"] = True
+
+
+@pytest.mark.parametrize("state", ["replaced", "overridden"])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("strategy_cls", [StandaloneNetworkStrategy, ChildNetworkStrategy])
+def test_campus_inactive_igmp_default_echo_does_not_repeat_authoritative_puts(state, check_mode, strategy_cls, inactive_trm_network_readback):
+    inventory = [deepcopy(inactive_trm_network_readback)]
+    inventory[0]["networkType"] = "vxlanCampus"
+    config = [{"network_name": "N", "gateway_on_border": True}]
+    for repeat in (False, True):
+        if strategy_cls is StandaloneNetworkStrategy:
+            coordinator, sm, parsed, orchestrator = _layer_validation_state_machine(config, inventory, check_mode, strategy_cls, "vxlanCampus", state)
+        else:
+            parent = MultisiteParentNetworkStrategy(fabric_name="parent", fabric_data={"managementType": "vxlan"})
+            entry = {"network_name": "N", "child_fabric_config": [{"fabric_name": "fab1", "gateway_on_border": True}]}
+            parent_config = parent.config_model_cls.from_config(entry, context={"state": state}).to_config(exclude_unset=True)
+            child = dict(parent_config["child_fabric_config"][0])
+            child.pop("fabric_name")
+            args = parent.build_child_task_args("fab1", [{"network_name": "N", **child}], state)
+            module = _Module({**args, "output_level": "normal"})
+            module.check_mode = check_mode
+            strategy = strategy_cls(fabric_name="fab1", fabric_data={"managementType": "vxlanCampus"})
+            coordinator = NetworkWorkflowCoordinator(module, strategy)
+            parsed = args["config"]
+            orchestrator = _LayerValidationNetworkOrchestrator(rest_send=RestSend({"state": args["state"]}), strategy=strategy, inventory=inventory)
+            sm = NDStateMachine(module=module, model_orchestrator=orchestrator, config=orchestrator.prepare_config_data(parsed))
+        coordinator._resolve_proposed_networks(sm, parsed, sm.state, orchestrator.strategy)
+        sm.manage_state()
+        assert sm.output.format()["changed"] is not repeat
+        assert orchestrator.query_count == 1
+        assert len(orchestrator.written_payloads) == (1 if not repeat and not check_mode else 0)
+        if not repeat:
+            payload = orchestrator._create_or_update_payload(sm.sent.get("N"))
+            assert payload["l3Data"]["fabricData"]["gatewayOnBorder"] is True
+            assert "igmpVersion" not in payload["l3Data"]["fabricData"]
+            inventory = [deepcopy(payload)]
+            inventory[0]["l3Data"]["fabricData"]["igmpVersion"] = 2
+        else:
+            assert sm.before.get("N").l3_data.fabric_data.igmp_version == 2
 
 
 @pytest.mark.parametrize("check_mode", [False, True])

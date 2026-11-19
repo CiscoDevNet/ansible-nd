@@ -436,15 +436,16 @@ class NetworkBaseModel(NetworkCommonModel):
     # Observed default-echo compatibility for normal L3 VXLAN iBGP Networks;
     # the supporting note must describe this L3 scope rather than L2 behavior.
     def _apply_reverse_diff_scope(self, data: dict[str, Any]) -> None:
-        """Ignore only observed deterministic normal L3 VXLAN iBGP defaults.
+        """Ignore observed normal L3 defaults without changing readback or payloads.
 
         Repeated omit/PUT/readback on ND 4.3.1 retains these exact defaults.
         Non-default expressible values remain removal differences. Canonical
         multicast comparison preserves omitted controller values while explicit
         group changes remain authoritative. VLAN IDs and VNIs have no default
         exemption here.
-        Other layers, PVLANs and Network types retain their own comparison
-        contracts instead of inheriting defaults observed on a normal L3 VNI.
+        Campus ignores only the default IGMP echo with explicitly inactive
+        IPv4 TRM. Other layers, PVLANs and Network types retain their own
+        comparison contracts.
         """
         standard_l3_ibgp = (
             self.network_type == NetworkType.VXLAN_IBGP.value
@@ -453,6 +454,19 @@ class NetworkBaseModel(NetworkCommonModel):
         )
         display_name = data.get("displayName")
         super()._apply_reverse_diff_scope(data)
+        campus_fabric = getattr(self.l3_data, "fabric_data", None)
+        if (
+            self.network_type == NetworkType.VXLAN_CAMPUS.value
+            and self.layer == NetworkLayer.LAYER3.value
+            and self.vlan_network_type == VlanNetworkType.NORMAL.value
+            and campus_fabric is not None
+            and "ipv4_trm" in campus_fabric.model_fields_set
+            and campus_fabric.ipv4_trm is False
+        ):
+            fabric = data.get("l3Data", {}).get("fabricData")
+            # ND retains the default IGMP version even when IPv4 TRM is off.
+            if isinstance(fabric, dict) and fabric.get("ipv4Trm") is False and fabric.get("igmpVersion") == 2:
+                fabric.pop("igmpVersion")
         if not standard_l3_ibgp:
             return
         # Generic Network schemas preserve server labels. The qualified normal

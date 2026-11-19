@@ -113,6 +113,20 @@ def test_observed_normal_l3_ibgp_defaults_do_not_change_other_network_contracts(
     assert model.to_reverse_diff_dict()["l2Data"]["xConnect"] is False
 
 
+@pytest.mark.parametrize("trm_enabled,igmp_version,ignored", [(False, 2, True), (False, 3, False), (True, 2, False), (None, 2, False)])
+def test_campus_ignores_only_confirmed_inactive_default_igmp_echo(trm_enabled, igmp_version, ignored):
+    row = deepcopy(_fixture()["network_definitions"][0])
+    row["networkType"] = "vxlanCampus"
+    fabric = row["l3Data"]["fabricData"]
+    fabric.update(ipv4Trm=trm_enabled, igmpVersion=igmp_version)
+    model = NetworkBaseModel.from_response(row)
+    reverse = model.to_reverse_diff_dict()["l3Data"]["fabricData"]
+    assert ("igmpVersion" not in reverse) is ignored
+    assert model.to_payload()["l3Data"]["fabricData"]["igmpVersion"] == igmp_version
+    assert model.to_diff_dict()["l3Data"]["fabricData"]["igmpVersion"] == igmp_version
+    assert row["l3Data"]["fabricData"]["igmpVersion"] == igmp_version
+
+
 def test_custom_explicit_multicast_group_is_not_replaced_by_a_global_default():
     fixture = _fixture()
     for row in fixture["network_definitions"]:
