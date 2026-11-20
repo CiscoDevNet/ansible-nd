@@ -227,15 +227,13 @@ jobs:
       - name: Install the collection tarball
         run: ansible-galaxy collection install .cache/collection-tarballs/*.tar.gz
 
-      # Keep every test and its fork isolation. Compact coverage between file batches so the
-      # coverage-enabled cell does not retain one large raw data file per test for the entire suite.
+      # ansible-test runs every test in its own fork, so --coverage writes one data file per test and the
+      # combine in "Generate coverage report" scales with the test count. Only the matrix.coverage cell pays that.
       - name: Run unit tests
-        run: |
-          if [[ "${{ matrix.coverage || false }}" == "true" ]]; then
-            python .github/scripts/run_unit_coverage.py --python "${{ matrix.python_version }}" --batch-size 20
-          else
-            ansible-test units --docker -v --color --truncate 0 --python "${{ matrix.python_version }}"
-          fi
+        run: >-
+          ansible-test units --docker -v --color --truncate 0
+          --python ${{ matrix.python_version }}
+          ${{ matrix.coverage && '--coverage' || '' }}
         working-directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd
 
       - name: Generate coverage report
