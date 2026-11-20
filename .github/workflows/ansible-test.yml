@@ -170,9 +170,6 @@ jobs:
       - name: Install ansible-base (${{ matrix.ansible_version }})
         run: pip install https://github.com/ansible/ansible/archive/${{ matrix.ansible_version }}.tar.gz --disable-pip-version-check
 
-      - name: Install coverage (v4.5.4)
-        run: pip install coverage==4.5.4
-
       - name: Download migrated collection artifacts
         uses: actions/download-artifact@v8
         with:
@@ -183,15 +180,7 @@ jobs:
         run: ansible-galaxy collection install .cache/collection-tarballs/*.tar.gz
 
       - name: Run sanity tests
-        run: ansible-test sanity --docker -v --color --truncate 0 --coverage
-        working-directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd
-
-      - name: Generate coverage report
-        run: ansible-test coverage xml -v --requirements --group-by command --group-by version
-        working-directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd
-
-      - name: Push coverate report to codecov.io
-        run: bash <(curl -s https://codecov.io/bash) -s 'tests/output/reports/' -F sanity
+        run: ansible-test sanity --docker -v --color --truncate 0
         working-directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd
 
   units:
