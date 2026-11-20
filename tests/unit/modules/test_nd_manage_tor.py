@@ -117,6 +117,28 @@ def test_unknown_ip_raises():
         nd_manage_tor._resolve_switch_config(config, "fab1", lambda: inventory)
 
 
+def test_gathered_config_round_trips_through_module_normalization():
+    """A gathered item can be supplied unchanged as a config[] item."""
+    existing = ManageTorModel.from_response(
+        {
+            "fabricName": "fab1",
+            "accessOrTorSwitchId": "T1",
+            "aggregationOrLeafSwitchId": "L1",
+            "resources": {
+                "accessOrTorPortChannelId": 501,
+                "aggregationOrLeafPortChannelId": 502,
+            },
+        }
+    )
+    replay = [existing.to_gathered_config()]
+
+    nd_manage_tor._resolve_switch_config(replay, "fab1", _boom)
+    replay[0]["fabric_name"] = "fab1"
+    proposed = ManageTorModel.from_config(replay[0], context={"state": "merged"})
+
+    assert proposed.to_payload() == existing.to_payload()
+
+
 def test_documentation_suboptions_match_argument_spec():
     """validate-modules parity: DOCUMENTATION suboptions == argument spec options."""
     doc = yaml.safe_load(nd_manage_tor.DOCUMENTATION)
