@@ -41,9 +41,6 @@ jobs:
           # Ansible 2.19: supports Python 3.11 - 3.13
           - ansible_version: "stable-2.19"
             python_version: "3.13"
-            # Coverage is a property of the code, not the interpreter, so only this cell
-            # generates and uploads it (see the units job). Keep this on exactly one entry.
-            coverage: true
           - ansible_version: "stable-2.19"
             python_version: "3.12"
           - ansible_version: "stable-2.19"
@@ -198,7 +195,6 @@ jobs:
         working-directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd
 
   units:
-    # Explicit name so the coverage matrix key does not appear in the job name.
     name: Unit Tests (${{ matrix.ansible_version }}, ${{ matrix.python_version }})
     needs:
       - ansible-galaxy-importer
@@ -207,7 +203,6 @@ jobs:
     permissions:
       contents: read
       actions: read
-      id-token: write  # Codecov OIDC upload; no CODECOV_TOKEN secret needed
 
     steps:
       - name: Set up Python ${{ matrix.python_version }}
@@ -227,39 +222,17 @@ jobs:
       - name: Install the collection tarball
         run: ansible-galaxy collection install .cache/collection-tarballs/*.tar.gz
 
-      # ansible-test runs every test in its own fork, so --coverage writes one data file per test and the
-      # combine in "Generate coverage report" scales with the test count. Only the matrix.coverage cell pays that.
+      # No --coverage here: coverage is measured once, by the "Unit Test Coverage" job below.
       - name: Run unit tests
-        run: >-
-          ansible-test units --docker -v --color --truncate 0
-          --python ${{ matrix.python_version }}
-          ${{ matrix.coverage && '--coverage' || '' }}
+        run: ansible-test units --docker -v --color --truncate 0 --python ${{ matrix.python_version }}
         working-directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd
 
-      - name: Generate coverage report
-        if: matrix.coverage
-        run: ansible-test coverage xml -v --requirements
-        working-directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd
-
-      - name: Check out code (gives the Codecov uploader the commit and file list)
-        if: matrix.coverage
-        uses: actions/checkout@v6
-
-      - name: Push coverage report to codecov.io
-        if: matrix.coverage
-        uses: codecov/codecov-action@v7
-        with:
-          directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd/tests/output/reports/
-          flags: unit
-          use_oidc: true
-          fail_ci_if_error: true
-
-  # Issue #587, step 1: measure coverage with plain pytest + pytest-cov in one process, next to the ansible-test coverage cell
-  # in the units job, so both reports land on the same commit and can be compared on Codecov (flags `unit` vs `unit-pytest-cov`).
-  # ansible-test forks per test and writes one coverage data file per test; this job has no fork and no combine step.
+  # Coverage is measured with plain pytest + pytest-cov in one process, not with `ansible-test units --coverage` (issue #587).
+  # ansible-test forks per test and writes one coverage data file per test, so its run and the combine that follows scale with
+  # the test count: about 115 minutes for 15,751 tests, against about 3 minutes here for the same Codecov figure.
   # Do not make this a required status check: a failing test already fails every units cell.
   coverage:
-    name: Unit Test Coverage (pytest-cov)
+    name: Unit Test Coverage
     needs:
       - ansible-galaxy-importer
     runs-on: ubuntu-latest
@@ -267,7 +240,7 @@ jobs:
       contents: read
       id-token: write  # Codecov OIDC upload; no CODECOV_TOKEN secret needed
     env:
-      # Same interpreter and ansible-core as the units cell that carries `coverage: true`.
+      # Coverage is a property of the code, not the interpreter, so one interpreter / ansible-core pair is enough.
       COVERAGE_PYTHON_VERSION: "3.13"
       COVERAGE_ANSIBLE_VERSION: "stable-2.19"
 
@@ -302,7 +275,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: coverage-xml-pytest-cov
+          name: coverage-xml
           path: ansible_collections/cisco/nd/coverage.xml
           if-no-files-found: ignore
 
@@ -312,7 +285,7 @@ jobs:
           working-directory: ansible_collections/cisco/nd
           files: coverage.xml
           disable_search: true
-          flags: unit-pytest-cov
+          flags: unit
           use_oidc: true
           fail_ci_if_error: true
 
