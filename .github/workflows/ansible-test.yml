@@ -254,6 +254,68 @@ jobs:
           use_oidc: true
           fail_ci_if_error: true
 
+  # Issue #587, step 1: measure coverage with plain pytest + pytest-cov in one process, next to the ansible-test coverage cell
+  # in the units job, so both reports land on the same commit and can be compared on Codecov (flags `unit` vs `unit-pytest-cov`).
+  # ansible-test forks per test and writes one coverage data file per test; this job has no fork and no combine step.
+  # Do not make this a required status check: a failing test already fails every units cell.
+  coverage:
+    name: Unit Test Coverage (pytest-cov)
+    needs:
+      - ansible-galaxy-importer
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # Codecov OIDC upload; no CODECOV_TOKEN secret needed
+    env:
+      # Same interpreter and ansible-core as the units cell that carries `coverage: true`.
+      COVERAGE_PYTHON_VERSION: "3.13"
+      COVERAGE_ANSIBLE_VERSION: "stable-2.19"
+
+    steps:
+      # The collection must sit at ansible_collections/cisco/nd for `import ansible_collections.cisco.nd.*` to resolve.
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          path: ansible_collections/cisco/nd
+
+      - name: Set up Python ${{ env.COVERAGE_PYTHON_VERSION }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.COVERAGE_PYTHON_VERSION }}
+
+      - name: Install ansible-core (${{ env.COVERAGE_ANSIBLE_VERSION }}) and the test requirements
+        run: >-
+          pip install --disable-pip-version-check
+          https://github.com/ansible/ansible/archive/${{ env.COVERAGE_ANSIBLE_VERSION }}.tar.gz
+          pytest pytest-ansible pytest-cov
+          -r ansible_collections/cisco/nd/tests/unit/requirements.txt
+
+      # Bare `--cov` (no source path) keeps report paths relative to the collection root (plugins/..., tests/...), which is what
+      # Codecov maps to the repository, and measures the same file set as the ansible-test report.
+      - name: Run unit tests with coverage
+        run: pytest --ansible-unit-inject-only --cov --cov-branch --cov-report=xml --cov-report=term:skip-covered tests/unit
+        working-directory: ansible_collections/cisco/nd
+        env:
+          ANSIBLE_COLLECTIONS_PATH: ${{ github.workspace }}
+
+      - name: Store the coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-xml-pytest-cov
+          path: ansible_collections/cisco/nd/coverage.xml
+          if-no-files-found: ignore
+
+      - name: Push coverage report to codecov.io
+        uses: codecov/codecov-action@v7
+        with:
+          working-directory: ansible_collections/cisco/nd
+          files: coverage.xml
+          disable_search: true
+          flags: unit-pytest-cov
+          use_oidc: true
+          fail_ci_if_error: true
+
   integration:
     name: Integration Tests
     if: false # No integration tests for now
