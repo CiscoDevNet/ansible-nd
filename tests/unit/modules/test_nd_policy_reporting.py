@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModuleError
+from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule, NDModuleError
 from ansible_collections.cisco.nd.plugins.modules import nd_manage_policy
 
 POLICY_ID = "POLICY-101"
@@ -143,6 +143,29 @@ class Controller:
         return [call for call in self.calls if call[0] != "GET"]
 
 
+class ControllerSender:
+    """Fake only HTTP delivery, leaving request and response handling real."""
+
+    def __init__(self, controller):
+        self.controller = controller
+        self.path = ""
+        self.verb = None
+        self.payload = None
+        self.response = {}
+
+    def commit(self):
+        method = self.verb.value
+        data = self.controller.request(method, self.path, self.payload)
+        deployment = method == "POST" and urlsplit(self.path).path.endswith("/switchActions/deploy")
+        self.response = {
+            "RETURN_CODE": 207 if deployment else 200,
+            "METHOD": method,
+            "REQUEST_PATH": self.path,
+            "MESSAGE": "Multi-Status" if deployment else "OK",
+            "DATA": data,
+        }
+
+
 @pytest.fixture
 def invoke(monkeypatch):
     """Drive actual main() with a reusable stateful controller."""
@@ -151,6 +174,7 @@ def invoke(monkeypatch):
         def __init__(self, params, check_mode, verbosity):
             self.params = deepcopy(params)
             self.check_mode = check_mode
+            self._debug = False
             self._verbosity = verbosity
             self.warnings = []
             self.no_log_values = set()
@@ -216,6 +240,7 @@ def invoke(monkeypatch):
         verbosity=0,
         cluster_name=None,
         ticket_id=None,
+        real_http=False,
     ):
         module = Module(
             {
@@ -232,7 +257,15 @@ def invoke(monkeypatch):
             verbosity,
         )
         monkeypatch.setattr(nd_manage_policy, "AnsibleModule", lambda **_kwargs: module)
-        monkeypatch.setattr(nd_manage_policy, "NDModule", lambda _module: FakeND(module, controller))
+        if real_http:
+            nd = NDModule(module)
+            rest_send = nd.get_rest_send()
+            rest_send.sender = ControllerSender(controller)
+            rest_send.unit_test = True
+            rest_send.timeout = 1
+            monkeypatch.setattr(nd_manage_policy, "NDModule", lambda _module: nd)
+        else:
+            monkeypatch.setattr(nd_manage_policy, "NDModule", lambda _module: FakeND(module, controller))
         with pytest.raises(ModuleResult) as captured:
             nd_manage_policy.main()
         return captured.value.result
@@ -569,6 +602,82 @@ def test_update_accepted_but_switch_deploy_rejected_keeps_accepted_after(invoke)
     assert result["after"][0]["templateInputs"] == controller.policies[POLICY_ID]["templateInputs"]
     assert [call[0] for call in controller.writes()] == ["PUT", "POST"]
     assert controller.writes()[-1][1].endswith("/switchActions/deploy")
+
+
+@pytest.mark.parametrize(
+    "switch_statuses",
+    [
+        pytest.param({SWITCH_ID: "failed"}, id="failed-switch"),
+        pytest.param({SWITCH_ID: "success", "SERIAL_B": "failed"}, id="mixed-switches"),
+        pytest.param({SWITCH_ID: "success", "SERIAL_B": "success"}, id="successful-switches"),
+    ],
+)
+def test_accepted_updates_retain_real_207_switch_deployment_outcomes(invoke, switch_statuses):
+    """Real 207 classification preserves accepted PUTs without false deploy success."""
+
+    class Deployment207Controller(Controller):
+        def request(self, verb, path, payload=None):
+            data = super().request(verb, path, payload)
+            if verb == "POST" and urlsplit(path).path.endswith("/switchActions/deploy"):
+                for row in data["switchIds"]:
+                    row["status"] = switch_statuses[row["switchId"]]
+                    row["message"] = "Deployment rejected" if row["status"] == "failed" else "Deployment completed"
+            return data
+
+    originals = [policy(pid, switchId=switch) for pid, switch in zip((POLICY_ID, SECOND_ID), switch_statuses)]
+    controller = Deployment207Controller(originals)
+    entries = [config(row["policyId"], switch=[{"serial_number": row["switchId"]}], priority=600) for row in originals]
+
+    result = invoke(controller, entries, deploy=True, verbosity=3, real_http=True)
+
+    failed_switches = [switch for switch, status in switch_statuses.items() if status == "failed"]
+    assert bool(result.get("failed")) is bool(failed_switches)
+    assert result["changed"] is True
+    assert result["before"] == originals
+    after = {row["policyId"]: row for row in result["after"]}
+    assert set(after) == set(controller.policies)
+    for original in originals:
+        policy_id = original["policyId"]
+        assert after[policy_id] == controller.policies[policy_id]
+        assert after[policy_id]["priority"] == 600
+        assert original["priority"] == 725
+
+    writes = controller.writes()
+    assert [call[0] for call in writes] == ["PUT"] * len(originals) + ["POST"]
+    deploy_path = writes[-1][1]
+    assert urlsplit(deploy_path).path.endswith("/switchActions/deploy")
+    assert writes[-1][2] == {"switchIds": sorted(switch_statuses)}
+    contexts = [
+        (response, outcome, diff)
+        for path, response, outcome, diff in zip(result["api_paths"], result["api_response"], result["api_result"], result["api_diff"])
+        if path == deploy_path
+    ]
+    assert len(contexts) == 1
+    response, outcome, diff = contexts[0]
+    assert {key: value for key, value in response.items() if key != "sequence_number"} == {
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": deploy_path,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "switchIds": [
+                {
+                    "switchId": switch,
+                    "status": switch_statuses[switch],
+                    "message": "Deployment rejected" if switch_statuses[switch] == "failed" else "Deployment completed",
+                }
+                for switch in sorted(switch_statuses)
+            ]
+        },
+    }
+    assert outcome["success"] is (not failed_switches)
+    assert diff["action"] == ("deploy_failed" if failed_switches else "switch_deploy")
+    if failed_switches:
+        assert "Deployment rejected" in result["msg"]
+        assert all(switch in result["msg"] for switch in failed_switches)
+        assert "deploy_success" not in diff
+    else:
+        assert diff["deploy_success"] is True
 
 
 def test_replacement_remove_rejected_preserves_original_and_skips_create(invoke):
