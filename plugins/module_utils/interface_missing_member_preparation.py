@@ -117,7 +117,8 @@ def _check_prepared(preparation: Any, record: Any) -> None:
         if not isinstance(oper, dict):
             raise RuntimeError("Prepared missing member has malformed operational evidence.")
         oper_id = oper.get("portChannelId")
-        if oper_id is not None and (type(oper_id) is not int or oper_id not in (-1, 0)):
+        # Exact JSON integer evidence rejects False, which otherwise equals zero.
+        if oper_id is not None and (type(oper_id) is not int or oper_id not in (-1, 0)):  # pylint: disable=unidiomatic-typecheck
             raise RuntimeError("Prepared missing member has positive or ambiguous operational membership.")
     desired_policy = preparation.model.to_payload()["configData"]["networkOS"]["policy"]
     policy_class = type(preparation.model.config_data.network_os.policy)
@@ -126,7 +127,7 @@ def _check_prepared(preparation: Any, record: Any) -> None:
     for field in expected_model.model_fields_set:
         alias = policy_class.model_fields[field].alias or field
         expected = getattr(expected_model, field)
-        if alias not in policy or getattr(actual_model, field) != expected or (type(expected) is bool and type(policy[alias]) is not bool):
+        if alias not in policy or getattr(actual_model, field) != expected or (isinstance(expected, bool) and not isinstance(policy[alias], bool)):
             raise RuntimeError(f"Prepared missing member readback differs for minimum host field {alias!r}.")
 
 
@@ -231,7 +232,12 @@ def refresh_missing_preparations(preparations: Any, snapshot: Any, phase: str = 
                     if any(values.get(key) not in (None, "") for key in ("primaryInterface", "portChannelId")):
                         raise RuntimeError("Explicit member host source unexpectedly declares aggregate ownership.")
                 oper = record.get("operData")
-                if not isinstance(oper, Mapping) or type(oper.get("portChannelId")) is not int or oper["portChannelId"] not in (-1, 0):
+                # Membership IDs require exact integers, including rejection of boolean aliases.
+                if (
+                    not isinstance(oper, Mapping)
+                    or type(oper.get("portChannelId")) is not int  # pylint: disable=unidiomatic-typecheck
+                    or oper["portChannelId"] not in (-1, 0)
+                ):
                     raise RuntimeError("Explicit member host source has positive or ambiguous operational membership.")
         else:
             _check_prepared(item, record)

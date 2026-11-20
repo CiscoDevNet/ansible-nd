@@ -422,7 +422,10 @@ def _query_intended_vpc_pairs(nd_v2: Any, fabric_name: str) -> list[dict[str, An
         # the server honored our requested maximum or returned complete scope.
         more = bool(next_link) or bool(page)
         if "counts" in meta:
-            if not isinstance(counts, dict) or any(type(counts.get(key)) is not int or counts[key] < 0 for key in ("total", "remaining")):
+            # Exact pagination integers must reject booleans that compare equal to zero or one.
+            if not isinstance(counts, dict) or any(
+                type(counts.get(key)) is not int or counts[key] < 0 for key in ("total", "remaining")  # pylint: disable=unidiomatic-typecheck
+            ):
                 raise VpcPairResourceError(msg="Intended vPC pair counts require non-negative integer total and remaining values.")
             total, remaining = counts["total"], counts["remaining"]
             if total != offset + len(page) + remaining or (expected_total is not None and total != expected_total):

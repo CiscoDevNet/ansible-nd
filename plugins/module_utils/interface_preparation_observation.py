@@ -165,7 +165,7 @@ def _observe_explicit_member(*, plan, resource, desired, serial, expectation, me
     normalize_safe_member_updates({"extra_config": raw_policy.get("extraConfig")})
     for field, expected in expected_values.items():
         alias = type(observed.policy).model_fields[field].alias or field
-        if getattr(observed.policy, field) != expected or (type(expected) is bool and type(raw_policy.get(alias)) is not bool):
+        if getattr(observed.policy, field) != expected or (isinstance(expected, bool) and not isinstance(raw_policy.get(alias), bool)):
             raise ValueError("Explicit Ethernet preparation member properties differ from requested intent")
     target["aggregate_member"] = {
         "parent_resource_index": parent.resource_index,
