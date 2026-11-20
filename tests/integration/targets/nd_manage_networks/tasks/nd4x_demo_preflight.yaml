@@ -1,0 +1,149 @@
+---
+- name: "ND4X PREFLIGHT: Query Nexus Dashboard version"
+  cisco.nd.nd_version:
+    output_level: debug
+  register: nd4x_network_version
+
+- name: "ND4X PREFLIGHT: Record ND 4.x support"
+  ansible.builtin.set_fact:
+    nd4x_network_supported: >-
+      {{
+        nd4x_network_version.current.platformVersion
+        is version('4.0.0', '>=')
+      }}
+
+- name: "ND4X PREFLIGHT: Explain unsupported controller skip"
+  ansible.builtin.debug:
+    msg: >-
+      Skipping nd_manage_networks harness scenarios because controller version
+      {{ nd4x_network_version.current.platformVersion }} is older than 4.0.0.
+  when: not nd4x_network_supported | bool
+
+- name: "ND4X PREFLIGHT: Validate harness topology"
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_topology in ['standalone', 'msd', 'mcfg']
+    fail_msg: >-
+      nd_network_harness_topology must be standalone, msd, or mcfg; received
+      {{ nd4x_network_topology }}.
+  when: nd4x_network_supported | bool
+
+- name: "ND4X PREFLIGHT: Require the target fabric"
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_fabric_name | length > 0
+    fail_msg: >-
+      Define the harness fabric with nd_network_harness_standalone_fabric,
+      nd_network_harness_msd_parent_fabric, or
+      nd_network_harness_mcfg_parent_fabric.
+  when: nd4x_network_supported | bool
+
+- name: "ND4X PREFLIGHT: Require the child fabric for parent topologies"
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_child_fabric_name | length > 0
+    fail_msg: >-
+      Parent harness topologies require a child fabric. Define the matching
+      nd_network_harness_msd_child_fabric or
+      nd_network_harness_mcfg_child_fabric.
+  when:
+    - nd4x_network_supported | bool
+    - nd4x_network_topology in ['msd', 'mcfg']
+
+- name: "ND4X PREFLIGHT: Require the MCFG cluster name"
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_mcfg_cluster_name | length > 0
+    fail_msg: >-
+      MCFG harness scenarios require nd_network_harness_mcfg_cluster_name so
+      the child network snapshot can include the required clusterName query
+      parameter.
+  when:
+    - nd4x_network_supported | bool
+    - nd4x_network_topology == 'mcfg'
+
+- name: "ND4X PREFLIGHT: Initialize network snapshot and validation queries"
+  ansible.builtin.set_fact:
+    nd4x_network_check_mode_queries: []
+    nd4x_network_validation_queries: []
+  when: nd4x_network_supported | bool
+
+- name: "ND4X PREFLIGHT: Snapshot parent Network collection"
+  ansible.builtin.set_fact:
+    nd4x_network_check_mode_queries: >-
+      {{
+        nd4x_network_check_mode_queries
+        + [
+            {
+              'name': 'Snapshot parent Networks',
+              'path': nd4x_network_parent_network_path,
+              'expected_status': 200,
+              'unordered_paths': ['/networks']
+            }
+          ]
+      }}
+    nd4x_network_validation_queries: >-
+      {{
+        nd4x_network_validation_queries
+        + [
+            {
+              'name': 'Validate parent Network collection',
+              'path': nd4x_network_parent_network_path,
+              'method': 'get',
+              'expected_status': 200,
+              'expect': [
+                {
+                  'jsonpath': '$.current',
+                  'exists': true
+                }
+              ]
+            }
+          ]
+      }}
+  when: nd4x_network_supported | bool
+
+- name: "ND4X PREFLIGHT: Snapshot child Network collection"
+  ansible.builtin.set_fact:
+    nd4x_network_check_mode_queries: >-
+      {{
+        nd4x_network_check_mode_queries
+        + [
+            {
+              'name': 'Snapshot child Networks',
+              'path': nd4x_network_child_network_path,
+              'expected_status': 200,
+              'unordered_paths': ['/networks']
+            }
+          ]
+      }}
+    nd4x_network_validation_queries: >-
+      {{
+        nd4x_network_validation_queries
+        + [
+            {
+              'name': 'Validate child Network collection',
+              'path': nd4x_network_child_network_path,
+              'method': 'get',
+              'expected_status': 200,
+              'expect': [
+                {
+                  'jsonpath': '$.current',
+                  'exists': true
+                }
+              ]
+            }
+          ]
+      }}
+  when:
+    - nd4x_network_supported | bool
+    - nd4x_network_topology in ['msd', 'mcfg']
+
+- name: "ND4X PREFLIGHT: Verify Network snapshot coverage"
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_check_mode_queries | length == (2 if nd4x_network_topology in ['msd', 'mcfg'] else 1)
+      - nd4x_network_validation_queries | length == (2 if nd4x_network_topology in ['msd', 'mcfg'] else 1)
+    fail_msg: >-
+      Could not prepare complete parent/child Network snapshot and validation
+      coverage for the selected {{ nd4x_network_topology }} topology.
+  when: nd4x_network_supported | bool

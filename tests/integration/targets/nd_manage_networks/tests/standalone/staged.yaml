@@ -359,7 +359,7 @@
 - name: Staged TC4 - Assert Omitted Network Definition Remains
   ansible.builtin.assert:
     that:
-      - (staged_gather_result.after | default([]) | to_json) is search("ndnetstgomit")
+      - (staged_gather_result.gathered | default([]) | to_json) is search("ndnetstgomit")
       - staged_attachment_rows | selectattr("networkName", "equalto", "ndnetstgcreate") | selectattr("attach", "equalto", true) | list | length > 0
       - >-
         (
