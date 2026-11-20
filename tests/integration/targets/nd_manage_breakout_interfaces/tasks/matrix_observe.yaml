@@ -1,0 +1,6 @@
+---
+- name: Independently observe every intended parent and the protected outside scope
+  ansible.builtin.include_tasks: matrix_observe_one.yaml
+  loop: "{{ range(0, breakout_matrix_fixtures | length) | list }}"
+  loop_control:
+    loop_var: breakout_matrix_index

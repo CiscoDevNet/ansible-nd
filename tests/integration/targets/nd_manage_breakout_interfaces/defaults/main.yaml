@@ -1,0 +1,48 @@
+---
+testcase: all
+test_fabric_name: "{{ fabric_name | default('') }}"
+test_switch_serial: "{{ switch_serial_1 | default('') }}"
+test_switch_ip: ""
+test_breakout_unknown_switch_id: ""
+test_breakout_unsupported_switch_id: ""
+# This must name a reserved, initially native, 100G parent in the test lab.
+test_breakout_parent: ""
+test_breakout_map: 25g-4x
+test_breakout_bulk_fixtures: []
+
+# Explicit desired groups protecting pre-existing, non-test families during
+# nonempty overridden cases. Each parent must already be broken out at setup.
+test_breakout_preserved_config: []
+# Empty overridden input is destructive; enable only for a wholly owned scope.
+test_breakout_allow_switch_clear: false
+test_breakout_allow_fabric_clear: false
+# Invalid maps can alter native interface intent. Use only disposable fixtures.
+test_breakout_allow_api_failures: false
+test_breakout_invalid_map: 25g-3x
+
+# Optional real coupled hardware. A supplied invalid fixture is an error,
+# whereas an absent switch ID explicitly skips this suite.
+test_breakout_coupled_switch_id: ""
+test_breakout_coupled_fabric_name: "{{ test_fabric_name }}"
+test_breakout_coupled_fixture: {}
+test_breakout_coupled_independent_fixture: {}
+test_breakout_coupled_safe_fixture: {}
+# Test-only GET settling after completed writes; never replay a mutation.
+# The observer rejects more than 10 attempts or 60 seconds total settling sleep.
+test_breakout_coupled_observe_retries: 7
+test_breakout_coupled_observe_interval: 10
+
+# Ordinary lifecycle fixture. Deliberately coupled footprints use the separate
+# coupled suite, whose expected failures must not be mistaken for creation.
+test_breakout_fixture:
+  control_parent: "{{ test_breakout_parent }}"
+  native_interfaces:
+    - "{{ test_breakout_parent }}"
+  profiles:
+    map_a:
+      breakout_map: "{{ test_breakout_map }}"
+      child_lanes: "{{ {test_breakout_parent: [1, 2, 3, 4]} }}"
+      native_interfaces: []
+
+test_breakout_observe_retries: 3
+test_breakout_observe_interval: 1

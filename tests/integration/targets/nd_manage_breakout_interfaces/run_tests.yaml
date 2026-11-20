@@ -1,0 +1,7 @@
+---
+# Supply connection settings through the inventory/integration_config.yml.
+- name: ND interface breakout integration tests
+  hosts: nd
+  gather_facts: false
+  roles:
+    - role: "{{ playbook_dir }}"

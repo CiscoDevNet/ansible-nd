@@ -1,0 +1,20 @@
+---
+- name: Remove one independently observed owned family without collateral verification
+  cisco.nd.nd_manage_breakout_interfaces:
+    fabric_name: "{{ test_breakout_coupled_fabric_name }}"
+    state: deleted
+    verify:
+      enabled: false
+    config:
+      - switch_id: "{{ test_breakout_coupled_switch_id }}"
+        interface_names: "{{ [coupled_cleanup_parent] }}"
+  check_mode: false
+  register: coupled_cleanup_result
+
+- name: Require completion before considering another disjoint cleanup request
+  ansible.builtin.assert:
+    that:
+      - not (coupled_cleanup_result.failed | default(false))
+      - coupled_cleanup_result.api_outcomes | length == 1
+      - coupled_cleanup_result.api_outcomes[0].outcome in ['success', 'noop']
+    fail_msg: "Scoped cleanup did not complete; no further mutations or replay are authorized. {{ coupled_cleanup_result }}"

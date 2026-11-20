@@ -1,0 +1,34 @@
+---
+# Only fresh, owned families are eligible. This is not the inverse under test:
+# original result and independent recovery evidence have already been frozen.
+- name: Read current topology before considering scoped cleanup
+  ansible.builtin.include_tasks: coupled_observe.yaml
+  vars:
+    coupled_observe_profile: native
+    coupled_observe_only: true
+    coupled_observe_baseline: "{{ coupled_native_baseline }}"
+
+- name: Choose at most one causative coupled family and the separately reserved independent family
+  ansible.builtin.set_fact:
+    coupled_cleanup_broken: >-
+      {{ coupled_observation.snapshot.families | dict2items |
+         selectattr('key', 'in', coupled_parents) |
+         rejectattr('value.children', 'equalto', []) | map(attribute='key') | list | sort }}
+
+- name: Cleanup each disjoint owned footprint once without enabling the collateral guard
+  ansible.builtin.include_tasks: coupled_cleanup_one.yaml
+  loop: >-
+    {{ ([coupled_control if coupled_control in coupled_cleanup_broken else coupled_cleanup_broken[0]]
+        if coupled_cleanup_broken | length > 0 else []) +
+       ([coupled_independent_parent] if coupled_has_independent and
+        coupled_observation.snapshot.families[coupled_independent_parent].children | length > 0 else []) }}
+  loop_control:
+    loop_var: coupled_cleanup_parent
+
+- name: Require the entire reserved footprint native after cleanup
+  ansible.builtin.include_tasks: coupled_observe.yaml
+  vars:
+    coupled_observe_profile: native
+    coupled_observe_only: false
+    coupled_observe_baseline: "{{ coupled_native_baseline }}"
+    coupled_observe_settle: true

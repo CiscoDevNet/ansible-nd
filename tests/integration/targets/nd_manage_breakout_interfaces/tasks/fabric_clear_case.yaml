@@ -1,0 +1,106 @@
+---
+- name: Refresh complete fabric scope immediately before the destructive test case
+  ansible.builtin.include_tasks: fabric_clear_read.yaml
+
+- name: Require exactly the intentionally prepared families and no unrelated family
+  ansible.builtin.assert:
+    that:
+      - >-
+        breakout_fabric_broken_keys | sort ==
+        (breakout_fabric_owned_keys | sort if breakout_fabric_case.changed else [])
+    fail_msg: An unexpected family or incomplete prepared state blocks fabric-wide overridden clear.
+
+- name: Predict the complete clear without invoking any mutation endpoint
+  cisco.nd.nd_manage_breakout_interfaces:
+    fabric_name: "{{ test_fabric_name }}"
+    state: overridden
+    config: "{{ [] if breakout_fabric_case.explicit else omit }}"
+  check_mode: true
+  register: breakout_result
+
+- name: Validate prediction without treating it as completed unbreakout
+  ansible.builtin.include_tasks: assert_result.yaml
+  vars:
+    breakout_expected_changed: "{{ breakout_fabric_case.changed }}"
+    breakout_expected_outcome_count: "{{ breakout_fabric_fixtures | length if breakout_fabric_case.changed else 0 }}"
+    breakout_expected_outcome: planned
+    breakout_expected_write_actions: []
+    breakout_expected_after_status: predicted
+    breakout_expected_discovery_rounds: 1
+    breakout_expected_metadata_count: "{{ 1 if breakout_fabric_case.changed else 0 }}"
+
+- name: Independently prove fabric-wide check mode did not perform the clear
+  ansible.builtin.include_tasks: fabric_clear_observe.yaml
+
+- name: Execute explicit-empty or omitted-config overridden against the isolated fabric
+  cisco.nd.nd_manage_breakout_interfaces:
+    fabric_name: "{{ test_fabric_name }}"
+    state: overridden
+    config: "{{ [] if breakout_fabric_case.explicit else omit }}"
+  register: breakout_result
+  ignore_errors: true
+
+- name: Preserve the original global-clear result before observer assertions
+  ansible.builtin.set_fact:
+    breakout_fabric_last_result: "{{ breakout_result }}"
+    breakout_fabric_last_action: remove
+
+- name: Require complete identity-based clear success or a genuine empty-fabric no-op
+  ansible.builtin.include_tasks: assert_result.yaml
+  vars:
+    breakout_expected_changed: "{{ breakout_fabric_case.changed }}"
+    breakout_expected_outcome_count: "{{ breakout_fabric_fixtures | length if breakout_fabric_case.changed else 0 }}"
+    breakout_expected_outcome: success
+    breakout_expected_write_actions: "{{ ['remove'] if breakout_fabric_case.changed else [] }}"
+    breakout_expected_after_status: "{{ 'observed' if breakout_fabric_case.changed else 'unchanged' }}"
+    breakout_expected_discovery_rounds: "{{ 1 + breakout_fabric_switches | length if breakout_fabric_case.changed else 1 }}"
+    breakout_expected_metadata_count: "{{ 1 if breakout_fabric_case.changed else 0 }}"
+    breakout_allow_guard_settling: "{{ breakout_fabric_case.changed | bool }}"
+
+- name: Match every removed family by composite identity, never list position
+  ansible.builtin.assert:
+    that:
+      - >-
+        breakout_result.api_outcomes | selectattr('switch_id', 'equalto', item.switch_id) |
+        selectattr('interface_name', 'equalto', item.control_parent) |
+        map(attribute='outcome') | list == ['success']
+      - >-
+        (breakout_result.api_outcomes | selectattr('switch_id', 'equalto', item.switch_id) |
+         selectattr('interface_name', 'equalto', item.control_parent) | first).api_interface_name
+        in breakout_fabric_snapshots[fabric_removed_index | string].families[item.control_parent].children
+  loop: "{{ breakout_fabric_fixtures if breakout_fabric_case.changed else [] }}"
+  loop_control:
+    index_var: fabric_removed_index
+    label: "{{ item.switch_id }}/{{ item.control_parent }}"
+
+- name: Require global initial discovery and one cached inventory read only when breakouts exist
+  ansible.builtin.assert:
+    that:
+      - >-
+        (breakout_result.api_calls | selectattr('path', 'search', '/interfacesSummary[?]') | first).path
+        is not search('[?&]switchId=')
+      - >-
+        breakout_result.api_calls | selectattr('purpose', 'defined') |
+        selectattr('purpose', 'equalto', 'switch_metadata') | list | length
+        == (1 if breakout_fabric_case.changed else 0)
+      - >-
+        breakout_result.api_calls | selectattr('purpose', 'defined') |
+        selectattr('purpose', 'equalto', 'switch_metadata') | map(attribute='path') |
+        list == (['/api/v1/manage/fabrics/' ~ (test_fabric_name | urlencode | replace('/', '%2F')) ~ '/switches']
+        if breakout_fabric_case.changed else [])
+  when: ansible_verbosity | int >= 3
+
+- name: Declare every owned footprint native after the clear
+  ansible.builtin.set_fact:
+    breakout_fabric_profiles: "{{ ['native'] * (breakout_fabric_fixtures | length) }}"
+
+- name: Independently validate all native parents and absence of active breakout intent
+  ansible.builtin.include_tasks: fabric_clear_observe.yaml
+
+- name: Independently re-read every Ethernet family across the fabric after clear
+  ansible.builtin.include_tasks: fabric_clear_read.yaml
+
+- name: Require no physical breakout families anywhere in the isolated fabric
+  ansible.builtin.assert:
+    that: breakout_fabric_broken_keys == []
+    fail_msg: Successful clear response did not independently restore an empty breakout-family fabric.

@@ -1,0 +1,182 @@
+---
+- name: "COUPLED {{ coupled_case.id }} - Do not continue after uncertain writes"
+  ansible.builtin.debug:
+    msg: "SKIP {{ coupled_case.id }}: an earlier unconfirmed operation or cleanup requires operator review; no further writes are safe."
+  when: coupled_stop_writes
+
+- name: "COUPLED {{ coupled_case.id }} - {{ coupled_case.title }}"
+  when: not coupled_stop_writes
+  block:
+    - name: Initialize per-case evidence without erasing earlier case failures
+      ansible.builtin.set_fact:
+        coupled_original_result: {}
+        coupled_case_failure: {}
+        coupled_immediate_observation: {}
+        coupled_settled_observation: {}
+        coupled_recovery_observation: {}
+        coupled_case_baseline: {}
+        coupled_case_write_pending: false
+        coupled_case_response_pending: true
+        coupled_case_settle_started: false
+
+    - name: Prove the footprint is native before preparing this case
+      ansible.builtin.include_tasks: coupled_observe.yaml
+      vars:
+        coupled_observe_profile: native
+        coupled_observe_only: false
+        coupled_observe_baseline: "{{ coupled_native_baseline }}"
+
+    - name: Prepare genuine coupled baseline with one controller request
+      ansible.builtin.include_tasks: coupled_prepare.yaml
+      when: coupled_case.initial == 'map_a'
+
+    - name: Independently record the exact pre-action topology and speeds
+      ansible.builtin.include_tasks: coupled_observe.yaml
+      vars:
+        coupled_observe_profile: "{{ coupled_case.initial }}"
+        coupled_observe_only: false
+        coupled_observe_baseline: "{{ coupled_native_baseline }}"
+
+    - name: Preserve immutable case baseline before invoking the module under test
+      ansible.builtin.set_fact:
+        coupled_case_baseline: "{{ coupled_observation.snapshot }}"
+        coupled_expected_collateral_parent: >-
+          {{ coupled_sibling if coupled_case.initial == 'native' else
+             coupled_sibling if coupled_case.state == 'overridden' and coupled_case.selector == 'sibling' else
+             coupled_control if coupled_case.state == 'overridden' else
+             coupled_control if coupled_case.selector in ['sibling', 'sibling_child'] else coupled_sibling }}
+        coupled_case_selectors: >-
+          {{ [coupled_control] if coupled_case.selector == 'control' else
+             [coupled_sibling] if coupled_case.selector == 'sibling' else
+             coupled_parents if coupled_case.selector == 'all' else
+             [coupled_observation.snapshot.families[coupled_control].children | last] if coupled_case.selector == 'control_child' else
+             [coupled_observation.snapshot.families[coupled_sibling].children | last] if coupled_case.selector == 'sibling_child' else
+             [coupled_control ~ '/' ~ (test_breakout_coupled_fixture.profiles.map_a.child_lanes[coupled_control] | max | string)]
+               if coupled_case.selector == 'former_child' else
+             [coupled_disappeared_parents | first] if coupled_case.selector == 'missing' else
+             [(coupled_disappeared_parents | first) ~ '/1'] if coupled_case.selector == 'missing_child' else
+             [coupled_control, coupled_independent_parent] }}
+        coupled_case_write_pending: true
+
+    - name: Invoke production module and retain its original expected failure
+      cisco.nd.nd_manage_breakout_interfaces:
+        fabric_name: "{{ test_breakout_coupled_fabric_name }}"
+        state: "{{ coupled_case.state }}"
+        config:
+          - switch_id: "{{ test_breakout_coupled_switch_id }}"
+            interface_names: "{{ coupled_case_selectors }}"
+            breakout_map: "{{ coupled_case.requested_map | default(coupled_map) if coupled_case.state != 'deleted' else omit }}"
+        verify: "{{ {'enabled': false} if not (coupled_case.verify | default(true) | bool) else omit }}"
+      register: coupled_original_result
+      ignore_errors: true
+
+    # This runs even when the production task failed. Never put it inside a
+    # success-only harness branch or after cleanup, which would hide recovery.
+    - name: Capture real state immediately after the module returns and before cleanup
+      ansible.builtin.include_tasks: coupled_observe.yaml
+      vars:
+        coupled_observe_profile: "{{ coupled_case.after }}"
+        coupled_observe_only: true
+        coupled_observe_baseline: "{{ coupled_native_baseline }}"
+        coupled_observe_settle: false
+
+    - name: Freeze immediate evidence and classify response uncertainty without assuming settled topology
+      ansible.builtin.set_fact:
+        coupled_immediate_observation: "{{ coupled_observation }}"
+        coupled_recovery_observation: "{{ coupled_observation }}"
+        coupled_case_response_pending: >-
+          {{ (coupled_original_result.api_outcomes is not defined) or
+             (coupled_case.expect != 'preflight_error' and
+              coupled_original_result.api_outcomes | default([]) | length == 0) or
+             (coupled_original_result.api_outcomes | default([]) |
+              rejectattr('outcome', 'in', ['success', 'failed', 'noop']) | list | length > 0) or
+             (coupled_original_result.recovery | default([]) | length > 0 and
+              (coupled_original_result.recovery | map(attribute='status') | unique | list) != ['response_confirmed']) or
+             (coupled_case.expect == 'recovery' and
+              coupled_original_result.recovery | default([]) | length != 1) }}
+
+    - name: Freeze uncertain invocations without settling or replaying any request
+      ansible.builtin.assert:
+        that:
+          - not coupled_case_response_pending
+        fail_msg: >-
+          The invocation has unknown forward outcomes or unconfirmed recovery.
+          Only immediate GET evidence was captured; no mutation replay or further
+          settling is permitted. {{ coupled_original_result }}
+
+    - name: Keep the write barrier raised until strict read-only settling succeeds
+      ansible.builtin.set_fact:
+        coupled_case_settle_started: true
+        coupled_case_write_pending: true
+
+    - name: Settle only completed actions against the declared profile and protected outside scope
+      ansible.builtin.include_tasks: coupled_observe.yaml
+      vars:
+        coupled_observe_profile: "{{ coupled_case.after }}"
+        coupled_observe_only: false
+        coupled_observe_baseline: "{{ coupled_native_baseline }}"
+        coupled_observe_settle: "{{ coupled_case.expect in ['recovery', 'success'] }}"
+
+    - name: Save settled recovery evidence before any outcome assertion or cleanup mutation
+      ansible.builtin.set_fact:
+        coupled_settled_observation: "{{ coupled_observation }}"
+        coupled_recovery_observation: "{{ coupled_observation }}"
+        coupled_case_write_pending: >-
+          {{ coupled_case_response_pending or
+             (coupled_original_result.recovery | default([]) | length > 0 and
+              (coupled_observation.snapshot.families | dict2items |
+               selectattr('key', 'in', test_breakout_coupled_fixture.native_interfaces) | items2dict) !=
+              (coupled_case_baseline.families | dict2items |
+               selectattr('key', 'in', test_breakout_coupled_fixture.native_interfaces) | items2dict)) }}
+
+    - name: Validate original outcome, inverse identity, trace and independent topology
+      ansible.builtin.include_tasks: coupled_assert.yaml
+
+  rescue:
+    - name: Preserve the final GET attempt when bounded settling failed
+      ansible.builtin.set_fact:
+        coupled_settled_observation: "{{ coupled_observation }}"
+        coupled_recovery_observation: "{{ coupled_observation }}"
+      when:
+        - coupled_case_settle_started
+        - coupled_observation.snapshot is defined
+
+    - name: Preserve the most recent complete observation even when its assertion failed
+      ansible.builtin.set_fact:
+        coupled_recovery_observation: "{{ coupled_observation }}"
+      when:
+        - coupled_original_result | length > 0
+        - coupled_observation.snapshot is defined
+        - coupled_recovery_observation | length == 0
+
+    - name: Retain original failure for the final suite summary
+      ansible.builtin.set_fact:
+        coupled_case_failure: "{{ ansible_failed_result }}"
+        coupled_case_failures: >-
+          {{ coupled_case_failures + [{'id': coupled_case.id, 'title': coupled_case.title,
+                                      'failure': ansible_failed_result}] }}
+
+  always:
+    - name: Freeze original invocation and pre-cleanup recovery observation
+      ansible.builtin.set_fact:
+        coupled_case_records: >-
+          {{ coupled_case_records + [{'id': coupled_case.id, 'title': coupled_case.title,
+                                      'result': coupled_original_result,
+                                      'immediate_observation_after_invocation': coupled_immediate_observation,
+                                      'settled_observation_before_cleanup': coupled_settled_observation,
+                                      'observation_before_cleanup': coupled_recovery_observation,
+                                      'failure': coupled_case_failure}] }}
+        coupled_stop_writes: "{{ coupled_stop_writes or coupled_case_write_pending }}"
+
+    - name: Cleanup only after capturing original recovery evidence
+      block:
+        - name: Clean the declared footprint without retrying uncertain requests
+          ansible.builtin.include_tasks: coupled_cleanup.yaml
+          when: not coupled_stop_writes
+      rescue:
+        - name: Preserve cleanup failure and stop later disruptive cases
+          ansible.builtin.set_fact:
+            coupled_stop_writes: true
+            coupled_case_failures: >-
+              {{ coupled_case_failures + [{'id': coupled_case.id, 'stage': 'cleanup',
+                                          'failure': ansible_failed_result}] }}

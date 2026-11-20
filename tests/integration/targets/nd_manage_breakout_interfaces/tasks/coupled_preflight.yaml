@@ -1,0 +1,174 @@
+---
+- name: Reject whole-play check mode and malformed optional hardware declarations
+  ansible.builtin.assert:
+    that:
+      - not ansible_check_mode
+      - test_breakout_coupled_fabric_name is string
+      - test_breakout_coupled_fabric_name | trim | length > 0
+      - test_breakout_coupled_switch_id is string
+      - test_breakout_coupled_fixture is mapping
+      - test_breakout_coupled_fixture.profiles is mapping
+      - test_breakout_coupled_fixture.profiles.map_a is mapping
+      - test_breakout_coupled_fixture.profiles.map_a.child_lanes is mapping
+      - test_breakout_coupled_fixture.profiles.map_a.child_lanes | length == 2
+      - test_breakout_coupled_fixture.control_parent in test_breakout_coupled_fixture.native_interfaces
+      - >-
+        test_breakout_coupled_fixture.profiles.map_a.child_lanes.keys() | list |
+        difference(test_breakout_coupled_fixture.native_interfaces) | length == 0
+      - >-
+        test_breakout_coupled_fixture.native_interfaces |
+        select('match', '^Ethernet[1-9][0-9]*/[1-9][0-9]*$') | list | length ==
+        test_breakout_coupled_fixture.native_interfaces | length
+      - test_breakout_coupled_fixture.profiles.map_a.breakout_map is match('^[1-9][0-9]*g-[1-9][0-9]*x$')
+      - test_breakout_coupled_independent_fixture | default({}) is mapping
+      - test_breakout_coupled_safe_fixture | default({}) is mapping
+    fail_msg: >-
+      A supplied coupled switch requires a complete reserved map_a fixture with
+      two coupled breakout families, canonical Ethernet parent names and a
+      canonical speed/lane map. Malformed optional fixtures are errors, not skips.
+
+- name: Require canonical names in every field of the coupled fixture
+  ansible.builtin.include_tasks: coupled_validate_names.yaml
+  vars:
+    coupled_names_fixture: "{{ test_breakout_coupled_fixture }}"
+
+- name: Validate the supplied coupled fixture locally before controller access
+  cisco.nd.nd_manage_breakout_interfaces_validate:
+    fabric_name: "{{ test_breakout_coupled_fabric_name }}"
+    switch_id: "{{ test_breakout_coupled_switch_id }}"
+    fixture: "{{ test_breakout_coupled_fixture }}"
+    expected_profile: native
+    validate_only: true
+    whole_switch: true
+    include_speeds: true
+    topology_only: true
+  check_mode: false
+
+- name: Establish canonical coupled-test variables
+  ansible.builtin.set_fact:
+    coupled_fixture: "{{ test_breakout_coupled_fixture }}"
+    coupled_control: "{{ test_breakout_coupled_fixture.control_parent }}"
+    coupled_map: "{{ test_breakout_coupled_fixture.profiles.map_a.breakout_map }}"
+    coupled_parents: "{{ test_breakout_coupled_fixture.profiles.map_a.child_lanes.keys() | list | sort }}"
+    coupled_has_independent: "{{ test_breakout_coupled_independent_fixture | default({}) | length > 0 }}"
+    coupled_has_safe_switch: "{{ test_breakout_coupled_safe_fixture | default({}) | length > 0 }}"
+    coupled_case_records: []
+    coupled_case_failures: []
+    coupled_stop_writes: false
+
+- name: Validate independent fixture locally when phase-preservation hardware is supplied
+  cisco.nd.nd_manage_breakout_interfaces_validate:
+    fabric_name: "{{ test_breakout_coupled_fabric_name }}"
+    switch_id: "{{ test_breakout_coupled_switch_id }}"
+    fixture: "{{ test_breakout_coupled_independent_fixture }}"
+    expected_profile: native
+    validate_only: true
+    include_speeds: true
+    topology_only: true
+  check_mode: false
+  when: coupled_has_independent
+
+- name: Require canonical names in every field of the independent fixture
+  ansible.builtin.include_tasks: coupled_validate_names.yaml
+  vars:
+    coupled_names_fixture: "{{ test_breakout_coupled_independent_fixture }}"
+  when: coupled_has_independent
+
+- name: Require disjoint independent footprint and compatible lane-speed profile
+  ansible.builtin.assert:
+    that:
+      - >-
+        test_breakout_coupled_independent_fixture.native_interfaces |
+        intersect(coupled_fixture.native_interfaces + (coupled_fixture.guard_interfaces | default([]))) | length == 0
+      - test_breakout_coupled_independent_fixture.profiles.map_a.child_lanes | length == 1
+      - >-
+        test_breakout_coupled_independent_fixture.control_parent in
+        test_breakout_coupled_independent_fixture.profiles.map_a.child_lanes
+      - >-
+        test_breakout_coupled_independent_fixture.native_interfaces |
+        select('match', '^Ethernet[1-9][0-9]*/[1-9][0-9]*$') | list | length ==
+        test_breakout_coupled_independent_fixture.native_interfaces | length
+      - test_breakout_coupled_independent_fixture.profiles.map_a.breakout_map == coupled_map
+      - test_breakout_coupled_independent_fixture.guard_interfaces | default([]) | length == 0
+    fail_msg: >-
+      The optional independent fixture must reserve a disjoint single family
+      with the same supported map. Declare all protected guard_interfaces on
+      the main coupled fixture; independent-fixture guards are not supported
+      and must never be silently dropped while merging the fixtures.
+  when: coupled_has_independent
+
+- name: Merge independent native footprint without learning expectations from controller state
+  ansible.builtin.set_fact:
+    coupled_fixture: >-
+      {{ coupled_fixture | combine({
+           'native_interfaces': coupled_fixture.native_interfaces + test_breakout_coupled_independent_fixture.native_interfaces,
+           'profiles': {
+             'map_a': coupled_fixture.profiles.map_a | combine({
+               'native_interfaces': (coupled_fixture.profiles.map_a.native_interfaces | default([])) +
+                                    test_breakout_coupled_independent_fixture.native_interfaces}),
+             'map_with_independent': coupled_fixture.profiles.map_a | combine({
+               'child_lanes': coupled_fixture.profiles.map_a.child_lanes |
+                              combine(test_breakout_coupled_independent_fixture.profiles.map_a.child_lanes),
+               'native_interfaces': (coupled_fixture.profiles.map_a.native_interfaces | default([])) +
+                                    (test_breakout_coupled_independent_fixture.profiles.map_a.native_interfaces | default([])),
+               'policy_maps': (coupled_fixture.profiles.map_a.policy_maps |
+                              default(dict(coupled_parents | zip([coupled_map] * (coupled_parents | length))))) |
+                              combine(test_breakout_coupled_independent_fixture.profiles.map_a.policy_maps |
+                                      default({test_breakout_coupled_independent_fixture.control_parent: coupled_map}))})
+           }}) }}
+    coupled_independent_parent: "{{ test_breakout_coupled_independent_fixture.control_parent }}"
+  when: coupled_has_independent
+
+- name: Identify explicitly declared coupled and disappearing native parents
+  ansible.builtin.set_fact:
+    coupled_sibling: "{{ coupled_parents | difference([coupled_control]) | first }}"
+    coupled_disappeared_parents: >-
+      {{ test_breakout_coupled_fixture.native_interfaces |
+         difference(coupled_parents + (test_breakout_coupled_fixture.profiles.map_a.native_interfaces | default([]))) | sort }}
+    coupled_observe_profile: native
+    coupled_observe_only: false
+    coupled_observe_unchanged: false
+
+- name: Validate optional cross-switch fixture before any disruptive case
+  ansible.builtin.include_tasks: coupled_safe_validate.yaml
+  when: coupled_has_safe_switch
+
+- name: Require real non-first child aliases and a consistent declared recovery map
+  ansible.builtin.assert:
+    that:
+      - item.value | length >= 2
+      - item.value | length == coupled_map.split('-')[1][:-1] | int
+    fail_msg: "Each coupled family must declare every lane in the recovery map and at least two real children."
+  loop: "{{ test_breakout_coupled_fixture.profiles.map_a.child_lanes | dict2items }}"
+
+- name: Capture a complete pre-mutation observation before validating guards
+  ansible.builtin.include_tasks: coupled_observe.yaml
+  vars:
+    coupled_observe_profile: native
+    coupled_observe_only: true
+
+- name: Save task-start baseline and require an isolated breakout scope for overridden
+  ansible.builtin.set_fact:
+    coupled_native_baseline: "{{ coupled_observation.snapshot }}"
+
+- name: Validate native footprint and protected guards against the pre-mutation baseline
+  ansible.builtin.include_tasks: coupled_observe.yaml
+  vars:
+    coupled_observe_profile: native
+    coupled_observe_only: false
+    coupled_observe_baseline: "{{ coupled_native_baseline }}"
+
+- name: Refuse authoritative switch operations when unowned breakouts exist
+  ansible.builtin.assert:
+    that:
+      - >-
+        coupled_observation.snapshot.outside_families | dict2items |
+        rejectattr('value.children', 'equalto', []) | list | length == 0
+      - >-
+        coupled_fixture.guard_interfaces | default([]) |
+        intersect(coupled_observation.snapshot.families | dict2items |
+                  rejectattr('value.children', 'equalto', []) | map(attribute='key') | list) | length == 0
+    fail_msg: >-
+      Coupled overridden tests require an isolated selected switch: unowned
+      breakout families must not be silently omitted from the desired config.
+      No writes have been made. Baseline: {{ coupled_native_baseline }}.
