@@ -131,6 +131,7 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self._send_interval: int = 5
         self._sender: Optional[SenderProtocol] = None
         self._timeout: int = 300
+        self._max_attempts: int | None = None
         self._unit_test: bool = False
         self._verb: HttpVerbEnum = HttpVerbEnum.GET
         # Counts dispatches even if the transport raises before recording a response.
@@ -345,6 +346,7 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self.sender.verb = self.verb
         self.sender.payload = self.payload
         success = False
+        attempts = 0
         while timeout > 0 and success is False:
             msg = f"{self.class_name}.{method_name}: "
             msg += "Calling sender.commit(): "
@@ -408,6 +410,8 @@ class RestSend:  # pylint: disable=too-many-public-methods
 
             success = self.result_current["success"]
             if success is False:
+                if self.max_attempts is not None and attempts >= self.max_attempts:
+                    break
                 if self.result_current.get("retryable", True) is False:
                     msg = f"{self.class_name}.{method_name}: "
                     msg += "Terminal failure (retryable=False). Not retrying. "
