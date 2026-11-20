@@ -1403,6 +1403,73 @@ def test_manage_policy_group_orchestrator_00550() -> None:
     assert len(results._tasks) == 1
 
 
+@pytest.mark.parametrize("status", ["success", "SUCCESS", " success "])
+@pytest.mark.parametrize("deploy", [False, True])
+def test_create_explicit_success_normalization_preserves_deployment(status, deploy):
+    """Explicit success confirms the ID before the existing optional deployment."""
+    create_body = {"policyGroups": [{"policyId": "POLICY-GROUP-CREATED", "status": status}]}
+    responses = [_resp(create_body, return_code=207, method="POST", message="Multi-Status")]
+    if deploy:
+        responses.append(_resp({"switchIds": [{"switchId": "SN1", "status": "success"}]}, method="POST"))
+    results = _make_results()
+    instance = _make_orchestrator(_build_rest_send(responses), deploy=deploy, results=results)
+    model = _build_pg_model()
+
+    assert instance.create_bulk([model]) == create_body
+
+    assert model.policy_id == "POLICY-GROUP-CREATED"
+    assert [(change["operation"], change["policy_id"]) for change in instance.accepted_changes] == [("create", "POLICY-GROUP-CREATED")]
+    assert len(results._tasks) == 1 + int(deploy)
+    assert all(task.verb == "POST" for task in results._tasks)
+    if deploy:
+        assert results._tasks[1].path.endswith("/switchActions/deploy")
+        assert results._tasks[1].payload == {"switchIds": ["SN1"]}
+
+
+@pytest.mark.parametrize(
+    "status_fields",
+    [
+        pytest.param({}, id="missing"),
+        pytest.param({"status": None}, id="null"),
+        pytest.param({"status": ""}, id="empty"),
+        pytest.param({"status": " \t "}, id="whitespace"),
+        pytest.param({"status": False}, id="false"),
+        pytest.param({"status": 0}, id="zero"),
+        pytest.param({"status": True}, id="true"),
+        pytest.param({"status": 1}, id="number"),
+        pytest.param({"status": ["success"]}, id="list"),
+        pytest.param({"status": {"result": "success"}}, id="object"),
+    ],
+)
+@pytest.mark.parametrize("invalid_first", [False, True])
+@pytest.mark.parametrize("deploy", [False, True])
+def test_create_unconfirmed_status_preserves_explicit_sibling_without_deploy(status_fields, invalid_first, deploy):
+    """Retain later explicit successes without accepting or deploying unconfirmed rows."""
+    invalid = {"policyId": "POLICY-GROUP-UNCONFIRMED", **status_fields}
+    success = {"policyId": "POLICY-GROUP-ACCEPTED", "status": " success "}
+    rows = [invalid, success] if invalid_first else [success, invalid]
+    results = _make_results()
+    instance = _make_orchestrator(
+        _build_rest_send([_resp({"policyGroups": rows}, return_code=207, method="POST", message="Multi-Status")]),
+        deploy=deploy,
+        results=results,
+    )
+    models = [_build_pg_model(description="first"), _build_pg_model(description="second")]
+
+    with pytest.raises(Exception, match="Unconfirmed create response.*status.*controller may have applied"):
+        instance.create_bulk(models)
+
+    invalid_index = 0 if invalid_first else 1
+    accepted_index = 1 - invalid_index
+    assert models[invalid_index].policy_id is None
+    assert models[accepted_index].policy_id == "POLICY-GROUP-ACCEPTED"
+    assert [change["policy_id"] for change in instance.accepted_changes] == ["POLICY-GROUP-ACCEPTED"]
+    assert instance.accepted_changes[0]["model"] == id(models[accepted_index])
+    assert len(results._tasks) == 1
+    assert results._tasks[0].verb == "POST"
+    assert results._tasks[0].path.endswith("/policyGroups")
+
+
 # =============================================================================
 # Test: update
 # =============================================================================
@@ -2438,7 +2505,8 @@ def test_manage_policy_group_orchestrator_01100() -> None:
     assert all(m.policy_id is None for m in models)
 
 
-def test_manage_policy_group_orchestrator_01110() -> None:
+@pytest.mark.parametrize("status", ["success", "SUCCESS", " success "])
+def test_manage_policy_group_orchestrator_01110(status) -> None:
     """
     # Summary
 
@@ -2451,8 +2519,8 @@ def test_manage_policy_group_orchestrator_01110() -> None:
     """
     models = [_build_pg_model(description="a"), _build_pg_model(description="b")]
     response_groups = [
-        {"policyId": "P1", "status": "success"},
-        {"policyId": "P2", "status": "success"},
+        {"policyId": "P1", "status": status},
+        {"policyId": "P2", "status": status},
     ]
 
     PolicyGroupOrchestrator._populate_policy_ids(models, response_groups)
