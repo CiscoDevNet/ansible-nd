@@ -86,6 +86,27 @@ def _canonicalize_for_compare(value: Any) -> Any:
     return value
 
 
+def _normalize_pair_identity_for_compare(want: dict[str, Any], have: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Compare an undirected pair without changing its wire orientation.
+
+    Authored template details can assign different values to each peer, so
+    preserve their orientation-sensitive comparison. Controller-only details
+    do not make an otherwise undirected requested pair order-sensitive.
+    Missing mode data is deliberately left missing.
+    """
+    if want.get("vpcPairDetails"):
+        return want, have
+
+    normalized = []
+    for payload in (want, have):
+        payload = dict(payload)
+        first, second = payload.get("switchId"), payload.get("peerSwitchId")
+        if isinstance(first, str) and isinstance(second, str):
+            payload["switchId"], payload["peerSwitchId"] = sorted((first, second))
+        normalized.append(payload)
+    return normalized[0], normalized[1]
+
+
 def _is_update_needed(want: dict[str, Any], have: dict[str, Any]) -> bool:
     """
     Determine if an update is needed by comparing want and have.
@@ -109,6 +130,7 @@ def _is_update_needed(want: dict[str, Any], have: dict[str, Any]) -> bool:
         >>> _is_update_needed(want, have)
         True
     """
+    want, have = _normalize_pair_identity_for_compare(want, have)
     normalized_want = _canonicalize_for_compare(want)
     normalized_have = _canonicalize_for_compare(have)
     return normalized_want != normalized_have

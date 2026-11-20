@@ -76,6 +76,7 @@ options:
         - The complete bootstrap and serial-swap batch is awaited before onboarding writes.
         - Pre-provision-only entries and check mode do not wait for physical switches.
         type: dict
+        default: {}
         suboptions:
             timeout:
                 description:

@@ -143,6 +143,8 @@ options:
           the post-write inventory GETs.
         - No-op and deployment-only runs continue to return observed state from initial discovery. Partial or failed write execution
           forces reconciliation even when this option is V(false).
+        - Explicit aggregate-member prerequisites retain fresh ownership verification on stage-only retries and no-ops, including
+          when this generic post-write refresh setting is V(false).
         type: bool
         default: false
   execution_options:
@@ -255,6 +257,13 @@ notes:
 - A retained aggregate-parent mutation is ordered before a safe update to one of its existing members. For a new IOS-XE port-channel,
   the registry-required Ethernet host-policy conversion is ordered before the parent attaches that member. The member policy itself is
   never synthesized by the workflow.
+- Explicit NX-OS Ethernet and matching port-channel or vPC resources can prepare missing Ethernet inventory in the same execution.
+  The workflow creates the requested host policy before configuring aggregate membership, then verifies the controller-generated member
+  policy and owning aggregate. This requires O(config_actions.deploy=false) and O(verify.enabled=true). Both resources must be supplied;
+  naming a port in an aggregate alone does not request an Ethernet create. No onboarding workflow or placeholder status is inferred.
+- An explicit Ethernet prerequisite may contain only its host policy and permitted member settings C(admin_state), C(description), and
+  safe C(extra_config). Configure VLANs, addressing and LACP on the aggregate resource. Existing ownership, links, child interfaces and
+  conflicting parent claims continue to block unsafe preparation. An unchanged replay verifies actual aggregate ownership.
 - Managed and unmanaged subinterface writes require a routed parent. Accepted policies are V(routedHost) or V(iosXeRoutedHost) for Ethernet, and V(l3Po) or
   V(iosXeL3PortChannel) for a port-channel, with matching network OS. A compatible routed parent may be created or transitioned in the
   same workflow when deployment is enabled. If the parent is not already operationally routed, the workflow writes and deploys only
@@ -275,6 +284,8 @@ notes:
   safety reads are unchanged.
 - No-op and deployment-only workflows report observed initial state. Partial or failed writes force a post-write reconciliation attempt
   even when O(verify.enabled=false), so mixed or uncertain outcomes are diagnosed against current controller state when possible.
+- Stage-only explicit aggregate-member prerequisites receive fresh ownership readback on successful retries and unchanged runs.
+  Their separate C(member_verifications) receipt identifies the observed member policy and exact parent ownership.
 - On supported ND 4.3.1 controllers, eligible NX-OS logical creates can be grouped across interface families after exact identity,
   vPC-pair, member, and routed-parent safety checks. Unqualified creates, including IOS-XE and member-bearing parents, retain their
   established family paths. Physical Ethernet interfaces already exist and are managed through policy assignments instead of logical creates.
@@ -326,6 +337,44 @@ notes:
 """
 
 EXAMPLES = r"""
+- name: Prepare missing Ethernet members and stage a trunk port-channel in one execution
+  cisco.nd.nd_interfaces_workflow:
+    fabric_name: FABRIC1
+    resources:
+      - type: ethernet_trunk_host
+        state: merged
+        config:
+          - switch_ip: 192.168.1.11
+            interface_names:
+              - Ethernet1/42
+              - Ethernet1/43
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  policy_type: trunkHost
+                  description: Server bundle member
+                  admin_state: true
+      - type: port_channel_trunk_host
+        state: merged
+        config:
+          - switch_ip: 192.168.1.11
+            interface_name: port-channel44
+            config_data:
+              network_os:
+                network_os_type: nx-os
+                policy:
+                  policy_type: trunkPoHost
+                  allowed_vlans: "100-200"
+                  port_channel_mode: active
+                  ports:
+                    - Ethernet1/42
+                    - Ethernet1/43
+    config_actions:
+      deploy: false
+    verify:
+      enabled: true
+
 - name: Configure several interface families with one shared snapshot
   cisco.nd.nd_interfaces_workflow:
     fabric_name: FABRIC1
@@ -893,9 +942,41 @@ vpc_staged_deletions:
       interface_name: port-channel61
       running_member_ports: [Ethernet1/2]
       reset_member_ports: [Ethernet1/2]
+member_verifications:
+  description:
+  - Fresh observed ownership for explicit NX-OS aggregate-member prerequisites, including unchanged policy-only retries.
+  - Binds the exact request to actual member policies, local owning switch and configured port-channel ID, plus validated pair evidence.
+  - Reports controller intent; it does not establish deployment or operational link convergence.
+  returned: after complete successful stage-only verification; omitted in check mode and on failed execution
+  type: dict
+  contains:
+    version:
+      description: Receipt format version.
+      type: int
+      sample: 1
+    source:
+      description: Native observation contract identifying this receipt.
+      type: str
+      sample: native_explicit_member_ownership_v1
+    observed:
+      description: Whether member ownership was read from current controller inventory.
+      type: bool
+    complete:
+      description: Whether every explicit prerequisite covered by this observation was verified.
+      type: bool
+    request_sha256:
+      description: Digest of the complete public workflow request.
+      type: str
+    members:
+      description:
+      - One row per verified switch/interface identity. Each row identifies the Ethernet and parent resource indexes, actual switch IP
+        and ID, interface name, requested parent identity and policy, actual local owning switch, configured port-channel ID,
+        actual member policy, and whether pair consistency was validated.
+      type: list
+      elements: dict
 member_preparations:
   description:
-  - Auxiliary standalone host-policy preparation needed before a requested physical member update and its parent operation.
+  - Host-policy preparation needed before requested aggregate membership, optionally followed by a permitted physical member update.
   - Empty when no such preparation is needed. Check-mode entries are V(planned); unexecuted normal-mode entries are V(not_attempted).
   - C(verified_before_membership=true) means fresh controller host intent was verified before staging the exact parent membership.
   - Accepted preparation and verified host intent do not prove device deployment, operational LACP convergence, or final member-update success.

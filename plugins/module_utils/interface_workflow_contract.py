@@ -26,6 +26,7 @@ CAPABILITIES = (
     "named_sync_rejection_v1",
     "actual_noop_upserts_v1",
     "deferred_membership_preparation_v1",
+    "explicit_member_preparation_v1",
 )
 # NaC checks these names from the selected base collection before passing a
 # new module argument. Older collections can safely retain their old path.

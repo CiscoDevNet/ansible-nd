@@ -119,17 +119,23 @@ class VpcPairEndpoints:
         return endpoint.path
 
     @staticmethod
-    def vpc_pairs_list(fabric_name: str) -> str:
+    def vpc_pairs_list(fabric_name: str, view: str | None = None, offset: int | None = None, max_results: int | None = None) -> str:
         """
-        Build path for listing all vPC pairs in a fabric.
+        Build a vPC pair list path with optional view and pagination.
 
         Args:
             fabric_name: Fabric name
+            view: Optional documented list view, such as intendedPairs
+            offset: Optional number of records to skip
+            max_results: Optional maximum number of records to return
 
         Returns:
-            Path: /api/v1/manage/fabrics/{fabricName}/vpcPairs
+            Path: /api/v1/manage/fabrics/{fabricName}/vpcPairs with optional query
         """
         endpoint = EpVpcPairsListGet(fabric_name=fabric_name)
+        endpoint.endpoint_params.view = view
+        endpoint.lucene_params.offset = offset
+        endpoint.lucene_params.max = max_results
         return endpoint.path
 
     @staticmethod

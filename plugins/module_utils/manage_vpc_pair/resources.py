@@ -23,6 +23,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exception
     VpcPairResourceError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
+    _normalize_pair_identity_for_compare,
     get_config_actions,
     get_verify_iterations,
     get_verify_settings,
@@ -366,6 +367,7 @@ class VpcPairStateMachine(NDStateMachine):
                 else:
                     existing_diff = existing_item.to_diff_dict()
                     proposed_diff = proposed_item.to_diff_dict(exclude_unset=(state == "merged"))
+                    proposed_diff, existing_diff = _normalize_pair_identity_for_compare(proposed_diff, existing_diff)
 
                     if unwanted_keys:
                         for key in unwanted_keys:
