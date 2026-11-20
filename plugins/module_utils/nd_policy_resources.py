@@ -1752,6 +1752,10 @@ class NDPolicyModule:
 
     def _index_pending_policy_removals(self, policies: list[dict]) -> None:
         """Index hidden removal ownership without changing the active cache."""
+        # TODO(4.2.1) policy-pushconfig-pending-removal (ND issue: TBD).
+        # Retain ownership for switch-level cleanup of removals left pending by
+        # pushConfig. Revisit when policy-scoped cleanup is verified for both
+        # unchanged policies and recreation after staged deletion.
         self._pending_policy_owners.clear()
         self._pending_recreation_owners.clear()
         for policy in policies:
@@ -1789,6 +1793,10 @@ class NDPolicyModule:
         have = entry.get("have") or {}
         switch = have.get("switchId") or have.get("serialNumber")
         if action == "update":
+            # TODO(4.2.1) policy-pushconfig-pending-removal (ND issue: TBD).
+            # Updates can stage old-configuration removals that pushConfig leaves
+            # pending. Retain switch deployment until policy-scoped deployment is
+            # verified to apply both the update and its associated removals.
             if not switch:
                 raise _PolicyDeploymentPlanningError(msg=f"Policy {entry.get('policy_id')} has no resolved switch for deployment.")
             return switch
