@@ -101,6 +101,24 @@ class MarkDeleteAcknowledgementController(RejectingController):
         return super().request(verb, path, payload)
 
 
+class CreateAcknowledgementController(RejectingController):
+    """Create independently, then substitute only each response row's status."""
+
+    def __init__(self, status_fields, groups=None):
+        super().__init__(groups)
+        self.status_fields = deepcopy(status_fields)
+
+    def request(self, verb, path, payload):
+        result = super().request(verb, path, payload)
+        if verb == "POST" and path.endswith("/policyGroups"):
+            rows = result["DATA"]["policyGroups"]
+            assert len(rows) == len(self.status_fields)
+            for row, fields in zip(rows, self.status_fields):
+                row.pop("status")
+                row.update(fields)
+        return result
+
+
 @pytest.mark.parametrize("anonymous", [False, True])
 @pytest.mark.parametrize(
     "body,accepted_ids",
@@ -477,9 +495,10 @@ def test_group_check_mode_valid_plan_survives_invalid_template_sibling(invoke):
 
 
 @pytest.mark.parametrize("id_field", ["policyId", "policy_id", "embedded"])
-@pytest.mark.parametrize("status", [None, ""])
-def test_group_create_accepted_id_aliases_survive_deploy_failure(invoke, id_field, status):
-    """Reporting retains the existing parser's accepted response compatibility."""
+@pytest.mark.parametrize("status", ["success", "SUCCESS", " success "])
+@pytest.mark.parametrize("force", [False, True])
+def test_group_create_accepted_id_aliases_survive_deploy_failure(invoke, id_field, status, force):
+    """Explicit accepted ID aliases survive a subsequent deployment failure."""
 
     class AliasController(RejectingController):
         def request(self, verb, path, payload):
@@ -491,17 +510,132 @@ def test_group_create_accepted_id_aliases_survive_deploy_failure(invoke, id_fiel
                     item["templateInputs"] = {"POLICY_ID": pid}
                 else:
                     item[id_field] = pid
-                if status is None:
-                    item.pop("status")
-                else:
-                    item["status"] = status
+                item["status"] = status
             return result
 
     controller = AliasController(reject_deploy=True)
-    result = invoke(controller, [config(name="feature_enable", description="Group A")], deploy=True)
+    result = invoke(controller, [config(name="feature_enable", description="Group A", create_additional_policy=force)], deploy=True)
     assert result["failed"] is True
     assert result["changed"] is True
     assert result["after"][0]["policy_id"] == "POLICY-GROUP-200"
+    if force:
+        assert result["force_created"][0]["policy_id"] == "POLICY-GROUP-200"
+    assert len(controller.deployments()) == 1
+
+
+@pytest.mark.parametrize("force", [False, True])
+@pytest.mark.parametrize("deploy", [False, True])
+@pytest.mark.parametrize("status", ["success", "SUCCESS", " success "])
+def test_group_explicit_create_status_preserves_success(invoke, force, deploy, status):
+    """Normalized explicit success keeps creation and requested deployment."""
+    controller = CreateAcknowledgementController([{"status": status}])
+    result = invoke(controller, [config(name="feature_enable", description="Created", create_additional_policy=force)], deploy=deploy)
+
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    assert result["after"][0]["policy_id"] == "POLICY-GROUP-200"
+    if force:
+        assert result["force_created"][0]["policy_id"] == "POLICY-GROUP-200"
+    assert len(controller.deployments()) == int(deploy)
+
+
+@pytest.mark.parametrize("force", [False, True])
+@pytest.mark.parametrize("deploy", [False, True])
+@pytest.mark.parametrize(
+    "status_fields",
+    [
+        {},
+        {"status": None},
+        {"status": ""},
+        {"status": " \t "},
+        {"status": False},
+        {"status": 0},
+        {"status": True},
+        {"status": 7},
+        {"status": ["success"]},
+        {"status": {"value": "success"}},
+    ],
+    ids=["missing", "null", "empty", "whitespace", "false", "zero", "true", "number", "list", "object"],
+)
+def test_group_unconfirmed_create_status_does_not_report_acceptance(invoke, force, deploy, status_fields):
+    """An ID without a valid status cannot confirm a create or trigger deploy."""
+    controller = CreateAcknowledgementController([status_fields], [group(description="Existing")])
+    result = invoke(controller, [config(name="feature_enable", description="Unconfirmed", create_additional_policy=force)], deploy=deploy)
+
+    assert result["failed"] is True
+    assert result["changed"] is False
+    assert "status" in result["msg"].lower()
+    assert "unconfirmed" in result["msg"].lower()
+    assert result["before"] == result["after"]
+    assert [item["policy_id"] for item in result["after"]] == [GROUP_ID]
+    assert result.get("force_created", []) == []
+    assert controller.deployments() == []
+    assert [call[0] for call in controller.writes()] == ["POST"]
+    # The simulated controller accepted the POST; the deficient acknowledgement
+    # proves neither creation nor rollback, so only known baseline state is shown.
+    assert set(controller.groups) == {GROUP_ID, "POLICY-GROUP-200"}
+
+
+@pytest.mark.parametrize("force", [False, True])
+@pytest.mark.parametrize("deploy", [False, True])
+@pytest.mark.parametrize("status", ["failed", "pending"])
+def test_group_non_success_create_status_preserves_controller_message(invoke, force, deploy, status):
+    """Explicit non-success rows fail with their message before deployment."""
+    controller = CreateAcknowledgementController([{"status": status, "message": "Creation was not acknowledged as successful"}])
+    result = invoke(controller, [config(name="feature_enable", description="Unconfirmed", create_additional_policy=force)], deploy=deploy)
+
+    assert result["failed"] is True
+    assert result["changed"] is False
+    assert "Creation was not acknowledged as successful" in result["msg"]
+    assert result["before"] == result["after"] == []
+    assert result.get("force_created", []) == []
+    assert controller.deployments() == []
+    assert [call[0] for call in controller.writes()] == ["POST"]
+
+
+@pytest.mark.parametrize("force", [False, True])
+@pytest.mark.parametrize("deploy", [False, True])
+@pytest.mark.parametrize("invalid_first", [False, True])
+def test_group_mixed_create_status_retains_all_explicit_successes(invoke, force, deploy, invalid_first):
+    """Invalid rows cannot hide accepted siblings on either side of the batch."""
+    statuses = [{"status": " SUCCESS "}, {}]
+    if invalid_first:
+        statuses.reverse()
+    controller = CreateAcknowledgementController(statuses, [group(description="Existing")])
+    entries = [
+        config(name="feature_enable", description="First", create_additional_policy=force),
+        config(name="feature_enable", description="Second", create_additional_policy=force),
+    ]
+    result = invoke(controller, entries, deploy=deploy)
+    accepted_id = "POLICY-GROUP-201" if invalid_first else "POLICY-GROUP-200"
+    accepted_description = "Second" if invalid_first else "First"
+
+    assert result["failed"] is True
+    assert result["changed"] is True
+    assert "unconfirmed" in result["msg"].lower()
+    assert [item["policy_id"] for item in result["before"]] == [GROUP_ID]
+    assert {item["policy_id"] for item in result["after"]} == {GROUP_ID, accepted_id}
+    if force:
+        assert [(item["policy_id"], item["description"]) for item in result["force_created"]] == [(accepted_id, accepted_description)]
+    assert controller.deployments() == []
+    assert [call[0] for call in controller.writes()] == ["POST"]
+    assert set(controller.groups) == {GROUP_ID, "POLICY-GROUP-200", "POLICY-GROUP-201"}
+
+
+@pytest.mark.parametrize("force", [False, True])
+@pytest.mark.parametrize("deploy", [False, True])
+def test_group_create_status_validation_preserves_check_mode(invoke, force, deploy):
+    """Creation previews do not send a POST or inspect a mutation response."""
+    controller = CreateAcknowledgementController([{}])
+    result = invoke(controller, [config(name="feature_enable", description="Preview", create_additional_policy=force)], deploy=deploy, check_mode=True)
+
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    assert controller.writes() == []
+    assert controller.groups == {}
+    preview = result["force_created"][0] if force else result["after"][0]
+    assert preview["description"] == "Preview"
+    assert "policy_id" not in preview
 
 
 @pytest.mark.parametrize("check_mode,reject_deploy", [(False, False), (True, False), (False, True)])

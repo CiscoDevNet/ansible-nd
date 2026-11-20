@@ -812,8 +812,8 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                     inputs = response_group.get("templateInputs") or response_group.get("template_inputs") or {}
                     if isinstance(inputs, dict):
                         policy_id = inputs.get("POLICY_ID")
-                status = response_group.get("status") or ""
-                if policy_id and (not status or str(status).lower() == "success"):
+                status = response_group.get("status")
+                if policy_id and isinstance(status, str) and status.strip().lower() == "success":
                     self._accepted_changes.append(
                         {"operation": "create", "policy_id": policy_id, "payload": deepcopy(payload["policyGroups"][idx]), "model": id(model_instances[idx])}
                     )
@@ -824,15 +824,19 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             for idx, rg in enumerate(response_groups):
                 if not isinstance(rg, dict):
                     continue
-                status = (rg.get("status") or "").lower()
-                if status and status != "success":
+                raw_status = rg.get("status")
+                status = raw_status.strip().lower() if isinstance(raw_status, str) else ""
+                if status != "success":
                     # Best-effort identifier for the failed item from the request
                     if idx < len(model_instances):
                         m = model_instances[idx]
                         ident = f"{m.template_name!r} (description={m.description!r})"
                     else:
                         ident = f"index {idx}"
-                    msg = rg.get("message") or "unknown error"
+                    if not status:
+                        msg = "Unconfirmed create response: missing, blank, or non-string status; the controller may have applied the request"
+                    else:
+                        msg = rg.get("message") or "unknown error"
                     failures.append(f"{ident}: {msg}")
 
             if failures:
@@ -1523,9 +1527,10 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             if idx >= len(response_groups):
                 break
             rg = response_groups[idx] or {}
-            status = (rg.get("status") or "").lower()
-            if status and status != "success":
-                # Failed item — no policyId to populate; let caller surface error
+            status = rg.get("status")
+            if not isinstance(status, str) or status.strip().lower() != "success":
+                # Only an explicit success confirms the returned ID belongs to
+                # an accepted creation; let the caller surface other outcomes.
                 continue
             pid = rg.get("policyId") or rg.get("policy_id")
             if not pid:
