@@ -3,9 +3,8 @@
 
 """Permissive fallback template model for policy types this module does not model.
 
-ND 4.2 defines 22 link policy types; this module strictly models a subset for
-create/update. The controller can still return a link using any of the others
-(for example ``ipfmNumbered`` or ``routedFabric``), and a strict discriminated
+The controller can return a link using an unmodeled policy type (for example
+``sonicNumbered`` or ``sonicRoutedFabric``), and a strict discriminated
 union would raise ``ValidationError`` on the full-fabric read -- aborting every
 state, even for unrelated supported links.
 

@@ -1,0 +1,4 @@
+minor_changes:
+  - nd_manage_links - add native IPFM numbered, OSPF VRF Lite, CSR, VXLAN-ACI, and routed-fabric link policies.
+  - nd_manage_links - add ND 4.3 cross-fabric-group underlay and service trunk, port-channel, and vPC link policies.
+  - nd_manage_links - validate release-specific link inputs in normal and check mode using the cached controller version; SONiC policies remain unsupported.
