@@ -50,7 +50,7 @@ class ConfigDataModel(NDNestedModel):
     """
     Hardware and gateway network data required for POAP and RMA operations.
 
-    Maps to config.poap.config_data and config.rma.config_data in the playbook.
+    Maps to config.preprovision.config_data in the playbook.
     """
 
     identifiers: ClassVar[list[str]] = []
@@ -61,6 +61,11 @@ class ConfigDataModel(NDNestedModel):
         description="List of model of modules in switch to Bootstrap/Pre-provision/RMA",
     )
     gateway: str = Field(description="Gateway IP with mask for the switch (e.g., 192.168.0.1/24)")
+    breakout: str | None = Field(
+        default=None,
+        min_length=1,
+        description="NX-OS interface breakout commands to apply during bootstrap",
+    )
 
     @field_validator("models", mode="before")
     @classmethod
@@ -108,8 +113,8 @@ class POAPConfigModel(NDNestedModel):
     ``serial_number`` and ``hostname`` are mandatory; all other fields are optional.
     Model, version, and config data are sourced from the bootstrap API at runtime.
     ``software_image`` can be provided to select the software image used during POAP import.
-    If the bootstrap API reports a different hostname or role, the API value overrides
-    the user-provided value and a warning is logged.
+    The authored hostname and role take precedence over device-reported values.
+    The bootstrap API supplies the role only when it is omitted from the config.
     """
 
     identifiers: ClassVar[list[str]] = []
@@ -438,6 +443,8 @@ class SwitchConfigModel(NDBaseModel):
         """
         if self.rma and (self.poap or self.preprovision):
             raise ValueError("Cannot specify 'rma' together with 'poap' or 'preprovision' for the same switch")
+        if self.poap and self.preprovision and self.poap.serial_number == self.preprovision.serial_number:
+            raise ValueError("A serial swap requires different physical and pre-provision serial numbers")
         return self
 
     @model_validator(mode="after")
@@ -697,6 +704,14 @@ class SwitchConfigModel(NDBaseModel):
         """Return the Ansible argument spec for nd_manage_switches."""
         return dict(
             fabric=dict(type="str", required=True),
+            bootstrap_wait=dict(
+                type="dict",
+                default={},
+                options=dict(
+                    timeout=dict(type="int", default=300),
+                    interval=dict(type="int", default=5),
+                ),
+            ),
             state=dict(
                 type="str",
                 default="merged",
@@ -804,6 +819,7 @@ class SwitchConfigModel(NDBaseModel):
                                         required=True,
                                     ),
                                     gateway=dict(type="str", required=True),
+                                    breakout=dict(type="str"),
                                 ),
                             ),
                         ),

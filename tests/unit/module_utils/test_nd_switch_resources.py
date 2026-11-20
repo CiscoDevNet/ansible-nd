@@ -300,6 +300,10 @@ class StaticBootstrapCache:
             return self.refreshed_data
         return self.data
 
+    def wait_for_serials(self, _serial_numbers):
+        """Return fixture observations without polling a controller."""
+        return self.get_index()
+
 
 def raise_assertion(message):
     """Raise AssertionError from lambdas assigned to fakes."""
@@ -1377,8 +1381,8 @@ def test_poap_handler_builds_and_submits_bootstrap_preprovision_and_swap():
         ]
     )
     assert ctx.results.metadata[-1]["action"] == "bootstrap"
-    assert ctx.results.diffs[-1]["switches"][0]["hostname"] == "api-host"
-    assert ctx.results.diffs[-1]["switches"][0]["switchRole"] == "spine"
+    assert ctx.results.diffs[-1]["switches"][0]["hostname"] == "user-host"
+    assert ctx.results.diffs[-1]["switches"][0]["switchRole"] == "leaf"
     assert ctx.results.diffs[-1]["switches"][0]["softwareImage"] == "nxos64-cs.10.6.4.M.bin"
     assert ctx.results.diffs[-1]["switches"][0]["dhcpBootstrapIp"] == "192.0.2.50"
     assert "imagePolicy" not in ctx.results.diffs[-1]["switches"][0]
@@ -1897,6 +1901,94 @@ def test_exit_json_check_mode_uses_synthetic_before_after_diff():
     assert final["before"][0]["seed_ip"] == "192.0.2.10"
     assert final["after"][1]["seed_ip"] == "192.0.2.11"
     assert final["diff"][0]["_action"] == "added"
+
+
+@pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
+def test_check_mode_matching_placeholder_reports_orphan_removal_only_for_overridden(state):
+    """A targeted placeholder replay must preserve unrelated inventory in its forecast."""
+    cfg = _cfg(
+        "192.0.2.10",
+        state=state,
+        preprovision={
+            "serial_number": "PRE1",
+            "model": "N9K-C93180YC-EX",
+            "version": "10.3(1)",
+            "hostname": "pre1-host",
+            "config_data": {
+                "models": ["N9K-C93180YC-EX"],
+                "gateway": "192.0.2.1/24",
+                "breakout": "interface breakout module 1 port 50 map 25g-4x",
+            },
+        },
+    )
+    existing = [_sw("192.0.2.10", "PRE1", discovery_status="unreachable"), _sw("192.0.2.11", "OTHER1")]
+    resource = _resource(state=state, config=[cfg.to_config()], check_mode=True, existing=existing)
+
+    resource.manage_state()
+    resource.exit_json()
+
+    final = resource.module.exit_kwargs
+    assert len(resource._plan.idempotent) == 1
+    assert resource._plan.to_delete == [existing[1]]
+    assert resource._plan.to_delete_existing == []
+    assert resource._plan.to_preprovision == []
+    assert resource.nd.calls == []
+    if state == "overridden":
+        assert final["changed"] is True
+        assert [(row["seed_ip"], row["_action"]) for row in final["diff"]] == [("192.0.2.11", "deleted")]
+        assert [row["seed_ip"] for row in final["after"]] == ["192.0.2.10"]
+    else:
+        assert final["changed"] is False
+        assert final["diff"] == []
+        assert final["after"] == final["before"]
+
+
+def test_check_mode_replaced_placeholder_mismatch_still_reports_targeted_delete_and_readd():
+    """Suppressing orphan forecasts must retain a real targeted replacement."""
+    cfg = _cfg(
+        "192.0.2.10",
+        state="replaced",
+        preprovision={
+            "serial_number": "PRE1",
+            "model": "N9K-C93180YC-EX",
+            "version": "10.3(1)",
+            "hostname": "renamed-pre1",
+            "config_data": {"models": ["N9K-C93180YC-EX"], "gateway": "192.0.2.1/24"},
+        },
+    )
+    existing = [_sw("192.0.2.10", "PRE1", discovery_status="unreachable"), _sw("192.0.2.11", "OTHER1")]
+    resource = _resource(state="replaced", config=[cfg.to_config()], check_mode=True, existing=existing)
+
+    resource.manage_state()
+    resource.exit_json()
+
+    final = resource.module.exit_kwargs
+    assert resource._plan.to_delete_existing == [existing[0]]
+    assert len(resource._plan.to_preprovision) == 1
+    assert final["changed"] is True
+    assert [(row["seed_ip"], row["_action"]) for row in final["diff"]] == [
+        ("192.0.2.10", "deleted"),
+        ("192.0.2.10", "added"),
+    ]
+    assert {row["seed_ip"] for row in final["after"]} == {"192.0.2.10", "192.0.2.11"}
+    assert resource.nd.calls == []
+
+
+@pytest.mark.parametrize("targeted", [False, True])
+def test_check_mode_deleted_output_preserves_explicit_plan_and_no_config_scopes(targeted):
+    """Keep existing deleted-state output behavior while narrowing orphan reporting."""
+    existing = [_sw("192.0.2.10", "SERIAL1"), _sw("192.0.2.11", "SERIAL2")]
+    resource = _resource(state="deleted", check_mode=True, existing=existing)
+    if targeted:
+        resource._plan = _empty_plan(to_delete=existing)
+        resource.proposed_cfgs = [_cfg("192.0.2.10", state="deleted")]
+
+    output = resource._build_check_mode_output()
+
+    assert output["changed"] is True
+    assert [row["seed_ip"] for row in output["diff"]] == (["192.0.2.10"] if targeted else ["192.0.2.10", "192.0.2.11"])
+    assert [row["seed_ip"] for row in output["after"]] == (["192.0.2.11"] if targeted else [])
+    assert resource.nd.calls == []
 
 
 def test_exit_json_normal_requeries_inventory_and_builds_delete_add_diff(monkeypatch):

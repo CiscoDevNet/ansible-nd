@@ -611,6 +611,9 @@ def build_poap_data_block(poap_cfg) -> dict[str, Any] | None:
         data_block["gatewayIpMask"] = gateway
     if poap_cfg.config_data.models:
         data_block["models"] = poap_cfg.config_data.models
+    breakout = getattr(poap_cfg.config_data, "breakout", None)
+    if breakout:
+        data_block["breakout"] = breakout
     return data_block or None
 
 
