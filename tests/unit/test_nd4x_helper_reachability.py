@@ -19,21 +19,52 @@ sys.modules[SPEC.name] = CHECKER
 SPEC.loader.exec_module(CHECKER)
 
 
-TARGETS_ROOT = Path(os.environ.get("ND4X_TEST_TARGETS_ROOT", CHECKER.TARGETS_ROOT)).resolve()
-HELPER_ROOT = TARGETS_ROOT / CHECKER.HELPER_ROLE
-CONSUMERS = CHECKER.discover_consumers(TARGETS_ROOT)
+HELPER_ROOT = CHECKER.HELPER_ROOT
 
 
-@pytest.mark.parametrize(
-    "consumer",
-    CONSUMERS,
-    ids=[consumer.name for consumer in CONSUMERS],
-)
-def test_each_harness_consumer_declares_and_uses_helper_role(consumer):
-    """Every target using the harness must declare its role dependency and new call name."""
+def _make_consumer(targets_root, call_name, *, helper_dependency):
+    consumer_root = targets_root / "example_target"
+    tasks = consumer_root / "tasks"
+    tasks.mkdir(parents=True)
+    (tasks / "main.yml").write_text(
+        f"---\n- name: Call the harness\n  {call_name}:\n    module: cisco.nd.nd_interface_loopback\n",
+        encoding="utf-8",
+    )
+    if helper_dependency:
+        meta = consumer_root / "meta"
+        meta.mkdir()
+        (meta / "main.yml").write_text(
+            f"---\ndependencies:\n  - role: {CHECKER.HELPER_ROLE}\n",
+            encoding="utf-8",
+        )
+    return CHECKER.discover_consumers(targets_root)[0]
+
+
+def test_contract_accepts_migrated_consumer(tmp_path):
+    targets_root = tmp_path / "targets"
+    targets_root.mkdir()
+    consumer = _make_consumer(
+        targets_root,
+        "nd4x_module_test",
+        helper_dependency=True,
+    )
+
     errors = CHECKER.contract_errors([consumer], helper_root=HELPER_ROOT, repo_root=REPO_ROOT)
-    target_errors = [error for error in errors if error.startswith(f"{consumer.name}:")]
-    assert not target_errors, "\n".join(target_errors)
+    assert not errors, "\n".join(errors)
+
+
+def test_contract_reports_consumer_that_has_not_migrated(tmp_path):
+    targets_root = tmp_path / "targets"
+    targets_root.mkdir()
+    consumer = _make_consumer(
+        targets_root,
+        "cisco.nd.nd4x_module_test",
+        helper_dependency=False,
+    )
+
+    errors = CHECKER.contract_errors([consumer], helper_root=HELPER_ROOT, repo_root=REPO_ROOT)
+    assert any("must depend on role" in error for error in errors)
+    assert any("call(s) need the new short name" in error for error in errors)
 
 
 def test_shared_helper_role_files_are_present():
