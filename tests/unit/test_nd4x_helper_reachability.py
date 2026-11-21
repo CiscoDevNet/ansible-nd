@@ -72,7 +72,11 @@ def test_ansible_resolves_helper_plugins_through_consumer_dependency(tmp_path):
     (helper_root / "aliases").write_text("hidden\n", encoding="utf-8")
     (helper_root / "tasks" / "main.yml").write_text("---\n[]\n", encoding="utf-8")
     (helper_root / "action_plugins" / "nd4x_module_test.py").write_text(
-        "from ansible.plugins.action import ActionBase\n\n" "class ActionModule(ActionBase):\n" "    pass\n",
+        """from ansible.plugins.action import ActionBase
+
+class ActionModule(ActionBase):
+    pass
+""",
         encoding="utf-8",
     )
     (helper_root / "library" / "nd4x_module_test.py").write_text(

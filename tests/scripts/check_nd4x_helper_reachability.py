@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Check that every ND4x harness consumer can load the shared test role.
 
 Run from any directory with:
@@ -30,7 +29,7 @@ HELPER_ROLE = "nd4x_test_helpers"
 HELPER_ROOT = TARGETS_ROOT / HELPER_ROLE
 NEW_CALLS = {"nd4x_module_test", "ansible.legacy.nd4x_module_test"}
 CALL_RE = re.compile(r"^\s*(?P<call>(?:cisco\.nd\.|ansible\.legacy\.)?nd4x_module_test)\s*:")
-ACTION_RE = re.compile(r"^\s*(?:ansible\.builtin\.)?action\s*:\s*" r"(?P<call>(?:cisco\.nd\.|ansible\.legacy\.)?nd4x_module_test)(?:\s|$)")
+ACTION_RE = re.compile(r"^\s*(?:ansible\.builtin\.)?action\s*:\s*(?P<call>(?:cisco\.nd\.|ansible\.legacy\.)?nd4x_module_test)(?:\s|$)")
 
 
 @dataclass(frozen=True)
