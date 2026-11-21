@@ -2,15 +2,31 @@
 
 from __future__ import absolute_import, division, print_function
 
+import importlib.util
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
 
 import pytest
 from ansible.errors import AnsibleActionFail
 from ansible.plugins.action import ActionBase
-from ansible_collections.cisco.nd.plugins.action.nd4x_module_test import (
-    ActionModule,
+
+PLUGIN_PATH = (
+    Path(__file__).resolve().parents[4]
+    / "tests"
+    / "integration"
+    / "targets"
+    / "nd4x_test_helpers"
+    / "action_plugins"
+    / "nd4x_module_test.py"
 )
+SPEC = importlib.util.spec_from_file_location("nd4x_module_test_role", PLUGIN_PATH)
+nd4x_module_test = importlib.util.module_from_spec(SPEC)
+assert SPEC.loader is not None
+sys.modules[SPEC.name] = nd4x_module_test
+SPEC.loader.exec_module(nd4x_module_test)
+ActionModule = nd4x_module_test.ActionModule
 
 
 def base_args():
@@ -784,7 +800,7 @@ def test_idempotency_retries_until_expected_result(action_plugin):
         {"changed": False, "failed": False},
     ]
 
-    with patch("ansible_collections.cisco.nd.plugins.action.nd4x_module_test.time.sleep") as sleep:
+    with patch.object(nd4x_module_test.time, "sleep") as sleep:
         result = run_plugin(action_plugin)
 
     assert action_plugin._execute_module.call_count == 5
@@ -803,7 +819,7 @@ def test_idempotency_stops_after_first_success(action_plugin):
         {"changed": False, "failed": False},
     ]
 
-    with patch("ansible_collections.cisco.nd.plugins.action.nd4x_module_test.time.sleep") as sleep:
+    with patch.object(nd4x_module_test.time, "sleep") as sleep:
         result = run_plugin(action_plugin)
 
     assert result["idempotency_attempts"] == 1
@@ -821,7 +837,7 @@ def test_idempotency_failure_after_retries_is_reported(action_plugin):
         {"changed": True, "failed": True, "msg": "still failing"},
     ]
 
-    with patch("ansible_collections.cisco.nd.plugins.action.nd4x_module_test.time.sleep") as sleep:
+    with patch.object(nd4x_module_test.time, "sleep") as sleep:
         with pytest.raises(
             AnsibleActionFail,
             match=r"Expected idempotency failed=False but got failed=True",
