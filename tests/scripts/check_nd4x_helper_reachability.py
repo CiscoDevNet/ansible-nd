@@ -24,19 +24,13 @@ from typing import Iterable
 
 import yaml
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TARGETS_ROOT = REPO_ROOT / "tests" / "integration" / "targets"
 HELPER_ROLE = "nd4x_test_helpers"
 HELPER_ROOT = TARGETS_ROOT / HELPER_ROLE
 NEW_CALLS = {"nd4x_module_test", "ansible.legacy.nd4x_module_test"}
-CALL_RE = re.compile(
-    r"^\s*(?P<call>(?:cisco\.nd\.|ansible\.legacy\.)?nd4x_module_test)\s*:"
-)
-ACTION_RE = re.compile(
-    r"^\s*(?:ansible\.builtin\.)?action\s*:\s*"
-    r"(?P<call>(?:cisco\.nd\.|ansible\.legacy\.)?nd4x_module_test)(?:\s|$)"
-)
+CALL_RE = re.compile(r"^\s*(?P<call>(?:cisco\.nd\.|ansible\.legacy\.)?nd4x_module_test)\s*:")
+ACTION_RE = re.compile(r"^\s*(?:ansible\.builtin\.)?action\s*:\s*" r"(?P<call>(?:cisco\.nd\.|ansible\.legacy\.)?nd4x_module_test)(?:\s|$)")
 
 
 @dataclass(frozen=True)
@@ -74,11 +68,7 @@ def discover_consumers(targets_root: Path = TARGETS_ROOT) -> list[Consumer]:
         if role_path.name == HELPER_ROLE:
             continue
         files = tuple(_iter_source_files(role_path))
-        calls = tuple(
-            (path, line_number, call)
-            for path in files
-            for line_number, call in _calls_in_file(path)
-        )
+        calls = tuple((path, line_number, call) for path in files for line_number, call in _calls_in_file(path))
         if calls:
             consumers.append(Consumer(role_path.name, role_path, files, calls))
     return consumers
@@ -139,20 +129,12 @@ def contract_errors(
     for consumer in consumers:
         meta_path = consumer.role_path / "meta" / "main.yml"
         if HELPER_ROLE not in _dependency_names(meta_path):
-            errors.append(
-                f"{consumer.name}: meta/main.yml must depend on role {HELPER_ROLE!r}"
-            )
+            errors.append(f"{consumer.name}: meta/main.yml must depend on role {HELPER_ROLE!r}")
         outdated_calls = [call for call in consumer.calls if call[2] not in NEW_CALLS]
         if outdated_calls:
-            examples = ", ".join(
-                f"{_display_path(path, repo_root)}:{line_number} ({call})"
-                for path, line_number, call in outdated_calls[:3]
-            )
+            examples = ", ".join(f"{_display_path(path, repo_root)}:{line_number} ({call})" for path, line_number, call in outdated_calls[:3])
             suffix = " ..." if len(outdated_calls) > 3 else ""
-            errors.append(
-                f"{consumer.name}: {len(outdated_calls)} call(s) need the new "
-                f"short name; examples: {examples}{suffix}"
-            )
+            errors.append(f"{consumer.name}: {len(outdated_calls)} call(s) need the new " f"short name; examples: {examples}{suffix}")
     return errors
 
 
@@ -204,9 +186,7 @@ def run_loader_smoke(
             encoding="utf-8",
         )
         env = os.environ.copy()
-        env["ANSIBLE_ROLES_PATH"] = os.pathsep.join(
-            (str(consumer_roles_root), str(targets_root))
-        )
+        env["ANSIBLE_ROLES_PATH"] = os.pathsep.join((str(consumer_roles_root), str(targets_root)))
         env["ANSIBLE_LOCAL_TEMP"] = str(temp_path / "ansible-local")
         result = subprocess.run(
             [executable, "--syntax-check", str(playbook)],
@@ -252,10 +232,7 @@ def main(argv: list[str] | None = None) -> int:
     targets_root = args.targets_root.resolve()
     helper_root = targets_root / HELPER_ROLE
     consumers = discover_consumers(targets_root)
-    print(
-        f"Found {len(consumers)} integration target(s) calling nd4x_module_test "
-        f"under {targets_root}."
-    )
+    print(f"Found {len(consumers)} integration target(s) calling nd4x_module_test " f"under {targets_root}.")
     errors = contract_errors(
         consumers,
         helper_root=helper_root,

@@ -12,15 +12,7 @@ import pytest
 from ansible.errors import AnsibleActionFail
 from ansible.plugins.action import ActionBase
 
-PLUGIN_PATH = (
-    Path(__file__).resolve().parents[4]
-    / "tests"
-    / "integration"
-    / "targets"
-    / "nd4x_test_helpers"
-    / "action_plugins"
-    / "nd4x_module_test.py"
-)
+PLUGIN_PATH = Path(__file__).resolve().parents[4] / "tests" / "integration" / "targets" / "nd4x_test_helpers" / "action_plugins" / "nd4x_module_test.py"
 SPEC = importlib.util.spec_from_file_location("nd4x_module_test_role", PLUGIN_PATH)
 nd4x_module_test = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None

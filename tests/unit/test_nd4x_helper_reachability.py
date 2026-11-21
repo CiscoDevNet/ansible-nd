@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHECKER_PATH = REPO_ROOT / "tests" / "scripts" / "check_nd4x_helper_reachability.py"
 SPEC = importlib.util.spec_from_file_location("nd4x_helper_reachability", CHECKER_PATH)
@@ -20,9 +19,7 @@ sys.modules[SPEC.name] = CHECKER
 SPEC.loader.exec_module(CHECKER)
 
 
-TARGETS_ROOT = Path(
-    os.environ.get("ND4X_TEST_TARGETS_ROOT", CHECKER.TARGETS_ROOT)
-).resolve()
+TARGETS_ROOT = Path(os.environ.get("ND4X_TEST_TARGETS_ROOT", CHECKER.TARGETS_ROOT)).resolve()
 HELPER_ROOT = TARGETS_ROOT / CHECKER.HELPER_ROLE
 CONSUMERS = CHECKER.discover_consumers(TARGETS_ROOT)
 
@@ -34,9 +31,7 @@ CONSUMERS = CHECKER.discover_consumers(TARGETS_ROOT)
 )
 def test_each_harness_consumer_declares_and_uses_helper_role(consumer):
     """Every target using the harness must declare its role dependency and new call name."""
-    errors = CHECKER.contract_errors(
-        [consumer], helper_root=HELPER_ROOT, repo_root=REPO_ROOT
-    )
+    errors = CHECKER.contract_errors([consumer], helper_root=HELPER_ROOT, repo_root=REPO_ROOT)
     target_errors = [error for error in errors if error.startswith(f"{consumer.name}:")]
     assert not target_errors, "\n".join(target_errors)
 
@@ -66,9 +61,7 @@ def test_discovery_finds_harness_consumers(tmp_path):
 
 
 def test_ansible_resolves_helper_plugins_through_consumer_dependency(tmp_path):
-    ansible_playbook = os.environ.get("ANSIBLE_PLAYBOOK") or shutil.which(
-        "ansible-playbook"
-    )
+    ansible_playbook = os.environ.get("ANSIBLE_PLAYBOOK") or shutil.which("ansible-playbook")
     if not ansible_playbook:
         pytest.skip("set ANSIBLE_PLAYBOOK or put ansible-playbook on PATH")
 
@@ -79,9 +72,7 @@ def test_ansible_resolves_helper_plugins_through_consumer_dependency(tmp_path):
     (helper_root / "aliases").write_text("hidden\n", encoding="utf-8")
     (helper_root / "tasks" / "main.yml").write_text("---\n[]\n", encoding="utf-8")
     (helper_root / "action_plugins" / "nd4x_module_test.py").write_text(
-        "from ansible.plugins.action import ActionBase\n\n"
-        "class ActionModule(ActionBase):\n"
-        "    pass\n",
+        "from ansible.plugins.action import ActionBase\n\n" "class ActionModule(ActionBase):\n" "    pass\n",
         encoding="utf-8",
     )
     (helper_root / "library" / "nd4x_module_test.py").write_text(
@@ -112,7 +103,5 @@ def test_ansible_resolves_helper_plugins_through_consumer_dependency(tmp_path):
         encoding="utf-8",
     )
 
-    passed, message = CHECKER.run_loader_smoke(
-        ansible_playbook, tmp_path / "targets"
-    )
+    passed, message = CHECKER.run_loader_smoke(ansible_playbook, tmp_path / "targets")
     assert passed, message
