@@ -181,6 +181,7 @@ def run_module(monkeypatch, params, controller):
     """Invoke the public module with real parsing and a non-network transport."""
     monkeypatch.delenv("ND_LOGGING_CONFIG", raising=False)
     monkeypatch.setattr(basic, "_ANSIBLE_ARGS", json.dumps({"ANSIBLE_MODULE_ARGS": params}).encode())
+    monkeypatch.setattr(basic, "_ANSIBLE_PROFILE", "legacy", raising=False)
     monkeypatch.setattr(sender_nd, "Connection", lambda *_args, **_kwargs: controller)
 
     def finish(_module, **result):
