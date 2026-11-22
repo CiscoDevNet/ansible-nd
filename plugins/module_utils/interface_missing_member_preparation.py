@@ -79,14 +79,31 @@ def _check_unowned(preparation: Any, snapshot: Any, index: EthernetMembershipInd
             if not isinstance(config, dict) or not config.get("networkOS"):
                 continue
             policy = _policy(record)
+            memberships = {}
             for field in ("ports", "peer1MemberPorts", "peer2MemberPorts"):
                 if field not in policy:
                     continue
                 names = EthernetMembershipIndex._valid_vpc_member_names(policy[field])
                 if names is None:
                     raise RuntimeError("Missing-member preparation refuses malformed parent membership lists.")
-                if name in names:
-                    raise RuntimeError(f"Missing-member preparation refuses a local or reciprocal parent claim for {switch_id}/{name}.")
+                memberships[field] = names
+            if record.get("interfaceType") == "vpc":
+                expected_peer = peer_id if owner_id == switch_id else switch_id
+                declared_peer = policy.get("peerSwitchId")
+                if expected_peer is None or declared_peer not in (None, "", expected_peer):
+                    raise RuntimeError("Missing-member preparation refuses unresolved or conflicting parent peer identity.")
+                # The index resolves pair-wide and local-first parent echoes
+                # against actual switch-scoped members. An unproved orientation
+                # deliberately keeps both slots, retaining conflicting evidence.
+                fields = index._local_vpc_parent_member_fields(owner_id, record_name, policy)
+                if owner_id != switch_id and len(fields) == 1:
+                    fields = tuple(field for field in ("peer1MemberPorts", "peer2MemberPorts") if field not in fields)
+                if owner_id == switch_id:
+                    fields = (*fields, "ports")
+            else:
+                fields = tuple(memberships)
+            if any(name in memberships.get(field, ()) for field in fields):
+                raise RuntimeError(f"Missing-member preparation refuses a local or reciprocal parent claim for {switch_id}/{name}.")
     if (switch_id, name) in orchestrator._fabric_link_endpoints():
         raise RuntimeError(f"Missing-member preparation refuses fabric-link endpoint {switch_id}/{name}.")
 

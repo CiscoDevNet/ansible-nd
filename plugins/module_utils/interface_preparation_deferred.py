@@ -24,7 +24,7 @@ def observation_plan(plan, deferred):
     for resource in plan.resources:
         proposed = [deferred.get((resource.resource_index, model.get_identifier_value()), {}).get("observation_model", model) for model in resource.proposed]
         resources.append(replace(resource, proposed=NDConfigCollection(resource.adapter.model_class, proposed)))
-    return SimpleNamespace(resources=tuple(resources), target_switch_ids=plan.target_switch_ids, changed=plan.changed)
+    return replace(plan, resources=tuple(resources))
 
 
 def defer_ready_memberships(*, params, plan, snapshot, request_sha256):
