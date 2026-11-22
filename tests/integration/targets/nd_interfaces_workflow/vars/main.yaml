@@ -30,8 +30,10 @@ nd_iw_family_order:
   - svi
   - loopback
   - vpc_access
+  - vpc_dot1q_tunnel
   - vpc_trunk_host
   - port_channel_access
+  - port_channel_dot1q_tunnel_host
   - port_channel_routed
   - port_channel_trunk_host
   - ethernet_access

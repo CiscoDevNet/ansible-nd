@@ -26,6 +26,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_membership impo
     EthernetMembershipIndex,
     MembershipValidationError,
     ParentMembershipClaim,
+    is_dot1q_default_mtu_removal,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -612,7 +613,7 @@ class InterfaceWorkflowPlanner:
             response.append(enriched)
         return NDConfigCollection.from_api_response(response_data=response, model_class=adapter.model_class)
 
-    def _validate_dot1q_platforms(self, targets: NDConfigCollection) -> None:
+    def _validate_dot1q_platforms(self, targets: NDConfigCollection, resource_type: str) -> None:
         """Reject known non-NX-OS evidence for explicitly named or selected dot1q targets."""
         inventory = self._inventory()
         for target in targets:
@@ -625,7 +626,7 @@ class InterfaceWorkflowPlanner:
             current_network_os = self._wire_network_os_type(raw)
             if any(value not in (None, "nx-os") for value in (platform_type, current_network_os)):
                 raise InterfaceWorkflowValidationError(
-                    f"Type 'ethernet_dot1q_tunnel_host' supports NX-OS only; {switch_ip}/{name} reports "
+                    f"Type '{resource_type}' supports NX-OS only; {switch_ip}/{name} reports "
                     f"switch platformType {platform_type!r} and interface networkOSType {current_network_os!r}."
                 )
 
@@ -636,11 +637,12 @@ class InterfaceWorkflowPlanner:
         proposed: NDConfigCollection,
     ) -> NDConfigCollection:
         """Select pair-scoped vPC state without name-global query deduplication."""
-        if adapter.resource_type == "ethernet_dot1q_tunnel_host":
+        dot1q_family = adapter.resource_type in {"ethernet_dot1q_tunnel_host", "port_channel_dot1q_tunnel_host", "vpc_dot1q_tunnel"}
+        if dot1q_family:
             # Identifier-only deletes have no network OS in their input. Check
             # the cached switch and interface records before treating one as
             # an already-reset port or building another platform's reset.
-            self._validate_dot1q_platforms(proposed)
+            self._validate_dot1q_platforms(proposed, adapter.resource_type)
         if adapter.ownership_domain == "ethernet" and orchestrator.rest_send.params.get("state") == "deleted":
             # A filtered default must not manufacture a successful reset after
             # model parsing silently omits an unmodeled controller field.
@@ -659,14 +661,17 @@ class InterfaceWorkflowPlanner:
                     )
         if adapter.ownership_domain != "vpc":
             existing = adapter.existing_collection(orchestrator)
-            if adapter.resource_type == "ethernet_dot1q_tunnel_host" and orchestrator.rest_send.params.get("state") == "overridden":
+            if dot1q_family and orchestrator.rest_send.params.get("state") == "overridden":
                 # Omitted override targets are selected from existing state,
                 # so validating only proposed would miss their platform evidence.
-                self._validate_dot1q_platforms(existing)
+                self._validate_dot1q_platforms(existing, adapter.resource_type)
             return existing
 
         orchestrator.validate_prerequisites()
-        return self.pair_scoped_vpc_collection(inventory=self._inventory(), adapter=adapter, orchestrator=orchestrator, proposed=proposed)
+        existing = self.pair_scoped_vpc_collection(inventory=self._inventory(), adapter=adapter, orchestrator=orchestrator, proposed=proposed)
+        if dot1q_family and orchestrator.rest_send.params.get("state") == "overridden":
+            self._validate_dot1q_platforms(existing, adapter.resource_type)
+        return existing
 
     @classmethod
     def _desired_policy_type(cls, model: NDBaseModel) -> str | None:
@@ -1466,7 +1471,14 @@ class InterfaceWorkflowPlanner:
         """
 
         family = resource.adapter.resource_type
-        if resource.state != "deleted" or family not in {"svi", "loopback", "port_channel_access", "port_channel_trunk_host", "port_channel_routed"}:
+        if resource.state != "deleted" or family not in {
+            "svi",
+            "loopback",
+            "port_channel_access",
+            "port_channel_dot1q_tunnel_host",
+            "port_channel_trunk_host",
+            "port_channel_routed",
+        }:
             return False
         if len(current_records) != 1:
             return False
@@ -1601,14 +1613,20 @@ class InterfaceWorkflowPlanner:
                     if current_po_id == own_po_id
                     else self._staged_parent_member_commands_cache.get((switch_id, current_po_id), {}).get(current_member, set())
                 )
-                remove_known_member_setting = (
-                    current_member in proven_members
-                    and line[3:] in prior_commands
+                remove_known_member_setting = current_member in proven_members and (
+                    line[3:] in prior_commands
                     and (
                         re.fullmatch(r"no mtu ([0-9]+)", line) is not None
                         and 576 <= int(line.split()[-1]) <= 9216
                         or re.fullmatch(r"no switchport (?:mode trunk|trunk allowed vlan [0-9,-]+)", line) is not None
+                        or family == "port_channel_dot1q_tunnel_host"
+                        and line == "no switchport mode dot1q-tunnel"
                     )
+                    # The default jumbo MTU is omitted from scoped ND
+                    # running CLI. This exact dot1q retirement can still
+                    # reset it without allowing another unseen MTU value.
+                    or family == "port_channel_dot1q_tunnel_host"
+                    and is_dot1q_default_mtu_removal(line, prior_commands)
                 )
                 raw_member = inventory.get((switch_id, current_member)) or {}
                 routed_default_command = (

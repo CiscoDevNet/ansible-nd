@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import re
 from types import MappingProxyType
 from typing import Any, TypeAlias
 
@@ -75,6 +76,21 @@ class MissingPeerIdentityError(MembershipValidationError):
             f"parent {parent_name!r} on switch {switch_id!r} from cached inventory "
             "or pair evidence"
         )
+
+
+def is_dot1q_default_mtu_removal(command: str, running_commands: Sequence[str] | set[str]) -> bool:
+    """Recognize the inherited jumbo MTU cleanup on an already-proven member.
+
+    ND omits the inherited MTU from scoped running CLI, then generates
+    ``no mtu 9216`` when resetting a dot1q member. Permit that one default
+    removal only when tunnel mode is present and no explicit MTU conflicts.
+    The caller must separately prove the exact deleted parent and member.
+    """
+    return (
+        command == "no mtu 9216"
+        and "switchport mode dot1q-tunnel" in running_commands
+        and not any(re.fullmatch(r"mtu\s+.+", line) for line in running_commands)
+    )
 
 
 def get_member_policy_descriptor_for_parent(policy_type: object) -> MemberPolicyDescriptor | None:
@@ -444,7 +460,7 @@ class EthernetMembershipIndex:
         """Index supported physical vPC members by switch and parent once.
 
         ND also labels the parent-side ``portChannel`` record with policies such as
-        ``trunkVpcMember`` and ``accessVpcMember``.  Those protected records are not
+        ``trunkVpcMember``, ``accessVpcMember`` and ``dot1qTunnelVpcMember``. Those protected records are not
         physical members and must not contaminate a vPC parent's member set.
         """
 

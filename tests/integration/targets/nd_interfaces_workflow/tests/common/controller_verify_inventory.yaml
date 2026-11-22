@@ -17,12 +17,14 @@
       ethernet_trunk_host: trunkHost
       loopback: loopback
       port_channel_access: accessPoHost
+      port_channel_dot1q_tunnel_host: dot1qTunnelPoHost
       port_channel_routed: l3Po
       port_channel_trunk_host: trunkPoHost
       subinterface_managed: subinterface
       subinterface_unmanaged: monitorSubinterface
       svi: svi
       vpc_access: accessVpcHost
+      vpc_dot1q_tunnel: dot1qTunnelVpc
       vpc_trunk_host: trunkVpcHost
 
 - name: Read authoritative fabric switch identities
@@ -74,7 +76,7 @@
       }}
     nd_iw_raw_expected_switch_ips: >-
       {{ [nd_iw_active_switches.vpc_peer1, nd_iw_active_switches.vpc_peer2]
-         if item.0.type in ['vpc_access', 'vpc_trunk_host']
+         if item.0.type in ['vpc_access', 'vpc_dot1q_tunnel', 'vpc_trunk_host']
          else [item.1.switch_ip] }}
     nd_iw_raw_expected_switch_ids: >-
       {{ nd_iw_raw_expected_switch_ips
@@ -109,7 +111,7 @@
       }}
     nd_iw_raw_expected_switch_ips: >-
       {{ [nd_iw_active_switches.vpc_peer1, nd_iw_active_switches.vpc_peer2]
-         if item.0.type in ['vpc_access', 'vpc_trunk_host']
+         if item.0.type in ['vpc_access', 'vpc_dot1q_tunnel', 'vpc_trunk_host']
          else [item.1.switch_ip] }}
     nd_iw_raw_expected_switch_ids: >-
       {{ nd_iw_raw_expected_switch_ips

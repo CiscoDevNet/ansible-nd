@@ -29,8 +29,10 @@ PREPARATION_TYPES = frozenset(
         "ethernet_access",
         "ethernet_trunk_host",
         "port_channel_access",
+        "port_channel_dot1q_tunnel_host",
         "port_channel_trunk_host",
         "vpc_access",
+        "vpc_dot1q_tunnel",
         "vpc_trunk_host",
     }
 )

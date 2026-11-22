@@ -134,7 +134,7 @@
           - nd_iw_batch_create_preview.request_stats.interface_inventory_cache_hits > 0
           - >-
             nd_iw_batch_create_preview.request_stats.vpc_pair_gets
-            == (1 if (nd_iw_batch_create_resources | selectattr('type', 'in', ['vpc_access', 'vpc_trunk_host']) | list | length > 0) else 0)
+            == (1 if (nd_iw_batch_create_resources | selectattr('type', 'in', ['vpc_access', 'vpc_dot1q_tunnel', 'vpc_trunk_host']) | list | length > 0) else 0)
 
     - name: Apply the batched merged create with verification disabled by default
       cisco.nd.nd_interfaces_workflow:

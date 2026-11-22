@@ -5,7 +5,7 @@ GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gp
 
 # `nd_interfaces_workflow` network integration target
 
-This target qualifies `cisco.nd.nd_interfaces_workflow` against live Nexus Dashboard fabrics. It exercises all thirteen interface-family adapters, aggregate lifecycle behavior, shared snapshots, implicit policy transitions, policy-independent explicit deletion, conflicts, output controls, invalid inputs, optional property packs, and guarded cleanup.
+This target qualifies `cisco.nd.nd_interfaces_workflow` against live Nexus Dashboard fabrics. It exercises all fifteen interface-family adapters, aggregate lifecycle behavior, shared snapshots, implicit policy transitions, policy-independent explicit deletion, conflicts, output controls, invalid inputs, optional property packs, and guarded cleanup.
 
 ## Run the target
 
@@ -32,7 +32,7 @@ Historical ten-family measurements on one fabric, before `ethernet_routed` joine
 - Smoke profile: **57.56 seconds**
 - Full check profile: **306.82 seconds** (about 5 minutes 7 seconds)
 
-These are reference measurements, not timeouts. An all-thirteen run performs additional routed and dot1q planning and lifecycle requests,
+These are reference measurements, not timeouts. A run covering all families performs additional routed and dot1q planning and lifecycle requests,
 so replace these figures after collecting a comparable run. Controller load, latency, and selected families can change runtime. The role
 is guarded with `run_once`, and selected fabrics run serially to protect the shared lab.
 
@@ -194,7 +194,7 @@ The preflight reads the mapped fabric and, when `nd_iw_verify_fabric_type` is tr
 
 ## Interface-family capabilities
 
-Each fabric currently lists the same thirteen `candidate_families`:
+Each fabric currently lists the same fifteen `candidate_families`:
 
 - `ethernet_access`
 - `ethernet_dot1q_tunnel_host`
@@ -202,12 +202,14 @@ Each fabric currently lists the same thirteen `candidate_families`:
 - `ethernet_trunk_host`
 - `loopback`
 - `port_channel_access`
+- `port_channel_dot1q_tunnel_host`
 - `port_channel_routed`
 - `port_channel_trunk_host`
 - `subinterface_managed`
 - `subinterface_unmanaged`
 - `svi`
 - `vpc_access`
+- `vpc_dot1q_tunnel`
 - `vpc_trunk_host`
 
 Use `nd_iw_selected_families` to restrict a run. A family is active only when it is selected, is present in the fabric `candidate_families`, is not in `unsupported_families`, is permitted by any optional `supported_families` allow-list, and supports the fabric discriminator in the property matrix. Candidate families declared unsupported are exercised as `nd_iw_unsupported_cases` and must fail in check mode without reporting a change. A per-family string or discriminator/default mapping in `unsupported_expected_error` can constrain the diagnostic.
@@ -233,6 +235,14 @@ Before selecting a family, reserve controller-visible resources that will not co
   port-channel/vPC members, or parent interfaces. A port name is not evidence of ownership; retain all module safety checks.
   Dot1q uses the existing `nd_iw_access_vlan` and `nd_iw_access_vlan_alternate` fixtures (3101/3102 by default).
 - A valid vPC pair and per-peer member interfaces for vPC cases.
+- Three unused physical member ports for `port_channel_dot1q_tunnel_host`:
+  `nd_iw_port_channel_dot1q_member1`, `nd_iw_port_channel_dot1q_member2`, and `nd_iw_port_channel_dot1q_member3`
+  default to `Ethernet1/58`, `Ethernet1/59`, and `Ethernet1/60`. Its port-channel IDs default to 931 and 932.
+  Override these ports on hardware with fewer interfaces or when another test owns them.
+- Two unused physical member ports on each vPC peer for `vpc_dot1q_tunnel`:
+  `nd_iw_vpc_dot1q_peer1_member1` / `nd_iw_vpc_dot1q_peer2_member1` default to `Ethernet1/10`, and
+  `nd_iw_vpc_dot1q_peer1_member2` / `nd_iw_vpc_dot1q_peer2_member2` default to `Ethernet1/11`.
+  Its vPC and generated port-channel IDs default to 971 and 972. These reservations do not overlap the other checked-in family defaults.
 - Routed parent interfaces for managed and unmanaged subinterfaces.
 - Test-owned loopback, port-channel, subinterface, SVI, vPC, and VLAN identifiers matching the reserved-resource overrides.
 - Existing NetFlow monitors/samplers, QoS and queuing policies, and controller/switch support for PFC or VLAN mapping when those optional packs are exercised.
@@ -272,6 +282,13 @@ above (`linkup_debounce_supported`, `fec_off_supported`, `l2_netflow_monitor_exi
 `qos_policy_exists`, `queuing_policy_exists`, `pfc_supported`); they are not enabled for live use by adding this family.
 Physical deletion is verified as reset to the default `trunkHost` policy. This definition does not claim live qualification
 on a particular controller release or switch platform; the separate standalone dot1q target remains available.
+
+Configured `port_channel_dot1q_tunnel_host` and `vpc_dot1q_tunnel` cases are also NX-OS-only. Their parent policies are
+`dot1qTunnelPoHost` and `dot1qTunnelVpc`, both using `mode: dot1qTunnel` and the public `access_vlan` field. The workflow
+catalog covers their create, update, replacement, override, and delete payloads, including physical member changes.
+The port-channel cases omit the unsupported `monitor` field. The vPC cases use shared VLAN intent and per-peer
+member ports, IDs, descriptions, and additional CLI. Referenced NetFlow/QoS/PFC packs retain their explicit prerequisites;
+catalog entries alone do not claim live qualification for every fabric type, platform, or controller version.
 
 The full check-only profile cannot deterministically preview a sibling-policy transition without first seeding live source state. The full live profile uses the standalone Ethernet access and trunk-host modules to establish deterministic sibling-policy sources, then verifies implicit accessHost↔trunkHost transitions under both `merged` and `replaced`, transition metadata, idempotency, and policy-independent deletion through the opposite Ethernet type. It also verifies that physical deletion resets both interfaces to the default `trunkHost` policy without physical deployment. Other structural domains and source policies remain unit-tested until each combination has a safe, model-backed live setup path; do not use fabric-owned loopbacks, SVIs, peer links, or other controller-owned interfaces merely to manufacture transition coverage.
 

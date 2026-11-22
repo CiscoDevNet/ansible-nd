@@ -149,7 +149,7 @@ class InterfaceWorkflowCoordinator:
 
     @staticmethod
     def _uses_vpc(resources: list[dict[str, Any]]) -> bool:
-        return any(isinstance(resource, dict) and resource.get("type") in {"vpc_access", "vpc_trunk_host"} for resource in resources)
+        return any(isinstance(resource, dict) and resource.get("type") in {"vpc_access", "vpc_dot1q_tunnel", "vpc_trunk_host"} for resource in resources)
 
     @staticmethod
     def _coerce_nonnegative_int(value: Any) -> int | None:
@@ -290,6 +290,7 @@ class InterfaceWorkflowCoordinator:
         for resource_index, resource in enumerate(resources):
             if not isinstance(resource, dict) or resource.get("type") not in {
                 "vpc_access",
+                "vpc_dot1q_tunnel",
                 "vpc_trunk_host",
             }:
                 continue
@@ -717,6 +718,7 @@ class InterfaceWorkflowCoordinator:
             "svi",
             "loopback",
             "port_channel_access",
+            "port_channel_dot1q_tunnel_host",
             "port_channel_trunk_host",
             "port_channel_routed",
             "subinterface_managed",
@@ -775,7 +777,7 @@ class InterfaceWorkflowCoordinator:
             if (
                 resource.state != "deleted"
                 or resource.adapter.ownership_domain != "vpc"
-                or resource.resource_type not in {"vpc_access", "vpc_trunk_host"}
+                or resource.resource_type not in {"vpc_access", "vpc_dot1q_tunnel", "vpc_trunk_host"}
                 or type(resource.resource_index) is not int
                 or resource.resource_index < 0
             ):
