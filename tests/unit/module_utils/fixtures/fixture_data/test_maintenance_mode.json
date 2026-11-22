@@ -8,7 +8,8 @@
         "GET shape is captured verbatim from ND 4.2.1 lab against fabric SITE1 on 2026-05-28.",
         "Each update() call after query_all() adds: POST changeSystemMode (the snapshot is cached).",
         "Switch A: ip=192.168.12.131, switchId=9UOJ3E8A6O9 (S1_BG1).",
-        "Switch B: ip=192.168.12.151, switchId=9ASNKH8T9DJ (S1_LE1)."
+        "Switch B: ip=192.168.12.151, switchId=9ASNKH8T9DJ (S1_LE1).",
+        "00500-00540 (issue #653) drive NDStateMachine end to end; their bulk GET rows reuse the Switch A/B identities above."
     ],
 
     "summary_ok": {
@@ -221,6 +222,160 @@
         "DATA": {
             "items": [
                 {"status": "failed", "message": "deploy aborted", "switchId": "9UOJ3E8A6O9"}
+            ]
+        }
+    },
+    "test_maintenance_mode_00500a": {
+        "TEST_NOTES": ["NDStateMachine merged no-op (issue #653): fabric summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "SITE1", "local": true, "fabricStatus": "default"}
+    },
+    "test_maintenance_mode_00500b": {
+        "TEST_NOTES": ["NDStateMachine merged no-op (issue #653): both switches already normal"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.131",
+                    "switchId": "9UOJ3E8A6O9",
+                    "additionalData": {"intendedSystemMode": "normal", "discoveredSystemMode": "normal"}
+                },
+                {
+                    "fabricManagementIp": "192.168.12.151",
+                    "switchId": "9ASNKH8T9DJ",
+                    "additionalData": {"intendedSystemMode": "normal", "discoveredSystemMode": "normal"}
+                }
+            ]
+        }
+    },
+    "test_maintenance_mode_00510a": {
+        "TEST_NOTES": ["NDStateMachine merged single-switch change (issue #653): fabric summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "SITE1", "local": true, "fabricStatus": "default"}
+    },
+    "test_maintenance_mode_00510b": {
+        "TEST_NOTES": ["NDStateMachine merged single-switch change (issue #653): switch A normal, maintenance requested"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.131",
+                    "switchId": "9UOJ3E8A6O9",
+                    "additionalData": {"intendedSystemMode": "normal", "discoveredSystemMode": "normal"}
+                }
+            ]
+        }
+    },
+    "test_maintenance_mode_00510c": {
+        "TEST_NOTES": ["NDStateMachine merged single-switch change (issue #653): POST changeSystemMode 207 success"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switchActions/changeSystemMode",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "items": [
+                {"status": "success", "message": "switch 9UOJ3E8A6O9 success to set mode to maintenance", "switchId": "9UOJ3E8A6O9"}
+            ]
+        }
+    },
+    "test_maintenance_mode_00520a": {
+        "TEST_NOTES": ["NDStateMachine merged check mode (issue #653): fabric summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "SITE1", "local": true, "fabricStatus": "default"}
+    },
+    "test_maintenance_mode_00520b": {
+        "TEST_NOTES": ["NDStateMachine merged check mode (issue #653): A normal, B maintenance; normal requested for both"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.131",
+                    "switchId": "9UOJ3E8A6O9",
+                    "additionalData": {"intendedSystemMode": "normal", "discoveredSystemMode": "normal"}
+                },
+                {
+                    "fabricManagementIp": "192.168.12.151",
+                    "switchId": "9ASNKH8T9DJ",
+                    "additionalData": {"intendedSystemMode": "maintenance", "discoveredSystemMode": "maintenance"}
+                }
+            ]
+        }
+    },
+    "test_maintenance_mode_00530a": {
+        "TEST_NOTES": ["preflight unknown switch (issue #653): fabric summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "SITE1", "local": true, "fabricStatus": "default"}
+    },
+    "test_maintenance_mode_00530b": {
+        "TEST_NOTES": ["preflight unknown switch (issue #653): only switch A in the fabric"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.131",
+                    "switchId": "9UOJ3E8A6O9",
+                    "additionalData": {"intendedSystemMode": "normal", "discoveredSystemMode": "normal"}
+                }
+            ]
+        }
+    },
+    "test_maintenance_mode_00540a": {
+        "TEST_NOTES": ["NDStateMachine merged on ND 4.3.1 (issue #653): fabric summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "SITE1", "local": true, "fabricStatus": "default"}
+    },
+    "test_maintenance_mode_00540b": {
+        "TEST_NOTES": ["NDStateMachine merged on ND 4.3.1 (issue #653): switch A normal, maintenance requested"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.131",
+                    "switchId": "9UOJ3E8A6O9",
+                    "additionalData": {"intendedSystemMode": "normal", "discoveredSystemMode": "normal"}
+                }
+            ]
+        }
+    },
+    "test_maintenance_mode_00540c": {
+        "TEST_NOTES": ["NDStateMachine merged on ND 4.3.1 (issue #653): POST changeSystemMode 207 success"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switchActions/changeSystemMode",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "items": [
+                {"status": "success", "message": "switch 9UOJ3E8A6O9 success to set mode to maintenance", "switchId": "9UOJ3E8A6O9"}
             ]
         }
     }
