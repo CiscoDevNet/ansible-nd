@@ -58,22 +58,16 @@ def _check_metadata(context: FabricContext, switch_id: str) -> None:
         raise RuntimeError(f"Missing-member preparation requires positive NX-OS fabric identity for {switch_id!r}.")
 
 
-def _check_unowned(preparation: Any, snapshot: Any, index: EthernetMembershipIndex) -> None:
-    """Refuse local/peer parent claims, child interfaces and fabric link intent."""
-    switch_id, name = preparation.switch_id, preparation.interface_name.casefold()
-    orchestrator = preparation.orchestrator
-    if index.get_member(switch_id, name) is not None or index.claiming_parents(switch_id, name):
-        raise RuntimeError(f"Missing-member preparation refuses existing aggregate ownership for {switch_id}/{name}.")
-    peer_id = orchestrator._member_peer_serial_cache.get(switch_id)
-    inventories = snapshot.clean_interfaces_by_switch
-    for owner_id in (switch_id, *((peer_id,) if peer_id is not None else ())):
-        if not snapshot.has_switch(owner_id):
-            raise RuntimeError("Missing-member preparation requires complete reciprocal inventories.")
+def _unowned_inventory_indexes(inventories: Any, index: EthernetMembershipIndex, target_ids: set[str], peer_ids: dict[str, str]):
+    """Precompute scoped children and parent claims from one fresh inventory."""
+    children, claims = set(), set()
+    scope = target_ids | {peer_ids[switch_id] for switch_id in target_ids if switch_id in peer_ids}
+    for owner_id in scope:
         for record in inventories[owner_id].values():
             record_name = str(record.get("interfaceName") or "").casefold()
-            if owner_id == switch_id and record.get("interfaceType") == "subInterface" and record_name.rsplit(".", 1)[0] == name:
-                raise RuntimeError(f"Missing-member preparation refuses existing child interfaces for {switch_id}/{name}.")
-            if owner_id != switch_id and record.get("interfaceType") != "vpc":
+            if owner_id in target_ids and record.get("interfaceType") == "subInterface":
+                children.add((owner_id, record_name.rsplit(".", 1)[0]))
+            if owner_id not in target_ids and record.get("interfaceType") != "vpc":
                 continue
             config = record.get("configData")
             if not isinstance(config, dict) or not config.get("networkOS"):
@@ -88,7 +82,7 @@ def _check_unowned(preparation: Any, snapshot: Any, index: EthernetMembershipInd
                     raise RuntimeError("Missing-member preparation refuses malformed parent membership lists.")
                 memberships[field] = names
             if record.get("interfaceType") == "vpc":
-                expected_peer = peer_id if owner_id == switch_id else switch_id
+                expected_peer = peer_ids.get(owner_id)
                 declared_peer = policy.get("peerSwitchId")
                 if expected_peer is None or declared_peer not in (None, "", expected_peer):
                     raise RuntimeError("Missing-member preparation refuses unresolved or conflicting parent peer identity.")
@@ -96,16 +90,79 @@ def _check_unowned(preparation: Any, snapshot: Any, index: EthernetMembershipInd
                 # against actual switch-scoped members. An unproved orientation
                 # deliberately keeps both slots, retaining conflicting evidence.
                 fields = index._local_vpc_parent_member_fields(owner_id, record_name, policy)
-                if owner_id != switch_id and len(fields) == 1:
-                    fields = tuple(field for field in ("peer1MemberPorts", "peer2MemberPorts") if field not in fields)
-                if owner_id == switch_id:
-                    fields = (*fields, "ports")
+                remote_fields = tuple(field for field in ("peer1MemberPorts", "peer2MemberPorts") if field not in fields)
+                if len(fields) != 1:
+                    remote_fields = ("peer1MemberPorts", "peer2MemberPorts")
+                for field in remote_fields:
+                    claims.update((expected_peer, name) for name in memberships.get(field, ()))
+                fields = (*fields, "ports")
             else:
                 fields = tuple(memberships)
-            if any(name in memberships.get(field, ()) for field in fields):
-                raise RuntimeError(f"Missing-member preparation refuses a local or reciprocal parent claim for {switch_id}/{name}.")
-    if (switch_id, name) in orchestrator._fabric_link_endpoints():
+            for field in fields:
+                claims.update((owner_id, name) for name in memberships.get(field, ()))
+    return children, claims
+
+
+def _phase_links(orchestrator: Any, links: dict[int, Any]):
+    """Reuse a provider's link evidence only inside this fresh validation call."""
+    provider = getattr(orchestrator, "_fabric_link_cache_provider", None) or orchestrator
+    key = id(provider)
+    if key not in links:
+        links[key] = orchestrator._fabric_link_endpoints()
+    return links[key]
+
+
+def _check_unowned(preparation: Any, index: EthernetMembershipIndex, children: Any, claims: Any, links: dict[int, Any]) -> None:
+    """Refuse local/peer parent claims, child interfaces and fabric link intent."""
+    switch_id, name = preparation.switch_id, preparation.interface_name.casefold()
+    if index.get_member(switch_id, name) is not None or index.claiming_parents(switch_id, name):
+        raise RuntimeError(f"Missing-member preparation refuses existing aggregate ownership for {switch_id}/{name}.")
+    if (switch_id, name) in children:
+        raise RuntimeError(f"Missing-member preparation refuses existing child interfaces for {switch_id}/{name}.")
+    if (switch_id, name) in claims:
+        raise RuntimeError(f"Missing-member preparation refuses a local or reciprocal parent claim for {switch_id}/{name}.")
+    if (switch_id, name) in _phase_links(preparation.orchestrator, links):
         raise RuntimeError(f"Missing-member preparation refuses fabric-link endpoint {switch_id}/{name}.")
+
+
+def _merge_peer_identity(peers: dict[str, str], switch_id: str, peer_id: str) -> None:
+    previous = peers.get(switch_id)
+    if previous is not None and previous != peer_id:
+        raise RuntimeError("Missing-member preparation refuses conflicting reciprocal pair identities.")
+    peers[switch_id] = peer_id
+
+
+def _fresh_preparation_scope(preparations: Any, snapshot: Any):
+    """Validate each distinct target/provider once and combine exact pair scope."""
+    refresh_ids = {item.switch_id for item in preparations}
+    checked_pairs, checked_metadata, orchestrators, peers = set(), set(), {}, {}
+    for item in preparations:
+        orchestrator = item.orchestrator
+        orchestrators[id(orchestrator)] = orchestrator
+        if orchestrator.deploy:
+            raise RuntimeError("Missing-member preparation requires deployment disabled.")
+        pair_key = id(orchestrator), item.switch_id
+        if pair_key in checked_pairs:
+            continue
+        checked_pairs.add(pair_key)
+        context = snapshot.topology_context(
+            lambda orchestrator=orchestrator: FabricContext(rest_send=orchestrator.rest_send, fabric_name=snapshot.fabric_name)
+        )
+        if (id(context), item.switch_id) not in checked_metadata:
+            _check_metadata(context, item.switch_id)
+            checked_metadata.add((id(context), item.switch_id))
+        peer_id = orchestrator._load_staged_detachment_peer(item.switch_id, load_peer_inventory=False)
+        if peer_id is not None:
+            if (id(context), peer_id) not in checked_metadata:
+                _check_metadata(context, peer_id)
+                checked_metadata.add((id(context), peer_id))
+            refresh_ids.add(peer_id)
+            _merge_peer_identity(peers, item.switch_id, peer_id)
+            _merge_peer_identity(peers, peer_id, item.switch_id)
+    for orchestrator in orchestrators.values():
+        for switch_id, peer_id in orchestrator._member_peer_serial_cache.items():
+            _merge_peer_identity(peers, switch_id, peer_id)
+    return refresh_ids, peers, tuple(orchestrators.values())
 
 
 def _check_prepared(preparation: Any, record: Any) -> None:
@@ -165,29 +222,19 @@ def refresh_missing_preparations(preparations: Any, snapshot: Any, phase: str = 
     ):
         raise RuntimeError("Missing-member preparation requires unique exact auxiliary receipts.")
     snapshot.invalidate_topology_evidence()
-    refresh_ids = {item.switch_id for item in preparations}
-    for item in preparations:
-        orchestrator = item.orchestrator
-        if orchestrator.deploy:
-            raise RuntimeError("Missing-member preparation requires deployment disabled.")
-        context = snapshot.topology_context(
-            lambda orchestrator=orchestrator: FabricContext(rest_send=orchestrator.rest_send, fabric_name=snapshot.fabric_name)
-        )
-        _check_metadata(context, item.switch_id)
-        peer_id = orchestrator._load_staged_detachment_peer(item.switch_id, load_peer_inventory=False)
-        if peer_id is not None:
-            _check_metadata(context, peer_id)
-            refresh_ids.add(peer_id)
+    refresh_ids, peer_ids, orchestrators = _fresh_preparation_scope(preparations, snapshot)
     snapshot.refresh(sorted(refresh_ids))
-    observed = []
-    for item in preparations:
-        orchestrator = item.orchestrator
+    if not all(snapshot.has_switch(switch_id) for switch_id in refresh_ids):
+        raise RuntimeError("Missing-member preparation requires complete reciprocal inventories.")
+    inventories = snapshot.clean_interfaces_by_switch
+    index = EthernetMembershipIndex(inventories, peer_switch_ids=peer_ids)
+    children, claims = _unowned_inventory_indexes(inventories, index, {item.switch_id for item in preparations}, peer_ids) if phase != "member" else ((), ())
+    links, observed = {}, []
+    for orchestrator in orchestrators:
         orchestrator._membership_index_cache = None
         orchestrator._membership_index_inventory_switches = frozenset()
-        index = EthernetMembershipIndex(
-            snapshot.clean_interfaces_by_switch,
-            peer_switch_ids=orchestrator._member_peer_serial_cache,
-        )
+    for item in preparations:
+        orchestrator = item.orchestrator
         record = snapshot.cached_interface(item.switch_id, item.interface_name)
         if phase == "member":
             ownership = index.validate(item.switch_id, item.interface_name)
@@ -203,7 +250,7 @@ def refresh_missing_preparations(preparations: Any, snapshot: Any, phase: str = 
             if (
                 item.switch_id,
                 item.interface_name.casefold(),
-            ) in orchestrator._fabric_link_endpoints():
+            ) in _phase_links(orchestrator, links):
                 raise RuntimeError("Prepared missing member became a fabric-link endpoint.")
             observed.append(
                 {
@@ -223,7 +270,7 @@ def refresh_missing_preparations(preparations: Any, snapshot: Any, phase: str = 
                 }
             )
             continue
-        _check_unowned(item, snapshot, index)
+        _check_unowned(item, index, children, claims, links)
         if phase == "absent":
             if item.kind == "missing_inventory":
                 if record is not None:
