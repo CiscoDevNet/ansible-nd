@@ -20,6 +20,8 @@ description:
 - Supports normal discovery, POAP (bootstrap/preprovision), and RMA operations.
 - Uses Pydantic model validation for switch configurations.
 - Provides state-based operations with intelligent diff calculation.
+- Check mode observes complete POAP candidate scope to forecast interrupted import recovery without polling or changes.
+- Candidate wait failures preserve accepted earlier changes; a mixed request is not automatically rolled back.
 options:
     fabric:
         description:
@@ -582,6 +584,33 @@ api_metadata:
   sample:
     - action: discover
       state: merged
+accepted_operations:
+  description:
+  - Nonsecret summaries of registered successful changes preserved when a later bootstrap candidate wait fails.
+  - Contains at most 100 entries. This records accepted operations, not verified final controller state or rollback.
+  returned: on bootstrap candidate wait failure
+  type: list
+  elements: dict
+  sample:
+    - action: update_role
+      sequence_number: 1
+      changed: true
+accepted_operations_truncated:
+  description: Whether additional accepted-operation summaries exceed the 100-entry diagnostic bound.
+  returned: on bootstrap candidate wait failure
+  type: bool
+  sample: false
+bootstrap_wait_failure:
+  description:
+  - Fabric, timeout and missing physical serials from an expired candidate wait.
+  - A failed candidate observation reports C(reason=observation_failed) and C(requested_serials), without claiming that those serials are absent.
+  returned: on bootstrap candidate wait timeout or observation failure
+  type: dict
+  sample:
+    fabric_name: FAB1
+    timeout: 0
+    missing_serials:
+      - REAL1
 """
 
 import logging
@@ -595,6 +624,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.co
     SwitchConfigModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch_resources import (
+    BootstrapWaitError,
     NDSwitchResourceModule,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
@@ -603,6 +633,41 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     nd_argument_spec,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
+
+_ACCEPTED_SWITCH_ACTIONS = frozenset(
+    (
+        "create",
+        "delete",
+        "update_role",
+        "bootstrap",
+        "preprovision",
+        "swap_serial",
+        "save_credentials",
+        "config_save",
+        "deploy_switches",
+        "deploy_config",
+        "rma",
+    )
+)
+
+
+def _fail_bootstrap_wait(module, results, error):
+    """Retain accepted results at the real Ansible termination boundary."""
+    results.build_final_result()
+    final = results.final_result
+    accepted = [
+        {"action": row["action"], "sequence_number": row["sequence_number"], "changed": True}
+        for row in results.accepted_changes
+        if row.get("action") in _ACCEPTED_SWITCH_ACTIONS
+    ]
+    final.update(
+        failed=True,
+        changed=True in results.changed,
+        accepted_operations=accepted[:100],
+        accepted_operations_truncated=len(accepted) > 100,
+        bootstrap_wait_failure=error.to_dict(),
+    )
+    module.fail_json(msg=str(error), **final)
 
 
 def main():
@@ -666,6 +731,10 @@ def main():
         # Exit with results
         log.info("State management completed successfully. Changed: %s", results.changed)
         sw_module.exit_json()
+
+    except BootstrapWaitError as error:
+        log.error("Bootstrap candidate wait failed: %s", error)
+        _fail_bootstrap_wait(module, results, error)
 
     except NDModuleError as error:
         # NDModule-specific errors (API failures, authentication issues, etc.)

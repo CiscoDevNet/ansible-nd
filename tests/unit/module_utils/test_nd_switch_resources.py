@@ -2106,16 +2106,19 @@ def test_utils_bootstrap_query_index_and_poap_data_block():
     log = ListLogger()
     nd = FakeND(data={"switches": [{"serialNumber": "SERIAL1"}]})
     assert query_bootstrap_switches(nd, "FAB1", log) == [{"serialNumber": "SERIAL1"}]
-    assert nd.calls[0]["path"].endswith("/bootstrap")
+    path, query = nd.calls[0]["path"].split("?", 1)
+    assert path.endswith("/bootstrap")
+    assert set(query.split("&")) == {"max=500", "offset=0"}
 
     nd = FakeND(data=[{"serialNumber": "SERIAL2"}])
     assert query_bootstrap_switches(nd, "FAB1", log) == [{"serialNumber": "SERIAL2"}]
 
     nd = FakeND(data="unexpected")
-    assert query_bootstrap_switches(nd, "FAB1", log) == []
+    with pytest.raises(SwitchOperationError, match="switches list"):
+        query_bootstrap_switches(nd, "FAB1", log)
 
     failing_nd = FakeND(exc=ValueError("boom"))
-    with pytest.raises(FailJsonError, match="Failed to query bootstrap switches"):
+    with pytest.raises(SwitchOperationError, match="Failed to query bootstrap switches"):
         query_bootstrap_switches(failing_nd, "FAB1", log)
 
     index = build_bootstrap_index([{"serialNumber": "SERIAL1"}, {"serial_number": "SERIAL2"}, {"hostname": "missing-serial"}])

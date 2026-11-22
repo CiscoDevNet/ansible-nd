@@ -300,6 +300,35 @@ class SwitchServiceContext:
         return response
 
 
+class BootstrapWaitError(SwitchOperationError):
+    """A completed candidate observation did not satisfy the bounded wait."""
+
+    def __init__(self, fabric_name: str, timeout: int, serial_numbers: list[str], *, observation_error: str | None = None):
+        self.fabric_name = fabric_name
+        self.timeout = timeout
+        self.serial_numbers = sorted(set(serial_numbers))
+        self.observation_error = observation_error
+        if observation_error is not None:
+            message = f"Cannot read complete POAP candidates in fabric '{fabric_name}': {observation_error}"
+        else:
+            message = (
+                f"Timed out after {timeout} seconds waiting for POAP candidates "
+                f"in fabric '{fabric_name}'. Missing serials: {', '.join(self.serial_numbers)}. "
+                "Ensure the switches are powered on, POAP/DHCP is enabled, "
+                "and the management network can reach the bootstrap service."
+            )
+        super().__init__(message)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return nonsecret wait diagnostics without claiming an after state."""
+        details = {"fabric_name": self.fabric_name, "timeout": self.timeout}
+        if self.observation_error is not None:
+            details.update(reason="observation_failed", requested_serials=list(self.serial_numbers))
+        else:
+            details["missing_serials"] = list(self.serial_numbers)
+        return details
+
+
 class BootstrapCache:
     """Cache bootstrap API queries to avoid redundant HTTP calls within a single run."""
 
@@ -323,14 +352,24 @@ class BootstrapCache:
         """
         if self._switches is None or refresh:
             self._log.debug("BootstrapCache: querying bootstrap API (refresh=%s)", refresh)
-            self._switches = query_bootstrap_switches(self._nd, self._fabric, self._log)
-            self._index = build_bootstrap_index(self._switches)
+            self.invalidate()
+            switches = query_bootstrap_switches(self._nd, self._fabric, self._log)
+            index = build_bootstrap_index(switches)
+            self._switches = switches
+            self._index = index
         return self._index
 
     def invalidate(self) -> None:
         """Clear the cache so the next access re-queries the API."""
         self._switches = None
         self._index = None
+
+    def _wait_observation(self, serial_numbers: set[str], timeout: int) -> dict[str, dict[str, Any]]:
+        """Preserve partial operations when any fresh candidate read fails."""
+        try:
+            return self.get_index(refresh=True)
+        except _FABRIC_OPERATION_ERRORS as error:
+            raise BootstrapWaitError(self._fabric, timeout, sorted(serial_numbers), observation_error=str(error)) from error
 
     def wait_for_serials(self, serial_numbers: list[str]) -> dict[str, dict[str, Any]]:
         """Wait once for a batch of physical switches to enter the POAP list.
@@ -346,21 +385,16 @@ class BootstrapCache:
         timeout = options.get("timeout", 300)
         interval = options.get("interval", 5)
         deadline = time.monotonic() + timeout
-        index = self.get_index(refresh=True)
+        index = self._wait_observation(required, timeout)
         while True:
             missing = sorted(required.difference(index))
             if not missing:
                 return index
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                self._nd.module.fail_json(
-                    msg=(
-                        f"Timed out after {timeout} seconds waiting for POAP candidates "
-                        f"in fabric '{self._fabric}'. Missing serials: {', '.join(missing)}. "
-                        "Ensure the switches are powered on, POAP/DHCP is enabled, "
-                        "and the management network can reach the bootstrap service."
-                    )
-                )
+                # Let the public module boundary retain all already accepted
+                # operations. fail_json exits via SystemExit and bypasses it.
+                raise BootstrapWaitError(self._fabric, timeout, missing)
             self._log.info(
                 "Waiting for POAP serials %s in fabric %s (%.1f seconds remaining)",
                 missing,
@@ -368,7 +402,7 @@ class BootstrapCache:
                 remaining,
             )
             time.sleep(min(interval, remaining))
-            index = self.get_index(refresh=True)
+            index = self._wait_observation(required, timeout)
 
 
 # =========================================================================
@@ -424,6 +458,7 @@ class SwitchPlan:
     # Cross-cutting helpers
     to_delete_existing: list["SwitchDataModel"]
     role_updates: list["SwitchConfigModel"] = field(default_factory=list)
+    bootstrap_recovery: list["SwitchConfigModel"] = field(default_factory=list)
 
 
 class SwitchDiffEngine:
@@ -2949,10 +2984,9 @@ class NDSwitchResourceModule:
         Existing matching preprovision placeholders remain inventory-idempotent.
         Their creation-only gateway, module, and breakout data cannot be read
         back from the list of physical devices in the bootstrap loop.
-        Check mode keeps its inventory-only plan.
+        Normal and check mode use the same complete read-only candidate
+        observation. Only the execution handlers may poll or mutate.
         """
-        if self.nd.module.check_mode:
-            return
         candidates = []
         for cfg in list(plan.idempotent) + list(plan.role_updates):
             sw = existing_by_ip.get(cfg.seed_ip)
@@ -2973,6 +3007,7 @@ class NDSwitchResourceModule:
                     bucket.remove(cfg)
             bucket = plan.to_swap if cfg.operation_type == "swap" else plan.to_bootstrap
             bucket.append(cfg)
+            plan.bootstrap_recovery.append(cfg)
             self.log.info("Resuming %s import for physical switch %s present in the POAP list", cfg.operation_type, cfg.seed_ip)
 
     def _apply_onboarding_role_updates(self, plan: "SwitchPlan") -> None:
@@ -3056,12 +3091,13 @@ class NDSwitchResourceModule:
             adds: list[SwitchConfigModel] = (
                 list(plan.to_add) + list(plan.normal_readd) + list(plan.to_bootstrap) + list(plan.to_preprovision) + list(plan.to_swap) + list(plan.to_rma)
             )
+            recovery_ips = {cfg.seed_ip for cfg in plan.bootstrap_recovery}
             for cfg in adds:
                 try:
                     entry = cfg.to_config()
                     entry.pop("operation_type", None)
                     entry["password"] = "<password>"
-                    entry["_action"] = "added"
+                    entry["_action"] = "updated" if cfg.seed_ip in recovery_ips else "added"
                     diff_list.append(entry)
                 except _OUTPUT_CONVERSION_ERRORS as exc:
                     self.log.warning("check_mode diff: could not convert %s: %s", cfg.seed_ip, exc)
@@ -3082,6 +3118,10 @@ class NDSwitchResourceModule:
             deleted_ips = {sw.fabric_management_ip for sw in deleted_sws}
             after_list = [e for e in before_list if e.get("seed_ip") not in deleted_ips]
             for cfg in adds:
+                if cfg.seed_ip in recovery_ips:
+                    # Import recovery keeps the already replaced physical
+                    # identity; it does not add a second inventory record.
+                    continue
                 # Mirror the format produced by _inventory_to_config_list — no
                 # poap/preprovision sub-blocks since those reflect the user's
                 # desired discovery method, not the resulting inventory state.
@@ -3101,7 +3141,7 @@ class NDSwitchResourceModule:
                     entry["preserve_config"] = preserve_config
                 after_list.append(entry)
             # Apply role updates in-place
-            update_role_map = {cfg.seed_ip: cfg for cfg in list(plan.to_update) + list(plan.role_updates)}
+            update_role_map = {cfg.seed_ip: cfg for cfg in list(plan.to_update) + list(plan.role_updates) + list(plan.bootstrap_recovery)}
             for entry in after_list:
                 ip = entry.get("seed_ip")
                 if ip in update_role_map:
