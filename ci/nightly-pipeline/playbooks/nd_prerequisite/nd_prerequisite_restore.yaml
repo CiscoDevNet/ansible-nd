@@ -1,0 +1,105 @@
+---
+# Restore only interface prerequisites created by this execution. The journal is
+# persisted before each mutation and retained after restore for recovery/audit.
+- name: Announce prerequisite interface restore journal
+  ansible.builtin.debug:
+    msg: >-
+      Restoring {{ _ndp_prerequisite_restore_operations | default([]) | length }}
+      prerequisite interface change(s) from {{ _ndp_restore_file }}.
+  run_once: true
+
+- name: Delete managed test subinterfaces without deletion-test assertions
+  cisco.nd.nd_interface_subinterface_managed:
+    fabric_name: "{{ _ndp_subinterface_cleanup.fabric }}"
+    config:
+      - switch_ip: "{{ _ndp_subinterface_cleanup.switch_ip }}"
+        interface_name: "{{ _ndp_cleanup_interface }}"
+    config_actions: {deploy: true}
+    state: deleted
+  loop: "{{ (_ndp_subinterface_cleanup | default({})).interfaces | default([]) }}"
+  loop_control:
+    loop_var: _ndp_cleanup_interface
+  register: _ndp_managed_subinterface_cleanup
+  ignore_errors: true
+  run_once: true
+  when: test_module | default('') == 'nd_interface_subinterface_managed'
+
+- name: Delete unmanaged test subinterfaces without deletion-test assertions
+  cisco.nd.nd_interface_subinterface_unmanaged:
+    fabric_name: "{{ _ndp_subinterface_cleanup.fabric }}"
+    config:
+      - switch_ip: "{{ _ndp_subinterface_cleanup.switch_ip }}"
+        interface_name: "{{ _ndp_cleanup_interface }}"
+    config_actions: {deploy: true}
+    state: deleted
+  loop: "{{ (_ndp_subinterface_cleanup | default({})).interfaces | default([]) }}"
+  loop_control:
+    loop_var: _ndp_cleanup_interface
+  register: _ndp_unmanaged_subinterface_cleanup
+  ignore_errors: true
+  run_once: true
+  when: test_module | default('') == 'nd_interface_subinterface_unmanaged'
+
+- name: Restore prerequisite interface changes in reverse order
+  ansible.builtin.include_tasks: restore_interface_operation.yaml
+  loop: "{{ _ndp_prerequisite_restore_operations | default([]) | reverse | list }}"
+  loop_control:
+    loop_var: _ndp_restore_operation
+    label: "{{ _ndp_restore_operation.action }} {{ _ndp_restore_operation.interface }}"
+  run_once: true
+
+- name: Report subinterface cleanup failures after attempting parent restoration
+  ansible.builtin.assert:
+    that:
+      - (_ndp_managed_subinterface_cleanup | default({})) is not failed
+      - (_ndp_unmanaged_subinterface_cleanup | default({})) is not failed
+    fail_msg: Subinterface cleanup failed; parent restoration was attempted. Inspect the deletion results above.
+  run_once: true
+
+- name: Record successful prerequisite interface restore
+  ansible.builtin.copy:
+    dest: "{{ _ndp_state_dir }}/interface-restore-complete.yaml"
+    content: >-
+      {{ {'schema_version': 1, 'run_id': _ndp_run_id,
+          'execution_id': _ndp_execution_id,
+          'restored_operations': _ndp_prerequisite_restore_operations | default([])} | to_nice_yaml }}
+    mode: "0600"
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: _ndp_prerequisite_restore_operations | default([]) | length > 0
+
+- name: Disarm prerequisite interface restore after successful verification
+  ansible.builtin.set_fact:
+    _ndp_prerequisite_restore_operations: []
+  run_once: true
+
+- name: Read the baseline repair lock owner after successful cleanup
+  ansible.builtin.slurp:
+    src: "{{ _ndp_repair_lock_dir }}/owner.json"
+  delegate_to: localhost
+  register: _ndp_repair_lock_owner
+  run_once: true
+  when: _ndp_baseline_repair_lock_acquired | default(false) | bool
+
+- name: Verify this run still owns the baseline repair lock
+  ansible.builtin.assert:
+    that:
+      - (_ndp_repair_lock_owner.content | b64decode | from_json).run_id == _ndp_run_id
+      - (_ndp_repair_lock_owner.content | b64decode | from_json).execution_id == _ndp_execution_id
+    fail_msg: "Baseline repair lock ownership changed; refusing to release it."
+  run_once: true
+  when: _ndp_baseline_repair_lock_acquired | default(false) | bool
+
+- name: Release the baseline repair lock after successful cleanup
+  ansible.builtin.file:
+    path: "{{ _ndp_repair_lock_dir }}"
+    state: absent
+  delegate_to: localhost
+  run_once: true
+  when: _ndp_baseline_repair_lock_acquired | default(false) | bool
+
+- name: Disarm the released baseline repair lock
+  ansible.builtin.set_fact:
+    _ndp_baseline_repair_lock_acquired: false
+  run_once: true

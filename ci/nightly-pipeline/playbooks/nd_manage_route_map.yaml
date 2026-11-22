@@ -1,0 +1,39 @@
+---
+# Nightly integration playbook for cisco.nd.nd_manage_route_map.
+# Self-contained: creates a route map with a set-local-preference rule
+# (no prefix-list/community dependencies), then deletes it.
+- name: cisco.nd nightly - nd_manage_route_map
+  hosts: nd
+  gather_facts: false
+  vars:
+    nd_prerequisite:
+      profile: smoke.nd_manage_route_map
+      fabric_types: [vxlanIbgp]
+      switch_count: 1
+      switch_roles: [leaf]
+    nd_fabric_name: VXLAN_EVPN_Fabric
+    nd_rm_name: RM_ANSIBLE_NIGHTLY
+  pre_tasks:
+    - name: Prepare and confirm ND topology prerequisites
+      ansible.builtin.import_tasks: nd_prerequisite/nd_prerequisite_wrapper.yaml
+      when: nd_prerequisite_enable | default(false) | bool
+  tasks:
+    - name: Create a route map
+      cisco.nd.nd_manage_route_map:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: merged
+        config:
+          - name: "{{ nd_rm_name }}"
+            entries:
+              - sequence_number: 10
+                action: permit
+                rule_entries:
+                  - rule_type: setLocalPreference
+                    value: 200
+
+    - name: Delete the test route map
+      cisco.nd.nd_manage_route_map:
+        fabric_name: "{{ nd_fabric_name }}"
+        state: deleted
+        config:
+          - name: "{{ nd_rm_name }}"

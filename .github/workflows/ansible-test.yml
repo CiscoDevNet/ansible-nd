@@ -27,7 +27,7 @@ jobs:
       - name: Run black against code
         uses: psf/black@stable
         with:
-          options: "--check --diff --color -l 159"
+          options: "--check --diff --color -l 159 --exclude 'ci/nightly-pipeline/'"
 
   build:
     name: Build Collection
