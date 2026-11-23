@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils import (
@@ -939,6 +940,7 @@ def test_switch_fabric_ops_bulk_add_delete_credentials_roles_and_finalize():
     assert ctx.results.metadata[-1]["action"] == "create"
     assert "switchRole" not in ctx.nd.calls[-1]["data"]["switches"][0]
 
+    ctx.nd._data = {"switches": []}
     deleted = fabric_ops.bulk_delete([_sw("192.0.2.10", "SERIAL1")])
     assert deleted == ["SERIAL1"]
     assert ctx.results.metadata[-1]["action"] == "delete"
@@ -979,6 +981,130 @@ def test_switch_fabric_ops_bulk_delete_wraps_api_failures():
 
     with pytest.raises(SwitchOperationError, match="Bulk delete failed"):
         fabric_ops.bulk_delete([_sw("192.0.2.10", "SERIAL1")])
+
+
+def test_bulk_delete_waits_for_absence_without_resubmitting_remove(monkeypatch):
+    nd = FakeND(data={"switches": [{"switchId": "SERIAL1"}]})
+    original_request = nd.request
+    reads = []
+
+    def request(path=None, *, verb, data=None):
+        if verb == HttpVerbEnum.GET:
+            reads.append(path)
+            nd._data = {"switches": [{"switchId": "SERIAL1"}]} if len(reads) == 1 else {"switches": []}
+        return original_request(path, verb=verb, data=data)
+
+    monkeypatch.setattr(nd, "request", request)
+    sleeps = []
+    monkeypatch.setattr("ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch_resources.time.sleep", sleeps.append)
+    ops = SwitchFabricOps(_ctx(nd=nd), fabric_utils=SimpleNamespace())
+    assert ops.bulk_delete([_sw("192.0.2.10", "SERIAL1")]) == ["SERIAL1"]
+    assert len(reads) == 2
+    assert sleeps == [5]
+    assert sum("switchActions/remove" in call["path"] for call in nd.calls) == 1
+    assert all("force" not in call["path"] for call in nd.calls)
+
+
+@pytest.mark.parametrize("body", [
+    {},
+    {"switches": None},
+    {"switches": [{}]},
+    {"switches": [{"switchId": "UNRELATED"}, {"switchId": "UNRELATED"}]},
+    {"switches": [], "code": 500, "message": "read failed"},
+])
+def test_bulk_delete_rejects_unverified_inventory(body):
+    ops = SwitchFabricOps(_ctx(nd=FakeND(data=body)), fabric_utils=SimpleNamespace())
+    with pytest.raises(SwitchOperationError):
+        ops.bulk_delete([_sw("192.0.2.10", "SERIAL1")])
+
+
+def test_bulk_delete_fails_if_one_requested_switch_remains(monkeypatch):
+    nd = FakeND(data={"switches": [{"switchId": "SERIAL2"}]})
+    monkeypatch.setattr("ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch_resources.time.sleep", lambda _: None)
+    ops = SwitchFabricOps(_ctx(nd=nd), fabric_utils=SimpleNamespace())
+    with pytest.raises(SwitchOperationError, match="1 requested switch"):
+        ops.bulk_delete([_sw("192.0.2.10", "SERIAL1"), _sw("192.0.2.11", "SERIAL2")])
+    assert len(nd.calls) == 13
+    assert sum("switchActions/remove" in call["path"] for call in nd.calls) == 1
+    assert ops.ctx.delete_diagnostics == {
+        "http_status": 200, "coverage": "unavailable", "requested": 2, "remaining": 1,
+        "switches": [
+            {"request_position": 1, "status": "unavailable", "reason": "unclassified", "present": False},
+            {"request_position": 2, "status": "unavailable", "reason": "unclassified", "present": True},
+        ],
+    }
+
+
+@pytest.mark.parametrize("extra,coverage", [([], "partial"), ([{}], "invalid"),
+    ([{"switchId": "PRIVATE-ID", "status": "success"}], "invalid"),
+    ([{"switchId": "UNKNOWN-ID", "status": "success"}], "invalid")])
+def test_bulk_delete_207_preserves_sanitized_evidence_on_request_failure(monkeypatch, extra, coverage):
+    error = NDModuleError("partial response", status=207, response_payload={"items": [
+        {"switchId": "PRIVATE-ID", "status": "failed", "message": "Leaf-ToR unpairing PRIVATE-TEXT"},
+        *extra,
+    ]})
+    nd = FakeND(exc=error)
+    failures = []
+
+    def fail_json(**kwargs):
+        failures.append(kwargs)
+        raise FailJsonError(kwargs["msg"])
+
+    monkeypatch.setattr(nd.module, "fail_json", fail_json)
+    ops = SwitchFabricOps(_ctx(nd=nd), fabric_utils=SimpleNamespace())
+    with pytest.raises(SwitchOperationError):
+        ops.bulk_delete([_sw("192.0.2.10", "PRIVATE-ID"), _sw("192.0.2.11", "PRIVATE-TWO")])
+    report = failures[0]["switch_delete_diagnostics"]
+    assert "PRIVATE" not in repr(report)
+    assert report["http_status"] == 207
+    assert report["coverage"] == coverage
+    assert report["remaining"] is None
+    assert report["switches"][1]["status"] == "unavailable"
+    if not extra:
+        assert report["switches"][0] == {
+            "request_position": 1, "status": "failed", "reason": "leaf-tor-unpairing", "present": None,
+        }
+    assert len(nd.calls) == 1
+
+
+@pytest.mark.parametrize("remaining", [False, True])
+def test_bulk_delete_checks_later_inventory_pages(monkeypatch, remaining):
+    nd = FakeND()
+    original_request = nd.request
+
+    def request(path=None, *, verb, data=None):
+        if verb == HttpVerbEnum.GET:
+            nd._data = (
+                {"switches": [{"switchId": "SERIAL1"}] if remaining else []}
+                if "offset=200" in path else
+                {"switches": [{"switchId": f"OTHER{i}"} for i in range(200)]}
+            )
+        return original_request(path, verb=verb, data=data)
+
+    monkeypatch.setattr(nd, "request", request)
+    monkeypatch.setattr("ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch_resources.time.sleep", lambda _: None)
+    ops = SwitchFabricOps(_ctx(nd=nd), fabric_utils=SimpleNamespace())
+    if remaining:
+        with pytest.raises(SwitchOperationError, match="still present"):
+            ops.bulk_delete([_sw("192.0.2.10", "SERIAL1")])
+    else:
+        assert ops.bulk_delete([_sw("192.0.2.10", "SERIAL1")]) == ["SERIAL1"]
+    assert any("offset=200" in call["path"] for call in nd.calls)
+
+
+def test_bulk_delete_fails_if_controller_ignores_pagination():
+    nd = FakeND(data={"switches": [{"switchId": f"OTHER{i}"} for i in range(200)]})
+    ops = SwitchFabricOps(_ctx(nd=nd), fabric_utils=SimpleNamespace())
+    with pytest.raises(SwitchOperationError, match="duplicate identities"):
+        ops.bulk_delete([_sw("192.0.2.10", "SERIAL1")])
+    assert len(nd.calls) == 3
+
+
+def test_bulk_delete_check_mode_never_removes_or_queries():
+    nd = FakeND()
+    nd.module.check_mode = True
+    assert SwitchFabricOps(_ctx(nd=nd), fabric_utils=SimpleNamespace()).bulk_delete([_sw("192.0.2.10", "SERIAL1")]) == []
+    assert nd.calls == []
 
 
 def test_bulk_discover_rejects_not_manageable_and_missing_identifiers():

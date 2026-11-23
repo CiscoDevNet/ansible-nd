@@ -29,7 +29,7 @@ resolution.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Sequence
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switch_actions import (
@@ -68,10 +68,9 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
     switches by IP.
 
     Inherits from `NDBaseInterfaceOrchestrator` for `FabricContext` plumbing and pre-flight
-    validation. The deploy/remove queuing methods on that base are unused here. The IP→switchId
-    resolution provided by `FabricContext.get_switch_id` is intentionally bypassed: this
-    orchestrator parses the same bulk switches GET it issues for mode reads, so calling
-    `FabricContext` would trigger a second list GET.
+    validation. The deploy/remove queuing methods on that base are unused here. Preflight
+    resolves the nested switch list from the same validated snapshot used by `update()`,
+    avoiding a second list GET through `FabricContext.get_switch_id`.
 
     ## Raises
 
@@ -105,6 +104,18 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
     # bulk list-GET, so update() does not need to fall back to FabricContext (which would issue a
     # second list GET).
     _snapshot_switch_ids: dict[str, str] | None = None
+
+    def _require_resolvable_switches(self, model_instances: Sequence[MaintenanceModeModel]) -> set[str]:
+        """Resolve nested switch IPs from the inventory validated by query_all."""
+        switch_ips = {switch.switch_ip for model in model_instances for switch in model.switches}
+        if not switch_ips:
+            return set()
+        if self._snapshot_switch_ids is None:
+            self.query_all()
+        switch_ids = self._snapshot_switch_ids or {}
+        if missing := switch_ips.difference(switch_ids):
+            raise RuntimeError(f"Cannot resolve switch_ip to switchId in fabric '{self.fabric_name}' for: {', '.join(sorted(missing))}.")
+        return {switch_ids[ip] for ip in switch_ips}
 
     # ------------------------------------------------------------------ #
     # CRUD method overrides (action-shaped semantics)

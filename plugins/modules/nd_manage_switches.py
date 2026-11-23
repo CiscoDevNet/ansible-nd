@@ -270,6 +270,9 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module requires ND 4.2 or higher.
+- Switch removal is verified with fresh, paginated inventory reads before reporting
+  success. If any requested switch remains after 12 reads separated by five seconds,
+  the operation fails without attempting force removal.
 - POAP operations require POAP and DHCP to be enabled in fabric settings.
 - RMA operations require the old switch to be in a replaceable state.
 - Idempotence for B(Bootstrap) - A bootstrap entry is considered idempotent when
@@ -484,6 +487,7 @@ def main():
     results.check_mode = module.check_mode
     results.action = "manage_switches"
 
+    sw_module = None
     try:
         # Initialize NDModule (uses RestSend infrastructure internally)
         nd = NDModule(module)
@@ -527,7 +531,7 @@ def main():
             results.final_result["error_details"] = error.to_dict()
 
         log.error("Module failed: %s", results.final_result)
-        module.fail_json(msg=error.msg, **results.final_result)
+        module.fail_json(msg=error.msg, **results.final_result, **(sw_module.ctx.delete_result() if sw_module else {}))
 
     except Exception as error:
         # Unexpected errors
@@ -553,7 +557,7 @@ def main():
 
             results.final_result["traceback"] = traceback.format_exc()
 
-        module.fail_json(msg=str(error), **results.final_result)
+        module.fail_json(msg=str(error), **results.final_result, **(sw_module.ctx.delete_result() if sw_module else {}))
 
 
 if __name__ == "__main__":

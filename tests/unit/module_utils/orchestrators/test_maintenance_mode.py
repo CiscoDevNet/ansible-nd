@@ -25,8 +25,10 @@ __metaclass__ = type  # pylint: disable=invalid-name
 import inspect
 
 import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.maintenance_mode.maintenance_mode import MaintenanceModeModel
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.maintenance_mode import MaintenanceModeOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -42,7 +44,7 @@ def responses_maintenance_mode(key: str):
     return load_fixture("test_maintenance_mode")[key]
 
 
-def _build_rest_send(gen_responses: ResponseGenerator, config: list | None = None) -> RestSend:
+def _build_rest_send(gen_responses: ResponseGenerator, config: list | None = None, *, check_mode: bool = False) -> RestSend:
     """Build a `RestSend` wired to a file-based `Sender` and `ResponseHandler`."""
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
@@ -53,13 +55,62 @@ def _build_rest_send(gen_responses: ResponseGenerator, config: list | None = Non
     response_handler.verb = HttpVerbEnum.GET
     response_handler.commit()
 
-    params = {"check_mode": False, "fabric_name": "SITE1", "config": config or []}
+    params = {"check_mode": check_mode, "fabric_name": "SITE1", "config": config or []}
     rest_send = RestSend(params)
     rest_send.sender = sender
     rest_send.response_handler = response_handler
     rest_send.unit_test = True
     rest_send.timeout = 1
     return rest_send
+
+
+@pytest.mark.parametrize("check_mode", [True, False], ids=["check", "normal"])
+@pytest.mark.parametrize("inventory_state", ["maintenance", "missing", "migration"])
+def test_maintenance_mode_two_switch_restore(check_mode: bool, inventory_state: str) -> None:
+    """Run the merged-state restore with two nested switches and no live controller."""
+    inventory = responses_maintenance_mode("test_maintenance_mode_00100b")
+    rows = inventory["DATA"]["switches"]
+    switches = [{"switch_ip": row["fabricManagementIp"]} for row in rows]
+    serials = [row["switchId"] for row in rows]
+    for row in rows:
+        row["additionalData"].update(intendedSystemMode="maintenance", discoveredSystemMode="maintenance")
+    if inventory_state == "missing":
+        rows.pop()
+    elif inventory_state == "migration":
+        rows[1]["additionalData"]["discoveredSystemMode"] = "migration"
+
+    def responses():
+        yield responses_maintenance_mode("test_maintenance_mode_00100a")
+        yield inventory
+        if inventory_state == "maintenance" and not check_mode:
+            response = responses_maintenance_mode("test_maintenance_mode_00200c")
+            response["DATA"]["items"] = [{"status": "success", "switchId": serial} for serial in serials]
+            yield response
+
+    config = [{"mode": "normal", "switches": switches}]
+    rest_send = _build_rest_send(ResponseGenerator(responses()), config=config, check_mode=check_mode)
+    instance = MaintenanceModeOrchestrator(rest_send=rest_send)
+    module = MockAnsibleModule()
+    module.params = {**rest_send.params, "state": "merged"}
+    module.check_mode = check_mode
+
+    if inventory_state != "maintenance":
+        message = "No switch found with fabricManagementIp" if inventory_state == "missing" else "are in 'migration' mode"
+        with pytest.raises(NDStateMachineError, match=message):
+            NDStateMachine(module=module, model_orchestrator=instance)
+        assert rest_send.verb == HttpVerbEnum.GET.value
+        return
+
+    machine = NDStateMachine(module=module, model_orchestrator=instance)
+    machine.manage_state()
+
+    assert machine.output.format()["changed"] is True
+    if check_mode:
+        assert rest_send.verb == HttpVerbEnum.GET.value
+    else:
+        assert rest_send.verb == HttpVerbEnum.POST.value
+        assert rest_send.path == "/api/v1/manage/fabrics/SITE1/switchActions/changeSystemMode"
+        assert rest_send.committed_payload == {"mode": "normal", "switchIds": serials}
 
 
 # =============================================================================
