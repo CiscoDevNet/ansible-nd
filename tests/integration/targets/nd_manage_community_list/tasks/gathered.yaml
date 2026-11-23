@@ -201,18 +201,35 @@
       - nm_gathered_invalid_name is failed
       - "'name' in nm_gathered_invalid_name.msg"
 
-- name: "GATHERED: Reject unsupported tenant name criterion"
+- name: "GATHERED: Filter by tenant name"
   cisco.nd.nd_manage_community_list:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     state: gathered
     config:
       - tenant_name: TENANT1
+  register: nm_gathered_tenant
+
+- name: "GATHERED: Verify tenant name filter"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_tenant is not changed
+      - nm_gathered_tenant.gathered is defined
+      - nm_gathered_tenant.gathered | type_debug == "list"
+      - nm_gathered_tenant.gathered | rejectattr('tenant_name', 'equalto', 'TENANT1') | list | length == 0
+
+- name: "GATHERED: Reject unsupported entries criterion"
+  cisco.nd.nd_manage_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    state: gathered
+    config:
+      - entries: "{{ community_list_standard.entries }}"
   register: nm_gathered_unsupported
   ignore_errors: true
 
-- name: "GATHERED: Verify unsupported tenant name is rejected"
+- name: "GATHERED: Verify unsupported entries criterion is rejected"
   ansible.builtin.assert:
     that:
       - nm_gathered_unsupported is failed
-      - "'tenant_name' in nm_gathered_unsupported.msg"
+      - "'entries' in nm_gathered_unsupported.msg"

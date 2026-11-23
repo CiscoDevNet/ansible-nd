@@ -483,13 +483,13 @@ def test_manage_extended_community_list_00250_invalid_gathered_filter_values(fil
     ("filter_item", "expected"),
     [
         ({"tenant_name": "tenantA"}, {"tenant_name": "tenantA"}),
-        ({"name": "tenantA~ECL1"}, {"name": "ECL1", "tenant_name": "tenantA"}),
+        ({"name": "tenantA~ECL1"}, {"name": "tenantA~ECL1"}),
         ({"name": "ECL1", "tenant_name": "tenantA"}, {"name": "ECL1", "tenant_name": "tenantA"}),
         ({"name": "ECL1", "tenantName": "tenantA"}, {"name": "ECL1", "tenant_name": "tenantA"}),
     ],
 )
 def test_manage_extended_community_list_00260_normalize_tenant_gathered_filter(filter_item, expected) -> None:
-    """Verify tenant-qualified and explicit tenant filters normalize identically."""
+    """Verify ambiguous names are preserved and explicit tenant filters are normalized."""
     assert ExtendedCommunityListModel.normalize_gathered_filter(filter_item) == expected
 
 
@@ -508,6 +508,10 @@ def test_manage_extended_community_list_00280_match_name_and_tenant_pair() -> No
     """Verify tenant-aware filters do not match the same bare name in another tenant."""
     criteria = ExtendedCommunityListModel.normalize_gathered_filter({"name": "tenantA~ECL1"})
 
+    assert ExtendedCommunityListModel.matches_gathered_filter(
+        criteria,
+        {"name": "tenantA~ECL1"},
+    )
     assert ExtendedCommunityListModel.matches_gathered_filter(
         criteria,
         {"name": "ECL1", "tenant_name": "tenantA"},
@@ -533,8 +537,8 @@ def test_manage_extended_community_list_00280_match_name_and_tenant_pair() -> No
 
 
 def test_manage_extended_community_list_00290_reject_overlong_qualified_filter() -> None:
-    """Verify the combined tenant-qualified name respects the API limit."""
-    with pytest.raises(ValidationError, match="115 characters or fewer"):
+    """Verify ambiguous names respect the gathered-filter length limit."""
+    with pytest.raises(ValidationError, match="115"):
         ExtendedCommunityListModel.normalize_gathered_filter(
             {
                 "name": f"{'T' * 63}~{'N' * 115}",

@@ -163,7 +163,7 @@ class PrefixListGatheredFilterModel(NDNestedModel):
     @model_validator(mode="before")
     @classmethod
     def normalize_tenant_qualified_name(cls, data: Any) -> Any:
-        """Normalize tenant~name filters to separate tenant_name and name fields."""
+        """Preserve ambiguous names unless tenant_name makes qualification explicit."""
         if not isinstance(data, dict):
             return data
 
@@ -171,13 +171,17 @@ class PrefixListGatheredFilterModel(NDNestedModel):
         if not isinstance(name, str) or "~" not in name:
             return data
 
-        qualified_tenant, bare_name = name.split("~", 1)
         supplied_tenant = data.get("tenant_name", data.get("tenantName"))
-        if supplied_tenant is not None and supplied_tenant != qualified_tenant:
+        if supplied_tenant is None:
+            return data
+
+        qualified_tenant, bare_name = name.split("~", 1)
+        if supplied_tenant != qualified_tenant:
             raise ValueError(f"tenant_name '{supplied_tenant}' conflicts with " f"tenant-qualified name '{name}'.")
+
         normalized = dict(data)
         normalized["name"] = bare_name
-        normalized["tenant_name"] = qualified_tenant
+        normalized["tenant_name"] = supplied_tenant
         normalized.pop("tenantName", None)
         return normalized
 
@@ -244,6 +248,10 @@ class PrefixListModel(NDBaseModel):
         "name",
         "tenant_name",
     )
+    gathered_filter_aliases: ClassVar[dict[str, str]] = {
+        "ipVersion": "ip_version",
+        "tenantName": "tenant_name",
+    }
 
     @classmethod
     def normalize_gathered_filter(cls, filter_item: dict) -> dict:
@@ -258,6 +266,33 @@ class PrefixListModel(NDBaseModel):
             exclude_none=True,
             context={"mode": "config"},
         )
+
+    @classmethod
+    def matches_gathered_filter(cls, criteria: dict, candidate: dict) -> bool:
+        """Match literal and tenant-qualified names containing '~'."""
+        expected_name = criteria.get("name")
+        if expected_name is None:
+            return super().matches_gathered_filter(criteria, candidate)
+
+        expected_tenant = criteria.get("tenant_name")
+        remaining_criteria = {key: value for key, value in criteria.items() if key not in ("name", "tenant_name")}
+        if not super().matches_gathered_filter(remaining_criteria, candidate):
+            return False
+
+        candidate_name = candidate.get("name")
+        candidate_tenant = candidate.get("tenant_name")
+
+        if expected_tenant is not None:
+            return candidate_tenant == expected_tenant and candidate_name == expected_name
+
+        if candidate_name == expected_name:
+            return True
+
+        if "~" not in expected_name:
+            return False
+
+        qualified_tenant, bare_name = expected_name.split("~", 1)
+        return candidate_tenant == qualified_tenant and candidate_name == bare_name
 
     # --- Fields ---
 

@@ -72,7 +72,9 @@ options:
       tenant_name:
         description:
         - The tenant that owns this prefix list.
-        - When omitted, the default tenant is used.
+        - For O(state=merged), O(state=replaced), O(state=overridden), and
+          O(state=deleted), omitting this option uses the default tenant.
+        - For O(state=gathered), omitting this option matches resources in any tenant.
         - Prefix lists with the same O(config.ip_version) and O(config.name) but different
           O(config.tenant_name) values are treated as independent resources.
         - Allowed characters are C([A-Za-z0-9_-]).

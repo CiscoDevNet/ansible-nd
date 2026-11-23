@@ -217,8 +217,7 @@ notes:
 - O(config.entries.icmp_option) is only valid when O(config.entries.protocol) is C(icmp);
   O(config.entries.tcp_option) is only valid when O(config.entries.protocol) is C(tcp).
 - Port operators (O(config.entries.src_port_action) and O(config.entries.dst_port_action))
-  are accepted in snake_case. Nexus Dashboard uses camelCase values internally, and gathered
-  output normalizes those values back to snake_case.
+  are accepted and returned in snake_case.
 - The RV(after) return value reflects the module's predicted post-write state (the intended
   configuration merged into the existing state), not a re-read from the controller after the
   write. See the RETURN documentation for RV(after).

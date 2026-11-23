@@ -880,7 +880,7 @@ def test_manage_prefix_list_00350_invalid_gathered_filter_values(filter_item) ->
         ),
         (
             {"ip_version": "ipv4", "name": "tenantA~PL1"},
-            {"ip_version": "ipv4", "name": "PL1", "tenant_name": "tenantA"},
+            {"ip_version": "ipv4", "name": "tenantA~PL1"},
         ),
         (
             {"ip_version": "ipv4", "name": "PL1", "tenant_name": "tenantA"},
@@ -893,7 +893,7 @@ def test_manage_prefix_list_00350_invalid_gathered_filter_values(filter_item) ->
     ],
 )
 def test_manage_prefix_list_00360_normalize_tenant_gathered_filter(filter_item, expected) -> None:
-    """Verify tenant-qualified and explicit tenant filters normalize identically."""
+    """Verify ambiguous names are preserved and explicit tenant filters are normalized."""
     assert PrefixListModel.normalize_gathered_filter(filter_item) == expected
 
 
@@ -918,6 +918,13 @@ def test_manage_prefix_list_00380_match_name_and_tenant_pair() -> None:
         }
     )
 
+    assert PrefixListModel.matches_gathered_filter(
+        criteria,
+        {
+            "ip_version": "ipv4",
+            "name": "tenantA~PL1",
+        },
+    )
     assert PrefixListModel.matches_gathered_filter(
         criteria,
         {
@@ -959,8 +966,8 @@ def test_manage_prefix_list_00380_match_name_and_tenant_pair() -> None:
 
 
 def test_manage_prefix_list_00390_reject_overlong_qualified_filter() -> None:
-    """Verify the combined tenant-qualified name respects the API limit."""
-    with pytest.raises(ValidationError, match="115 characters or fewer"):
+    """Verify ambiguous names respect the gathered-filter length limit."""
+    with pytest.raises(ValidationError, match="115"):
         PrefixListModel.normalize_gathered_filter(
             {
                 "ip_version": "ipv4",

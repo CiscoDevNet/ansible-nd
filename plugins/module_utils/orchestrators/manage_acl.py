@@ -243,7 +243,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
             spec=self.gathered_lucene_spec,
         )
 
-        # TODO(4.2.1) TBD
+        # TODO(4.2.1) policy-list-lucene-quoted-value-silently-empty
         # The ACL endpoint returns no results for quoted filter values. Names
         # containing '-' or '~' are quoted by the generic safe formatter, so use a
         # complete scan and exact local filtering for those names.

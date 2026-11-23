@@ -64,7 +64,9 @@ options:
       tenant_name:
         description:
         - The tenant that owns this extended community list.
-        - When omitted the default tenant is used.
+        - For O(state=merged), O(state=replaced), O(state=overridden), and
+          O(state=deleted), omitting this option uses the default tenant.
+        - For O(state=gathered), omitting this option matches resources in any tenant.
         - Allowed characters are C([A-Za-z0-9_-]). Max 63 characters.
         - When set, O(config.name) may be the bare list name or the fully qualified C(tenant~name) API name.
         - The module reports the bare O(config.name) and uses C(tenant~name) for API lookups, updates, and deletes.

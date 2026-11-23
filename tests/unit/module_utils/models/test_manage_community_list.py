@@ -481,13 +481,13 @@ def test_manage_community_list_00250_invalid_gathered_filter_values(filter_item)
     ("filter_item", "expected"),
     [
         ({"tenant_name": "tenantA"}, {"tenant_name": "tenantA"}),
-        ({"name": "tenantA~CL1"}, {"name": "CL1", "tenant_name": "tenantA"}),
+        ({"name": "tenantA~CL1"}, {"name": "tenantA~CL1"}),
         ({"name": "CL1", "tenant_name": "tenantA"}, {"name": "CL1", "tenant_name": "tenantA"}),
         ({"name": "CL1", "tenantName": "tenantA"}, {"name": "CL1", "tenant_name": "tenantA"}),
     ],
 )
 def test_manage_community_list_00260_normalize_tenant_gathered_filter(filter_item, expected) -> None:
-    """Verify tenant-qualified and explicit tenant filters normalize identically."""
+    """Verify ambiguous names are preserved and explicit tenant filters are normalized."""
     assert CommunityListModel.normalize_gathered_filter(filter_item) == expected
 
 
@@ -506,6 +506,10 @@ def test_manage_community_list_00280_match_name_and_tenant_pair() -> None:
     """Verify tenant-aware filters do not match the same bare name in another tenant."""
     criteria = CommunityListModel.normalize_gathered_filter({"name": "tenantA~CL1"})
 
+    assert CommunityListModel.matches_gathered_filter(
+        criteria,
+        {"name": "tenantA~CL1"},
+    )
     assert CommunityListModel.matches_gathered_filter(
         criteria,
         {"name": "CL1", "tenant_name": "tenantA"},
@@ -530,8 +534,8 @@ def test_manage_community_list_00280_match_name_and_tenant_pair() -> None:
 
 
 def test_manage_community_list_00290_reject_overlong_qualified_filter() -> None:
-    """Verify the combined tenant-qualified name respects the API limit."""
-    with pytest.raises(ValidationError, match="115 characters or fewer"):
+    """Verify ambiguous names respect the gathered-filter length limit."""
+    with pytest.raises(ValidationError, match="115"):
         CommunityListModel.normalize_gathered_filter(
             {
                 "name": f"{'T' * 63}~{'N' * 115}",
