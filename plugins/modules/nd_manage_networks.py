@@ -124,16 +124,16 @@ options:
       vrf_name:
         description: VRF name associated with the Network.
         type: str
-      layer:
+      network_mode:
         description:
-          - Network layer.
-          - When omitted, existing Networks retain their current layer in V(merged), V(replaced), V(overridden), and V(staged).
-          - Their existing VRF association is also retained when both C(layer) and C(vrf_name) are omitted.
-          - Specify C(layer) explicitly to request a layer change, or if the existing layer cannot be determined from controller readback.
+          - Network mode.
+          - When omitted, existing Networks retain their current network_mode in V(merged), V(replaced), V(overridden), and V(staged).
+          - Their existing VRF association is also retained when both C(network_mode) and C(vrf_name) are omitted.
+          - Specify C(network_mode) explicitly to request a network_mode change, or if the existing network_mode cannot be determined from controller readback.
           - New ordinary Networks default to Layer 3. New primary PVLANs without L3 properties and secondary PVLANs resolve to Layer 2.
           - New Layer 3 and Layer 2 with VRF Networks require C(vrf_name).
           - Layer 2 with VRF requires fabric Security Groups and MAC segmentation.
-          - External fabrics support only Layer 2 definitions. Omitted C(layer) resolves to Layer 2.
+          - External fabrics support only Layer 2 definitions. Omitted C(network_mode) resolves to Layer 2.
           - External definition options are C(network_name), C(vlan_id), optional C(vlan_name), and optional C(network_id).
           - ND assigns the External Network ID when C(network_id) is omitted during creation.
           - External Networks require C(vlan_id) on creation. VRF, gateway, PVLAN, and other feature settings are not supported.
@@ -284,7 +284,7 @@ options:
           - New Networks default to C(normal). Omission preserves an existing Network's type in all write states,
             including C(replaced), C(overridden), and C(staged).
           - C(primary) is mapped to the ND private primary Network type.
-          - C(primary) supports Layer 2 and Layer 3. When its layer is derived, VRF or L3-specific properties select Layer 3
+          - C(primary) supports Layer 2 and Layer 3. When its network_mode is derived, VRF or L3-specific properties select Layer 3
             and require O(config.vrf_name); otherwise it uses Layer 2.
           - C(community) and C(isolated) are mapped to private secondary Network templates and require O(config.primary_network_id).
           - C(primary), C(community), and C(isolated) are not supported on Multi-cluster Fabric groups.
@@ -487,7 +487,7 @@ EXAMPLES = r"""
     state: merged
     config:
       - network_name: Network_BLUE
-        layer: layer2
+        network_mode: layer2
         network_id: 50010
         vlan_id: 2001
         vlan_name: Network_BLUE_VLAN
@@ -500,7 +500,7 @@ EXAMPLES = r"""
     state: merged
     config:
       - network_name: Network_BLUE
-        layer: layer2
+        network_mode: layer2
         network_id: 50010
         vlan_id: 2001
         vlan_name: Network_BLUE_VLAN
@@ -522,7 +522,7 @@ EXAMPLES = r"""
       type: resource
     config:
       - network_name: Network_L3
-        layer: layer3
+        network_mode: layer3
         vrf_name: Tenant_A
         network_id: 50020
         vlan_id: 2002
@@ -540,7 +540,7 @@ EXAMPLES = r"""
     config:
       - network_name: PVLAN_PRIMARY
         vlan_network_type: primary
-        layer: layer2
+        network_mode: layer2
         network_id: 50100
         vlan_id: 2100
         deploy: false
@@ -580,7 +580,7 @@ EXAMPLES = r"""
     state: merged
     config:
       - network_name: Network_PARENT
-        layer: layer3
+        network_mode: layer3
         vrf_name: TENANT_BLUE
         network_id: 50030
         vlan_id: 2030
@@ -604,7 +604,7 @@ EXAMPLES = r"""
     state: deleted
     config:
       - network_name: Network_BLUE
-        layer: layer2
+        network_mode: layer2
 
 # Replace Network configuration
 - name: Replace Network configuration
@@ -613,7 +613,7 @@ EXAMPLES = r"""
     state: replaced
     config:
       - network_name: Network_BLUE
-        layer: layer2
+        network_mode: layer2
         network_id: 50010
         vlan_id: 2001
         vlan_name: Network_BLUE_REPLACED
@@ -625,7 +625,7 @@ EXAMPLES = r"""
     state: overridden
     config:
       - network_name: Network_BLUE
-        layer: layer2
+        network_mode: layer2
         network_id: 50010
         vlan_id: 2001
 
@@ -635,7 +635,7 @@ EXAMPLES = r"""
     state: staged
     config:
       - network_name: Network_BLUE
-        layer: layer2
+        network_mode: layer2
         network_id: 50010
         vlan_id: 2001
         vlan_name: Network_BLUE_VLAN
@@ -646,7 +646,7 @@ EXAMPLES = r"""
               - interface_range: Ethernet1/10
                 mode: trunk
       - network_name: Network_GREEN
-        layer: layer2
+        network_mode: layer2
         network_id: 50011
         vlan_id: 2002
         vlan_name: Network_GREEN_VLAN
@@ -695,7 +695,7 @@ before:
   elements: dict
   sample:
     - network_name: Network_BLUE
-      layer: layer2
+      network_mode: layer2
       network_id: 50010
       vlan_id: 2001
 after:
@@ -707,7 +707,7 @@ after:
   elements: dict
   sample:
     - network_name: Network_BLUE
-      layer: layer2
+      network_mode: layer2
       network_id: 50010
       vlan_id: 2001
 diff:
@@ -725,7 +725,7 @@ proposed:
   elements: dict
   sample:
     - network_name: Network_BLUE
-      layer: layer2
+      network_mode: layer2
       network_id: 50010
       vlan_id: 2001
 gathered:
@@ -735,7 +735,7 @@ gathered:
   elements: dict
   sample:
     - network_name: Network_BLUE
-      layer: layer2
+      network_mode: layer2
       network_id: 50010
       vlan_id: 2001
 workflow_trace:

@@ -143,7 +143,7 @@ def _entry(resource, name, identifier=31001):
         "attach": [{"ip_address": "192.0.2.10", **({"deploy": False} if resource == "network" else {})}],
     }
     if resource == "network":
-        entry["layer"] = "layer2"
+        entry["network_mode"] = "layer2"
     return entry
 
 

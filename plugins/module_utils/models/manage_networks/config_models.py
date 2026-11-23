@@ -22,7 +22,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNe
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
     DpuAffinity,
     MappingType,
-    NetworkLayer,
+    NetworkMode,
     NetworkType,
     PublicNetworkAttachmentMode,
     VlanNetworkType,
@@ -85,7 +85,7 @@ NETWORK_DEFINITION_INTENT_FIELDS = frozenset(
         "vlanNetworkType",
         "primary_network_id",
         "primaryNetworkId",
-        "layer",
+        "network_mode",
         "mtu",
         "arp_suppression",
         "arpSuppression",
@@ -129,8 +129,8 @@ NETWORK_DEFINITION_INTENT_FIELDS = frozenset(
         "childFabricConfig",
     }
 )
-NETWORK_LAYER_INFERENCE_FIELDS = NETWORK_DEFINITION_INTENT_FIELDS - {"child_fabric_config", "childFabricConfig"}
-_L3_LAYER_INTENT_FIELDS = frozenset(
+NETWORK_MODE_INFERENCE_FIELDS = NETWORK_DEFINITION_INTENT_FIELDS - {"child_fabric_config", "childFabricConfig"}
+_L3_NETWORK_MODE_INTENT_FIELDS = frozenset(
     {
         "mtu",
         "arp_suppression",
@@ -167,9 +167,9 @@ _L3_LAYER_INTENT_FIELDS = frozenset(
 )
 
 
-def has_l3_definition_intent_for_layer(data: dict[str, Any]) -> bool:
-    """Return true when omitted layer can still be inferred as layer3."""
-    return any(data.get(field) is not None for field in _L3_LAYER_INTENT_FIELDS)
+def has_l3_definition_intent_for_network_mode(data: dict[str, Any]) -> bool:
+    """Return true when omitted network mode can still be inferred as Layer 3."""
+    return any(data.get(field) is not None for field in _L3_NETWORK_MODE_INTENT_FIELDS)
 
 
 class NetworkInterfaceConfigModel(NDNestedModel):
@@ -369,17 +369,19 @@ class NetworkChildConfigModel(NDNestedModel):
             interface_netflow_monitor=requested.get("interface_netflow_monitor"),
         )
 
-    def validate_layer(self, layer: str | None) -> None:
+    def validate_network_mode(self, network_mode: str | None) -> None:
         """Validate child overrides against the effective child Network mode."""
-        if layer == NetworkLayer.LAYER2.value:
+        if network_mode == NetworkMode.LAYER2.value:
             if self.interface_netflow_monitor is not None:
                 raise ValueError(f"child_fabric_config[{self.fabric_name}].interface_netflow_monitor is not valid for layer2 networks")
             invalid = sorted(
-                field for field in (_L3_LAYER_INTENT_FIELDS - {"interface_netflow_monitor"}) & self.model_fields_set if getattr(self, field, None) is not None
+                field
+                for field in (_L3_NETWORK_MODE_INTENT_FIELDS - {"interface_netflow_monitor"}) & self.model_fields_set
+                if getattr(self, field, None) is not None
             )
             if invalid:
                 raise ValueError(f"child_fabric_config[{self.fabric_name}] layer2 networks do not support L3 properties: {', '.join(invalid)}")
-        elif layer in (NetworkLayer.LAYER3.value, NetworkLayer.LAYER2_WITH_VRF.value) and self.x_connect:
+        elif network_mode in (NetworkMode.LAYER3.value, NetworkMode.LAYER2_WITH_VRF.value) and self.x_connect:
             raise ValueError(f"child_fabric_config[{self.fabric_name}].x_connect is only valid for layer2 networks")
 
 
@@ -397,7 +399,7 @@ class NetworkConfigModel(NDBaseModel):
     vlan_id: int | None = Field(default=None, alias="vlanId")
     vlan_network_type: str | None = Field(default=None, alias="vlanNetworkType")
     primary_network_id: int | None = Field(default=None, alias="primaryNetworkId")
-    layer: str | None = None
+    network_mode: str | None = None
     vlan_name: str | None = Field(default=None, alias="vlanName")
     x_connect: bool | None = Field(default=None, alias="xConnect")
     multicast_group_address: str | None = Field(default=None, alias="multicastGroup")
@@ -434,47 +436,47 @@ class NetworkConfigModel(NDBaseModel):
 
         normalized["dhcp_servers"] = cls._normalize_dhcp_servers(normalized)
         context = info.context or {}
-        normalized["layer"] = cls._normalize_effective_layer(
+        normalized["network_mode"] = cls._normalize_effective_network_mode(
             normalized,
-            defer_omitted_layer=bool(context.get("defer_omitted_layer")),
-            existing_layer=context.get("existing_layer"),
+            defer_omitted_network_mode=bool(context.get("defer_omitted_network_mode")),
+            existing_network_mode=context.get("existing_network_mode"),
             default_network_type=context.get("default_network_type"),
         )
 
         return normalized
 
     @staticmethod
-    def _normalize_effective_layer(
+    def _normalize_effective_network_mode(
         data: dict[str, Any],
-        defer_omitted_layer: bool = False,
-        existing_layer: str | None = None,
+        defer_omitted_network_mode: bool = False,
+        existing_network_mode: str | None = None,
         default_network_type: str | None = None,
     ) -> str | None:
-        """Return the explicit or derived network layer used by runtime payload construction."""
-        layer = data.get("layer")
-        if layer:
-            return layer
-        if existing_layer is not None:
-            return existing_layer
-        if not NetworkConfigModel._has_definition_intent_for_layer(data):
+        """Return the explicit or derived network mode used by runtime payload construction."""
+        network_mode = data.get("network_mode")
+        if network_mode:
+            return network_mode
+        if existing_network_mode is not None:
+            return existing_network_mode
+        if not NetworkConfigModel._has_definition_intent_for_network_mode(data):
             return None
-        if defer_omitted_layer:
+        if defer_omitted_network_mode:
             return None
         vlan_network_type = data.get("vlan_network_type") or data.get("vlanNetworkType")
         if vlan_network_type in _VLAN_NETWORK_TYPE_ALIASES:
             vlan_network_type = _VLAN_NETWORK_TYPE_ALIASES[vlan_network_type]
         if vlan_network_type in _PRIVATE_SECONDARY_VLAN_NETWORK_TYPES:
-            return NetworkLayer.LAYER2.value
+            return NetworkMode.LAYER2.value
         if default_network_type == NetworkType.EXTERNAL_CONNECTIVITY.value:
-            return NetworkLayer.LAYER2.value
-        if vlan_network_type == VlanNetworkType.PRIVATE_PRIMARY.value and not has_l3_definition_intent_for_layer(data):
-            return NetworkLayer.LAYER2.value
-        return NetworkLayer.LAYER3.value
+            return NetworkMode.LAYER2.value
+        if vlan_network_type == VlanNetworkType.PRIVATE_PRIMARY.value and not has_l3_definition_intent_for_network_mode(data):
+            return NetworkMode.LAYER2.value
+        return NetworkMode.LAYER3.value
 
     @staticmethod
-    def _has_definition_intent_for_layer(data: dict[str, Any]) -> bool:
+    def _has_definition_intent_for_network_mode(data: dict[str, Any]) -> bool:
         """Return true when sparse input is intended to create or update a network definition."""
-        return any(data.get(field) is not None for field in NETWORK_LAYER_INFERENCE_FIELDS)
+        return any(data.get(field) is not None for field in NETWORK_MODE_INFERENCE_FIELDS)
 
     @staticmethod
     def _normalize_dhcp_servers(data: dict[str, Any]) -> list[dict[str, Any]] | None:
@@ -587,19 +589,19 @@ class NetworkConfigModel(NDBaseModel):
         context = info.context or {}
         read_only_or_delete = context.get("state") in ("deleted", "gathered")
         if not read_only_or_delete and context.get("default_network_type") == NetworkType.EXTERNAL_CONNECTIVITY.value:
-            supported = {"network_name", "network_id", "vlan_id", "vlan_name", "layer", "vrf_name", "attach", "deploy"}
+            supported = {"network_name", "network_id", "vlan_id", "vlan_name", "network_mode", "vrf_name", "attach", "deploy"}
             unsupported = self.model_fields_set - supported
-            if self.layer not in (None, NetworkLayer.LAYER2.value):
-                unsupported.add("layer")
+            if self.network_mode not in (None, NetworkMode.LAYER2.value):
+                unsupported.add("network_mode")
             if self.vrf_name not in (None, "NA"):
                 unsupported.add("vrf_name")
             invalid = sorted(field for field in unsupported if getattr(self, field, None) is not None)
             if invalid:
                 raise ValueError("External Networks support only L2 definitions; unsupported properties: " + ", ".join(invalid))
-        if not read_only_or_delete and self.x_connect and self.layer in (NetworkLayer.LAYER3.value, NetworkLayer.LAYER2_WITH_VRF.value):
+        if not read_only_or_delete and self.x_connect and self.network_mode in (NetworkMode.LAYER3.value, NetworkMode.LAYER2_WITH_VRF.value):
             raise ValueError("x_connect is only valid for layer2 networks")
         if not read_only_or_delete and (
-            self.layer in (NetworkLayer.LAYER3.value, NetworkLayer.LAYER2_WITH_VRF.value)
+            self.network_mode in (NetworkMode.LAYER3.value, NetworkMode.LAYER2_WITH_VRF.value)
             and network_type != NetworkType.USER_DEFINED.value
             and not (self.vrf_name or context.get("existing_vrf_name"))
         ):
@@ -609,10 +611,10 @@ class NetworkConfigModel(NDBaseModel):
         if self.vlan_network_type is not None or not context.get("defer_omitted_vlan_network_type"):
             self._check_vlan_network_type_rules()
             self._check_attachment_interface_modes()
-        if not read_only_or_delete and self.layer == NetworkLayer.LAYER2.value:
+        if not read_only_or_delete and self.network_mode == NetworkMode.LAYER2.value:
             rejected_fields = [
                 field
-                for field in _L3_LAYER_INTENT_FIELDS & self.model_fields_set
+                for field in _L3_NETWORK_MODE_INTENT_FIELDS & self.model_fields_set
                 if getattr(self, field, None) is not None and not (field == "vrf_name" and self.vrf_name == "NA")
             ]
             if rejected_fields:
@@ -634,7 +636,7 @@ class NetworkConfigModel(NDBaseModel):
                 vlan_netflow_monitor=self.vlan_netflow_monitor,
                 interface_netflow_monitor=self.interface_netflow_monitor,
             )
-        if self.interface_netflow_monitor is not None and self.layer == NetworkLayer.LAYER2.value:
+        if self.interface_netflow_monitor is not None and self.network_mode == NetworkMode.LAYER2.value:
             raise ValueError("interface_netflow_monitor is not valid for layer2 networks")
 
     def _check_vlan_network_type_rules(self) -> None:
@@ -649,7 +651,7 @@ class NetworkConfigModel(NDBaseModel):
             return
         if self.primary_network_id is None:
             raise ValueError(f"{vlan_network_type} requires primary_network_id")
-        if self.layer == "layer3":
+        if self.network_mode == "layer3":
             raise ValueError(f"{vlan_network_type} networks do not support layer3 intent")
 
         disallowed_fields = {
@@ -742,11 +744,11 @@ class NetworkParentConfigModel(NetworkConfigModel):
         return filtered
 
     @model_validator(mode="after")
-    def _check_child_layer_rules(self, info: ValidationInfo):
+    def _check_child_network_mode_rules(self, info: ValidationInfo):
         if (info.context or {}).get("state") in ("gathered", "deleted"):
             return self
         for child in self.child_fabric_config or []:
-            child.validate_layer(self.layer)
+            child.validate_network_mode(self.network_mode)
         return self
 
     @model_validator(mode="after")

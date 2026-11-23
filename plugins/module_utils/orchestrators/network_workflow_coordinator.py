@@ -33,7 +33,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types impo
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import NetworkChildConfigModel, NetworkConfigModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import NetworkLayer, VlanNetworkType
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import NetworkMode, VlanNetworkType
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.network_data_models import DefaultL3DataModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.networks import NDNetworkOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.config_actions.backends.resource import ResourceConfigActionsBackend
@@ -274,10 +274,10 @@ class NetworkWorkflowCoordinator:
                 continue
             for entry in child_task["module_args"]["config"]:
                 existing = sm.existing.get(entry["network_name"])
-                layer = entry.get("layer") or getattr(existing, "layer", None)
+                network_mode = entry.get("network_mode") or getattr(existing, "network_mode", None)
                 try:
-                    child_options = {key: value for key, value in entry.items() if key not in ("network_name", "layer")}
-                    NetworkChildConfigModel.from_config({"fabric_name": child_task["fabric"], **child_options}).validate_layer(layer)
+                    child_options = {key: value for key, value in entry.items() if key not in ("network_name", "network_mode")}
+                    NetworkChildConfigModel.from_config({"fabric_name": child_task["fabric"], **child_options}).validate_network_mode(network_mode)
                 except ValueError as exc:
                     raise NDStateMachineError(str(exc)) from exc
 
@@ -328,7 +328,7 @@ class NetworkWorkflowCoordinator:
 
         Ansible's argument spec is static, but parent/child/standalone scope is
         known only after fabric resolution.  This method provides the second
-        layer of argument enforcement before any Network payload is sent to ND.
+        network_mode of argument enforcement before any Network payload is sent to ND.
         """
         config = module_args.get("config") or []
 
@@ -368,9 +368,9 @@ class NetworkWorkflowCoordinator:
         Validate each entry in ``config`` against ``model_cls`` and return
         the normalised list (Python field names, None values excluded).
 
-        State context defers omitted role/layer validation until current
+        State context defers omitted role/network_mode validation until current
         inventory is available and exempts read/delete selectors from
-        definition-only layer requirements.
+        definition-only network_mode requirements.
 
         Validation errors are reported immediately via ``module.fail_json``.
         """
@@ -380,8 +380,8 @@ class NetworkWorkflowCoordinator:
                 context = {"state": state, "default_network_type": NDNetworkOrchestrator.default_network_type(self.strategy.fabric_data)}
                 if state not in ("gathered", "deleted"):
                     context["defer_omitted_vlan_network_type"] = True
-                if NDNetworkOrchestrator.should_defer_omitted_layer(entry, state):
-                    context["defer_omitted_layer"] = True
+                if NDNetworkOrchestrator.should_defer_omitted_network_mode(entry, state):
+                    context["defer_omitted_network_mode"] = True
                 model = model_cls.from_config(entry, context=context)
                 parsed_config = model.to_config(exclude_unset=True)
                 operational_only = not NDNetworkOrchestrator.has_network_definition_intent(parsed_config)
@@ -606,13 +606,13 @@ class NetworkWorkflowCoordinator:
         child_cfg = copy.deepcopy(child_cfg)
         child_fabric_name: str = child_cfg.pop("fabric_name")
 
-        # Inherit the Network identifier plus layer context from the parent
+        # Inherit the Network identifier plus network_mode context from the parent
         # definition.  The parent owns create/delete and immutable identity
-        # fields; layer context only prevents child PUTs from being interpreted
+        # fields; network_mode context only prevents child PUTs from being interpreted
         # as a network-mode change by ND.
         child_cfg["network_name"] = parent_network.get("network_name")
-        if child_cfg.get("layer") is None and parent_network.get("layer") is not None:
-            child_cfg["layer"] = parent_network.get("layer")
+        if child_cfg.get("network_mode") is None and parent_network.get("network_mode") is not None:
+            child_cfg["network_mode"] = parent_network.get("network_mode")
 
         if child_fabric_name in child_tasks_dict:
             # Append to existing child task (batch multiple Networks together)
@@ -738,11 +738,11 @@ class NetworkWorkflowCoordinator:
 
         ### NDStateMachineError
 
-        - An operational-only Network is absent or has an unsupported policy, or an omitted existing layer cannot be resolved.
+        - An operational-only Network is absent or has an unsupported policy, or an omitted existing network_mode cannot be resolved.
 
         ### ValidationError
 
-        - Supplied intent conflicts with its effective role or layer.
+        - Supplied intent conflicts with its effective role or network_mode.
         """
         if state in ("gathered", "deleted"):
             return
@@ -768,12 +768,12 @@ class NetworkWorkflowCoordinator:
                 if current.vlan_network_type in secondary_types and entry.get("primary_network_id") is None:
                     effective_entry["primary_network_id"] = current.primary_network_id
             validated = None
-            if not strategy.is_child and (entry.get("vlan_network_type") is None or NDNetworkOrchestrator.should_defer_omitted_layer(entry, state)):
+            if not strategy.is_child and (entry.get("vlan_network_type") is None or NDNetworkOrchestrator.should_defer_omitted_network_mode(entry, state)):
                 context = {"state": state, "default_network_type": NDNetworkOrchestrator.default_network_type(strategy.fabric_data)}
-                if current is not None and entry.get("layer") is None:
-                    if current.layer is None and not operational_only:
-                        raise NDStateMachineError(f"Cannot resolve the existing layer for Network '{name}'; specify layer explicitly.")
-                    context.update(existing_layer=current.layer, existing_vrf_name=current.vrf_name)
+                if current is not None and entry.get("network_mode") is None:
+                    if current.network_mode is None and not operational_only:
+                        raise NDStateMachineError(f"Cannot resolve the existing network_mode for Network '{name}'; specify network_mode explicitly.")
+                    context.update(existing_network_mode=current.network_mode, existing_vrf_name=current.vrf_name)
                 validated = strategy.config_model_cls.from_config(effective_entry, context=context)
             if operational_only:
                 sm.proposed.replace(current.model_copy(deep=True))
@@ -815,11 +815,11 @@ class NetworkWorkflowCoordinator:
                 proposed = sm.model_orchestrator.prepare_private_secondary_update(effective_entry, current, proposed, state)
                 sm.proposed.replace(proposed)
                 continue
-            if validated is not None and validated.layer is not None:
-                proposed.layer = validated.layer
-                if current is not None and entry.get("layer") is None and entry.get("vrf_name") is None:
+            if validated is not None and validated.network_mode is not None:
+                proposed.network_mode = validated.network_mode
+                if current is not None and entry.get("network_mode") is None and entry.get("vrf_name") is None:
                     proposed.vrf_name = current.vrf_name
-                if current is None and validated.layer == NetworkLayer.LAYER2.value and proposed.vrf_name is None:
+                if current is None and validated.network_mode == NetworkMode.LAYER2.value and proposed.vrf_name is None:
                     proposed.vrf_name = "NA"
 
     def _restore_state_machine_params(self, original_config: Any, original_state: Any) -> None:

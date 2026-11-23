@@ -17,7 +17,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import Res
 @pytest.mark.parametrize("field,wire", [("gateway_ipv4_address", "gatewayIpv4Address"), ("gateway_ipv6_address", "gatewayIpv6Address")])
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden"])
 def test_gateway_clear_survives_validation_and_repeats_after_omitted_readback(field, wire, state):
-    raw = {"network_name": "BLUE", "layer": "layer3", "vrf_name": "TENANT", field: ""}
+    raw = {"network_name": "BLUE", "network_mode": "layer3", "vrf_name": "TENANT", field: ""}
     parsed = NetworkConfigModel.from_config(raw, context={"state": state}).to_config(exclude_unset=True)
     assert parsed[field] == ""
     strategy = StandaloneNetworkStrategy("FAB", {"managementType": "vxlanIbgp"})
@@ -48,6 +48,6 @@ def test_gateway_clear_survives_validation_and_repeats_after_omitted_readback(fi
 @pytest.mark.parametrize("section,field", [("l2Data", "vlanName"), ("l3Data", "vlanInterfaceDescription")])
 def test_empty_text_and_omitted_readback_are_comparison_equivalent_without_payload_defaults(network_type, section, field):
     current = NetworkBaseModel.from_response({"networkName": "BLUE", "networkType": network_type, "networkMode": "layer3"})
-    proposed = NetworkBaseModel.from_config({"networkName": "BLUE", "networkType": network_type, "layer": "layer3", section: {field: ""}})
+    proposed = NetworkBaseModel.from_config({"networkName": "BLUE", "networkType": network_type, "network_mode": "layer3", section: {field: ""}})
     assert current.get_diff(proposed, exclude_unset=True)
     assert field not in current.to_payload().get(section, {})

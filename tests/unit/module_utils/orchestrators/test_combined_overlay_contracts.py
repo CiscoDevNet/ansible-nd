@@ -20,15 +20,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.networks im
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.standalone_network import StandaloneNetworkStrategy
 
 
-def _config(layer="layer3"):
+def _config(network_mode="layer3"):
     config = {
         "network_name": "BLUE",
         "network_id": 29991,
-        "layer": layer,
+        "network_mode": network_mode,
         "deploy": False,
         "attach": [{"ip_address": "192.0.2.10", "interfaces": [{"mode": "trunk", "interface_range": "Ethernet1/35"}]}],
     }
-    if layer != "layer2":
+    if network_mode != "layer2":
         config["vrf_name"] = "TENANT"
     return config
 
@@ -49,10 +49,10 @@ def _coordinator(config, state="staged"):
     return NetworkWorkflowCoordinator(SimpleNamespace(params=params, check_mode=False), strategy=_strategy())
 
 
-@pytest.mark.parametrize("layer", ["layer2", "layer2WithVrf", "layer3"])
+@pytest.mark.parametrize("network_mode", ["layer2", "layer2WithVrf", "layer3"])
 @pytest.mark.parametrize("netflow", [False, True])
-def test_canonical_module_expansion_and_sparse_parsing_keep_original_request_binding(layer, netflow):
-    raw = _config(layer)
+def test_canonical_module_expansion_and_sparse_parsing_keep_original_request_binding(network_mode, netflow):
+    raw = _config(network_mode)
     raw["netflow_enable"] = netflow
     if netflow:
         raw["vlan_netflow_monitor"] = "MONITOR_BLUE"
@@ -65,7 +65,7 @@ def test_canonical_module_expansion_and_sparse_parsing_keep_original_request_bin
     coordinator = _coordinator(expanded)
     parsed = coordinator._parse_config(expanded, NetworkConfigModel, "staged")
     assert coordinator._network_staging_request_sha256 == expected
-    assert parsed[0]["layer"] == layer
+    assert parsed[0]["network_mode"] == network_mode
     assert parsed[0]["netflow_enable"] is netflow
     assert ("vlan_netflow_monitor" in parsed[0]) is netflow
     assert "is_l2only" not in parsed[0]
@@ -153,7 +153,7 @@ def test_authoritative_initial_query_observes_whole_scope_with_receipt_already_i
 
 @pytest.mark.parametrize("role", ["normal", "primary", "community", "isolated"])
 def test_canonical_pvlan_relationships_preserve_native_payload_but_decline_bounded_effect_receipt(role):
-    config = {"network_name": "BLUE", "network_id": 29991, "vlan_id": 191, "layer": "layer2", "vlan_network_type": role}
+    config = {"network_name": "BLUE", "network_id": 29991, "vlan_id": 191, "network_mode": "layer2", "vlan_network_type": role}
     if role in ("community", "isolated"):
         config["primary_network_id"] = 29990
     canonical = NetworkConfigModel.from_config(_expanded([config])[0], context={"state": "staged"}).to_config(exclude_unset=True)

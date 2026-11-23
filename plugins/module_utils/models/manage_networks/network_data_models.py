@@ -23,10 +23,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
     AciVlanNetworkType,
-    ClassicNetworkLayer,
+    ClassicNetworkMode,
     ConfigurationStatus,
     FabricType,
-    NetworkLayer,
+    NetworkMode,
     NetworkType,
     OperationStatus,
     VlanNetworkType,
@@ -379,7 +379,7 @@ class NetworkCommonModel(NDBaseModel):
     display_name: str | None = Field(default=None, alias="displayName")
     vrf_name: str | None = Field(default=None, alias="vrfName", max_length=32)
     vlan_id: int | None = Field(default=None, alias="vlanId", ge=2, le=4094)
-    layer: NetworkLayer | None = Field(default=None, alias="networkMode")
+    network_mode: NetworkMode | None = Field(default=None, alias="networkMode")
 
     @field_validator("network_name", mode="before")
     @classmethod
@@ -449,7 +449,7 @@ class NetworkBaseModel(NetworkCommonModel):
         """
         standard_l3_ibgp = (
             self.network_type == NetworkType.VXLAN_IBGP.value
-            and self.layer == NetworkLayer.LAYER3.value
+            and self.network_mode == NetworkMode.LAYER3.value
             and self.vlan_network_type == VlanNetworkType.NORMAL.value
         )
         display_name = data.get("displayName")
@@ -457,7 +457,7 @@ class NetworkBaseModel(NetworkCommonModel):
         campus_fabric = getattr(self.l3_data, "fabric_data", None)
         if (
             self.network_type == NetworkType.VXLAN_CAMPUS.value
-            and self.layer == NetworkLayer.LAYER3.value
+            and self.network_mode == NetworkMode.LAYER3.value
             and self.vlan_network_type == VlanNetworkType.NORMAL.value
             and campus_fabric is not None
             and "ipv4_trm" in campus_fabric.model_fields_set
@@ -537,10 +537,10 @@ class NetworkBaseModel(NetworkCommonModel):
                 "network_template_config",
             ):
                 data.pop(key, None)
-        elif self.layer == NetworkLayer.LAYER2.value and isinstance(self.l3_data, DefaultL3DataModel):
+        elif self.network_mode == NetworkMode.LAYER2.value and isinstance(self.l3_data, DefaultL3DataModel):
             applicable = self.l3_data.to_layer2_payload(exclude_unset=True)
             self._flatten_l3_data(data, applicable)
-        elif self.layer != NetworkLayer.LAYER2.value or self.network_type == NetworkType.USER_DEFINED.value:
+        elif self.network_mode != NetworkMode.LAYER2.value or self.network_type == NetworkType.USER_DEFINED.value:
             self._flatten_l3_data(data, l3_data)
         return data
 
@@ -620,8 +620,8 @@ class NetworkBaseModel(NetworkCommonModel):
             if model_cls is not None:
                 return model_cls.from_response(response, **kwargs)
         normalized = dict(response)
-        if "layer" not in normalized and "networkMode" in normalized:
-            normalized["layer"] = normalized["networkMode"]
+        if "network_mode" not in normalized and "networkMode" in normalized:
+            normalized["network_mode"] = normalized["networkMode"]
         l2_data = normalized.get("l2Data")
         if isinstance(l2_data, dict):
             l2_data = dict(l2_data)
@@ -633,7 +633,7 @@ class NetworkBaseModel(NetworkCommonModel):
                 l2_data["fabricData"] = fabric_data
             normalized["l2Data"] = l2_data
         if (
-            normalized.get("layer") == NetworkLayer.LAYER2.value
+            normalized.get("network_mode") == NetworkMode.LAYER2.value
             and normalized.get("vlanNetworkType") == VlanNetworkType.PRIVATE_PRIMARY.value
             and cls._is_layer2_default_l3_data(normalized.get("l3Data"))
         ):
@@ -717,7 +717,7 @@ class VxlanNetworkModel(NetworkBaseModel):
         if self.network_type == NetworkType.VXLAN.value and not kwargs.get("exclude_unset", False):
             l2_data.setdefault("xConnect", False)
             l2_data.setdefault("fabricData", {})
-        if self.layer == NetworkLayer.LAYER2.value:
+        if self.network_mode == NetworkMode.LAYER2.value:
             l3_data = self.l3_data.to_layer2_payload(exclude_unset=kwargs.get("exclude_unset", False)) if self.l3_data is not None else {}
             if not kwargs.get("exclude_unset", False):
                 l3_data.setdefault("fabricData", {}).setdefault("netflow", False)
@@ -781,7 +781,7 @@ class RoutedNetworkModel(NetworkBaseModel):
     """Routed network model."""
 
     network_type: Literal[NetworkType.ROUTED] = Field(default=NetworkType.ROUTED, alias="networkType")
-    layer: ClassicNetworkLayer | None = Field(default=None)
+    network_mode: ClassicNetworkMode | None = Field(default=None, alias="networkMode")
     l2_data: ClassicOrRoutedL2DataModel | None = Field(default=None, alias="l2Data")
     l3_data: ClassicOrRoutedL3DataModel | None = Field(default=None, alias="l3Data")
 
@@ -848,7 +848,7 @@ class ExternalConnectivityNetworkModel(NetworkBaseModel):
 
     exclude_from_diff: ClassVar[set[str]] = NetworkBaseModel.exclude_from_diff | {"display_name"}
     config_exclude_fields: ClassVar[set[str]] = NetworkBaseModel.config_exclude_fields | {"display_name"}
-    payload_exclude_fields: ClassVar[set[str]] = NetworkBaseModel.payload_exclude_fields | {"display_name", "layer"}
+    payload_exclude_fields: ClassVar[set[str]] = NetworkBaseModel.payload_exclude_fields | {"display_name", "network_mode"}
     reverse_diff_exclude: ClassVar[set[str]] = NetworkBaseModel.reverse_diff_exclude | {"networkId"}
     network_type: Literal[NetworkType.EXTERNAL_CONNECTIVITY] = Field(default=NetworkType.EXTERNAL_CONNECTIVITY, alias="networkType")
     vlan_network_type: VlanNetworkType | None = Field(default=None, alias="vlanNetworkType")

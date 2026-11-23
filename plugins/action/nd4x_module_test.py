@@ -1445,7 +1445,7 @@ class ActionModule(ActionBase):
                 "vlan_id": network_value("vlan_id", "vlanId"),
                 "vlan_name": network_value("vlan_name", "vlanName", l2_data),
                 "is_l2only": network_value("is_l2only", "isL2Only"),
-                "layer": network_value("layer", "layer"),
+                "network_mode": network_value("network_mode", "networkMode"),
                 "enable_ir": network_value("enable_ir", "enableIr", fabric_data),
                 "rt_auto": network_value("rt_auto", "rtAuto", l2_data),
                 "deploy": item.get("deploy"),

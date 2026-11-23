@@ -109,7 +109,7 @@ def invoke(monkeypatch, state, *, reject=False, check=False, omit_shared=False):
     config = [
         {
             "network_name": "BLUE",
-            "layer": "layer2",
+            "network_mode": "layer2",
             "network_id": 20001,
             "vlan_id": 101,
             "deploy": False,
@@ -123,7 +123,7 @@ def invoke(monkeypatch, state, *, reject=False, check=False, omit_shared=False):
         config.append(
             {
                 "network_name": "SHARED",
-                "layer": "layer2",
+                "network_mode": "layer2",
                 "network_id": 20002,
                 "vlan_id": 102,
                 "deploy": False,

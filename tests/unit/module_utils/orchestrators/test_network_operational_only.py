@@ -96,7 +96,7 @@ def test_mixed_operational_and_sparse_networks_resolve_from_one_inventory(monkey
     try:
         assert type(sm.proposed.get("N")) is type(sm.existing.get("N"))
         assert sm.existing.get("N").get_diff(sm.proposed.get("N"), exclude_unset=True)
-        assert sm.proposed.get("M").layer == "layer2"
+        assert sm.proposed.get("M").network_mode == "layer2"
     finally:
         coordinator._restore_state_machine_params(original_config, original_state)
 
@@ -143,7 +143,7 @@ def test_child_only_request_preserves_parent_definition(monkeypatch, strategy_cl
     monkeypatch.setattr(coordinator_module, "NDNetworkOrchestrator", _InventoryOrchestrator)
     parsed = coordinator._parse_config([entry], strategy.config_model_cls, state)
     assert parsed[0]["child_fabric_config"][0]["x_connect"] is False
-    assert parsed[0].get("layer") is None
+    assert parsed[0].get("network_mode") is None
     parent_entry = dict(parsed[0])
     parent_entry.pop("child_fabric_config")
     sm, original_config, original_state = coordinator._new_state_machine({"state": state, "config": [parent_entry]}, strategy)

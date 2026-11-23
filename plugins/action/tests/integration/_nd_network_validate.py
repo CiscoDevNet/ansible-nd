@@ -107,7 +107,7 @@ FIELD_PATHS = {
     ),
     "net_id": (("network_id",), ("networkId",), ("l2_data", "networkId"), ("l2Data", "networkId"), ("l3_data", "networkId"), ("l3Data", "networkId")),
     "network_type": (("network_type",), ("networkType",), ("parent", "networkType")),
-    "layer": (("layer",), ("networkMode",), ("parent", "networkMode")),
+    "network_mode": (("network_mode",), ("networkMode",), ("parent", "networkMode")),
     "vrf_name": (("vrf_name",), ("vrfName",), ("parent", "vrfName")),
     "vlan_id": (("vlan_id",), ("vlanId",), ("l2_data", "vlanId"), ("l2Data", "vlanId"), ("l3_data", "vlanId"), ("l3Data", "vlanId")),
     "vlan_name": (
