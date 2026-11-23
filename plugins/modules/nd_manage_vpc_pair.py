@@ -137,6 +137,15 @@ notes:
     - Check mode is fully supported via both framework and RestSend
     - No separate dry_run parameter is supported; use native Ansible check_mode
     - "Validation error: C(config_actions.save=false) with C(config_actions.deploy=true) is not allowed"
+    - With a nonempty O(config), C(merged) and C(replaced) read pair configuration only for the requested pairs.
+      The complete intended-pair list is still checked for conflicting peer assignments.
+    - C(overridden) reads all intended pairs, including pairs omitted from O(config) that may need removal.
+      An empty O(config) retains the existing full-scope behavior for save and deploy operations.
+    - A required pair read fails if its peer-link mode cannot be determined. For a nonempty C(merged) request,
+      an unavailable detail endpoint also requires explicit custom-detail data, or explicit absence, in the list response
+      so existing custom settings are not silently lost. Errors identify the fabric and affected peers.
+    - O(verify.enabled) controls the post-write refresh. The refresh uses the same pair scope as the initial query.
+      Configuration save and deployment retain their O(config_actions) scope.
 """
 
 EXAMPLES = """
@@ -270,6 +279,8 @@ before:
     description:
     - vPC pair state before changes.
     - May contain controller read-only properties because it is queried from controller state.
+    - With nonempty C(merged) or C(replaced) configuration, includes only requested pairs that already exist.
+      C(overridden) includes the full intended-pair set.
     type: list
     returned: always
     sample: [{"switchId": "FDO123", "peerSwitchId": "FDO456", "useVirtualPeerLink": false}]
@@ -278,11 +289,14 @@ after:
     - vPC pair state after changes.
     - By default this is refreshed from controller after write operations and may include read-only properties.
     - Refresh verification runs when verify.enabled=true (default).
+    - Uses the same pair scope as C(before), including newly created requested pairs when present.
     type: list
     returned: always
     sample: [{"switchId": "FDO123", "peerSwitchId": "FDO456", "useVirtualPeerLink": true}]
 gathered:
-    description: Current vPC pairs (gathered state only)
+    description:
+    - Current vPC pairs (gathered state only).
+    - Includes all intended pairs unless O(config) selects specific pairs.
     type: dict
     returned: when state is gathered
     contains:
