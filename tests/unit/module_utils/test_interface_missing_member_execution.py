@@ -186,7 +186,7 @@ def test_wrong_generated_member_fails_after_accepted_parent_without_claiming_ver
 @pytest.mark.parametrize("kind", ["missing_inventory", "explicit_host_conversion"])
 def test_explicit_missing_preparation_requires_verified_staging_before_executor(monkeypatch, deploy, verify, check_mode, kind):
     module = coordinator_fakes.FakeModule(check_mode=check_mode, verify_enabled=verify)
-    module.params["config_actions"] = {} if deploy is None else {"deploy": deploy}
+    module.params["config_actions"] = {"deploy": deploy}
     coordinator = InterfaceWorkflowCoordinator(module)
     workflow_plan = coordinator_fakes.plan()
     workflow_plan.member_preparations = (SimpleNamespace(kind=kind),)

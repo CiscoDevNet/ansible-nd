@@ -1248,7 +1248,7 @@ class InterfaceWorkflowCoordinator:
         with profile.phase("planning") if profile is not None else nullcontext():
             plan = self._build_plan()
         if any(preparation.kind in {"missing_inventory", "explicit_host_conversion"} for preparation in getattr(plan, "member_preparations", ())):
-            if (self.module.params.get("config_actions") or {}).get("deploy") is not False:
+            if (self.module.params.get("config_actions") or {}).get("deploy", False) is not False:
                 raise InterfaceWorkflowValidationError("Explicit member preparation requires config_actions.deploy=false")
             if (self.module.params.get("verify") or {}).get("enabled") is not True:
                 raise InterfaceWorkflowValidationError("Explicit member preparation requires verify.enabled=true")
