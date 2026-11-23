@@ -432,10 +432,11 @@ def test_guard_restores_original_attempt_limit_and_deadline_before_return_or_inv
     if scenario == "read_failure":
         scripted = [deepcopy(pending), action(item(P21)), deepcopy(pending), response({"interfaces": None})]
     elif scenario == "exhaustion":
-        scripted = [deepcopy(pending), action(item(P21)), *[deepcopy(pending) for _unused_attempt in range(12)]]
+        scripted = [deepcopy(pending), action(item(P21)), *[deepcopy(pending) for _unused_attempt in range(3)]]
     else:
         scripted = [deepcopy(pending), action(item(P21)), deepcopy(pending), topology(P21, P23), action(item(P21 + "/1"))]
-    report, calls = run(scripted, config=[group(P21)], verify=VERIFY)
+    verify = {**VERIFY, "wait_timeout": 15} if scenario == "exhaustion" else VERIFY
+    report, calls = run(scripted, config=[group(P21)], verify=verify)
     assert report["failed"] is True and report["changed"] is True
     assert guard_limits == [(7, 7, None, None)]
     assert 1 in attempt_assignments and attempt_assignments[-1] == 7
@@ -444,3 +445,8 @@ def test_guard_restores_original_attempt_limit_and_deadline_before_return_or_inv
     if scenario == "late_collateral":
         assert report["recovery"][0]["status"] == "response_confirmed"
         assert report["recovery"][0]["topology_verified"] is False
+    elif scenario == "exhaustion":
+        assert clock.sleeps == [5, 5, 5]
+        assert len(summary_calls(calls)) == 4
+        assert report["verification"]["complete"] is True
+        assert "15-second verification budget" in report["msg"]

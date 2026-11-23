@@ -1,6 +1,6 @@
 ---
 - name: Independently validate owned footprint and protect all outside families on its switch
-  cisco.nd.nd_manage_breakout_interfaces_validate:
+  cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
     fabric_name: "{{ test_fabric_name }}"
     switch_id: "{{ breakout_fabric_fixtures[breakout_fabric_index].switch_id }}"
     fixture: "{{ breakout_fabric_fixtures[breakout_fabric_index] }}"

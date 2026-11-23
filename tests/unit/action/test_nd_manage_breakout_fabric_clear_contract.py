@@ -289,7 +289,7 @@ def test_observer_scope_excludes_only_explicit_same_switch_owned_parents():
         "test_breakout_observe_retries": 1,
         "test_breakout_observe_interval": 0,
     }
-    args = render(tasks("tasks/fabric_clear_observe_one.yaml")[0]["cisco.nd.nd_manage_breakout_interfaces_validate"], values)
+    args = render(tasks("tasks/fabric_clear_observe_one.yaml")[0]["cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate"], values)
     assert args["whole_switch"] is True
     assert args["include_speeds"] is True
     assert args["owned_interfaces"] == ["Ethernet1/53", "Ethernet1/54"]

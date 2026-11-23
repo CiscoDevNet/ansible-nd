@@ -1,6 +1,6 @@
 ---
 - name: Read one matrix footprint using independently declared expectations
-  cisco.nd.nd_manage_breakout_interfaces_validate:
+  cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
     fabric_name: "{{ test_fabric_name }}"
     switch_id: "{{ test_switch_serial }}"
     fixture: "{{ breakout_matrix_fixtures[breakout_matrix_index] }}"

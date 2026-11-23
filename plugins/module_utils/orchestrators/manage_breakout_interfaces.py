@@ -48,6 +48,8 @@ _DISCOVERY_WAIT_SECONDS = 180
 _DISCOVERY_POLL_INTERVAL = 5
 _VERIFICATION_WAIT_SECONDS = 180
 _VERIFICATION_POLL_INTERVAL = 5
+_UNBREAKOUT_MAX_ATTEMPTS = 3
+_UNBREAKOUT_RETRY_INTERVAL = 5
 _PARENT = re.compile(r"^Ethernet(?P<slot>[1-9]\d*)/(?P<port>[1-9]\d*)$", re.IGNORECASE)
 _PHYSICAL = re.compile(r"Ethernet([1-9]\d*)/([1-9]\d*)(?:/([1-9]\d*))?", re.IGNORECASE)
 _SPEED = re.compile(r"([1-9]\d*)(?:\.0+)?\s*(?:Gb|Gbps|G)", re.IGNORECASE)
@@ -89,8 +91,9 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
 
     Initial discovery is needed for idempotency and child selection. Action results
     describe API acknowledgements, not independently verified topology or running
-    configuration. Missing results remain unknown. The orchestrator does not
-    replay actions; requests use the standard RestSend retry behavior.
+    configuration. Missing results do not establish success. Forward unbreakout can retry
+    eligible completed failures after a fresh topology check, up to three total
+    attempts. Creation and recovery retain their existing transport behavior.
     """
 
     model_class: ClassVar[type] = BreakoutInterfaceModel
@@ -106,6 +109,8 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
     _write_attempted: bool = PrivateAttr(default=False)
     _report: dict[str, Any] = PrivateAttr(default_factory=dict)
     _verification_deadline: float | None = PrivateAttr(default=None)
+    _retry_guard_snapshots: dict[str, dict] = PrivateAttr(default_factory=dict)
+    _retry_observation_error: str | None = PrivateAttr(default=None)
 
     @property
     def report_snapshot(self) -> dict[str, Any]:
@@ -618,7 +623,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
                 {"interfaces": interfaces},
                 operation_type=(OperationType.CREATE if state == "merged" else OperationType.DELETE),
             )
-        except Exception as exc:  # Retain completed responses without an orchestrator-level replay.
+        except Exception as exc:  # Retain the wire response; forward retry eligibility is checked separately.
             request_error = str(exc)
         if self.rest_send.response_count == before_count:
             message = request_error or "No completed controller response is available."
@@ -644,12 +649,116 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
             errors.insert(0, request_error)
         return outcomes, errors
 
+    @staticmethod
+    def _can_retry_unbreakout(response, outcomes):
+        """Retry completed empty receipts or complete, identified item failures.
+
+        An empty receipt is not proof that nothing happened. A fresh interface
+        check is required before another best-effort request. Malformed or
+        ambiguous receipts and incomplete transports never authorize a replay.
+        """
+        if response.get("RETURN_CODE") not in {200, 201, 207} or not any(item["outcome"] != "success" for item in outcomes):
+            return False
+        data = response.get("DATA")
+        rows = data.get("results") if isinstance(data, dict) else None
+        return isinstance(rows, list) and (not rows or (len(rows) == len(outcomes) and all(item["outcome"] in {"success", "failed"} for item in outcomes)))
+
+    def _retry_targets_snapshot(self, submitted):
+        """Read only pending families when post-action verification is disabled."""
+        models = [BreakoutInterfaceModel(switch_id=item["switch_id"], interface_name=item["interface_name"]) for item in submitted]
+        snapshot = {}
+        for serial, filter_text, _unused_models in self.discovery_groups(models):
+            snapshot.update(self._index_topology(self._query_group(serial, filter_text), serial, allow_intent=True))
+        wanted = {(model.switch_id, model.interface_name) for model in models}
+        return {key: row for key, row in snapshot.items() if key in wanted}
+
+    def _retry_guard_snapshot(self, before, submitted):
+        """Check all original action switches, reusing untouched retry snapshots."""
+        serials = list(dict.fromkeys(item["switch_id"] for item in submitted))
+        for serial in serials:
+            if serial not in self._retry_guard_snapshots:
+                self._retry_guard_snapshots[serial] = self._topology_snapshot([serial])
+        current = {key: row for key, row in before.items() if key[0] not in self._retry_guard_snapshots}
+        for snapshot in self._retry_guard_snapshots.values():
+            current.update(snapshot)
+        return current
+
+    def _execute_forward_action(self, submitted, state, before, guarded, requested_state=None):
+        """Retry forward unbreakout only, preserving successes and phase baselines.
+
+        Each unbreakout POST gets one transport attempt. Completed failures may
+        receive two further attempts after five/ten-second backoff and a fresh
+        usable-child check. Guarded reads cover every originally mutated switch;
+        response-only retries read pending families without a collateral guard.
+        Native, missing or undiscovered targets stop retries without converting
+        an unknown acknowledgement into success. Recovery never enters here.
+        """
+        self._retry_guard_snapshots.clear()
+        self._retry_observation_error = None
+        if state != "deleted":
+            return self._execute_action(submitted, state)
+        writer = self.rest_send
+        saved_attempts = writer.max_attempts
+        final_outcomes, counts = {}, defaultdict(int)
+        pending = submitted
+        errors = []
+        writer.max_attempts = 1
+        try:
+            for attempt in range(1, _UNBREAKOUT_MAX_ATTEMPTS + 1):
+                outcomes, errors = self._execute_action(pending, state)
+                for item in outcomes:
+                    key = (item["switch_id"], item["interface_name"])
+                    counts[key] += 1
+                    final_outcomes[key] = {**item, "attempts": counts[key]}
+                ordered = [final_outcomes[(item["switch_id"], item["interface_name"])] for item in submitted]
+                if not self._last_action_completed or not self._can_retry_unbreakout(writer.response_current, outcomes):
+                    return ordered, errors
+                if attempt == _UNBREAKOUT_MAX_ATTEMPTS:
+                    return ordered, [*errors, f"Unbreakout was not confirmed after {_UNBREAKOUT_MAX_ATTEMPTS} attempts."]
+                pending = [item for item in ordered if item["outcome"] != "success"]
+                if not writer.unit_test:
+                    time.sleep(_UNBREAKOUT_RETRY_INTERVAL * attempt)
+                try:
+                    observed = self._retry_guard_snapshot(before, submitted) if guarded else self._retry_targets_snapshot(pending)
+                except Exception as error:
+                    message = f"Unbreakout retry could not obtain a usable interface snapshot: {error}"
+                    self._retry_observation_error = message
+                    return ordered, [*errors, message]
+                baseline = (
+                    before
+                    if guarded
+                    else {(item["switch_id"], item["interface_name"]): before[(item["switch_id"], item["interface_name"])] for item in pending}
+                )
+                self._action_changed = self._action_changed or self._families(baseline) != self._families(observed)
+                if guarded and any(report["collateral"] for report in self._guard(before, observed, submitted, state, requested_state)):
+                    return ordered, errors
+                refreshed = []
+                for item in pending:
+                    key = (item["switch_id"], item["interface_name"])
+                    family = observed.get(key, {})
+                    child = next((name for name in family.get("children", []) if family.get("child_readiness", {}).get(name)), None)
+                    if not family.get("broken_out") or child is None:
+                        return ordered, [
+                            *errors,
+                            f"Unbreakout retry was not sent for '{key[0]}/{key[1]}': no currently discovered breakout child is available. "
+                            "The original API outcome remains unconfirmed or failed.",
+                        ]
+                    refreshed.append({**item, "api_interface_name": child})
+                pending = refreshed
+                for item in pending:
+                    self._retry_guard_snapshots.pop(item["switch_id"], None)
+            return ordered, errors
+        finally:
+            writer.max_attempts = saved_attempts
+
     def run(self) -> dict[str, Any]:
-        """Select response-only or guarded planning without changing shared transport."""
+        """Select response-only or guarded planning with phase-local retry handling."""
         self._report = {}
         self._action_changed = False
         self._write_attempted = False
         self._last_action_completed = False
+        self._retry_guard_snapshots.clear()
+        self._retry_observation_error = None
         self._api_calls.clear()
         params = self.rest_send.params
         if params.get("state", "merged") not in {"merged", "deleted", "overridden"}:
@@ -779,7 +888,14 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
             # retry loop inside any page of the bounded guard observation.
             writer.max_attempts = 1
         try:
-            observed = self._topology_snapshot(serials)
+            if self._retry_observation_error is not None:
+                raise RuntimeError(self._retry_observation_error)
+            cached = self._retry_guard_snapshots
+            self._retry_guard_snapshots = {}
+            observed = {key: row for serial in serials for key, row in cached.get(serial, {}).items()}
+            uncached = [serial for serial in serials if serial not in cached]
+            if uncached:
+                observed.update(self._topology_snapshot(uncached))
             current = {key: row for key, row in before.items() if key[0] not in mutated_switches}
             current.update(observed)
             reports = self._guard(before, current, submitted, phase, requested_state=requested_state)
@@ -1202,7 +1318,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
                 # dictionary entries, never mutate the prior family's data.
                 before = dict(current)
                 submitted = [self._submitted(model, before, phase) for model in planned]
-                outcomes, action_errors = self._execute_action(submitted, phase)
+                outcomes, action_errors = self._execute_forward_action(submitted, phase, before, guarded, requested_state=state)
                 completed = self._last_action_completed
                 result["api_outcomes"].extend(outcomes)
                 result["changed"] = result["changed"] or self._action_changed
@@ -1298,7 +1414,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
             result["api_calls"] = list(self._api_calls)
 
     def _run_response_only(self) -> dict[str, Any]:
-        """Run merged/deleted using initial discovery and API acknowledgements."""
+        """Use API acknowledgements, with fresh target reads only for unbreakout retries."""
         params = self.rest_send.params
         self._action_changed = False
         self._api_calls.clear()
@@ -1391,7 +1507,7 @@ class ManageBreakoutInterfacesOrchestrator(NDBaseOrchestrator[BreakoutInterfaceM
                 for item in submitted
             ]
         elif submitted:
-            action_outcomes, errors = self._execute_action(submitted, state)
+            action_outcomes, errors = self._execute_forward_action(submitted, state, before, False, requested_state=state)
         else:
             action_outcomes = []
         outcomes.update({(item["switch_id"], item["interface_name"]): item for item in action_outcomes})

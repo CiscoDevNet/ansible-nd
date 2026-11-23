@@ -18,7 +18,7 @@
     coupled_names_fixture: "{{ test_breakout_coupled_safe_fixture }}"
 
 - name: Validate complete safe-switch fixture locally without issuing GETs
-  cisco.nd.nd_manage_breakout_interfaces_validate:
+  cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
     fabric_name: "{{ test_breakout_coupled_fabric_name }}"
     switch_id: "{{ test_breakout_coupled_safe_fixture.switch_id }}"
     fixture: "{{ test_breakout_coupled_safe_fixture }}"

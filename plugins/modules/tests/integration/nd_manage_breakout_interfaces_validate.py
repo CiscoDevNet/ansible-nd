@@ -82,7 +82,7 @@ notes:
 
 EXAMPLES = r"""
 - name: Validate a breakout test fixture without contacting Nexus Dashboard
-  cisco.nd.nd_manage_breakout_interfaces_validate:
+  cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
     fabric_name: fab1
     switch_id: FDO222425SE
     validate_only: true

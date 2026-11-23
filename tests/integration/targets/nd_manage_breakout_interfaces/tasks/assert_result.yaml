@@ -45,22 +45,8 @@
       - (breakout_result.may_have_changed | bool) == (breakout_expected_may_have_changed | bool)
   when: breakout_expected_may_have_changed is defined
 
-- name: Validate module write count and order from high-verbosity trace
-  ansible.builtin.assert:
-    that:
-      - breakout_result.api_calls is defined
-      - >-
-        breakout_result.api_calls | rejectattr('method', 'equalto', 'GET') |
-        map(attribute='method') | unique | list
-        == (['POST'] if (breakout_expected_write_actions | default([]) | length) > 0 else [])
-      - >-
-        breakout_result.api_calls | selectattr('method', 'equalto', 'POST') |
-        map(attribute='path') | map('regex_replace', '^.*/interfaceActions/', '') | list
-        == (breakout_expected_write_actions | default([]))
-    fail_msg: >-
-      Unexpected module write trace. Validator GETs are separate and are not
-      counted in this module's API budget.
-  when: ansible_verbosity | int >= 3
+- name: Validate exact action ordering and any bounded forward unbreakout retries
+  ansible.builtin.include_tasks: assert_action_trace.yaml
 
 - name: Validate the focused GET budget when specified
   ansible.builtin.assert:
@@ -78,7 +64,7 @@
         (breakout_result.api_calls | selectattr('method', 'equalto', 'GET') |
          selectattr('path', 'search', '/interfacesSummary[?]') |
          selectattr('path', 'search', '[?&]offset=0(?:&|$)') | list | length
-         == (breakout_expected_discovery_rounds | int))
+         == (breakout_expected_discovery_rounds | int) + (breakout_retry_extra_rounds | default(0) | int))
       - >-
         breakout_result.api_calls | selectattr('purpose', 'defined') |
         selectattr('purpose', 'equalto', 'switch_metadata') | list | length
@@ -101,7 +87,7 @@
           - breakout_expected_changed | bool
           - not (breakout_expected_failed | default(false) | bool)
           - breakout_expected_write_actions | default([]) | length == 1
-          - breakout_result.api_calls | selectattr('method', 'equalto', 'POST') | list | length == 1
+          - breakout_result.api_calls | selectattr('method', 'equalto', 'POST') | list | length == (breakout_trace_expected_actions | length)
           - breakout_result.verification is defined
           - breakout_result.verification.enabled | bool
           - breakout_result.verification.complete | bool
@@ -150,8 +136,8 @@
           - (breakout_expected_discovery_rounds | int) > (breakout_guard_mutated_switches | length)
           - (breakout_guard_before_rounds | int) == (breakout_expected_discovery_rounds | int) - (breakout_guard_mutated_switches | length)
           - (breakout_guard_after_rounds | int) >= (breakout_guard_mutated_switches | length)
-          - (breakout_guard_before_rounds | int) + (breakout_guard_after_rounds | int) <= (breakout_expected_discovery_rounds | int) + 35 * (breakout_guard_mutated_switches | length)
-          - breakout_guard_after | rejectattr('method', 'equalto', 'GET') | list | length == 0
+          - (breakout_guard_before_rounds | int) + (breakout_guard_after_rounds | int) <= (breakout_expected_discovery_rounds | int) + 35 * (breakout_guard_mutated_switches | length) + (breakout_retry_extra_rounds | default(0) | int)
+          - breakout_guard_after | rejectattr('method', 'equalto', 'GET') | list | length == (breakout_trace_remove_attempts | int) - 1
           - breakout_guard_summary_calls | length == (breakout_guard_after | selectattr('method', 'equalto', 'GET') | list | length)
         fail_msg: Only bounded post-action Ethernet guard reads may exceed the original query-start budget; mandatory initial reads remain exact.
 
@@ -191,7 +177,7 @@
           - >-
             breakout_guard_summary_calls |
             selectattr('path', 'search', '[?&]switchId=' ~ (item | regex_escape) ~ '(?:&|$)') |
-            selectattr('path', 'search', '[?&]offset=0(?:&|$)') | list | length <= 36
+            selectattr('path', 'search', '[?&]offset=0(?:&|$)') | list | length <= 36 + (breakout_retry_extra_rounds_by_switch | default({})).get(item, 0)
         fail_msg: Each mutated switch needs a complete initial guard query and no more than thirty-five additional query starts within the 180-second/five-second contract.
       loop: "{{ breakout_guard_mutated_switches }}"
 

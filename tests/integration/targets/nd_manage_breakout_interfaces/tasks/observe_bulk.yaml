@@ -2,7 +2,7 @@
 # The caller loops over fixture indices. Every observation covers the complete
 # declared hardware group, never just its control parent or response snapshot.
 - name: Capture optional bulk guards before the first mutation
-  cisco.nd.nd_manage_breakout_interfaces_validate:
+  cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
     fabric_name: "{{ test_fabric_name }}"
     switch_id: "{{ breakout_bulk_fixtures[breakout_bulk_index].switch_id }}"
     fixture: "{{ breakout_bulk_fixtures[breakout_bulk_index] }}"
@@ -29,7 +29,7 @@
   when: breakout_bulk_guard_observation.snapshot is defined
 
 - name: Observe one complete independently reserved bulk footprint
-  cisco.nd.nd_manage_breakout_interfaces_validate:
+  cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
     fabric_name: "{{ test_fabric_name }}"
     switch_id: "{{ breakout_bulk_fixtures[breakout_bulk_index].switch_id }}"
     fixture: "{{ breakout_bulk_fixtures[breakout_bulk_index] }}"

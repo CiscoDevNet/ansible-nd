@@ -1,6 +1,6 @@
 ---
 - name: Independently inspect safe-switch state separately from the production invocation
-  cisco.nd.nd_manage_breakout_interfaces_validate:
+  cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
     fabric_name: "{{ test_breakout_coupled_fabric_name }}"
     switch_id: "{{ test_breakout_coupled_safe_fixture.switch_id }}"
     fixture: "{{ test_breakout_coupled_safe_fixture }}"

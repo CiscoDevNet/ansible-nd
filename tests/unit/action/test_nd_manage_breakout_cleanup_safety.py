@@ -147,8 +147,8 @@ def test_barrier_is_evaluated_after_observation_and_before_any_cleanup_mutation(
 def test_successful_original_remove_settles_with_read_only_native_oracle_and_keeps_failures_separate():
     settle = next(task for task in CLEANUP if task["name"] == "Allow only readback settling for a reported successful original direct unbreakout")
     oracle = settle["block"][0]
-    assert oracle["cisco.nd.nd_manage_breakout_interfaces_validate"]["expected_profile"] == "native"
-    assert oracle["cisco.nd.nd_manage_breakout_interfaces_validate"]["retries"] == "{{ test_breakout_observe_retries }}"
+    assert oracle["cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate"]["expected_profile"] == "native"
+    assert oracle["cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate"]["retries"] == "{{ test_breakout_observe_retries }}"
     assert oracle["check_mode"] is False
     assert settle["rescue"][0]["ansible.builtin.set_fact"]["breakout_cleanup_original_topology_failure"] == "{{ ansible_failed_result }}"
     assert settle["always"][0]["ansible.builtin.set_fact"]["breakout_observation"] == "{{ breakout_cleanup_original_settling }}"

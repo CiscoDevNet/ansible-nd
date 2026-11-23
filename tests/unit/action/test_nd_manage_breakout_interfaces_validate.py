@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from ansible.errors import AnsibleConnectionFailure
 from ansible.plugins.action import ActionBase
-from ansible_collections.cisco.nd.plugins.action import (
+from ansible_collections.cisco.nd.plugins.action.tests.integration import (
     nd_manage_breakout_interfaces_validate as validator,
 )
 
@@ -698,7 +698,7 @@ def test_real_action_base_contract_smoke(monkeypatch, check_mode):
         args={"fabric_name": "fab1", "switch_id": SERIAL, "fixture": fixture()},
         check_mode=check_mode,
         async_val=0,
-        action="cisco.nd.nd_manage_breakout_interfaces_validate",
+        action="cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate",
     )
     plugin._connection = SimpleNamespace(_shell=SimpleNamespace(tmpdir="/private/tmp"))
     plugin._execute_module = MagicMock(side_effect=live())

@@ -16,6 +16,12 @@ import yaml
 from jinja2 import StrictUndefined
 from jinja2.nativetypes import NativeEnvironment
 
+from ansible_collections.cisco.nd.tests.unit.action.test_nd_manage_breakout_guard_budget_contract import (
+    BASE,
+    execute_tasks,
+    unbreakout_variables,
+)
+
 TARGET = Path(__file__).resolve().parents[2] / "integration" / "targets" / "nd_manage_breakout_interfaces"
 PREFLIGHT = yaml.safe_load((TARGET / "tasks" / "coupled_preflight.yaml").read_text())
 NAMES = yaml.safe_load((TARGET / "tasks" / "coupled_validate_names.yaml").read_text())
@@ -24,11 +30,102 @@ ASSERTIONS = yaml.safe_load((TARGET / "tasks" / "coupled_assert.yaml").read_text
 CROSS_SWITCH = yaml.safe_load((TARGET / "tasks" / "coupled_cross_switch.yaml").read_text())
 SAFE_VALIDATION = yaml.safe_load((TARGET / "tasks" / "coupled_safe_validate.yaml").read_text())
 OBSERVE = yaml.safe_load((TARGET / "tasks" / "coupled_observe.yaml").read_text())
-OBSERVER = next(task for task in OBSERVE if "cisco.nd.nd_manage_breakout_interfaces_validate" in task)
+OBSERVER = next(task for task in OBSERVE if "cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate" in task)
 PREPARE = yaml.safe_load((TARGET / "tasks" / "coupled_prepare.yaml").read_text())
 CLEANUP = yaml.safe_load((TARGET / "tasks" / "coupled_cleanup.yaml").read_text())
 DEFAULTS = yaml.safe_load((TARGET / "defaults" / "main.yaml").read_text())
 SUITE = yaml.safe_load((TARGET / "tests" / "coupled.yaml").read_text())
+
+
+def _execute_coupled_trace(result, case):
+    """Execute only shared trace checks; no observer or controller is simulated."""
+    tasks = [
+        deepcopy(task)
+        for task in ASSERTIONS
+        if task.get("ansible.builtin.include_tasks") == "assert_action_trace.yaml"
+        or task["name"] == "Check action order and absence of a recovery readback in production trace"
+    ]
+    assert len(tasks) == 2
+    values = {"ansible_verbosity": 3, "coupled_original_result": result, "coupled_case": case}
+    execute_tasks(tasks, values)
+    return values
+
+
+@pytest.mark.parametrize("attempts", [1, 2, 3])
+@pytest.mark.parametrize("guarded", [False, True])
+def test_coupled_successful_unbreakout_uses_the_same_proven_retry_trace_contract(attempts, guarded):
+    result = unbreakout_variables(attempts, guarded=guarded)["breakout_result"]
+    values = _execute_coupled_trace(result, {"expect": "success", "state": "deleted", "initial": "map_a", "selector": "control"})
+    assert values["breakout_trace_expected_actions"] == ["remove"] * attempts
+    assert values["breakout_retry_extra_rounds"] == attempts - 1
+
+
+@pytest.mark.parametrize("reported", [0, 2, 4, True, "3"])
+def test_coupled_retry_trace_rejects_missing_invalid_or_mismatched_attempt_evidence(reported):
+    result = unbreakout_variables(3)["breakout_result"]
+    result["api_outcomes"][0]["attempts"] = reported
+    with pytest.raises(AssertionError):
+        _execute_coupled_trace(result, {"expect": "success", "state": "deleted", "initial": "map_a", "selector": "control"})
+
+
+def test_coupled_retry_trace_rejects_a_replayed_already_successful_family():
+    result = unbreakout_variables(3, partial=True)["breakout_result"]
+    posts = [index for index, call in enumerate(result["api_calls"]) if call["method"] == "POST"]
+    successful_wire = deepcopy(result["api_payload"][posts[0]]["interfaces"][0])
+    for index in posts[1:]:
+        result["api_payload"][index]["interfaces"].insert(0, successful_wire)
+    result["api_outcomes"][0]["attempts"] = 3
+    with pytest.raises(AssertionError):
+        _execute_coupled_trace(result, {"expect": "success", "state": "deleted", "initial": "map_a", "selector": "control"})
+
+
+@pytest.mark.parametrize("expect", ["noop", "preflight_error"])
+def test_coupled_nonmutating_cases_cannot_gain_a_write_allowance(expect):
+    result = {"api_calls": [], "api_outcomes": []}
+    case = {"expect": expect, "state": "deleted", "initial": "map_a", "selector": "control"}
+    values = _execute_coupled_trace(result, case)
+    assert values["breakout_trace_expected_actions"] == []
+    result["api_calls"].append({"method": "POST", "path": BASE + "/interfaceActions/remove"})
+    with pytest.raises(AssertionError):
+        _execute_coupled_trace(result, case)
+
+
+@pytest.mark.parametrize(
+    "initial,selector,actions",
+    [
+        ("native", "control", ["breakout", "remove"]),
+        ("map_a", "control", ["remove", "breakout"]),
+        ("map_a", "control_plus_independent", ["breakout", "remove", "breakout"]),
+    ],
+)
+def test_coupled_recovery_keeps_exact_forward_inverse_order_without_retry_allowances(initial, selector, actions):
+    result = {
+        "api_calls": [{"method": "POST", "path": BASE + "/interfaceActions/" + action} for action in actions],
+        "api_outcomes": [{"action": "unbreakout", "attempts": 3}],
+    }
+    case = {"expect": "recovery", "state": "deleted", "initial": initial, "selector": selector}
+    values = _execute_coupled_trace(result, case)
+    assert "breakout_trace_expected_actions" not in values  # The forward retry helper is deliberately skipped.
+    result["api_calls"].insert(0, {"method": "POST", "path": BASE + "/interfaceActions/remove"})
+    with pytest.raises(AssertionError):
+        _execute_coupled_trace(result, case)
+
+
+def test_coupled_recovery_still_rejects_a_post_inverse_readback():
+    result = {"api_calls": [{"method": "POST", "path": BASE + "/interfaceActions/" + action} for action in ["remove", "breakout"]]}
+    case = {"expect": "recovery", "state": "deleted", "initial": "map_a", "selector": "control"}
+    _execute_coupled_trace(result, case)
+    result["api_calls"].append({"method": "GET", "path": BASE + "/interfacesSummary"})
+    with pytest.raises(AssertionError):
+        _execute_coupled_trace(result, case)
+
+
+@pytest.mark.parametrize("endpoint", ["policies", "configSave", "switchActions/deploy"])
+def test_coupled_trace_still_forbids_policy_save_and_deploy_requests(endpoint):
+    result = unbreakout_variables(1)["breakout_result"]
+    result["api_calls"].append({"method": "GET", "path": BASE + "/" + endpoint})
+    with pytest.raises(AssertionError):
+        _execute_coupled_trace(result, {"expect": "success", "state": "deleted", "initial": "map_a", "selector": "control"})
 
 
 def _fixture():
@@ -207,7 +304,7 @@ def test_optional_safe_switch_is_locally_validated_before_the_first_coupled_get(
     first_read = next(index for index, task in enumerate(PREFLIGHT) if task.get("ansible.builtin.include_tasks") == "coupled_observe.yaml")
     assert validation < first_read
     assert SAFE_VALIDATION[1]["ansible.builtin.include_tasks"] == "coupled_validate_names.yaml"
-    args = SAFE_VALIDATION[2]["cisco.nd.nd_manage_breakout_interfaces_validate"]
+    args = SAFE_VALIDATION[2]["cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate"]
     assert args["validate_only"] is True and args["whole_switch"] is True
     assert "switch_id != test_breakout_coupled_switch_id" in " ".join(SAFE_VALIDATION[0]["ansible.builtin.assert"]["that"])
 
@@ -268,7 +365,7 @@ def test_cross_switch_recovery_targets_only_violating_switch_and_keeps_safe_crea
 
 @pytest.mark.parametrize("settle,observe_only,attempts,interval", [(False, False, 1, 0), (True, True, 1, 0), (True, False, 7, 10)])
 def test_only_explicit_strict_observation_can_get_settle_within_existing_hard_limits(settle, observe_only, attempts, interval):
-    arguments = OBSERVER["cisco.nd.nd_manage_breakout_interfaces_validate"]
+    arguments = OBSERVER["cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate"]
     variables = {**DEFAULTS, "coupled_observe_settle": settle, "coupled_observe_only": observe_only}
     actual_attempts = _environment().from_string(arguments["retries"]).render(**variables)
     actual_interval = _environment().from_string(arguments["interval"]).render(**variables)
@@ -304,7 +401,7 @@ def test_settling_knobs_are_locally_checked_before_first_get_and_every_mutation(
     assert OBSERVE[0]["name"].startswith("Validate test-only GET settling limits")
     checks = OBSERVE[0]["ansible.builtin.assert"]["that"]
     assert all(_expression(expression, variables) for expression in checks) is valid
-    first_observer = next(index for index, task in enumerate(OBSERVE) if "cisco.nd.nd_manage_breakout_interfaces_validate" in task)
+    first_observer = next(index for index, task in enumerate(OBSERVE) if "cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate" in task)
     assert first_observer > 0
     assert any(task.get("ansible.builtin.include_tasks") == "coupled_observe.yaml" for task in PREFLIGHT)
     assert all("cisco.nd.nd_manage_breakout_interfaces" not in task and "cisco.nd.nd_rest" not in task for task in PREFLIGHT)

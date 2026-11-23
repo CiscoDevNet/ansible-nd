@@ -276,12 +276,18 @@ def test_incomplete_post_action_snapshot_does_not_guess_an_inverse():
 
 def test_unanswered_mutation_never_uses_stale_response_for_compensation():
     report, calls = run(
-        [topology(native=(P21,)), ValueError("POST connection interrupted")],
+        [topology(native=(P21,)), ValueError("POST connection interrupted"), ValueError("Post-action GET connection interrupted")],
         config=[group(P21)],
         verify=VERIFY,
     )
     assert report["failed"] is True
     assert report["may_have_changed"] is True
+    assert report["verification"]["complete"] is False
+    assert report["api_outcomes"][0]["outcome"] == "unknown"
+    assert "POST connection interrupted" in report["api_outcomes"][0]["message"]
+    assert "Post-action GET connection interrupted" in report["msg"]
+    assert len(calls) == 4
+    assert report["api_calls"][-1]["response_received"] is False
     assert len(writes(calls)) == 1
     assert not report.get("recovery")
 
@@ -971,6 +977,16 @@ def test_non_string_item_failure_message_preserves_known_partial_change(message,
     accepted_api_name = P21 + "/1" if deleting else P21
     rejected_api_name = P23 + "/1" if deleting else P23
     scripted = [baseline, action(item(accepted_api_name), item(rejected_api_name, status="error", message=message))]
+    if deleting:
+        # The accepted family is never resubmitted. Every failed attempt keeps
+        # the original structured diagnostic, with real reads before retries.
+        for _attempt in range(2):
+            scripted.extend(
+                [
+                    topology(P23, native=(P21,)) if verify["enabled"] else topology(P23),
+                    action(item(rejected_api_name, status="error", message=message)),
+                ]
+            )
     if verify["enabled"]:
         scripted.append(topology(P23, native=(P21,)) if deleting else topology(P21, native=(P23,)))
     report, calls = run(
@@ -993,10 +1009,28 @@ def test_non_string_item_failure_message_preserves_known_partial_change(message,
     assert isinstance(rejected["message"], str) and rejected["message"]
     expected_message = "Unsupported map" if isinstance(message, (dict, list)) else "17"
     assert expected_message in rejected["message"]
-    assert len(writes(calls)) == 1
-    assert writes(calls)[0]["path"] == (REMOVE if deleting else BREAKOUT)
-    assert len(summary_calls(calls)) == (2 if verify["enabled"] else 1)
-    assert len(calls) == (4 if verify["enabled"] else 3)
+    assert len(writes(calls)) == (3 if deleting else 1)
+    assert [call["path"] for call in writes(calls)] == ([REMOVE] * 3 if deleting else [BREAKOUT])
+    if deleting:
+        assert accepted["attempts"] == 1
+        assert rejected["attempts"] == 3
+        assert [call["payload"]["interfaces"] for call in writes(calls)] == [
+            [{"switchId": SERIAL, "interfaceName": accepted_api_name}, {"switchId": SERIAL, "interfaceName": rejected_api_name}],
+            [{"switchId": SERIAL, "interfaceName": rejected_api_name}],
+            [{"switchId": SERIAL, "interfaceName": rejected_api_name}],
+        ]
+        assert len(summary_calls(calls)) == (4 if verify["enabled"] else 3)
+        assert len(calls) == (8 if verify["enabled"] else 7)
+        for call in summary_calls(calls):
+            assert call["payload"] is None
+            if verify["enabled"]:
+                assert_whole_ethernet(call)
+        if not verify["enabled"]:
+            for call in summary_calls(calls)[1:]:
+                assert parse_qs(urlsplit(call["path"]).query)["filter"] == ["interfaceName:*Ethernet1/23* AND switchId:" + SERIAL]
+    else:
+        assert len(summary_calls(calls)) == (2 if verify["enabled"] else 1)
+        assert len(calls) == (4 if verify["enabled"] else 3)
     assert not report.get("recovery")
     assert_no_map_or_deploy_queries(calls)
     if verify["enabled"]:

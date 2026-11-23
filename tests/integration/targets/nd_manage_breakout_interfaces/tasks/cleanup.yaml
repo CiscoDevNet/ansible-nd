@@ -58,7 +58,7 @@
 - name: Allow only readback settling for a reported successful original direct unbreakout
   block:
     - name: Wait for native topology without repeating the successful original removal
-      cisco.nd.nd_manage_breakout_interfaces_validate:
+      cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
         fabric_name: "{{ test_fabric_name }}"
         switch_id: "{{ test_switch_serial }}"
         fixture: "{{ breakout_fixture }}"
@@ -177,7 +177,7 @@
     - breakout_cleanup_remaining | length > 0
 
 - name: Allow GET-only readback settling after confirmed removal without replaying writes
-  cisco.nd.nd_manage_breakout_interfaces_validate:
+  cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
     fabric_name: "{{ test_fabric_name }}"
     switch_id: "{{ test_switch_serial }}"
     fixture: "{{ breakout_fixture }}"

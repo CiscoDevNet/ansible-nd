@@ -15,7 +15,7 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible import template as ansible_template
 
-from ansible_collections.cisco.nd.plugins.action import nd_manage_breakout_interfaces_validate as observer
+from ansible_collections.cisco.nd.plugins.action.tests.integration import nd_manage_breakout_interfaces_validate as observer
 
 TARGET = Path(__file__).resolve().parents[2] / "integration" / "targets" / "nd_manage_breakout_interfaces"
 SERIAL = "FDO28481BXX"
@@ -33,6 +33,7 @@ _YAML_SOURCES = {
         "tests/fabric_clear.yaml",
         "tasks/matrix_cleanup.yaml",
         "tasks/api_failure_case.yaml",
+        "tests/lifecycle.yaml",
     )
 }
 
@@ -137,7 +138,7 @@ def test_each_observer_receives_its_own_profile_with_identical_owned_baseline_sc
     values["breakout_matrix_profiles"] = profiles
     observe = tasks("tasks/matrix_observe_one.yaml")[0]
     for index in range(2):
-        args = render(observe["cisco.nd.nd_manage_breakout_interfaces_validate"], {**values, "breakout_matrix_index": index})
+        args = render(observe["cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate"], {**values, "breakout_matrix_index": index})
         assert args["expected_profile"] == profiles[index]
         assert args["owned_interfaces"] == OWNED
         assert args["baseline"] == values["breakout_matrix_baselines"][str(index)]
@@ -151,7 +152,8 @@ def test_capture_has_no_baseline_before_writes_but_post_action_observation_keeps
     observe = tasks("tasks/matrix_observe_one.yaml")[0]
     for index in range(2):
         args = render(
-            observe["cisco.nd.nd_manage_breakout_interfaces_validate"], {**values, "breakout_matrix_index": index, "breakout_matrix_observe_only": True}
+            observe["cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate"],
+            {**values, "breakout_matrix_index": index, "breakout_matrix_observe_only": True},
         )
         assert args["baseline"] == "__omit__"
         assert args["observe_only"] is True
@@ -181,6 +183,49 @@ def test_every_override_case_builds_correct_interface_level_maps_and_retains_exi
         assert group["breakout_map"] == case.get("map_override", values["breakout_matrix_fixtures"][index]["profiles"]["map_a"]["breakout_map"])
     assert render(case_tasks[-1]["vars"], values)["breakout_matrix_profiles"] == case["profiles"]
     assert render(case_tasks[3]["check_mode"], values) is case.get("check_mode", False)
+
+
+@pytest.mark.parametrize("extra_rounds", [0, 1, 2])
+def test_override_reuses_shared_retry_proof_and_retains_exact_response_only_get_budget(extra_rounds):
+    values = variables()
+    result = {"api_calls": [{"method": "GET", "path": "/api/v1/manage/fabrics/fab1/interfacesSummary?offset=0"}] * (1 + extra_rounds)}
+    values.update(
+        breakout_matrix_last_result=result,
+        breakout_override_case={"writes": ["breakout", "remove"], "verify": False},
+        breakout_retry_extra_rounds=extra_rounds,
+    )
+    shared = task("tasks/override_case.yaml", "Verify phase ordering")
+    assert shared["ansible.builtin.include_tasks"] == "assert_action_trace.yaml"
+    assert render(shared["vars"], values) == {"breakout_result": result, "breakout_expected_write_actions": ["breakout", "remove"]}
+    budget = task("tasks/override_case.yaml", "Require exact response-only query starts")
+    assert all(condition(expression, values) for expression in budget["when"])
+    assert assertions(budget, values)
+    continuation = {"api_calls": result["api_calls"] + [{"method": "GET", "path": "/api/v1/manage/fabrics/fab1/interfacesSummary?offset=1000"}]}
+    assert assertions(budget, {**values, "breakout_matrix_last_result": continuation})
+    for incorrect_count in [extra_rounds, extra_rounds + 2]:
+        altered = {"api_calls": result["api_calls"][:1] * incorrect_count}
+        assert not assertions(budget, {**values, "breakout_matrix_last_result": altered})
+
+
+@pytest.mark.parametrize("attempts", [1, 2, 3])
+def test_lifecycle_ip_payload_assertions_accept_proven_remove_retries_but_keep_creation_single_attempt(attempts):
+    body = tasks("tests/lifecycle.yaml")[0]["block"]
+    deletion = next(item for item in body if item["name"].startswith("DELETED - Require IP deletion"))
+    creation = next(item for item in body if item["name"].startswith("MERGED - Require IP creation"))
+    result = {
+        "api_outcomes": [{"switch_id": SERIAL, "interface_name": OWNED[0], "attempts": attempts}],
+        "api_payload": [{"interfaces": [{"switchId": SERIAL}]} for _attempt in range(attempts)],
+        "api_calls": [{"purpose": "switch_metadata", "path": "/api/v1/manage/fabrics/fab1/switches"}],
+    }
+    values = {**variables(), "breakout_control_parent": OWNED[0], "breakout_result": result}
+    assert assertions(deletion, values)
+    assert assertions(creation, values) is (attempts == 1)
+    altered = deepcopy(result)
+    altered["api_payload"][-1]["interfaces"][0]["switchId"] = "FOREIGN"
+    assert not assertions(deletion, {**values, "breakout_result": altered})
+    altered = deepcopy(result)
+    altered["api_payload"].append({"interfaces": [{"switchId": SERIAL}]})
+    assert not assertions(deletion, {**values, "breakout_result": altered})
 
 
 def test_protection_groups_cannot_authorize_an_extra_switch_or_unobserved_parent():
@@ -402,7 +447,7 @@ def test_partial_validation_flags_reset_for_every_case_and_default_to_strict_mat
     assert reset["breakout_matrix_topology_only_indices"] == []
     assert reset["breakout_failure_partial_indices"] == []
     values.update(reset)
-    read = tasks("tasks/matrix_observe_one.yaml")[0]["cisco.nd.nd_manage_breakout_interfaces_validate"]
+    read = tasks("tasks/matrix_observe_one.yaml")[0]["cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate"]
     for index in (0, 1):
         assert render(read, {**values, "breakout_matrix_index": index})["topology_only"] is False
     del values["breakout_matrix_topology_only_indices"]
@@ -454,7 +499,7 @@ def test_partial_policy_exception_requires_one_exact_composite_outcome_identity(
 def test_correction_policy_exception_is_scoped_to_existing_partial_index_not_fresh_create_or_global_facts():
     values = variables()
     values.update(breakout_failure_case={"state": "merged"}, breakout_failure_partial_indices=[0], breakout_matrix_topology_only_indices=[])
-    read = tasks("tasks/matrix_observe_one.yaml")[0]["cisco.nd.nd_manage_breakout_interfaces_validate"]
+    read = tasks("tasks/matrix_observe_one.yaml")[0]["cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate"]
     for prefix in ["Independently prove the corrected", "Independently validate topology and fresh"]:
         scoped = render(api_case_task(prefix)["vars"], values)
         assert scoped["breakout_matrix_topology_only_indices"] == [0]
@@ -468,7 +513,7 @@ def test_valid_partial_observation_keeps_strict_policy_validation_for_explicit_s
     values = variables()
     values.update(item={"index": 0, "valid": True}, breakout_failure_partial_indices=[] if known_success else [0])
     values["breakout_matrix_snapshots"]["0"]["families"][OWNED[0]] = family(OWNED[0], native=False)
-    args = render(api_case_task("Validate an applied valid")["cisco.nd.nd_manage_breakout_interfaces_validate"], values)
+    args = render(api_case_task("Validate an applied valid")["cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate"], values)
     assert args["topology_only"] is (not known_success)
     prepared = observer._prepare_fixture(args["fixture"])
     differences = observer._compare(values["breakout_matrix_snapshots"]["0"], prepared, "map_a", include_speeds=True, topology_only=args["topology_only"])

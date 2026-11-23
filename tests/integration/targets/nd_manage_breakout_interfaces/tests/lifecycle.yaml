@@ -597,7 +597,8 @@
           - breakout_result.api_outcomes[0].interface_name == breakout_control_parent
           - >-
             breakout_result.api_payload | select('mapping') | selectattr('interfaces', 'defined') |
-            map(attribute='interfaces') | flatten | map(attribute='switchId') | list == [test_switch_serial]
+            map(attribute='interfaces') | flatten | map(attribute='switchId') | list
+            == [test_switch_serial] * (breakout_result.api_outcomes[0].attempts | int)
           - >-
             breakout_result.api_calls | selectattr('purpose', 'defined') |
             selectattr('purpose', 'equalto', 'switch_metadata') | map(attribute='path') | list

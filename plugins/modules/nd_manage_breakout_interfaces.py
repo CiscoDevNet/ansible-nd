@@ -99,9 +99,10 @@ options:
     - If all API results succeed but the expected changes are not yet visible, the module checks again every five seconds until O(verify.wait_timeout),
       provided no unintended changes are found. Checks stop when the expected changes appear, unintended changes are found,
       an interface read fails, or time runs out. An interface read already in progress may finish after this limit.
-    - The wait settings control interface checks; they do not retry breakout or unbreakout requests.
-    - When disabled, the module skips post-change interface checks, discovery waiting and automatic recovery.
+    - The wait settings control interface checks; they do not control request retries.
+    - When disabled, the module skips post-change verification, discovery waiting and automatic recovery.
       It still reads current state, validates inputs and platforms, skips operations already satisfied and checks API results.
+      Unconfirmed or failed unbreakout requests can still require interface reads before a retry.
     - No post-change verification runs when no changes are needed or in check mode.
     type: dict
     suboptions:
@@ -117,7 +118,7 @@ options:
         - Checks run immediately and then every five seconds while the expected changes remain unresolved.
           The module stops waiting as soon as the checks resolve.
         - Must be a positive integer. Ignored when O(verify.enabled=false), in check mode or when no changes are needed.
-        - This limit does not include the preceding breakout or unbreakout request or the total task runtime.
+        - This limit does not include breakout or unbreakout requests, retry delays or checks before a retry, or the total task runtime.
         type: int
         default: 180
       discovery_timeout:
@@ -145,6 +146,19 @@ notes:
 - For V(merged), unchanged unlisted breakout families are allowed. For V(overridden), include all coupled parents intended to remain broken out;
   unbreaking an omitted sibling must not remove or alter a retained desired family. For V(deleted), list every family intended to be unbroken.
 - Listing all intended parents does not guarantee controller acceptance of redundant coupled requests.
+- Forward unbreakout is attempted at most three times, including the first request, with five seconds before the second attempt
+  and ten seconds before the third. This applies to V(deleted) and the removal phase of V(overridden).
+  There is no retry option to configure. Breakout creation and recovery do not use this retry loop.
+- Retries apply to completed requests that report identified item failures or an empty results list.
+  Interfaces already confirmed successful are not resubmitted. Before another request, the module rechecks the remaining targets
+  and requires an available, discovered breakout child. It stops if the target is native, absent or unavailable,
+  an interface read fails, or enabled verification finds unintended changes.
+- An empty results list does not prove that the preceding request made no changes. Retry checks use the interface state reported
+  by Nexus Dashboard, which can lag behind the switch. Retries are best-effort and do not guarantee that an operation runs only once.
+- Forward unbreakout timeouts, HTTP errors, in-progress replies and malformed or ambiguous item results are not retried.
+  A successful request awaiting interface updates uses O(verify.wait_timeout) rather than another unbreakout request.
+- With O(verify.enabled=false), successful unbreakout requests still require no post-action interface read.
+  A retry requires a filtered read of the remaining families; it does not enable collateral verification or recovery.
 - With verification enabled, the module checks breakout parent and child interface names reported by Nexus Dashboard.
   It does not check existing profile maps, interface settings, link state, switch running configuration or collateral native-port presence.
 - When unintended changes are found, the module attempts to undo changes from that operation on the affected switch.
@@ -158,7 +172,7 @@ notes:
   that action is not submitted and the task fails. These checks occur before the action and do not verify recovery.
 - If a breakout or unbreakout request times out or returns HTTP 500, no recovery request is submitted,
   because the original operation may still be running.
-- Partial or unknown API results without unintended changes fail the task without undoing accepted changes.
+- Partial or unknown API results that remain unresolved after any eligible unbreakout retries fail the task without undoing accepted changes.
   In O(state=overridden), the module does not continue with further unbreakout operations.
 - With O(verify.enabled=false), overridden only selects existing breakout families found before the task for removal.
   Additional families created through hardware coupling during the task are not automatically selected for removal.
@@ -391,6 +405,9 @@ api_outcomes:
   - C(outcome) is C(success), C(failed), C(unknown), C(noop) or C(planned). C(planned) identifies an action predicted in check mode.
   - For child inputs, C(requested_interface_name) preserves the normalized supplied selector.
     A C(breakout_map), when present, is the requested map.
+  - Submitted forward unbreakout outcomes include C(attempts), the number of requests made for that family, from one to three.
+    One final outcome is returned per family. No-op and check-mode outcomes omit C(attempts).
+    Individual request attempts remain in the API trace according to the output verbosity.
   - A successful API acknowledgement does not establish the requested topology or overall task success.
     Recovery results are reported separately under C(recovery).
   returned: always

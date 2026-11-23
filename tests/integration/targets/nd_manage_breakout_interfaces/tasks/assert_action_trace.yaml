@@ -1,0 +1,276 @@
+---
+# Shared by ordinary result assertions and the authoritative-state matrix.
+# Retries must be backed by the original receipts, payloads and attempt counts;
+# a successful final task alone never authorizes extra mutation calls.
+- name: Validate the original action trace and bounded unbreakout retries
+  when: ansible_verbosity | int >= 3
+  block:
+    - name: Select only submitted forward unbreakout outcomes
+      ansible.builtin.set_fact:
+        breakout_trace_remove_outcomes: >-
+          {{ breakout_result.api_outcomes | selectattr('action', 'equalto', 'unbreakout') |
+             rejectattr('outcome', 'in', ['noop', 'planned']) | list }}
+        breakout_retry_extra_rounds: 0
+        breakout_retry_extra_rounds_by_switch: {}
+
+    - name: Require a bounded integer attempt count for each submitted family
+      ansible.builtin.assert:
+        that:
+          - item.attempts | default(1) is integer
+          - item.attempts | default(1) is not boolean
+          - item.attempts | default(1) >= 1
+          - item.attempts | default(1) <= 3
+      loop: '{{ breakout_trace_remove_outcomes }}'
+      loop_control:
+        label: '{{ item.switch_id }}/{{ item.interface_name }}'
+
+    - name: Expand only the forward removal phase by its original attempt evidence
+      ansible.builtin.set_fact:
+        breakout_trace_remove_attempts: >-
+          {{ breakout_trace_remove_outcomes | map(attribute='attempts', default=1) | list | default([1], true) | max }}
+        breakout_trace_expected_actions: >-
+          {%- set ns = namespace(actions=[]) -%}
+          {%- set attempts = breakout_trace_remove_outcomes | map(attribute='attempts', default=1) | list | default([1], true) | max -%}
+          {%- for action in breakout_expected_write_actions | default([]) -%}
+          {%- set ns.actions = ns.actions + ([action] * attempts if action == 'remove' else [action]) -%}
+          {%- endfor -%}
+          {{ ns.actions }}
+
+    - name: Require the exact mutation count and phase order
+      ansible.builtin.assert:
+        that:
+          - breakout_result.api_calls is defined
+          - >-
+            breakout_result.api_calls | rejectattr('method', 'equalto', 'GET') |
+            map(attribute='method') | unique | list
+            == (['POST'] if breakout_trace_expected_actions | length > 0 else [])
+          - >-
+            breakout_result.api_calls | selectattr('method', 'equalto', 'POST') |
+            map(attribute='path') | map('regex_replace', '^.*/interfaceActions/', '') | list
+            == breakout_trace_expected_actions
+        fail_msg: >-
+          Unexpected module write trace. Creation, no-op, check-mode and recovery
+          counts remain exact; extra forward removes require bounded retry evidence.
+
+    - name: Prove every additional remove and retry observation from original evidence
+      when: breakout_trace_remove_attempts | int > 1
+      block:
+        - name: Require complete traces for one forward removal phase without recovery
+          ansible.builtin.assert:
+            that:
+              - breakout_expected_write_actions | select('equalto', 'remove') | list | length == 1
+              - breakout_result.recovery | default([]) | length == 0
+              - breakout_result.api_payload is defined
+              - breakout_result.api_response is defined
+              - breakout_result.api_payload | length == breakout_result.api_calls | length
+              - breakout_result.api_response | length == breakout_result.api_calls | length
+
+        - name: Index canonical payload and receipt identities for each remove
+          ansible.builtin.set_fact:
+            breakout_trace_remove_records: >-
+              {%- set ns = namespace(records=[]) -%}
+              {%- for index in range(breakout_result.api_calls | length) -%}
+              {%- set call = breakout_result.api_calls[index] -%}
+              {%- if call.method == 'POST' and call.path is search('/interfaceActions/remove$') -%}
+              {%- set payload = breakout_result.api_payload[index] -%}
+              {%- set receipt = breakout_result.api_response[index] -%}
+              {%- set record = namespace(keys=[], full_keys=[], groups={}, successes=[]) -%}
+              {%- for wire in payload.interfaces -%}
+              {%- set parts = wire.interfaceName.split('/') -%}
+              {%- set parent = parts[:2] | join('/') -%}
+              {%- set key = wire.switchId ~ '/' ~ parent -%}
+              {%- set bucket = wire.switchId ~ '/' ~ parts[0] ~ '/' ~ parts[1][0] -%}
+              {%- set record.keys = record.keys + [key] -%}
+              {%- set record.full_keys = record.full_keys + [wire.switchId ~ '/' ~ wire.interfaceName] -%}
+              {%- set record.groups = record.groups | combine({bucket: record.groups.get(bucket, []) + [parts[1]]}) -%}
+              {%- endfor -%}
+              {%- if receipt.RETURN_CODE in [200, 201, 207] -%}
+              {%- for row in receipt.DATA.results | default([], true) -%}
+              {%- if row.status | default('') | trim | lower == 'success' -%}
+              {%- set record.successes = record.successes + [row.switchId ~ '/' ~ (row.interfaceName | regex_replace('/[1-9][0-9]*$', ''))] -%}
+              {%- endif -%}
+              {%- endfor -%}
+              {%- endif -%}
+              {%- set ns.records = ns.records + [{'index': index, 'call': call, 'payload': payload,
+                   'receipt': receipt, 'keys': record.keys, 'full_keys': record.full_keys,
+                   'groups': record.groups, 'success_keys': record.successes}] -%}
+              {%- endif -%}
+              {%- endfor -%}
+              {{ ns.records }}
+            breakout_trace_remove_keys: >-
+              {{ breakout_trace_remove_outcomes | map(attribute='switch_id') |
+                 zip(breakout_trace_remove_outcomes | map(attribute='interface_name')) | map('join', '/') | list }}
+
+        - name: Require exact original ownership and prevent replay of confirmed successes
+          vars:
+            breakout_trace_prior_successes: >-
+              {{ breakout_trace_remove_records[:breakout_trace_remove_index] | map(attribute='success_keys') | flatten | list }}
+          ansible.builtin.assert:
+            that:
+              - item.payload is mapping
+              - item.payload.interfaces is sequence and item.payload.interfaces is not string and item.payload.interfaces is not mapping
+              - item.payload.interfaces | length > 0
+              - item.payload.interfaces | select('mapping') | list | length == item.payload.interfaces | length
+              - item.payload.interfaces | map(attribute='switchId') | select('string') | list | length == item.payload.interfaces | length
+              - >-
+                item.payload.interfaces | map(attribute='interfaceName') |
+                select('match', '^Ethernet[1-9][0-9]*/[1-9][0-9]*/[1-9][0-9]*$') | list | length
+                == item.payload.interfaces | length
+              - item['keys'] | unique | length == item['keys'] | length
+              - item['keys'] | difference(breakout_trace_remove_keys) | length == 0
+              - item['keys'] | intersect(breakout_trace_prior_successes) | length == 0
+              - breakout_trace_remove_index != 0 or item['keys'] | sort == breakout_trace_remove_keys | sort
+              - breakout_trace_remove_index == 0 or item['keys'] | difference(breakout_trace_remove_records[breakout_trace_remove_index - 1]['keys']) | length == 0
+              - item.call.http_status == item.receipt.RETURN_CODE
+          loop: '{{ breakout_trace_remove_records }}'
+          loop_control:
+            index_var: breakout_trace_remove_index
+            label: '{{ item.index }}'
+
+        - name: Require every replayed receipt to be a completed eligible failure
+          vars:
+            breakout_trace_receipt_keys: >-
+              {{ item.receipt.DATA.results | map(attribute='switchId') |
+                 zip(item.receipt.DATA.results | map(attribute='interfaceName')) | map('join', '/') | list }}
+          ansible.builtin.assert:
+            that:
+              - item.receipt.RETURN_CODE in [200, 201, 207]
+              - item.receipt.DATA is mapping
+              - item.receipt.DATA.results is sequence and item.receipt.DATA.results is not string and item.receipt.DATA.results is not mapping
+              - >-
+                item.receipt.DATA.results | length == 0 or
+                (breakout_trace_receipt_keys | sort == item.full_keys | sort and
+                 item.receipt.DATA.results | map(attribute='status') | map('trim') | map('lower') |
+                 reject('in', ['success', 'failed', 'failure', 'error']) | list | length == 0)
+              - item.success_keys | length < item['keys'] | length
+          loop: '{{ breakout_trace_remove_records[:-1] }}'
+          loop_control:
+            label: '{{ item.index }}'
+
+        - name: Match each final family outcome to its actual submission count and receipts
+          vars:
+            breakout_trace_key: '{{ item.switch_id }}/{{ item.interface_name }}'
+          ansible.builtin.assert:
+            that:
+              - >-
+                breakout_trace_remove_records | map(attribute='keys') | flatten |
+                select('equalto', breakout_trace_key) | list | length == item.attempts | default(1)
+              - >-
+                (item.outcome == 'success') ==
+                (breakout_trace_key in (breakout_trace_remove_records | map(attribute='success_keys') | flatten | list))
+          loop: '{{ breakout_trace_remove_outcomes }}'
+          loop_control:
+            label: '{{ item.switch_id }}/{{ item.interface_name }}'
+
+        - name: Derive exact retry probe groups and additional query-start budgets
+          ansible.builtin.set_fact:
+            breakout_trace_retry_probes: >-
+              {%- set ns = namespace(probes=[]) -%}
+              {%- for index in range(1, breakout_trace_remove_records | length) -%}
+              {%- set previous = breakout_trace_remove_records[index - 1] -%}
+              {%- set current = breakout_trace_remove_records[index] -%}
+              {%- set probe = namespace(scopes=[]) -%}
+              {%- if breakout_result.verification is defined -%}
+              {%- for serial in previous.payload.interfaces | map(attribute='switchId') | unique | list -%}
+              {%- set probe.scopes = probe.scopes + [{'serial': serial, 'filter': 'interfaceType:ethernet AND switchId:' ~ serial}] -%}
+              {%- endfor -%}
+              {%- else -%}
+              {%- for bucket, ports in current.groups.items() -%}
+              {%- set parts = bucket.split('/') -%}
+              {%- set prefix = namespace(value='') -%}
+              {%- set first = ports | sort | first -%}
+              {%- set last = ports | sort | last -%}
+              {%- for position in range(first | length) -%}
+              {%- if prefix.value | length == position and first[position:position + 1] == last[position:position + 1] -%}
+              {%- set prefix.value = prefix.value ~ first[position:position + 1] -%}
+              {%- endif -%}
+              {%- endfor -%}
+              {%- set probe.scopes = probe.scopes + [{'serial': parts[0], 'filter': 'interfaceName:*' ~ parts[1] ~ '/' ~ prefix.value ~ '* AND switchId:' ~ parts[0]}] -%}
+              {%- endfor -%}
+              {%- endif -%}
+              {%- set calls = namespace(values=[]) -%}
+              {%- for call_index in range(previous.index + 1, current.index) -%}
+              {%- set calls.values = calls.values + [{'index': call_index, 'call': breakout_result.api_calls[call_index]}] -%}
+              {%- endfor -%}
+              {%- set ns.probes = ns.probes + [{'calls': calls.values, 'scopes': probe.scopes}] -%}
+              {%- endfor -%}
+              {{ ns.probes }}
+            breakout_retry_extra_rounds: >-
+              {%- set ns = namespace(count=0) -%}
+              {%- for current in breakout_trace_remove_records[1:] -%}
+              {%- set ns.count = ns.count + (current.payload.interfaces | map(attribute='switchId') | unique | length
+                    if breakout_result.verification is defined else current.groups | length) -%}
+              {%- endfor -%}
+              {{ ns.count }}
+            breakout_retry_extra_rounds_by_switch: >-
+              {%- set ns = namespace(counts={}) -%}
+              {%- for current in breakout_trace_remove_records[1:] -%}
+              {%- for serial in current.payload.interfaces | map(attribute='switchId') | unique | list -%}
+              {%- set ns.counts = ns.counts | combine({serial: ns.counts.get(serial, 0) + 1}) -%}
+              {%- endfor -%}
+              {%- endfor -%}
+              {{ ns.counts }}
+
+        - name: Require exactly one complete retry probe per permitted switch or group
+          vars:
+            breakout_trace_probe_starts: >-
+              {{ item.calls | map(attribute='call') | selectattr('path', 'search', '[?&]offset=0(?:&|$)') | list }}
+          ansible.builtin.assert:
+            that:
+              - item.calls | length > 0
+              - item.calls | map(attribute='call') | rejectattr('method', 'equalto', 'GET') | list | length == 0
+              - breakout_trace_probe_starts | length == item.scopes | length
+              - item.calls | map(attribute='call') | rejectattr('http_status', 'equalto', 200) | list | length == 0
+          loop: '{{ breakout_trace_retry_probes }}'
+
+        - name: Index each retry scope and page for exact filter validation
+          ansible.builtin.set_fact:
+            breakout_trace_probe_scopes: >-
+              {%- set ns = namespace(values=[]) -%}
+              {%- for probe in breakout_trace_retry_probes -%}
+              {%- for scope in probe.scopes -%}
+              {%- set filters = [scope.filter, scope.filter | urlencode, {'filter': scope.filter} | urlencode | regex_replace('^filter=', '')] -%}
+              {%- set pattern = '^(?=.*[?&]switchId=' ~ (scope.serial | regex_escape) ~ '(?:&|$))(?=.*[?&]filter=(?:' ~ (filters | map('regex_escape') | join('|')) ~ ')(?:&|$)).*$' -%}
+              {%- set ns.values = ns.values + [{'pattern': pattern, 'calls': probe.calls}] -%}
+              {%- endfor -%}
+              {%- endfor -%}
+              {{ ns.values }}
+            breakout_trace_probe_pages: >-
+              {%- set ns = namespace(values=[]) -%}
+              {%- for probe in breakout_trace_retry_probes -%}
+              {%- for page in probe.calls -%}
+              {%- set ns.values = ns.values + [{'index': page.index, 'call': page.call, 'scopes': probe.scopes}] -%}
+              {%- endfor -%}
+              {%- endfor -%}
+              {{ ns.values }}
+
+        - name: Require every expected retry scope to have exactly one initial page
+          ansible.builtin.assert:
+            that:
+              - >-
+                item.calls | map(attribute='call') | selectattr('path', 'search', item.pattern) |
+                selectattr('path', 'search', '[?&]offset=0(?:&|$)') | list | length == 1
+          loop: '{{ breakout_trace_probe_scopes }}'
+
+        - name: Require every retry page to be body-free and stay in its exact scope
+          vars:
+            breakout_trace_scope_matches: >-
+              {%- set ns = namespace(count=0) -%}
+              {%- for scope in item.scopes -%}
+              {%- set filters = [scope.filter, scope.filter | urlencode, {'filter': scope.filter} | urlencode | regex_replace('^filter=', '')] -%}
+              {%- set pattern = '^(?=.*[?&]switchId=' ~ (scope.serial | regex_escape) ~ '(?:&|$))(?=.*[?&]filter=(?:' ~ (filters | map('regex_escape') | join('|')) ~ ')(?:&|$)).*$' -%}
+              {%- if item.call.path is search(pattern) -%}{%- set ns.count = ns.count + 1 -%}{%- endif -%}
+              {%- endfor -%}
+              {{ ns.count }}
+          ansible.builtin.assert:
+            that:
+              - breakout_trace_scope_matches | int == 1
+              - item.call.path is search('/interfacesSummary[?]')
+              - item.call.path | regex_findall('[?&]switchId=([^&]*)') | length == 1
+              - item.call.path | regex_findall('[?&]filter=([^&]*)') | length == 1
+              - item.call.path | regex_findall('[?&]includeAll=([^&]*)') | length == 1
+              - item.call.path is search('[?&]includeAll=true(?:&|$)')
+              - item.call.path | regex_findall('[?&]offset=([^&]*)') | length == 1
+              - item.call.path | regex_findall('[?&]offset=([^&]*)') | first is match('^(?:0|[1-9][0-9]*)$')
+              - breakout_result.api_payload[item.index] is none
+          loop: '{{ breakout_trace_probe_pages }}'

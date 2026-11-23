@@ -52,7 +52,7 @@
                  reject('equalto', 'response_confirmed') | list | length > 0) }}
 
     - name: Observe one owned bulk hardware group before recovery
-      cisco.nd.nd_manage_breakout_interfaces_validate:
+      cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
         fabric_name: "{{ test_fabric_name }}"
         switch_id: "{{ breakout_bulk_owned_fixture.switch_id }}"
         fixture: "{{ breakout_bulk_owned_fixture }}"
@@ -71,7 +71,7 @@
         - item.value.children | length > 0
 
     - name: Allow only GET settling when an original removal may still be completing
-      cisco.nd.nd_manage_breakout_interfaces_validate:
+      cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
         fabric_name: "{{ test_fabric_name }}"
         switch_id: "{{ breakout_bulk_owned_fixture.switch_id }}"
         fixture: "{{ breakout_bulk_owned_fixture }}"
@@ -147,7 +147,7 @@
       when: breakout_bulk_cleanup_families | length > 0
 
     - name: Require full owned-group native restoration after scoped recovery
-      cisco.nd.nd_manage_breakout_interfaces_validate:
+      cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
         fabric_name: "{{ test_fabric_name }}"
         switch_id: "{{ breakout_bulk_owned_fixture.switch_id }}"
         fixture: "{{ breakout_bulk_owned_fixture }}"

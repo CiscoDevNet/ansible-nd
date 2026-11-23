@@ -132,7 +132,7 @@
           selectattr('outcome', 'in', ['failed', 'unknown']) | list | length == 1
 
     - name: Validate an applied valid item against its declared profile, never its returned map
-      cisco.nd.nd_manage_breakout_interfaces_validate:
+      cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
         fabric_name: "{{ test_fabric_name }}"
         switch_id: "{{ test_switch_serial }}"
         fixture: "{{ breakout_matrix_fixtures[item.index] }}"
@@ -195,7 +195,7 @@
       loop: "{{ breakout_failure_case.entries }}"
 
     - name: Require omitted baseline family to survive failed overridden creation
-      cisco.nd.nd_manage_breakout_interfaces_validate:
+      cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
         fabric_name: "{{ test_fabric_name }}"
         switch_id: "{{ test_switch_serial }}"
         fixture: "{{ breakout_matrix_fixtures[1] }}"

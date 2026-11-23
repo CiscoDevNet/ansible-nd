@@ -47,10 +47,12 @@ class RecordingSender(Sender):
     def __init__(self, responses):
         super().__init__()
         self.calls = []
+        self.fixture_exhausted = False
         self.ansible_module = MockAnsibleModule()
 
         def scripted():
             yield from responses
+            self.fixture_exhausted = True
             raise AssertionError("Unexpected REST call: fixture exhausted (possible retry/readback)")
 
         self.gen = ResponseGenerator(scripted())
@@ -97,6 +99,11 @@ def item(name, *, switch=SERIAL, status="Success", message="Action completed"):
 
 def action(*items, code=207):
     return response({"results": list(items)}, code=code, method="POST")
+
+
+def unbreakout_retry_failures(reply, *pending_names):
+    """Provide both fresh pending-family reads and both remaining failed attempts."""
+    return [summary(*pending_names), copy.deepcopy(reply), summary(*pending_names), copy.deepcopy(reply)]
 
 
 def group(*names, switch=SERIAL, breakout_map="25g-4x"):
@@ -162,13 +169,15 @@ def run(
     rest_send.response_handler = handler
     rest_send.unit_test = True
     # A long budget reveals unwanted shared retries instead of hiding them with
-    # a one-attempt fixture timeout; HTTP 207 failures must be terminal.
+    # a one-attempt fixture timeout. HTTP 207 failures stop the shared sender;
+    # eligible forward unbreakouts have their own explicitly scripted retries.
     rest_send.timeout = 600
     rest_send.send_interval = 1
     if results is not None:
         results.state = state
         results.check_mode = check_mode
     result = ManageBreakoutInterfacesOrchestrator(rest_send=rest_send, results=results).run()
+    assert not sender.fixture_exhausted, f"Unexpected REST call exhausted the scripted responses: {result}"
     return result, sender.calls
 
 
@@ -394,15 +403,27 @@ def test_check_mode_plans_unbreakout_without_any_write():
     assert writes(calls) == []
 
 
-def test_partial_unbreakout_preserves_success_and_failure_without_followups():
+def test_partial_unbreakout_preserves_success_while_retrying_only_the_failed_family():
+    """Confirmed successes receive no follow-ups; only the failed family is retried."""
+    retry = action(item("Ethernet1/51/1", status="failed"))
     result, calls = run(
-        [summary("Ethernet1/50/1", "Ethernet1/51/1"), action(item("Ethernet1/50/1"), item("Ethernet1/51/1", status="failed"))],
+        [
+            summary("Ethernet1/50/1", "Ethernet1/51/1"),
+            action(item("Ethernet1/50/1"), item("Ethernet1/51/1", status="failed")),
+            *unbreakout_retry_failures(retry, "Ethernet1/51/1"),
+        ],
         state="deleted",
         config=[group("Ethernet1/50", "Ethernet1/51", breakout_map=None)],
     )
     assert result["failed"] is True
     assert result["changed"] is True
-    assert [call["path"] for call in writes(calls)] == [REMOVE]
+    assert [call["path"] for call in writes(calls)] == [REMOVE] * 3
+    assert len(calls) == 7
+    assert outcomes(result)[(SERIAL, "Ethernet1/50")]["outcome"] == "success"
+    assert outcomes(result)[(SERIAL, "Ethernet1/50")]["attempts"] == 1
+    assert outcomes(result)[(SERIAL, "Ethernet1/51")]["outcome"] == "failed"
+    assert outcomes(result)[(SERIAL, "Ethernet1/51")]["attempts"] == 3
+    assert [call["payload"]["interfaces"] for call in writes(calls)[1:]] == [[{"switchId": SERIAL, "interfaceName": "Ethernet1/51/1"}]] * 2
 
 
 def test_bulk_unbreakout_excludes_native_noop_and_matches_reordered_children():
@@ -985,8 +1006,12 @@ def test_modified_true_reports_changed_even_when_target_outcome_is_unknown(state
     api_name = "Ethernet1/50" if state == "merged" else "Ethernet1/50/1"
     reply = action() if unknown_kind == "missing_result" else action(item(api_name, status="warning"))
     reply["modified"] = "true"
+    retrying = state == "deleted" and unknown_kind == "missing_result"
+    scripted = [summary(api_name), reply]
+    if retrying:
+        scripted.extend(unbreakout_retry_failures(reply, api_name))
     result, calls = run(
-        [summary(api_name), reply],
+        scripted,
         state=state,
         config=[group("Ethernet1/50", breakout_map=None if state == "deleted" else "25g-4x")],
     )
@@ -995,7 +1020,9 @@ def test_modified_true_reports_changed_even_when_target_outcome_is_unknown(state
     assert result["may_have_changed"] is True
     assert result["after_status"] == "unknown"
     assert outcomes(result)[(SERIAL, "Ethernet1/50")]["outcome"] == "unknown"
-    assert len(calls) == 3
+    assert len(calls) == (7 if retrying else 3)
+    if retrying:
+        assert outcomes(result)[(SERIAL, "Ethernet1/50")]["attempts"] == 3
 
 
 @pytest.mark.parametrize("state", ["merged", "deleted"])
@@ -1004,8 +1031,13 @@ def test_modified_false_is_authoritative_for_mixed_success_and_failure(state):
     second = "Ethernet1/51" if state == "merged" else "Ethernet1/51/1"
     reply = action(item(first), item(second, status="failed", message="Unsupported interface"))
     reply["modified"] = "false"
+    scripted = [summary(first, second), reply]
+    if state == "deleted":
+        retry = action(item(second, status="failed", message="Unsupported interface"))
+        retry["modified"] = "false"
+        scripted.extend(unbreakout_retry_failures(retry, second))
     result, calls = run(
-        [summary(first, second), reply],
+        scripted,
         state=state,
         config=[group("Ethernet1/50", "Ethernet1/51", breakout_map=None if state == "deleted" else "25g-4x")],
     )
@@ -1015,7 +1047,10 @@ def test_modified_false_is_authoritative_for_mixed_success_and_failure(state):
     assert result["after_status"] == "unknown"
     assert outcomes(result)[(SERIAL, "Ethernet1/50")]["outcome"] == "success"
     assert outcomes(result)[(SERIAL, "Ethernet1/51")]["outcome"] == "failed"
-    assert len(calls) == 3
+    assert len(calls) == (7 if state == "deleted" else 3)
+    if state == "deleted":
+        assert outcomes(result)[(SERIAL, "Ethernet1/50")]["attempts"] == 1
+        assert outcomes(result)[(SERIAL, "Ethernet1/51")]["attempts"] == 3
 
 
 def test_group_discovery_indexes_exact_families_before_each_classifier(monkeypatch):
@@ -1113,6 +1148,8 @@ def test_proposed_and_diff_are_grouped_input_intent_not_api_child_names(state, s
         status = "failed" if scenario == "action_error" else "Success"
         posted_names = [first] if scenario == "mixed_action_noop" else [first, second]
         scripted.append(action(*(item(name, status=status) for name in posted_names)))
+        if state == "deleted" and scenario == "action_error":
+            scripted.extend(unbreakout_retry_failures(scripted[-1], *posted_names))
     result, calls = run(scripted, state=state, config=[expected], check_mode=scenario == "check_mode")
     assert result["proposed"] == [expected]
     if scenario in {"noop", "initial_error"}:
@@ -1122,7 +1159,8 @@ def test_proposed_and_diff_are_grouped_input_intent_not_api_child_names(state, s
     else:
         assert result["diff"] == [expected]
     assert result["failed"] is (scenario in {"initial_error", "action_error"})
-    assert len(calls) == (3 if scenario in {"success", "mixed_action_noop", "action_error"} else 2)
+    expected_calls = 7 if state == "deleted" and scenario == "action_error" else 3 if scenario in {"success", "mixed_action_noop", "action_error"} else 2
+    assert len(calls) == expected_calls
     assert all("interface_name" not in entry and "api_interface_name" not in entry for entry in result["proposed"] + result["diff"])
 
 
@@ -1221,10 +1259,17 @@ def test_shared_results_register_all_response_calls_with_expected_verbosity(stat
     statuses = ["Success", "Success"] if outcome == "success" else ["Success", "failed"] if outcome == "partial" else ["failed", "failed"]
     if outcome != "noop":
         scripted.append(action(*(item(name, status=status) for name, status in zip(api_names, statuses))))
+    retrying = state == "deleted" and outcome in {"partial", "failed"}
+    if retrying:
+        pending_names = [name for name, status in zip(api_names, statuses) if status == "failed"]
+        retry = action(*(item(name, status="failed") for name in pending_names))
+        scripted.extend(unbreakout_retry_failures(retry, *pending_names))
     result, calls = run(scripted, state=state, config=[group(*names, breakout_map=None if state == "deleted" else "25g-4x")], results=trace)
     operations = [OperationType.QUERY, OperationType.QUERY]
     if outcome != "noop":
         operations.append(OperationType.CREATE if state == "merged" else OperationType.DELETE)
+    if retrying:
+        operations.extend([OperationType.QUERY, OperationType.DELETE] * 2)
     assert_registered_calls(trace, calls, operations, state=state)
     assert trace.results[1]["success"] is True
     assert trace.responses[1]["DATA"]["interfaces"] == scripted[0]["DATA"]["interfaces"]
@@ -1232,7 +1277,11 @@ def test_shared_results_register_all_response_calls_with_expected_verbosity(stat
         assert trace.results[2]["success"] is (outcome == "success")
         assert trace.responses[2]["DATA"]["results"] == scripted[1]["DATA"]["results"]
     assert result["failed"] is (outcome in {"partial", "failed"})
-    assert len(calls) == (2 if outcome == "noop" else 3)
+    assert len(calls) == (7 if retrying else 2 if outcome == "noop" else 3)
+    if retrying:
+        assert [row["api_interface_name"] for row in result["api_outcomes"] if row["attempts"] == 3] == pending_names
+        for call in writes(calls)[1:]:
+            assert call["payload"]["interfaces"] == [{"switchId": SERIAL, "interfaceName": name} for name in pending_names]
 
 
 def test_cached_ip_lookup_is_registered_once_as_read_before_action():
@@ -1350,6 +1399,8 @@ def test_real_response_results_and_ndoutput_gating_preserve_workflow_evidence(st
         scripted.append(action(item(api_names[0])))
     elif scenario == "partial":
         scripted.append(action(item(api_names[0]), item(api_names[1], status="failed")))
+        if state == "deleted":
+            scripted.extend(unbreakout_retry_failures(action(item(api_names[1], status="failed")), api_names[1]))
     elif scenario == "missing_identity":
         scripted.append(action(item("Ethernet1/99")))
     elif scenario == "timeout":
@@ -1398,7 +1449,10 @@ def test_real_response_results_and_ndoutput_gating_preserve_workflow_evidence(st
     elif state == "deleted":
         assert output["after"][0]["interface_name"] == "Ethernet1/50"
         assert output["after"][0]["broken_out"] is False
-    assert len(calls) == (2 if scenario in {"noop", "check_mode"} else 3)
+    assert len(calls) == (7 if state == "deleted" and scenario == "partial" else 2 if scenario in {"noop", "check_mode"} else 3)
+    if state == "deleted" and scenario == "partial":
+        assert [entry["attempts"] for entry in output["api_outcomes"]] == [1, 3]
+        assert [entry["outcome"] for entry in output["api_outcomes"]] == ["success", "failed"]
 
 
 def test_lost_ip_lookup_response_is_registered_as_unanswered_read_in_debug_output():

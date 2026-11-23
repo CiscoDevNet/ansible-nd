@@ -34,7 +34,7 @@
       module check mode. Setup never cleans up an unexpected existing breakout.
 
 - name: Validate the complete fixture schema locally before the first mutation
-  cisco.nd.nd_manage_breakout_interfaces_validate:
+  cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
     fabric_name: "{{ test_fabric_name }}"
     switch_id: "{{ test_switch_serial }}"
     fixture: "{{ test_breakout_fixture }}"
@@ -67,7 +67,7 @@
     breakout_lifecycle_failure: {}
 
 - name: Capture the complete selected-switch topology before any write
-  cisco.nd.nd_manage_breakout_interfaces_validate:
+  cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
     fabric_name: "{{ test_fabric_name }}"
     switch_id: "{{ test_switch_serial }}"
     fixture: "{{ breakout_fixture }}"
@@ -81,7 +81,7 @@
   register: breakout_setup_observation
 
 - name: Validate the initially native fixture against the captured baseline
-  cisco.nd.nd_manage_breakout_interfaces_validate:
+  cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
     fabric_name: "{{ test_fabric_name }}"
     switch_id: "{{ test_switch_serial }}"
     fixture: "{{ breakout_fixture }}"

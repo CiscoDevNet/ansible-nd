@@ -28,7 +28,7 @@
     fail_msg: Supply canonical serial identities and complete, reserved, independently acting hardware footprints.
 
 - name: Parse the complete bulk fixture locally without any controller GET
-  cisco.nd.nd_manage_breakout_interfaces_validate:
+  cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
     fabric_name: "{{ test_fabric_name }}"
     switch_id: "{{ breakout_bulk_candidate.switch_id | default(test_switch_serial) }}"
     fixture: "{{ breakout_bulk_candidate }}"

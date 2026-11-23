@@ -33,7 +33,7 @@
     coupled_names_fixture: "{{ test_breakout_coupled_fixture }}"
 
 - name: Validate the supplied coupled fixture locally before controller access
-  cisco.nd.nd_manage_breakout_interfaces_validate:
+  cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
     fabric_name: "{{ test_breakout_coupled_fabric_name }}"
     switch_id: "{{ test_breakout_coupled_switch_id }}"
     fixture: "{{ test_breakout_coupled_fixture }}"
@@ -57,7 +57,7 @@
     coupled_stop_writes: false
 
 - name: Validate independent fixture locally when phase-preservation hardware is supplied
-  cisco.nd.nd_manage_breakout_interfaces_validate:
+  cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
     fabric_name: "{{ test_breakout_coupled_fabric_name }}"
     switch_id: "{{ test_breakout_coupled_switch_id }}"
     fixture: "{{ test_breakout_coupled_independent_fixture }}"

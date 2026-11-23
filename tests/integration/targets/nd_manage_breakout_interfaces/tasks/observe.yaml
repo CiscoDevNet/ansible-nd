@@ -6,7 +6,7 @@
     fail_msg: Capture guard evidence before the first mutation; never learn it from changed state.
 
 - name: Independently observe and validate the reserved interface footprint
-  cisco.nd.nd_manage_breakout_interfaces_validate:
+  cisco.nd.tests.integration.nd_manage_breakout_interfaces_validate:
     fabric_name: "{{ test_fabric_name }}"
     switch_id: "{{ test_switch_serial }}"
     fixture: "{{ breakout_fixture }}"

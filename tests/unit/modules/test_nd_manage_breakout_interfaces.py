@@ -469,7 +469,9 @@ def test_documentation_describes_verification_boundary_coupled_parent_scope_and_
     docs = yaml.safe_load(module_under_test.DOCUMENTATION)
     verify_notes = " ".join(docs["options"]["verify"]["description"])
     assert "reads current state, validates inputs and platforms, skips operations already satisfied and checks API results" in verify_notes
-    assert "skips post-change interface checks, discovery waiting and automatic recovery" in verify_notes
+    assert "skips post-change verification, discovery waiting and automatic recovery" in verify_notes
+    assert "Unconfirmed or failed unbreakout requests can still require interface reads before a retry" in verify_notes
+    assert "unbreakout_retries" not in docs["options"]
     notes = " ".join(docs["notes"])
     assert "Individual child lanes and disappearing native siblings" in notes
     assert "unchanged unlisted breakout families are allowed" in notes
@@ -479,7 +481,11 @@ def test_documentation_describes_verification_boundary_coupled_parent_scope_and_
     assert "times out or returns HTTP 500, no recovery request" in notes
     assert "overridden only selects existing breakout families found before the task for removal" in notes
     assert "Additional families created through hardware coupling during the task are not automatically selected for removal" in notes
+    assert "Forward unbreakout is attempted at most three times, including the first request" in notes
+    assert "Interfaces already confirmed successful are not resubmitted" in notes
+    assert "Forward unbreakout timeouts, HTTP errors, in-progress replies and malformed or ambiguous item results are not retried" in notes
     returned = yaml.safe_load(module_under_test.RETURN)
+    assert "Submitted forward unbreakout outcomes include C(attempts)" in " ".join(returned["api_outcomes"]["description"])
     assert "initial-discovery evidence for switches not acted on" in " ".join(returned["after_status"]["description"])
     assert "historical observation evidence, not the current topology after compensation" in " ".join(returned["observed_before_recovery"]["description"])
 

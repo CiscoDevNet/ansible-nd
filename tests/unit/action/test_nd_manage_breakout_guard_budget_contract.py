@@ -28,7 +28,7 @@ OTHER = "FDO28481BYY"
 # access below copies the document, keeping adversarial cases isolated.
 _YAML_SOURCES = {
     path: yaml.safe_load((TARGET / path).read_text())
-    for path in ("tasks/assert_result.yaml", "tests/lifecycle.yaml", "tasks/fabric_clear_case.yaml", "defaults/main.yaml")
+    for path in ("tasks/assert_result.yaml", "tasks/assert_action_trace.yaml", "tests/lifecycle.yaml", "tasks/fabric_clear_case.yaml", "defaults/main.yaml")
 }
 
 
@@ -87,6 +87,10 @@ def execute_tasks(tasks, variables):
                 expressions = expressions if isinstance(expressions, list) else [expressions]
                 for expression in expressions:
                     assert condition(expression, local), task["name"] + ": " + expression
+            elif "ansible.builtin.include_tasks" in task:
+                assert task["ansible.builtin.include_tasks"] == "assert_action_trace.yaml", task["name"]
+                execute_tasks(deepcopy(_YAML_SOURCES["tasks/assert_action_trace.yaml"]), local)
+                variables.update({key: value for key, value in local.items() if key not in declared})
             else:
                 raise AssertionError("Unexpected nonlocal operation in result assertions: " + task["name"])
 
@@ -170,6 +174,222 @@ def variables(extra=0, *, opt_in=False):
     if opt_in:
         values["breakout_allow_guard_settling"] = True
     return values
+
+
+def unbreakout_variables(attempts, *, guarded=True, partial=False, create_first=False, opt_in=False):
+    """Supply real aligned traces, receipts and payloads for retry-proof assertions."""
+    values = variables()
+    result = values["breakout_result"]
+    parents = ["Ethernet1/53", "Ethernet1/54"] if partial else ["Ethernet1/53"]
+    records = [(SERIAL, parent) for parent in parents]
+    calls = [result["api_calls"][0], summary()]
+    payloads = [None, None]
+    responses = [{"RETURN_CODE": 200, "DATA": {}}, {"RETURN_CODE": 200, "DATA": {"interfaces": []}}]
+    if create_first:
+        calls.append({"method": "POST", "path": BASE + "/interfaceActions/breakout", "http_status": 207})
+        payloads.append({"interfaces": [{"switchId": SERIAL, "interfaceName": "Ethernet1/55", "breakoutMap": "25g-4x"}]})
+        responses.append({"RETURN_CODE": 207, "DATA": {"results": [{"switchId": SERIAL, "interfaceName": "Ethernet1/55", "status": "Success"}]}})
+        if guarded:
+            calls.append(summary())
+            payloads.append(None)
+            responses.append({"RETURN_CODE": 200, "DATA": {"interfaces": []}})
+    for attempt in range(attempts):
+        pending = records[1:] if partial and attempt else records
+        if attempt:
+            probe = summary() if guarded else summary(filter="interfaceName:*" + pending[0][1] + "* AND switchId:" + SERIAL)
+            calls.append(probe)
+            payloads.append(None)
+            responses.append({"RETURN_CODE": 200, "DATA": {"interfaces": []}})
+        calls.append({"method": "POST", "path": BASE + "/interfaceActions/remove", "http_status": 207})
+        payloads.append({"interfaces": [{"switchId": serial, "interfaceName": parent + "/1"} for serial, parent in pending]})
+        if attempt == attempts - 1:
+            items = [{"switchId": serial, "interfaceName": parent + "/1", "status": "Success"} for serial, parent in pending]
+        elif partial and attempt == 0:
+            items = [
+                {"switchId": serial, "interfaceName": parent + "/1", "status": "Success" if index == 0 else "failed"}
+                for index, (serial, parent) in enumerate(pending)
+            ]
+        else:
+            items = []
+        responses.append({"RETURN_CODE": 207, "DATA": {"results": items}})
+    if guarded:
+        calls.append(summary())
+        payloads.append(None)
+        responses.append({"RETURN_CODE": 200, "DATA": {"interfaces": []}})
+    result.update(
+        api_calls=calls,
+        api_payload=payloads,
+        api_response=responses,
+        api_outcomes=[
+            {
+                "switch_id": serial,
+                "interface_name": parent,
+                "api_interface_name": parent + "/1",
+                "action": "unbreakout",
+                "outcome": "success",
+                "attempts": 1 if partial and index == 0 else attempts,
+            }
+            for index, (serial, parent) in enumerate(records)
+        ],
+        after_status="observed" if guarded else "response_confirmed",
+    )
+    if guarded:
+        result["verification"]["phases"][0]["phase"] = "unbreakout"
+    else:
+        result.pop("verification")
+    if create_first:
+        result["api_outcomes"].insert(0, {"switch_id": SERIAL, "interface_name": "Ethernet1/55", "action": "breakout", "outcome": "success"})
+        if guarded:
+            result["verification"]["phases"].insert(0, {"switch_id": SERIAL, "phase": "breakout", "topology_matches": True, "collateral": []})
+    values.update(
+        breakout_expected_write_actions=["breakout", "remove"] if create_first else ["remove"],
+        breakout_expected_outcome_count=len(result["api_outcomes"]),
+        breakout_expected_discovery_rounds=1 + int(guarded) + int(guarded and create_first),
+    )
+    if opt_in:
+        values["breakout_allow_guard_settling"] = True
+    return values
+
+
+@pytest.mark.parametrize("attempts", [1, 2, 3])
+@pytest.mark.parametrize("guarded", [False, True])
+def test_unbreakout_trace_accepts_only_proven_attempts_and_exact_probe_budgets(attempts, guarded):
+    require_accepted(unbreakout_variables(attempts, guarded=guarded))
+
+
+@pytest.mark.parametrize("attempts", [2, 3])
+@pytest.mark.parametrize("guarded", [False, True])
+def test_partial_bulk_retry_proof_keeps_confirmed_success_out_of_later_payloads(attempts, guarded):
+    require_accepted(unbreakout_variables(attempts, guarded=guarded, partial=True))
+
+
+@pytest.mark.parametrize("guarded", [False, True])
+def test_retry_probe_groups_two_pending_parents_with_their_common_prefix(guarded):
+    values = unbreakout_variables(3, guarded=guarded)
+    result = values["breakout_result"]
+    result["api_outcomes"].append({"switch_id": SERIAL, "interface_name": "Ethernet1/54", "action": "unbreakout", "outcome": "success", "attempts": 3})
+    values["breakout_expected_outcome_count"] = 2
+    for index, call in enumerate(result["api_calls"]):
+        if call["method"] == "POST":
+            result["api_payload"][index]["interfaces"].append({"switchId": SERIAL, "interfaceName": "Ethernet1/54/1"})
+            rows = result["api_response"][index]["DATA"]["results"]
+            if rows:
+                rows.append({"switchId": SERIAL, "interfaceName": "Ethernet1/54/1", "status": "Success"})
+        elif not guarded and index > 2:
+            result["api_calls"][index] = summary(filter="interfaceName:*Ethernet1/5* AND switchId:" + SERIAL)
+    require_accepted(values)
+
+
+def test_retry_probe_checks_the_successful_switch_once_and_reuses_it_afterward():
+    values = unbreakout_variables(3, partial=True)
+    result = values["breakout_result"]
+    first = {"switchId": SERIAL, "interfaceName": "Ethernet1/53/1"}
+    second = {"switchId": OTHER, "interfaceName": "Ethernet1/54/1"}
+    remove = {"method": "POST", "path": BASE + "/interfaceActions/remove", "http_status": 207}
+    result["api_calls"] = [
+        result["api_calls"][0],
+        summary(),
+        summary(switch=OTHER),
+        deepcopy(remove),
+        summary(),
+        summary(switch=OTHER),
+        deepcopy(remove),
+        summary(switch=OTHER),
+        deepcopy(remove),
+        summary(switch=OTHER),
+    ]
+    result["api_payload"] = [None, None, None, {"interfaces": [first, second]}, None, None, {"interfaces": [second]}, None, {"interfaces": [second]}, None]
+    result["api_response"] = [{"RETURN_CODE": 200, "DATA": {}} for _unused in result["api_calls"]]
+    result["api_response"][3] = {"RETURN_CODE": 207, "DATA": {"results": [{**first, "status": "Success"}, {**second, "status": "failed"}]}}
+    result["api_response"][6] = {"RETURN_CODE": 207, "DATA": {"results": []}}
+    result["api_response"][8] = {"RETURN_CODE": 207, "DATA": {"results": [{**second, "status": "Success"}]}}
+    result["api_outcomes"][1]["switch_id"] = OTHER
+    result["verification"]["phases"].append({"switch_id": OTHER, "phase": "unbreakout", "topology_matches": True, "collateral": []})
+    values["breakout_expected_discovery_rounds"] = 4
+    require_accepted(values)
+    # Two initial pages on the successful peer cannot stand in for the failed switch.
+    result["api_calls"][5] = summary()
+    assert not accepted(values)[0]
+
+
+@pytest.mark.parametrize("attempts", [2, 3])
+def test_overridden_action_order_keeps_one_creation_before_bounded_removal_retries(attempts):
+    require_accepted(unbreakout_variables(attempts, create_first=True))
+
+
+@pytest.mark.parametrize("attempts", [2, 3])
+def test_guard_settling_opt_in_accepts_proven_removal_retries_without_expanding_initial_reads(attempts):
+    require_accepted(unbreakout_variables(attempts, opt_in=True))
+
+
+@pytest.mark.parametrize("reported", [0, -1, 4, True, "3"])
+def test_unbreakout_trace_rejects_invalid_or_excess_attempt_claims(reported):
+    values = unbreakout_variables(3)
+    values["breakout_result"]["api_outcomes"][0]["attempts"] = reported
+    assert not accepted(values)[0]
+
+
+@pytest.mark.parametrize("actual,reported", [(1, 2), (2, 1), (2, 3), (3, 2), (4, 3)])
+def test_unbreakout_trace_rejects_mismatched_post_and_attempt_counts(actual, reported):
+    values = unbreakout_variables(actual)
+    values["breakout_result"]["api_outcomes"][0]["attempts"] = reported
+    assert not accepted(values)[0]
+
+
+@pytest.mark.parametrize("mutation", ["retry_confirmed", "extra_creation", "recovery", "foreign_parent", "duplicate_parent"])
+def test_unbreakout_trace_rejects_replayed_success_or_unrelated_mutations(mutation):
+    values = unbreakout_variables(3, partial=True)
+    result = values["breakout_result"]
+    post_indices = [index for index, call in enumerate(result["api_calls"]) if call["method"] == "POST"]
+    if mutation == "retry_confirmed":
+        first = deepcopy(result["api_payload"][post_indices[0]]["interfaces"][0])
+        for index in post_indices[1:]:
+            result["api_payload"][index]["interfaces"].insert(0, first)
+        result["api_outcomes"][0]["attempts"] = 3
+    elif mutation == "extra_creation":
+        result["api_calls"][post_indices[1]]["path"] = BASE + "/interfaceActions/breakout"
+    elif mutation == "recovery":
+        result["recovery"] = [{"status": "response_confirmed"}]
+    elif mutation == "foreign_parent":
+        result["api_payload"][post_indices[1]]["interfaces"][0]["interfaceName"] = "Ethernet1/99/1"
+    else:
+        result["api_payload"][post_indices[1]]["interfaces"] *= 2
+    assert not accepted(values)[0]
+
+
+@pytest.mark.parametrize("code", [202, 400, 500])
+def test_unbreakout_trace_does_not_authorize_replay_after_incomplete_or_terminal_http_receipts(code):
+    values = unbreakout_variables(2)
+    result = values["breakout_result"]
+    index = next(index for index, call in enumerate(result["api_calls"]) if call["method"] == "POST")
+    result["api_calls"][index]["http_status"] = code
+    result["api_response"][index]["RETURN_CODE"] = code
+    assert not accepted(values)[0]
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra", "peer", "broad_filter", "wrong_filter", "body", "duplicate_offset"])
+@pytest.mark.parametrize("guarded", [False, True])
+def test_retry_probe_contract_rejects_missing_extra_or_out_of_scope_queries(mutation, guarded):
+    values = unbreakout_variables(2, guarded=guarded)
+    result = values["breakout_result"]
+    index = next(index for index, call in enumerate(result["api_calls"]) if index > 2 and call["method"] == "GET")
+    if mutation == "missing":
+        for name in ("api_calls", "api_payload", "api_response"):
+            result[name].pop(index)
+    elif mutation == "extra":
+        for name in ("api_calls", "api_payload", "api_response"):
+            result[name].insert(index, deepcopy(result[name][index]))
+    elif mutation == "peer":
+        result["api_calls"][index] = summary(switch=OTHER)
+    elif mutation == "broad_filter":
+        result["api_calls"][index] = summary(filter="interfaceType:ethernet OR switchId:" + SERIAL)
+    elif mutation == "wrong_filter":
+        result["api_calls"][index] = summary(filter="interfaceName:*Ethernet1/54* AND switchId:" + SERIAL)
+    elif mutation == "body":
+        result["api_payload"][index] = {"interfaces": [{"switchId": SERIAL, "interfaceName": "Ethernet1/53/1"}]}
+    else:
+        result["api_calls"][index]["path"] += "&offset=0"
+    assert not accepted(values)[0]
 
 
 def test_default_budget_still_accepts_exact_existing_trace():

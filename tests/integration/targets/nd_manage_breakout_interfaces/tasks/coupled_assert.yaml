@@ -125,6 +125,17 @@
       - coupled_original_result.after_status == 'response_confirmed'
   when: not (coupled_case.verify | default(true) | bool)
 
+- name: Validate bounded forward attempts outside recovery scenarios
+  ansible.builtin.include_tasks: assert_action_trace.yaml
+  vars:
+    breakout_result: '{{ coupled_original_result }}'
+    breakout_expected_write_actions: >-
+      {{ [] if coupled_case.expect in ['noop', 'preflight_error'] else
+         ['remove'] if coupled_case.state == 'deleted' else ['breakout'] }}
+  when:
+    - ansible_verbosity | int >= 3
+    - coupled_case.expect != 'recovery'
+
 - name: Check action order and absence of a recovery readback in production trace
   ansible.builtin.assert:
     that:
@@ -135,11 +146,9 @@
       - >-
         coupled_original_result.api_calls | selectattr('method', 'equalto', 'POST') |
         map(attribute='path') | map('regex_replace', '^.*/interfaceActions/', '') | list ==
-        (['breakout', 'remove', 'breakout'] if coupled_case.selector == 'control_plus_independent' else
-         ['breakout', 'remove'] if coupled_case.expect == 'recovery' and coupled_case.initial == 'native' else
-         ['remove', 'breakout'] if coupled_case.expect == 'recovery' else
-         [] if coupled_case.expect in ['noop', 'preflight_error'] else
-         ['remove'] if coupled_case.state == 'deleted' else ['breakout'])
+        ((['breakout', 'remove', 'breakout'] if coupled_case.selector == 'control_plus_independent' else
+          ['breakout', 'remove'] if coupled_case.initial == 'native' else ['remove', 'breakout'])
+         if coupled_case.expect == 'recovery' else breakout_trace_expected_actions)
       - coupled_case.expect != 'recovery' or coupled_original_result.api_calls[-1].method == 'POST'
     fail_msg: "Unexpected production API order; independent observer GETs are not part of this trace. {{ coupled_original_result.api_calls }}"
   when: ansible_verbosity | int >= 3

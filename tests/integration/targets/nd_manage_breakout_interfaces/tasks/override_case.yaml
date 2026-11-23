@@ -41,16 +41,23 @@
     fail_msg: "{{ breakout_override_case.id }} failed: {{ breakout_matrix_last_result }}"
 
 - name: Verify phase ordering and absence of per-parent write expansion
+  ansible.builtin.include_tasks: assert_action_trace.yaml
+  vars:
+    breakout_result: "{{ breakout_matrix_last_result }}"
+    breakout_expected_write_actions: "{{ breakout_override_case.writes }}"
+  when: ansible_verbosity | int >= 3
+
+- name: Require exact response-only query starts including proven unbreakout retry probes
   ansible.builtin.assert:
     that:
       - >-
-        breakout_matrix_last_result.api_calls | selectattr('method', 'equalto', 'POST') |
-        map(attribute='path') | map('regex_replace', '^.*/interfaceActions/', '') | list == breakout_override_case.writes
-      - >-
-        breakout_override_case.verify | default(true)
-        or (breakout_matrix_last_result.api_calls |
-            selectattr('method', 'equalto', 'GET') | selectattr('path', 'search', '/interfacesSummary') | list | length) == 1
-  when: ansible_verbosity | int >= 3
+        (breakout_matrix_last_result.api_calls |
+         selectattr('method', 'equalto', 'GET') | selectattr('path', 'search', '/interfacesSummary[?]') |
+         selectattr('path', 'search', '[?&]offset=0(?:&|$)') | list | length)
+        == 1 + (breakout_retry_extra_rounds | int)
+  when:
+    - ansible_verbosity | int >= 3
+    - not (breakout_override_case.verify | default(true))
 
 - name: Validate authoritative check-mode discovery and prediction metadata
   ansible.builtin.include_tasks: assert_check_mode.yaml
