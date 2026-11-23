@@ -125,3 +125,19 @@ def test_from_fabric_builds_collection(monkeypatch):
     assert inventory.collection is not None
     assert set(inventory.by_ip()) == {"192.0.2.10", "192.0.2.11"}
     assert inventory.by_id()["SERIAL2"].switch_role == "spine"
+
+
+def test_from_context_builds_collection_from_cached_switches():
+    """from_context parses the switch records supplied by FabricContext."""
+    fabric_context = SimpleNamespace(
+        switches=[
+            {"switchId": "SERIAL1", "serialNumber": "SERIAL1", "fabricManagementIp": "192.0.2.10", "switchRole": "leaf"},
+            {"switchId": "SERIAL2", "serialNumber": "SERIAL2", "fabricManagementIp": "192.0.2.11", "switchRole": "spine"},
+        ]
+    )
+
+    inventory = FabricSwitchInventory.from_context(fabric_context, SwitchDataModel)
+
+    assert inventory.collection is not None
+    assert set(inventory.by_ip()) == {"192.0.2.10", "192.0.2.11"}
+    assert inventory.by_id()["SERIAL2"].switch_role == "spine"
