@@ -398,7 +398,13 @@ def assert_conditions(conditions, variables):
     conditional = Conditional(loader=loader)
     conditional.when = conditions
     templar = Templar(loader=loader, variables=variables)
-    return conditional.evaluate_conditional(templar, variables)
+    evaluate = getattr(conditional, "evaluate_conditional", None)
+    if callable(evaluate):
+        return evaluate(templar, variables)
+    evaluate_with_result = getattr(conditional, "evaluate_conditional_with_result", None)
+    if callable(evaluate_with_result):
+        return evaluate_with_result(templar, variables)[0]
+    return all(conditional._check_conditional(condition, templar, variables) for condition in conditional.when)
 
 
 @pytest.mark.parametrize("resource", RESOURCES)
@@ -503,12 +509,11 @@ def test_secondary_cleanup_requires_supported_pvlan_opt_in(topology, pvlan_enabl
 @pytest.mark.parametrize("topology", TOPOLOGIES)
 def test_attachment_deployment_does_not_require_arp_suppression_tcam(topology):
     target, variables, templar = fixture_context("network", topology, "4.3.1")
-    del variables
     tasks = yaml.safe_load((target / "tasks/nd4x_attachments.yaml").read_text())
     create = next(task for task in tasks if task.get("name") == "Create and attach a fresh resource in one module call")
     config = templar.template(create["cisco.nd.nd4x_module_test"]["config"])
     assert config[0]["arp_suppression"] is False
-    assert templar.template("{{ nd4x_network_l3 }}")["arp_suppression"] is True
+    assert templar.template(variables["nd4x_network_l3"])["arp_suppression"] is True
 
 
 @pytest.mark.parametrize("release", RELEASES)
