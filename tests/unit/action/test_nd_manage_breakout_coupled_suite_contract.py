@@ -57,7 +57,8 @@ def test_coupled_successful_unbreakout_uses_the_same_proven_retry_trace_contract
     result = unbreakout_variables(attempts, guarded=guarded)["breakout_result"]
     values = _execute_coupled_trace(result, {"expect": "success", "state": "deleted", "initial": "map_a", "selector": "control"})
     assert values["breakout_trace_expected_actions"] == ["remove"] * attempts
-    assert values["breakout_retry_extra_rounds"] == attempts - 1
+    # Ansible versions before 2.19 can render this derived numeric fact as a string.
+    assert int(values["breakout_retry_extra_rounds"]) == attempts - 1
 
 
 @pytest.mark.parametrize("reported", [0, 2, 4, True, "3"])
