@@ -3613,7 +3613,13 @@ def test_external_vlan_name_update_preserves_controller_identity_and_converges(s
         "vlanId": 2454,
         "l2Data": {"vlanName": "OLD"},
     }
-    coordinator, sm, parsed, orchestrator = _network_mode_validation_state_machine([entry], [existing], check_mode, network_type="externalConnectivity", state=state)
+    coordinator, sm, parsed, orchestrator = _network_mode_validation_state_machine(
+        [entry],
+        [existing],
+        check_mode,
+        network_type="externalConnectivity",
+        state=state,
+    )
     coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
     sm.manage_state()
     payload = orchestrator._create_or_update_payload(sm.sent.get("EXTERNAL_NET"))
@@ -3626,7 +3632,13 @@ def test_external_vlan_name_update_preserves_controller_identity_and_converges(s
     assert orchestrator.query_count == 1
 
     readback = {**existing, "l2Data": {"vlanName": "UPDATED"}}
-    coordinator, sm, parsed, orchestrator = _network_mode_validation_state_machine([entry], [readback], check_mode, network_type="externalConnectivity", state=state)
+    coordinator, sm, parsed, orchestrator = _network_mode_validation_state_machine(
+        [entry],
+        [readback],
+        check_mode,
+        network_type="externalConnectivity",
+        state=state,
+    )
     coordinator._resolve_proposed_networks(sm, parsed, state, orchestrator.strategy)
     sm.manage_state()
     assert sm.output.format()["changed"] is False

@@ -907,7 +907,15 @@ def test_x_connect_rejects_routed_capable_modes(state, network_mode):
         NetworkConfigModel.from_config(
             {"network_name": "USERS", "x_connect": True}, context={"state": state, "existing_network_mode": network_mode, "existing_vrf_name": "T"}
         )
-    valid = NetworkConfigModel.from_config({"network_name": "USERS", "network_mode": network_mode, "vrf_name": "T", "x_connect": False}, context={"state": state})
+    valid = NetworkConfigModel.from_config(
+        {
+            "network_name": "USERS",
+            "network_mode": network_mode,
+            "vrf_name": "T",
+            "x_connect": False,
+        },
+        context={"state": state},
+    )
     assert valid.x_connect is False
 
 

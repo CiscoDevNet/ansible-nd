@@ -314,7 +314,11 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             l2_data.setdefault("fabricData", {})
         if l2_data is not None:
             transformed["l2_data"] = l2_data
-        if network_mode is None or self._network_mode_allows_l3_data(network_mode) or (network_mode == NetworkMode.LAYER2.value and not self._is_mcfg_parent()):
+        if (
+            network_mode is None
+            or self._network_mode_allows_l3_data(network_mode)
+            or (network_mode == NetworkMode.LAYER2.value and not self._is_mcfg_parent())
+        ):
             l3_data = self._l3_data(config, network_type)
             if l3_data:
                 transformed["l3_data"] = l3_data
