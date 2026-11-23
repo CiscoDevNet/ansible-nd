@@ -132,6 +132,7 @@ class NDStateMachine:
                 filters=raw_config,
                 normalize_filter=self.model_class.normalize_gathered_filter,
                 supported_properties=self.model_class.gathered_filter_properties,
+                supported_aliases=self.model_class.gathered_filter_aliases,
             )
 
         # ``prepare_config_data`` (switch-id backfill, payload transforms) is

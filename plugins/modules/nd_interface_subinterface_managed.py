@@ -19,7 +19,7 @@ description:
   O(config[].interface_name) value (e.g. C(Ethernet1/3.2), C(GigabitEthernet1/0/2.100) or C(Port-channel10.5)).
 - This module manages the managed variant only.
   The unmanaged variant (C(policyType) C(monitorSubinterface)) is handled by C(nd_interface_subinterface_unmanaged).
-- It supports creating, updating, and deleting subinterface configurations on switches within a fabric.
+- It supports gathering, creating, updating, and deleting subinterface configurations on switches within a fabric.
 - Each config item targets a single subinterface identified by O(config[].interface_name).
 - Configure multiple subinterfaces in one task by listing multiple config items.
 author:
@@ -36,9 +36,11 @@ options:
     - Each item specifies the target switch, the subinterface name, and the policy configuration.
     - Multiple subinterfaces and multiple switches can be configured in a single task by listing additional items.
     - The structure mirrors the ND Manage Interfaces API payload.
+    - Required for O(state=merged), O(state=replaced), O(state=overridden), and O(state=deleted).
+    - Omit for O(state=gathered). This module currently supports gather-all only; gathered filtering is not supported.
     type: list
     elements: dict
-    required: true
+    required: false
     suboptions:
       switch_ip:
         description:
@@ -231,9 +233,11 @@ options:
       Any managed subinterface managed by this module that exists on ND but is not present in the configuration will be deleted.
       Use with extra caution.
     - Use O(state=deleted) to remove the specified subinterfaces via the C(interfaceActions/remove) API followed by a deploy.
+    - Use O(state=gathered) to read all managed NX-OS subinterfaces across the fabric without making changes.
+      O(config) must be omitted or empty when O(state=gathered).
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -412,6 +416,12 @@ EXAMPLES = r"""
     config_actions:
       deploy: false
     state: merged
+
+- name: Gather all managed subinterfaces in the fabric
+  cisco.nd.nd_interface_subinterface_managed:
+    fabric_name: my_fabric
+    state: gathered
+  register: gathered_managed_subinterfaces
 """
 
 RETURN = r"""
@@ -463,7 +473,7 @@ after:
           prefix: 24
 diff:
   description: The per-interface difference between C(before) and C(after).
-  returned: always
+  returned: when O(state) is not V(gathered)
   type: list
   elements: dict
   sample:
@@ -475,7 +485,7 @@ diff:
           ip: 192.168.50.60
 proposed:
   description: The configuration the module proposed to apply, before reconciliation with the controller.
-  returned: when O(output_level) is V(info) or V(debug)
+  returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
   sample:
@@ -485,6 +495,25 @@ proposed:
       network_os:
         policy:
           ip: 192.168.50.60
+gathered:
+  description:
+  - Managed subinterfaces discovered from Nexus Dashboard.
+  - Returned in reusable Ansible configuration format.
+  returned: when O(state) is V(gathered)
+  type: list
+  elements: dict
+  sample:
+  - switch_ip: 192.168.1.3
+    interface_name: Ethernet1/8.101
+    config_data:
+      network_os:
+        policy:
+          admin_state: true
+          vlan_id: 101
+          vrf_interface: default
+          ip: 192.0.2.1
+          prefix: 30
+          mtu: 9216
 logs:
   description: Internal diagnostic log messages collected during the run.
   returned: when O(output_level) is V(debug)
@@ -530,15 +559,27 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
     )
     require_pydantic(module)
     setup_logging(module)
     module_log = logging.getLogger("nd.nd_interface_subinterface_managed")
+    config_items = module.params.get("config") or []
     module_log.debug(
         "config items=%d switches=%d",
-        len(module.params["config"]),
-        len({item.get("switch_ip") for item in module.params["config"]}),
+        len(config_items),
+        len({item.get("switch_ip") for item in config_items}),
     )
+
+    if module.params["state"] == "gathered" and config_items:
+        module.fail_json(
+            msg=("config is not supported when state is gathered because this module " "currently supports gather-all only; omit config or use an empty list.")
+        )
 
     nd_state_machine = None
 
@@ -560,7 +601,7 @@ def main():
         nd_state_machine.manage_state()
         module_log.debug("manage_state end")
 
-        if not module.check_mode:
+        if not module.check_mode and module.params["state"] != "gathered":
             nd_state_machine.model_orchestrator.remove_pending()
             nd_state_machine.model_orchestrator.deploy_pending()
 

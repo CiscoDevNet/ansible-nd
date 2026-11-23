@@ -23,7 +23,7 @@ short_description: Manage L3Outs (Layer-3 Outs) on Cisco Nexus Dashboard
 description:
 - Manage L3Out (Layer-3 Out) configurations on Cisco Nexus Dashboard (ND).
 - L3Outs provide connectivity between ND-managed fabrics and external networks.
-- It supports creating, updating, and deleting L3Out configurations.
+- It supports creating, updating, deleting, and gathering L3Out configurations.
 - Supports multiple connectivity types (routed, subInterface, svi) and routing protocols (BGP, static).
 - Requires ND 4.1 or later.
 author:
@@ -44,15 +44,22 @@ options:
       If an L3Out exists, it will be fully replaced. If it does not exist, it will be created.
     - Use O(state=deleted) to delete the L3Outs specified in O(config).
       The O(config) list is required and each item must include at least O(config.name).
+    - Use O(state=gathered) to read all L3Out configurations associated with
+      O(fabric_name) without changing the controller or managed devices.
+      O(config) must be omitted or empty because filtering is not supported.
     type: str
-    choices: [ merged, replaced, deleted ]
+    choices: [ merged, replaced, deleted, gathered ]
     default: merged
   config:
     description:
     - A list of dictionaries containing L3Out configurations.
+    - Required for O(state=merged), O(state=replaced), and O(state=deleted).
+    - Omit this option or provide an empty list for O(state=gathered).
+    - Nonempty O(config) is rejected for O(state=gathered) because this
+      module supports gather-all only.
     type: list
     elements: dict
-    required: true
+    required: false
     suboptions:
       name:
         description:
@@ -805,6 +812,12 @@ EXAMPLES = r"""
     config:
       - name: my-l3out
       - name: l3out-static
+
+- name: Gather all L3Outs associated with a fabric
+  cisco.nd.nd_manage_l3out:
+    fabric_name: "{{ fabric_name }}"
+    state: gathered
+  register: gathered_l3outs
 """
 
 RETURN = r"""
@@ -824,15 +837,29 @@ after:
   returned: always
 diff:
   description: The differences between before and after states.
-  type: dict
-  returned: always
+  type: list
+  returned: when O(state) is not V(gathered)
   contains:
     before:
       description: State before changes.
       type: list
+      elements: dict
     after:
       description: State after changes.
       type: list
+      elements: dict
+gathered:
+  description:
+    - All L3Out configurations associated with O(fabric_name).
+    - Controller-provided fields defined by the module's O(config) argument specification are retained.
+    - Secret fields are returned with their values masked.
+    - The attach field reports controller attachment status. Supplying it to a
+      write state can invoke the separate attachment action.
+    - Masked secret placeholders must be replaced with the intended secret before
+      gathered output is used as write-state configuration.
+  returned: when O(state=gathered)
+  type: list
+  elements: dict
 """
 
 import traceback
@@ -874,11 +901,23 @@ def _validate_config_for_state(module: AnsibleModule) -> None:
 
     For merged/replaced states, the ND L3Out API requires a complete object.
     For deleted state, config must be provided with at least the L3Out name(s).
+    For gathered state, config must be omitted or empty because only gather-all
+    operations are supported.
     Validating locally produces clear error messages instead of opaque
     controller-side bulk item failures.
     """
     state = module.params.get("state")
     config = module.params.get("config") or []
+
+    if state == "gathered":
+        if config:
+            module.fail_json(
+                msg=(
+                    "config is not supported when state is gathered because this module currently supports "
+                    "gather-all only; omit config or use an empty list."
+                )
+            )
+        return
 
     if state == "deleted" and not config:
         module.fail_json(
@@ -954,6 +993,11 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
     )
     require_pydantic(module)
 
@@ -976,11 +1020,18 @@ def main():
             for item in nd_state_machine.proposed:
                 nd_state_machine.model_orchestrator._resolve_links(item)
 
-        # Manage state (merged, replaced, deleted)
+        # Manage state (merged, replaced, deleted, gathered)
         nd_state_machine.manage_state()
 
+        # Attachment is a separate controller mutation and must never run for gathered.
+        attach_result = {
+            "attachment_changed": False,
+            "attachment_failures": [],
+        }
+
         # Post-state: handle attach/detach operations
-        attach_result = _handle_attachments(nd_state_machine, module.check_mode)
+        if module.params["state"] != "gathered":
+            attach_result = _handle_attachments(nd_state_machine, module.check_mode)
 
         # Format output
         output = nd_state_machine.output.format()

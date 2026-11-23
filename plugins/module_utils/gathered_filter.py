@@ -173,6 +173,28 @@ def _extract_active_leaf_paths(data: dict[str, Any], prefix: str = "") -> set[st
     return paths
 
 
+def _normalize_supported_filter_aliases(
+    filter_item: dict[str, Any],
+    supported_aliases: Mapping[str, str],
+    index: int,
+) -> dict[str, Any]:
+    """Replace supported aliases with their canonical gathered-filter keys."""
+    normalized = deepcopy(filter_item)
+
+    for alias, canonical in supported_aliases.items():
+        if alias not in normalized:
+            continue
+
+        alias_value = normalized.pop(alias)
+
+        if canonical in normalized and normalized[canonical] != alias_value:
+            raise ValueError(f"Gathered filter at index {index} contains conflicting values " f"for '{canonical}' and its alias '{alias}'.")
+
+        normalized[canonical] = alias_value
+
+    return normalized
+
+
 def _reject_unsupported_filter_properties(
     filter_item: dict[str, Any],
     supported_properties: tuple[str, ...],
@@ -181,11 +203,12 @@ def _reject_unsupported_filter_properties(
     """Raise ValueError if a filter item contains properties not in the supported set.
 
     This is the enforcement function for the model's gathered_filter_properties
-    declaration. Called exactly once per filter item during pre-flight validation,
-    before any API request or normalization.
+    declaration. Called once per filter item after supported aliases are normalized
+    and before model-specific normalization or any API request.
 
     Args:
-        filter_item: One raw filter dict from the user's config list.
+        filter_item: One filter dictionary with supported aliases converted to
+        canonical property names.
         supported_properties: The model's declared tuple of allowed dot-paths.
         index: The position of this filter item in the config list (for error messages).
 
@@ -245,6 +268,7 @@ def filter_gathered_response(
         filters=filters,
         normalize_filter=normalize_filter,
         supported_properties=model_class.gathered_filter_properties,
+        supported_aliases=model_class.gathered_filter_aliases,
     )
 
     filtered_models: list[NDBaseModel] = []
@@ -272,6 +296,7 @@ def validate_gathered_filters(
     filters: list[Any],
     normalize_filter: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     supported_properties: tuple[str, ...] = (),
+    supported_aliases: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Pre-flight validation and normalization for gathered filter items.
@@ -279,15 +304,16 @@ def validate_gathered_filters(
     Validates each filter item through a strict pipeline:
 
     1. Type check — the item must be a dictionary.
-    2. Property check — every active property must be supported.
-    3. Model-specific validation and normalization — field constraints are
+    2. Alias normalization — supported aliases are converted to canonical keys.
+    3. Property check — every active property must be supported.
+    4. Model-specific validation and normalization — field constraints are
     applied and values are converted to canonical form.
-    4. Active-value check — at least one non-empty criterion must remain.
-    5. Explicit-empty check — no supplied criterion may be an empty string,
+    5. Active-value check — at least one non-empty criterion must remain.
+    6. Explicit-empty check — no supplied criterion may be an empty string,
     list, or mapping alongside another active criterion.
 
-    Property validation runs before model-specific normalization so unsupported
-    keys are reported using the exact property paths supplied by the user.
+    Supported aliases are canonicalized before property validation. Unknown keys
+    remain unchanged so unsupported properties are still reported to the user.
 
     Returns:
         A new list containing validated, canonical filter dictionaries.
@@ -302,14 +328,19 @@ def validate_gathered_filters(
         if not isinstance(filter_item, dict):
             raise ValueError(f"Each gathered filter item must be a dictionary, " f"got {type(filter_item).__name__} at index {idx}.")
 
+        normalized = deepcopy(filter_item)
+        if supported_aliases:
+            normalized = _normalize_supported_filter_aliases(
+                normalized,
+                supported_aliases,
+                idx,
+            )
         if supported_properties:
             _reject_unsupported_filter_properties(
-                filter_item,
+                normalized,
                 supported_properties,
                 idx,
             )
-
-        normalized = deepcopy(filter_item)
         if normalize_filter is not None:
             normalized = normalize_filter(normalized)
 

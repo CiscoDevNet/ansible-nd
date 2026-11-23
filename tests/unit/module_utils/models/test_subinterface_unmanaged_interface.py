@@ -574,9 +574,9 @@ def test_subinterface_unmanaged_interface_01100():
     ## Test
 
     - fabric_name is required str
-    - config is required list-of-dict with only switch_ip and interface_name options
+    - config is optional list-of-dict and conditionally required by the module
     - config_data is absent from the config options
-    - state is enum with merged/replaced/overridden/deleted
+    - state is enum with merged/replaced/overridden/deleted/gathered
 
     ## Classes and Methods
 
@@ -586,8 +586,8 @@ def test_subinterface_unmanaged_interface_01100():
     assert spec["fabric_name"]["type"] == "str"
     assert spec["fabric_name"]["required"] is True
     assert spec["config"]["type"] == "list"
-    assert spec["config"]["required"] is True
-    assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted"]
+    assert spec["config"]["required"] is False
+    assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted", "gathered"]
     assert spec["state"]["default"] == "merged"
 
     config_options = spec["config"]["options"]

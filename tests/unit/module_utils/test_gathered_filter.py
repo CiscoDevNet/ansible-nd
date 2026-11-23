@@ -237,6 +237,20 @@ def test_validate_rejects_unsupported_properties():
         )
 
 
+def test_validate_rejects_conflicting_alias_values():
+    with pytest.raises(ValueError, match="conflicting values"):
+        validate_gathered_filters(
+            filters=[
+                {
+                    "tenant_name": "TENANT1",
+                    "tenantName": "TENANT2",
+                }
+            ],
+            supported_properties=("tenant_name",),
+            supported_aliases={"tenantName": "tenant_name"},
+        )
+
+
 def test_validate_rejects_nested_unsupported_property():
     with pytest.raises(ValueError, match="unsupported properties.*'config_data.network_os.policy.extra_config'"):
         validate_gathered_filters(

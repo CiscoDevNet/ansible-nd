@@ -153,6 +153,64 @@ class PrefixListEntryModel(NDNestedModel):
             raise ValueError(f"mask '{value}' is not a valid IP address.")
 
 
+class PrefixListGatheredFilterModel(NDNestedModel):
+    """Validate scalar fields supported by partial gathered filters."""
+
+    ip_version: IpVersionEnum | None = Field(default=None)
+    name: str | None = Field(default=None, min_length=1, max_length=115)
+    tenant_name: str | None = Field(default=None, alias="tenantName", max_length=63)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_tenant_qualified_name(cls, data: Any) -> Any:
+        """Preserve ambiguous names unless tenant_name makes qualification explicit."""
+        if not isinstance(data, dict):
+            return data
+
+        name = data.get("name")
+        if not isinstance(name, str) or "~" not in name:
+            return data
+
+        supplied_tenant = data.get("tenant_name", data.get("tenantName"))
+        if supplied_tenant is None:
+            return data
+
+        qualified_tenant, bare_name = name.split("~", 1)
+        if supplied_tenant != qualified_tenant:
+            raise ValueError(f"tenant_name '{supplied_tenant}' conflicts with " f"tenant-qualified name '{name}'.")
+
+        normalized = dict(data)
+        normalized["name"] = bare_name
+        normalized["tenant_name"] = supplied_tenant
+        normalized.pop("tenantName", None)
+        return normalized
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str | None) -> str | None:
+        if value is not None and not _NAME_RE.match(value):
+            raise ValueError(f"Prefix list name '{value}' is invalid. Only alphanumeric characters and '~', '_', '-' are allowed.")
+        return value
+
+    @field_validator("tenant_name")
+    @classmethod
+    def validate_tenant_name(cls, value: str | None) -> str | None:
+        if value is not None and not _TENANT_RE.match(value):
+            raise ValueError(f"Tenant name '{value}' is invalid. Only alphanumeric characters, '_', and '-' are allowed.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_qualified_name_length(self) -> "PrefixListGatheredFilterModel":
+        """Validate the combined tenant-qualified API name length."""
+        if self.tenant_name is None or self.name is None:
+            return self
+
+        qualified_name = f"{self.tenant_name}~{self.name}"
+        if len(qualified_name) > _QUALIFIED_NAME_MAX_LENGTH:
+            raise ValueError(f"tenant-qualified prefix list name '{qualified_name}' must be " f"{_QUALIFIED_NAME_MAX_LENGTH} characters or fewer.")
+        return self
+
+
 class PrefixListModel(NDBaseModel):
     """
     Prefix list configuration (IPv4 or IPv6) for a Nexus Dashboard fabric.
@@ -182,6 +240,59 @@ class PrefixListModel(NDBaseModel):
     exclude_from_diff: ClassVar[set[str]] = {"last_update_timestamp"}
     payload_exclude_fields: ClassVar[set[str]] = {"ip_version", "last_update_timestamp"}
     unwanted_keys: ClassVar[list] = []
+
+    # --- Gathered Filtering Configuration ---
+    supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "ip_version",
+        "name",
+        "tenant_name",
+    )
+    gathered_filter_aliases: ClassVar[dict[str, str]] = {
+        "ipVersion": "ip_version",
+        "tenantName": "tenant_name",
+    }
+
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """Validate and normalize one partial gathered-state filter."""
+        validated = PrefixListGatheredFilterModel.model_validate(
+            filter_item,
+            by_name=True,
+            context={"mode": "config", "state": "gathered"},
+        )
+        return validated.model_dump(
+            by_alias=False,
+            exclude_none=True,
+            context={"mode": "config"},
+        )
+
+    @classmethod
+    def matches_gathered_filter(cls, criteria: dict, candidate: dict) -> bool:
+        """Match literal and tenant-qualified names containing '~'."""
+        expected_name = criteria.get("name")
+        if expected_name is None:
+            return super().matches_gathered_filter(criteria, candidate)
+
+        expected_tenant = criteria.get("tenant_name")
+        remaining_criteria = {key: value for key, value in criteria.items() if key not in ("name", "tenant_name")}
+        if not super().matches_gathered_filter(remaining_criteria, candidate):
+            return False
+
+        candidate_name = candidate.get("name")
+        candidate_tenant = candidate.get("tenant_name")
+
+        if expected_tenant is not None:
+            return candidate_tenant == expected_tenant and candidate_name == expected_name
+
+        if candidate_name == expected_name:
+            return True
+
+        if "~" not in expected_name:
+            return False
+
+        qualified_tenant, bare_name = expected_name.split("~", 1)
+        return candidate_tenant == qualified_tenant and candidate_name == bare_name
 
     # --- Fields ---
 
@@ -381,17 +492,17 @@ class PrefixListModel(NDBaseModel):
             config=dict(
                 type="list",
                 elements="dict",
-                required=True,
+                required=False,
                 options=dict(
                     ip_version=dict(
                         type="str",
-                        required=True,
+                        required=False,
                         choices=["ipv4", "ipv6"],
                         aliases=["ipVersion"],
                     ),
                     name=dict(
                         type="str",
-                        required=True,
+                        required=False,
                     ),
                     description=dict(
                         type="str",
@@ -441,6 +552,6 @@ class PrefixListModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
         )
