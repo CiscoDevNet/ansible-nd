@@ -266,3 +266,128 @@ NdFabricName = Annotated[
     Field(alias="name", min_length=1, max_length=64, description="Fabric name"),
     AfterValidator(_validate_fabric_name),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Trunk VLAN types (issue #347)
+#
+# Shared by every trunk-like interface model (ethernet trunkHost, port-channel trunkPoHost, vPC trunkVpcHost, ethernet member) so VLAN
+# syntax is accepted and rejected identically across modules. Previously each model carried its own copy and they drifted.
+# ---------------------------------------------------------------------------
+
+# Shape regex: "none", "all", or comma-separated VLAN ids/ranges. Range bounds are validated separately.
+_ALLOWED_VLANS_SHAPE = re.compile(r"^(none|all|(\d+(-\d+)?)(,\d+(-\d+)?)*)$")
+# Single VLAN id or range token (e.g. "100" or "100-200"). Range bounds are validated separately.
+_VLAN_ID_OR_RANGE_SHAPE = re.compile(r"^\d+(-\d+)?$")
+
+
+def validate_vlan_id_or_range(token: str, field_name: str) -> None:
+    """
+    # Summary
+
+    Validate a single VLAN id or range token (e.g. `"100"` or `"100-200"`) and confirm every id is in 1..4094 and any range has start <= end.
+
+    Shared helper used by `validate_allowed_vlans` (per comma-split token) and `validate_customer_vlan_id_list` (per list element).
+    `field_name` is interpolated into error messages so callers see which field surfaced the failure.
+
+    ## Raises
+
+    ### ValueError
+
+    - If `token` does not match `\\d+(-\\d+)?`.
+    - If any VLAN id is outside 1..4094.
+    - If a range has start greater than end.
+    """
+    if not _VLAN_ID_OR_RANGE_SHAPE.match(token):
+        raise ValueError(f"{field_name} entry {token!r} must be a VLAN id or range (e.g. '100' or '100-200')")
+    if "-" in token:
+        start_str, end_str = token.split("-", 1)
+        start, end = int(start_str), int(end_str)
+        if not 1 <= start <= 4094 or not 1 <= end <= 4094:
+            raise ValueError(f"{field_name} range {token!r} is out of bounds; VLAN ids must be in 1..4094")
+        if start > end:
+            raise ValueError(f"{field_name} range {token!r} has start greater than end")
+    else:
+        vid = int(token)
+        if not 1 <= vid <= 4094:
+            raise ValueError(f"{field_name} id {vid} is out of bounds; VLAN ids must be in 1..4094")
+
+
+def validate_allowed_vlans(value):
+    """
+    # Summary
+
+    Validate `allowed_vlans` matches `"none"`, `"all"`, or a comma-separated list of VLAN ids/ranges where every id is in 1..4094 and every range start <= end.
+
+    Used as the `BeforeValidator` payload for the `AllowedVlans` Annotated type. `None`, the empty string, and non-str/non-int values are returned
+    unchanged so Pydantic's own type check reports them.
+
+    ## Raises
+
+    ### ValueError
+
+    - If `value` is a non-empty string that does not match the expected shape.
+    - If any VLAN id is outside 1..4094.
+    - If any range has start greater than end.
+    """
+    if value is None or value == "":
+        return value
+    # TODO(4.2.1) interface-get-field-normalization
+    # ND echoes a single-id allowed_vlans as a JSON int (e.g. 250) on GET even though POST/PUT accept (and the
+    # spec types it as) a string. We coerce int -> str here so a GET response round-trips against the str the
+    # user supplied and idempotency comparisons stay stable. Remove when the GET-side retype is fixed.
+    if isinstance(value, int) and not isinstance(value, bool):
+        value = str(value)
+    if not isinstance(value, str):
+        return value
+    if value in ("none", "all"):
+        return value
+    if not _ALLOWED_VLANS_SHAPE.match(value):
+        raise ValueError(f"allowed_vlans must be 'none', 'all', or a comma-separated list of VLAN ids/ranges (e.g. '1-200,500-2000,3000'); got {value!r}")
+    for token in value.split(","):
+        validate_vlan_id_or_range(token, "allowed_vlans")
+    return value
+
+
+def validate_customer_vlan_id_list(value):
+    """
+    # Summary
+
+    Validate `customer_vlan_id` is a list of non-empty VLAN id or range strings where every id is in 1..4094 and every range start <= end.
+    Used in `vlanMappingEntries` to identify which customer VLAN ids map to a provider VLAN id. Single-id entries that arrive as JSON ints are
+    coerced to str per entry, mirroring `validate_allowed_vlans`, so GET responses round-trip and idempotency comparisons stay stable.
+
+    Used as the `BeforeValidator` payload for the `CustomerVlanIdList` Annotated type. `None` and non-list values are returned unchanged so
+    Pydantic's own type check reports them.
+
+    ## Raises
+
+    ### ValueError
+
+    - If any list entry is not a non-empty string (after int coercion).
+    - If any entry is not a VLAN id or range, has an id outside 1..4094, or has a reversed range.
+    """
+    if value is None:
+        return value
+    if not isinstance(value, list):
+        return value
+    coerced = []
+    for entry in value:
+        if isinstance(entry, int) and not isinstance(entry, bool):
+            entry = str(entry)
+        if not isinstance(entry, str) or not entry:
+            raise ValueError(f"customer_vlan_id entries must be non-empty strings (VLAN id or range); got {entry!r}")
+        validate_vlan_id_or_range(entry, "customer_vlan_id")
+        coerced.append(entry)
+    return coerced
+
+
+# See the AsciiDescription NOTE above for why Optional[...] is used in these runtime Annotated expressions instead of `... | None`.
+AllowedVlans = Annotated[Optional[str], BeforeValidator(validate_allowed_vlans)]
+"""Trunk allowed-VLANs spec (`str | None`): 'none', 'all', or comma-separated VLAN ids/ranges in 1..4094."""
+
+CustomerVlanIdList = Annotated[Optional[list[str]], BeforeValidator(validate_customer_vlan_id_list)]
+"""Customer VLAN id list (`list[str] | None`): each entry is a VLAN id or range in 1..4094 (e.g. `['100', '200-300']`)."""
+
+VlanId = Annotated[int, Field(ge=1, le=4094)]
+"""Single VLAN id in 1..4094. Declare optional fields as `VlanId | None`; layer with `Field(...)` for `default` / `alias` / `description` as usual."""
