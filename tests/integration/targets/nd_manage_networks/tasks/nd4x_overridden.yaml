@@ -14,7 +14,7 @@
 - name: Verify the full destructive scope immediately before overridden
   ansible.builtin.include_tasks: nd4x_scope_preflight.yaml
 
-- name: "OVERRIDDEN: Retain the omitted layer and remove the omitted owned resource"
+- name: "OVERRIDDEN: Retain the omitted network mode and remove the omitted owned resource"
   cisco.nd.nd4x_module_test:
     module: cisco.nd.nd_manage_networks
     state: overridden

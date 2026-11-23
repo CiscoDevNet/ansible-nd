@@ -99,7 +99,7 @@
   ansible.builtin.include_tasks: nd4x_scope_preflight.yaml
   when: nd4x_definition_state == 'overridden'
 
-- name: "{{ nd4x_definition_state | upper }} L3: Retain omitted layer and VRF while resetting other properties"
+- name: "{{ nd4x_definition_state | upper }} L3: Retain omitted network mode and VRF while resetting other properties"
   cisco.nd.nd4x_module_test:
     module: cisco.nd.nd_manage_networks
     state: "{{ nd4x_definition_state }}"

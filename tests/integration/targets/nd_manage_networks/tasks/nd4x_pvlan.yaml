@@ -55,7 +55,7 @@
         ('privateSecondaryCommunity' if item.item.vlan_network_type == 'community' else 'privateSecondaryIsolated')
   loop: "{{ nd4x_network_pvlan_results.results }}"
 
-- name: "{{ item | upper }}: An omitted layer preserves the primary PVLAN mode, role and VRF"
+- name: "{{ item | upper }}: An omitted network mode preserves the primary PVLAN mode, role and VRF"
   cisco.nd.nd4x_module_test:
     module: cisco.nd.nd_manage_networks
     state: "{{ item }}"

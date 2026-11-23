@@ -47,14 +47,14 @@ nd4x_network_cleanup:
   - {network_name: "{{ nd4x_network_names[5] }}"}
 nd4x_network_seed:
   network_name: "{{ nd4x_network_names[0] }}"
-  layer: layer2
+  network_mode: layer2
   network_id: "{{ nd_network_base_id | int + 80 }}"
   vlan_id: "{{ nd_network_base_vlan | int + 80 }}"
   vlan_name: ND4X_L2_SEED
   deploy: false
 nd4x_network_l3:
   network_name: "{{ nd4x_network_names[1] }}"
-  layer: layer3
+  network_mode: layer3
   vrf_name: "{{ nd4x_network_vrf_name }}"
   network_id: "{{ nd_network_base_id | int + 81 }}"
   vlan_id: "{{ nd_network_base_vlan | int + 81 }}"
@@ -69,7 +69,7 @@ nd4x_network_l3:
   deploy: false
 nd4x_network_extra:
   network_name: "{{ nd4x_network_names[2] }}"
-  layer: layer2
+  network_mode: layer2
   network_id: "{{ nd_network_base_id | int + 82 }}"
   vlan_id: "{{ nd_network_base_vlan | int + 82 }}"
   deploy: false
@@ -88,7 +88,7 @@ nd4x_network_pvlan_primary:
   network_name: "{{ nd4x_network_names[3] }}"
   network_id: "{{ nd_network_base_id | int + 83 }}"
   vlan_id: "{{ nd_network_base_vlan | int + 83 }}"
-  layer: layer3
+  network_mode: layer3
   vrf_name: "{{ nd4x_network_vrf_name }}"
   vlan_network_type: primary
   gateway_ipv4_address: 198.51.100.1/24
@@ -99,14 +99,14 @@ nd4x_network_pvlan_secondaries:
     vlan_id: "{{ nd_network_base_vlan | int + 84 }}"
     vlan_network_type: community
     primary_network_id: "{{ nd_network_base_id | int + 83 }}"
-    layer: layer2
+    network_mode: layer2
     deploy: false
   - network_name: "{{ nd4x_network_names[5] }}"
     network_id: "{{ nd_network_base_id | int + 85 }}"
     vlan_id: "{{ nd_network_base_vlan | int + 85 }}"
     vlan_network_type: isolated
     primary_network_id: "{{ nd_network_base_id | int + 83 }}"
-    layer: layer2
+    network_mode: layer2
     deploy: false
 nd4x_network_l2_query:
   name: Verify the Layer 2 Network through the controller
@@ -126,13 +126,13 @@ nd4x_network_l3_query:
     - {jsonpath: '$.current.l3Data.gatewayIpv4Address', equals: 192.0.2.1/24}
 nd4x_network_negative_cases:
   - label: Layer 2 rejects an explicitly supplied MTU
-    config: {network_name: "{{ nd4x_network_names[0] }}", layer: layer2, mtu: 9216}
+    config: {network_name: "{{ nd4x_network_names[0] }}", network_mode: layer2, mtu: 9216}
     message: layer2 networks do not support L3 properties
   - label: Layer 3 requires a VRF
-    config: {network_name: "{{ nd4x_network_names[0] }}", layer: layer3}
+    config: {network_name: "{{ nd4x_network_names[0] }}", network_mode: layer3}
     message: vrf_name is required
   - label: NetFlow monitor requires enablement
-    config: {network_name: "{{ nd4x_network_names[0] }}", layer: layer2, netflow_enable: false, vlan_netflow_monitor: BAD}
+    config: {network_name: "{{ nd4x_network_names[0] }}", network_mode: layer2, netflow_enable: false, vlan_netflow_monitor: BAD}
     message: netflow_enable
     standalone_only: true
   - label: Secondary PVLAN requires a primary association

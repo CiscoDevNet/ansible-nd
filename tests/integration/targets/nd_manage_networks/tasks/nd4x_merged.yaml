@@ -82,7 +82,7 @@
       - network_name: "{{ nd4x_network_names[2] }}"
         network_id: "{{ nd_network_base_id | int + 82 }}"
         vlan_id: "{{ nd_network_base_vlan | int + 82 }}"
-        layer: layer2
+        network_mode: layer2
     check_mode_queries: "{{ nd4x_network_snapshots }}"
     expected: "{{ nd4x_network_expected_change }}"
   register: nd4x_network_no_targets

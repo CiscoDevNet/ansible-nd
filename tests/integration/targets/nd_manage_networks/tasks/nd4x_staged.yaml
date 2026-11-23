@@ -14,7 +14,7 @@
 - name: Verify the full attachment scope immediately before staged
   ansible.builtin.include_tasks: nd4x_scope_preflight.yaml
 
-- name: "STAGED: Retain the omitted layer without deleting omitted definitions"
+- name: "STAGED: Retain the omitted network mode without deleting omitted definitions"
   cisco.nd.nd4x_module_test:
     module: cisco.nd.nd_manage_networks
     state: staged
