@@ -184,11 +184,10 @@ class EpManageTorAssociationsGet(_EpManageTorBase):
     @property
     def path(self) -> str:
         base = self._build_path("accessAssociations")
-        # includeCandidates must be sent explicitly: the ND API returns HTTP 400
-        # if the query string is entirely absent, but with includeCandidates=false
-        # present it returns the whole fabric's associations (aggregationOrLeafSwitchId
-        # then only optionally filters). to_query_string() always renders the bool,
-        # so the query string is never empty.
+        # TODO(4.2.1) access-associations-includecandidates-default-true
+        # The spec declares includeCandidates optional with default false, but ND treats an omitted flag as true: a bare
+        # fabric-wide GET returns HTTP 400 "Invalid aggregationOrLeafSwitchId", and a leaf-scoped GET without the flag answers
+        # in candidate mode. to_query_string() always renders the bool, so the query string is never empty.
         query_string = self.endpoint_params.to_query_string()
         return f"{base}?{query_string}" if query_string else base
 

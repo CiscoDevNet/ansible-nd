@@ -23,13 +23,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_extended_community_list.manage_extended_community_list import (
     ExtendedCommunityListModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.bulk_create_readback import NDBulkCreateReadBackOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 _FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
 
 
-class ManageExtendedCommunityListOrchestrator(NDBaseOrchestrator[ExtendedCommunityListModel]):
+class ManageExtendedCommunityListOrchestrator(NDBulkCreateReadBackOrchestrator[ExtendedCommunityListModel]):
     """
     Orchestrator for extended community list CRUD operations on Nexus Dashboard.
 
@@ -167,7 +167,8 @@ class ManageExtendedCommunityListOrchestrator(NDBaseOrchestrator[ExtendedCommuni
 
     def create_bulk(self, model_instances: list[ExtendedCommunityListModel], **kwargs) -> ResponseType:
         """
-        Bulk-create extended community lists.
+        Bulk-create extended community lists. On failure, the items the controller committed anyway are read back (`_created_despite_failure`) and named
+        in the error; `accepted_mutations` then reports them to `NDStateMachine`.
 
         POST /fabrics/{fabricName}/extendedCommunityLists
         Body: {"extendedCommunityLists": [...]}
@@ -182,6 +183,9 @@ class ManageExtendedCommunityListOrchestrator(NDBaseOrchestrator[ExtendedCommuni
             return result
         except Exception as e:
             names = [m.name for m in model_instances]
+            created = [m.name for m in self._created_despite_failure(model_instances)]
+            if created:
+                raise RuntimeError(f"Bulk create failed for {names}: {e}. The controller created {created} from the same request.") from e
             raise RuntimeError(f"Bulk create failed for {names}: {e}") from e
 
     def update(self, model_instance: ExtendedCommunityListModel, **kwargs) -> ResponseType:

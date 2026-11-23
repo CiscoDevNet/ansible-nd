@@ -264,6 +264,34 @@ class NDPolicyModule:
 
         self.log.info(f"Initialized NDPolicyModule for fabric: {self.fabric_name}, state: {self.state}")
 
+    def _module_changed(self) -> bool:
+        """
+        # Summary
+
+        Return the top-level `changed` value for this run.
+
+        `Results._determine_if_changed()` reports every check-mode task as unchanged, so in check mode the would-be value is re-derived
+        from the registered tasks the way `Results` derives it for real runs: an explicit `changed` flag in the task result wins, otherwise
+        any diff content beyond `sequence_number` counts as a change (issue #630).
+
+        ## Raises
+
+        None
+        """
+        if True in self.results.changed:
+            return True
+        if not self.check_mode:
+            return False
+        for task_result, task_diff in zip(self.results.results, self.results.diffs):
+            explicit_changed = task_result.get("changed")
+            if explicit_changed is not None:
+                if explicit_changed:
+                    return True
+                continue
+            if any(key != "sequence_number" for key in task_diff):
+                return True
+        return False
+
     def exit_module(self) -> None:
         """Build final result via :class:`NDOutput` and exit.
 
@@ -274,8 +302,9 @@ class NDPolicyModule:
 
         Output shape contract:
 
-        - ``changed`` is derived from :attr:`Results.changed` (same
-          semantics as the previous ``exit_json``).
+        - ``changed`` is derived from :attr:`Results.changed`, re-derived
+          from the registered tasks in check mode (see
+          :meth:`_module_changed`, issue #630).
         - ``before`` / ``after`` are the policy snapshot lists this
           module already maintains in ``self._before`` / ``self._after``.
         - ``diff`` defaults to ``[]`` at all verbosities; the per-API-call
@@ -300,14 +329,14 @@ class NDPolicyModule:
         verbosity = self.module._verbosity if hasattr(self.module, "_verbosity") else 0
         output_level = self.module.params.get("output_level", "normal") or "normal"
 
-        # Always-on keys.  ``changed`` is taken from Results so that the
-        # per-task ``_determine_if_changed()`` logic continues to drive
-        # the top-level value (same behaviour as the previous exit_json).
+        # Always-on keys.  ``changed`` comes from the per-task
+        # ``_determine_if_changed()`` logic in Results for real runs and
+        # from ``_module_changed()`` in check mode (issue #630).
         # We deliberately do NOT pass ``diff=`` — NDOutput.format()
         # defaults it to [] and the per-call list is exposed via
         # ``api_diff`` at -vvv.
         kwargs: dict = {
-            "changed": True in self.results.changed,
+            "changed": self._module_changed(),
             "before": self._before,
             "after": self._after,
         }
@@ -2875,7 +2904,9 @@ class NDPolicyModule:
                 "MESSAGE": "OK (check_mode)",
                 "DATA": {},
             }
-            self.results.result_current = {"success": True, "found": True}
+            # Carry the caller's intent so a no-diff deploy stays
+            # ``changed: false`` under ``_module_changed()`` (issue #630).
+            self.results.result_current = {"success": True, "found": True, "changed": changed}
             self.results.diff_current = {
                 "action": "deploy",
                 "policy_ids": policy_ids,

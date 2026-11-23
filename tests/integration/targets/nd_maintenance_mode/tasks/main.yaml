@@ -17,7 +17,7 @@
 #
 #   nd_test_maintenance_mode_fabric_name=SITE1
 #   nd_test_maintenance_mode_switch_ip_a=192.168.12.131
-#   nd_test_maintenance_mode_switch_ip_b=192.168.12.141
+#   nd_test_maintenance_mode_switch_ip_b=192.168.12.151
 #
 # The module's POST endpoint requires write authentication. If the inventory's
 # ansible_httpapi_login_domain is read-only on the target ND (e.g. radius), set
