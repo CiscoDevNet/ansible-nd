@@ -2461,3 +2461,224 @@ def test_vpc_interface_base_00270(monkeypatch) -> None:
         instance.preflight_safety([_build_model()])
 
     assert instance.rest_send.response_count == 2
+
+
+def _vpc_pairs_page(records: list[dict], meta: dict | None = None) -> dict:
+    """Build one discovered `vpcPairs` page with exactly the given pagination metadata (`meta` omitted when None)."""
+
+    data: dict = {"vpcPairs": records}
+    if meta is not None:
+        data["meta"] = meta
+    return {
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/vpcPairs",
+        "MESSAGE": "OK",
+        "DATA": data,
+    }
+
+
+def _unrelated_discovered_pairs(count: int) -> list[dict]:
+    """Build `count` distinct discovered pairs, none of which is the pair the membership tests propose."""
+
+    return [_discovered_pair(f"FILL{index:05d}A", f"FILL{index:05d}B") for index in range(count)]
+
+
+def _next_link(offset: int) -> dict:
+    """Build pagination metadata that carries only a next-page link, as the `vpcPairs` schema permits."""
+
+    return {"links": {"next": f"/api/v1/manage/fabrics/fabric_1/vpcPairs?max=500&offset={offset}"}}
+
+
+def test_vpc_interface_base_00271(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify the discovered-pair gate follows `meta.links.next` when the response carries no counts (PR #678 review).
+
+    ## Test
+
+    - Page 1 holds 500 unrelated discovered pairs and only a next-page link (no `meta.counts`)
+    - Page 2 holds the proposed pair and no metadata
+    - `preflight_safety` does not raise and both pages were fetched
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.preflight_safety()
+    - VpcInterfaceBaseOrchestrator._discovered_pairs()
+    """
+    _wire_membership_pair(monkeypatch, {_MEMBERSHIP_PRIMARY: {}, _MEMBERSHIP_PEER: {}})
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", lambda self, model_instances: None)
+
+    def responses():
+        yield _vpc_pairs_page(_unrelated_discovered_pairs(500), _next_link(500))
+        yield _vpc_pairs_page([_discovered_pair(_MEMBERSHIP_PRIMARY, _MEMBERSHIP_PEER)])
+
+    instance = _build_orchestrator(ResponseGenerator(responses()))
+
+    with does_not_raise():
+        instance.preflight_safety([_build_model()])
+
+    assert instance.rest_send.response_count == 2
+
+
+def test_vpc_interface_base_00272(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify the discovered-pair gate requests the next page after a full page that carries no pagination metadata (PR #678 review).
+
+    ## Test
+
+    - Page 1 holds 500 unrelated discovered pairs and no `meta`
+    - Page 2 holds the proposed pair and no `meta`; it is shorter than the page size, so the read ends there
+    - `preflight_safety` does not raise and exactly two pages were fetched
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.preflight_safety()
+    - VpcInterfaceBaseOrchestrator._discovered_pairs()
+    """
+    _wire_membership_pair(monkeypatch, {_MEMBERSHIP_PRIMARY: {}, _MEMBERSHIP_PEER: {}})
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", lambda self, model_instances: None)
+
+    def responses():
+        yield _vpc_pairs_page(_unrelated_discovered_pairs(500))
+        yield _vpc_pairs_page([_discovered_pair(_MEMBERSHIP_PRIMARY, _MEMBERSHIP_PEER)])
+
+    instance = _build_orchestrator(ResponseGenerator(responses()))
+
+    with does_not_raise():
+        instance.preflight_safety([_build_model()])
+
+    assert instance.rest_send.response_count == 2
+
+
+def test_vpc_interface_base_00273(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify a short page with no pagination metadata ends the discovered-pair read, so an undiscovered pair is still refused after one GET.
+
+    ## Test
+
+    - The only page holds 3 unrelated discovered pairs and no `meta`
+    - `preflight_safety` raises the pair-readiness error
+    - Exactly one `vpcPairs` GET was issued
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.preflight_safety()
+    - VpcInterfaceBaseOrchestrator._discovered_pairs()
+    """
+    _wire_membership_pair(monkeypatch, {_MEMBERSHIP_PRIMARY: {}, _MEMBERSHIP_PEER: {}})
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", lambda self, model_instances: None)
+
+    def responses():
+        yield _vpc_pairs_page(_unrelated_discovered_pairs(3))
+
+    instance = _build_orchestrator(ResponseGenerator(responses()))
+
+    with pytest.raises(RuntimeError, match=r"not discovered on the switches"):
+        instance.preflight_safety([_build_model()])
+
+    assert instance.rest_send.response_count == 1
+
+
+def test_vpc_interface_base_00274(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify a repeated page fails the discovered-pair read instead of looping or deciding from a partial set, and that nothing is cached.
+
+    ## Test
+
+    - Page 1 holds 500 unrelated discovered pairs and no `meta`
+    - Page 2 repeats page 1
+    - `_discovered_pairs` raises `RuntimeError` naming the repeated page and leaves the cache unset
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator._discovered_pairs()
+    """
+    _wire_membership_pair(monkeypatch, {_MEMBERSHIP_PRIMARY: {}, _MEMBERSHIP_PEER: {}})
+
+    def responses():
+        yield _vpc_pairs_page(_unrelated_discovered_pairs(500))
+        yield _vpc_pairs_page(_unrelated_discovered_pairs(500))
+
+    instance = _build_orchestrator(ResponseGenerator(responses()))
+
+    with pytest.raises(RuntimeError, match=r"repeated a page at offset 500"):
+        instance._discovered_pairs()
+
+    assert instance._discovered_pair_keys is None
+
+
+@pytest.mark.parametrize(
+    "meta, match",
+    [
+        ({"links": {"next": "/api/v1/manage/fabrics/fabric_1/vpcPairs?max=500&offset=0"}}, r"next link for fabric 'fabric_1' does not advance past offset 0"),
+        ({"links": {"next": "/api/v1/manage/fabrics/fabric_1/vpcPairs?max=500"}}, r"next link for fabric 'fabric_1' lacks one offset"),
+        ({"links": {"next": 7}}, r"next link for fabric 'fabric_1' must be a URL string"),
+        (
+            {"counts": {"remaining": 0, "total": 1}, "links": {"next": "/api/v1/manage/fabrics/fabric_1/vpcPairs?max=500&offset=1"}},
+            r"next link for fabric 'fabric_1' contradicts terminal counts metadata",
+        ),
+    ],
+)
+def test_vpc_interface_base_00275(monkeypatch, meta, match) -> None:
+    """
+    # Summary
+
+    Verify contradictory or non-progressing pagination metadata fails the discovered-pair read and caches nothing.
+
+    ## Test
+
+    - One page holds the proposed pair with metadata that cannot be followed (stale offset, missing offset, non-string link) or that
+      contradicts itself (a next link beside terminal counts)
+    - `_discovered_pairs` raises `RuntimeError` and leaves the cache unset, so the pair is not accepted from an unreliable read
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator._discovered_pairs()
+    """
+    _wire_membership_pair(monkeypatch, {_MEMBERSHIP_PRIMARY: {}, _MEMBERSHIP_PEER: {}})
+
+    def responses():
+        yield _vpc_pairs_page([_discovered_pair(_MEMBERSHIP_PRIMARY, _MEMBERSHIP_PEER)], meta)
+
+    instance = _build_orchestrator(ResponseGenerator(responses()))
+
+    with pytest.raises(RuntimeError, match=match):
+        instance._discovered_pairs()
+
+    assert instance._discovered_pair_keys is None
+
+
+def test_vpc_interface_base_00276(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify an empty page that still reports more records fails the discovered-pair read.
+
+    ## Test
+
+    - The page holds no records while `meta.counts.remaining` is 2
+    - `_discovered_pairs` raises `RuntimeError` and leaves the cache unset
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator._discovered_pairs()
+    """
+    _wire_membership_pair(monkeypatch, {_MEMBERSHIP_PRIMARY: {}, _MEMBERSHIP_PEER: {}})
+
+    def responses():
+        yield _vpc_pairs_page([], {"counts": {"remaining": 2}})
+
+    instance = _build_orchestrator(ResponseGenerator(responses()))
+
+    with pytest.raises(RuntimeError, match=r"reports more records after empty offset 0"):
+        instance._discovered_pairs()
+
+    assert instance._discovered_pair_keys is None

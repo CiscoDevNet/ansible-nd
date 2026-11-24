@@ -35,6 +35,7 @@ import re
 from dataclasses import dataclass
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
+from urllib.parse import parse_qs, urlsplit
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_vpc_pair import EpVpcPairGet
@@ -254,34 +255,111 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             "nd_manage_vpc_pair with config_actions.deploy=true before configuring vPC interfaces."
         )
 
+    @staticmethod
+    def _coerce_nonnegative_int(value: Any) -> int | None:
+        """
+        # Summary
+
+        Return a pagination count as a non-negative integer, or None when the value is absent or unusable.
+
+        ## Raises
+
+        None
+        """
+        if isinstance(value, bool):
+            return None
+        try:
+            converted = int(value)
+        except (TypeError, ValueError):
+            return None
+        return converted if converted >= 0 else None
+
+    def _next_discovered_pair_offset(self, data: Mapping[str, Any], offset: int, page_length: int) -> int | None:
+        """
+        # Summary
+
+        Decide from one discovered `vpcPairs` page whether another page follows, and return its offset (None when the read is complete).
+        The pagination metadata is optional in the `vpcPairs` response schema on ND 4.2.1 and 4.3.1, so its absence proves nothing: the
+        order of trust is `meta.counts.total`, then `meta.counts.remaining`, then `meta.links.next`, then a full page. These are the
+        semantics the workflow coordinator applies to the same endpoint (`InterfaceWorkflowCoordinator._vpc_pair_records`).
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If `meta.links.next` is not a URL string, carries no single `offset`, or does not advance past `offset`.
+        - If `meta.links.next` is present while the counts say this page is the last one.
+        - If the page is empty while the metadata reports more records.
+        """
+        metadata = data.get("meta")
+        counts = metadata.get("counts") if isinstance(metadata, Mapping) else None
+        counts = counts if isinstance(counts, Mapping) else {}
+        links = metadata.get("links") if isinstance(metadata, Mapping) else None
+        next_link = links.get("next") if isinstance(links, Mapping) else None
+        next_offset: int | None = None
+        if next_link:
+            if not isinstance(next_link, str):
+                raise RuntimeError(f"Discovered vPC pair next link for fabric {self.fabric_name!r} must be a URL string.")
+            raw_offsets = parse_qs(urlsplit(next_link).query).get("offset", [])
+            if len(raw_offsets) != 1:
+                raise RuntimeError(f"Discovered vPC pair next link for fabric {self.fabric_name!r} lacks one offset.")
+            next_offset = self._coerce_nonnegative_int(raw_offsets[0])
+            if next_offset is None or next_offset <= offset:
+                raise RuntimeError(f"Discovered vPC pair next link for fabric {self.fabric_name!r} does not advance past offset {offset}.")
+        total = self._coerce_nonnegative_int(counts.get("total"))
+        remaining = self._coerce_nonnegative_int(counts.get("remaining"))
+        if next_offset is not None and (total is not None and offset + page_length >= total or remaining == 0):
+            raise RuntimeError(f"Discovered vPC pair next link for fabric {self.fabric_name!r} contradicts terminal counts metadata.")
+        if total is not None:
+            has_next = offset + page_length < total or next_offset is not None
+        elif remaining is not None:
+            has_next = remaining > 0 or next_offset is not None
+        else:
+            has_next = next_offset is not None or page_length >= _DISCOVERED_PAIR_PAGE_SIZE
+        if not has_next:
+            return None
+        if not page_length:
+            raise RuntimeError(f"Discovered vPC pair response for fabric {self.fabric_name!r} reports more records after empty offset {offset}.")
+        return next_offset if next_offset is not None else offset + page_length
+
     def _discovered_pairs(self) -> set[frozenset[str]]:
         """
         # Summary
 
-        Return the unordered serial pairs the fabric-wide discovered `vpcPairs` view reports, fetched once per orchestrator and followed
-        across pages via `meta.counts.remaining`.
+        Return the unordered serial pairs the fabric-wide discovered `vpcPairs` view reports, fetched once per orchestrator. Every page is
+        read before the result is cached (`_next_discovered_pair_offset` decides whether one follows), so a pair on a later page is never
+        mistaken for an undiscovered one and a failed read leaves no partial set behind.
 
         ## Raises
 
         ### RuntimeError
 
         - If a page does not carry a `vpcPairs` list.
+        - If a page repeats an earlier one.
+        - Propagated from `_next_discovered_pair_offset` if the pagination metadata cannot be followed or contradicts itself.
         - Propagated from `_request` if the GET fails.
         """
         if self._discovered_pair_keys is not None:
             return self._discovered_pair_keys
         keys: set[frozenset[str]] = set()
-        offset = 0
-        while True:
+        seen_pages: set[tuple[tuple[Any, Any], ...]] = set()
+        offset: int | None = 0
+        while offset is not None:
             api_endpoint = EpVpcPairsListGet()
             api_endpoint.fabric_name = self.fabric_name
             api_endpoint.lucene_params.max = _DISCOVERED_PAIR_PAGE_SIZE
             api_endpoint.lucene_params.offset = offset
+            # A stable order keeps offset pagination from skipping or repeating a pair between pages.
+            api_endpoint.lucene_params.sort = "switchId:asc"
             response = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
             data: Mapping[str, Any] = response if isinstance(response, Mapping) else {}
             page = data.get("vpcPairs", [])
             if not isinstance(page, list):
                 raise RuntimeError(f"Discovered vPC pair response for fabric {self.fabric_name!r} must contain a list in 'vpcPairs'; received: {data!r}")
+            signature = tuple((record.get("switchId"), record.get("peerSwitchId")) if isinstance(record, Mapping) else (None, None) for record in page)
+            if page and signature in seen_pages:
+                raise RuntimeError(f"Discovered vPC pair pagination for fabric {self.fabric_name!r} repeated a page at offset {offset}.")
+            seen_pages.add(signature)
             for record in page:
                 if not isinstance(record, Mapping):
                     continue
@@ -289,12 +367,7 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 peer_switch_id = record.get("peerSwitchId")
                 if isinstance(switch_id, str) and isinstance(peer_switch_id, str) and switch_id and peer_switch_id:
                     keys.add(frozenset({switch_id.strip(), peer_switch_id.strip()}))
-            meta = data.get("meta")
-            counts = meta.get("counts") if isinstance(meta, Mapping) else None
-            remaining = counts.get("remaining") if isinstance(counts, Mapping) else None
-            if not page or not isinstance(remaining, int) or remaining <= 0:
-                break
-            offset += len(page)
+            offset = self._next_discovered_pair_offset(data, offset, len(page))
         self._discovered_pair_keys = keys
         return keys
 
