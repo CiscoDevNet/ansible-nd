@@ -11,6 +11,7 @@ from typing import ClassVar
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import filter_gathered_response
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_dot1q_tunnel_interface import VpcDot1qTunnelInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_interface_base import VpcInterfaceBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
@@ -20,6 +21,40 @@ class VpcDot1qTunnelInterfaceOrchestrator(VpcInterfaceBaseOrchestrator):
     """Manage dot1qTunnelVpc through the established staged interface lifecycle."""
 
     model_class: ClassVar[type[NDBaseModel]] = VpcDot1qTunnelInterfaceModel
+
+    def _switches_to_query(self) -> dict[str, str]:
+        """Read all switches unless every gathered filter names a specific switch."""
+        if self.rest_send.params.get("state") != "gathered":
+            return super()._switches_to_query()
+        switch_map = self.fabric_context.switch_map
+        filters = self.rest_send.params.get("config") or []
+        switch_ips = {item["switch_ip"].strip() for item in filters if item.get("switch_ip")}
+        for switch_ip in sorted(switch_ips):
+            if switch_ip not in switch_map:
+                raise ValueError(f"Gathered filter references switch_ip '{switch_ip}' which does not exist in fabric '{self.fabric_name}'.")
+        if not filters or any(not item.get("switch_ip") for item in filters):
+            return switch_map
+        return {ip: switch_id for ip, switch_id in switch_map.items() if ip in switch_ips}
+
+    def _managed_vpc_interfaces(self, switch_ip: str, switch_id: str, managed_types: set[str]) -> list[dict]:
+        """Keep matching peer copies before the shared pair deduplication runs.
+
+        Different filter items can name opposite peers with different criteria.
+        Filtering only after deduplication could keep the peer that does not
+        match and incorrectly discard the whole vPC.
+        """
+        records = super()._managed_vpc_interfaces(switch_ip, switch_id, managed_types)
+        filters = self.rest_send.params.get("config") or []
+        if self.rest_send.params.get("state") != "gathered" or not filters:
+            return records
+        matching = filter_gathered_response(
+            response_data=records,
+            filters=filters,
+            model_class=self.model_class,
+            normalize_filter=self.model_class.normalize_gathered_filter,
+        )
+        names = {model.interface_name for model in matching}
+        return [record for record in records if self._canonical_interface_name(record["interfaceName"]) in names]
 
     def _managed_policy_types(self) -> set[str]:
         """Manage the parent policy, never an Ethernet or generated vPC member."""

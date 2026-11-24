@@ -21,6 +21,12 @@ class PortChannelDot1qTunnelHostInterfaceOrchestrator(PortChannelBaseOrchestrato
     interface_type: ClassVar[str] = "portChannel"
     interface_mode: ClassVar[str] = "dot1qTunnel"
 
+    def _switches_to_query(self) -> dict[str, str]:
+        """Gather this family's parents from every switch without requiring config."""
+        if self.rest_send.params.get("state") == "gathered":
+            return self.fabric_context.switch_map
+        return super()._switches_to_query()
+
     def _managed_policy_types(self) -> set[str]:
         """Manage the parent policy, never an Ethernet or generated vPC member."""
         return {"dot1qTunnelPoHost"}

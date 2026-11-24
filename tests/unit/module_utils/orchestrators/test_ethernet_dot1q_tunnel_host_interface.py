@@ -55,6 +55,51 @@ def test_query_all_selects_only_dot1q_host_policy(monkeypatch) -> None:
     assert [(item["switchIp"], item["interfaceName"]) for item in result] == [("192.0.2.11", "Ethernet1/40")]
 
 
+def test_gathered_query_covers_switches_and_excludes_member_policies(monkeypatch) -> None:
+    orchestrator = _orchestrator("gathered")
+    switch_map = {"192.0.2.11": "SERIAL11", "192.0.2.12": "SERIAL12"}
+    calls = []
+    monkeypatch.setattr(EthernetDot1qTunnelHostInterfaceOrchestrator, "validate_prerequisites", lambda self: None)
+    monkeypatch.setattr(FabricContext, "switch_map", property(lambda self: switch_map))
+
+    def query(self, *, switch_id, expression):
+        calls.append((switch_id, expression))
+        host = _wire("Ethernet1/40", "dot1qTunnelHost")
+        host["switchId"] = switch_id
+        return [host, _wire("Ethernet1/41", "dot1qTunnelPoMember"), _wire("Ethernet1/42", "trunkHost")]
+
+    monkeypatch.setattr(EthernetDot1qTunnelHostInterfaceOrchestrator, "_query_interfaces_with_lucene", query)
+    result = orchestrator.query_all(gathered_filters=[])
+    assert [(item["switchIp"], item["interfaceName"]) for item in result] == [
+        ("192.0.2.11", "Ethernet1/40"),
+        ("192.0.2.12", "Ethernet1/40"),
+    ]
+    assert calls == [("SERIAL11", "interfaceType:ethernet"), ("SERIAL12", "interfaceType:ethernet")]
+
+
+def test_gathered_query_limits_reads_to_the_filtered_switch(monkeypatch) -> None:
+    orchestrator = _orchestrator("gathered")
+    calls = []
+    monkeypatch.setattr(EthernetDot1qTunnelHostInterfaceOrchestrator, "validate_prerequisites", lambda self: None)
+    monkeypatch.setattr(FabricContext, "switch_map", property(lambda self: {"192.0.2.11": "SERIAL11", "192.0.2.12": "SERIAL12"}))
+
+    def query(self, *, switch_id, expression):
+        calls.append((switch_id, expression))
+        return []
+
+    monkeypatch.setattr(EthernetDot1qTunnelHostInterfaceOrchestrator, "_query_interfaces_with_lucene", query)
+    assert orchestrator.query_all(gathered_filters=[{"switch_ip": "192.0.2.12", "interface_name": "Ethernet1/40"}]) == []
+    assert calls == [("SERIAL12", 'interfaceType:ethernet AND interfaceName:"Ethernet1/40"')]
+
+
+def test_gathered_is_allowed_during_deployment_freeze(monkeypatch) -> None:
+    orchestrator = _orchestrator("gathered")
+    monkeypatch.setattr(FabricContext, "fabric_exists", lambda self: True)
+    monkeypatch.setattr(FabricContext, "fabric_is_local", lambda self: True)
+    monkeypatch.setattr(FabricContext, "fabric_is_deployment_frozen", lambda self: pytest.fail("Read-only gathering must not check deployment freeze"))
+    orchestrator.validate_prerequisites()
+
+
 @pytest.mark.parametrize("policy_type", ["dot1qTunnelPoMember", "dot1qTunnelVpcMember", "dot1qTunnelVpcPoMember"])
 def test_existing_dot1q_members_fail_host_preflight(policy_type: str) -> None:
     """Existing dot1q members remain protected even when explicitly named."""

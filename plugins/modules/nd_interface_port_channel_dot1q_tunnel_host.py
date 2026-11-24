@@ -29,9 +29,10 @@ options:
   config:
     description:
     - Interfaces to manage. Each item identifies a switch and a logical interface.
+    - Required for mutation states. For O(state=gathered), omit O(config) or use an empty list to read all dot1q port-channels.
+    - Gathered filtering is not supported; nonempty O(config) is rejected for O(state=gathered).
     type: list
     elements: dict
-    required: true
     suboptions:
       switch_ip:
         description:
@@ -267,7 +268,9 @@ options:
                     type: int
   state:
     description:
-    - Whether to merge, replace, override, or delete the managed dot1q-tunnel parent interfaces.
+    - Whether to merge, replace, override, delete, or gather the managed dot1q-tunnel parent interfaces.
+    - O(state=gathered) reads only port-channel dot1q parent policies and returns them under C(gathered) in a format reusable as O(config).
+    - Gathered does not change controller or switch configuration, including when O(config_actions.deploy=true).
     type: str
     default: merged
     choices:
@@ -275,6 +278,7 @@ options:
     - replaced
     - overridden
     - deleted
+    - gathered
   config_actions:
     description:
     - Controls deploy behavior after port-channel mutations are complete.
@@ -331,6 +335,12 @@ EXAMPLES = r"""
     config:
       - switch_ip: 192.0.2.11
         interface_name: port-channel61
+
+- name: Gather all dot1q port-channel interfaces without making changes
+  cisco.nd.nd_interface_port_channel_dot1q_tunnel_host:
+    fabric_name: my_fabric
+    state: gathered
+  register: dot1q_interfaces
 """
 
 RETURN = r"""
@@ -350,7 +360,7 @@ before:
   - The existing matching port-channel configuration in the module's query scope before the module ran, structured like O(config).
   - The list can include matching interfaces on the selected switches that were not explicitly listed in O(config); O(state=overridden)
     uses fabric-wide scope.
-  - An empty list when no matching interface configuration existed.
+  - An empty list when no matching interface configuration existed, or when O(state=gathered).
   returned: always
   type: list
   elements: dict
@@ -371,6 +381,7 @@ after:
   - The matching port-channel configuration in the same query scope after the module ran, structured like O(config).
   - Successfully deleted interfaces are absent. The list can include matching interfaces not explicitly listed in O(config).
   - In check mode, the configuration that would result had the module run outside of check mode.
+  - An empty list when O(state=gathered); use C(gathered) for the read results.
   returned: always
   type: list
   elements: dict
@@ -388,17 +399,25 @@ after:
           - Ethernet1/1
           - Ethernet1/2
           port_channel_mode: active
+gathered:
+  description:
+  - Matching dot1q port-channel configuration, returned without making changes.
+  - Uses the module's input field names and can be reused as O(config) for a mutation state.
+  returned: when O(state=gathered)
+  type: list
+  elements: dict
+  sample: []
 diff:
   description:
   - Reserved for the per-interface difference between C(before) and C(after).
-  - Currently always an empty list for this module family; compare C(before) and C(after) directly.
-  returned: always
+  - Currently always an empty list for mutation states; compare C(before) and C(after) directly.
+  returned: when O(state) is not V(gathered)
   type: list
   elements: dict
   sample: []
 proposed:
   description: The configuration the module proposed to apply, before reconciliation with the controller.
-  returned: when O(output_level) is V(info) or V(debug)
+  returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
   sample:
@@ -460,10 +479,19 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
     )
     require_pydantic(module)
     setup_logging(module)
     module_log = logging.getLogger("nd.nd_interface_port_channel_dot1q_tunnel_host")
+
+    if module.params["state"] == "gathered" and module.params.get("config"):
+        module.fail_json(msg="state: gathered reads all dot1q port-channels; omit config or set config: []. Gathered filtering is not supported.")
 
     nd_state_machine = None
 
@@ -485,7 +513,7 @@ def main():
         nd_state_machine.manage_state()
         module_log.debug("manage_state end")
 
-        if not module.check_mode:
+        if not module.check_mode and module.params["state"] != "gathered":
             nd_state_machine.model_orchestrator.remove_pending()
             nd_state_machine.model_orchestrator.deploy_pending()
 

@@ -36,6 +36,7 @@ use the ND-native `peer1_*` / `peer2_*` naming where `peer1` corresponds to `swi
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -355,6 +356,13 @@ class VpcDot1qTunnelConfigDataModel(NDNestedModel):
     network_os: VpcDot1qTunnelNetworkOSModel = Field(alias="networkOS")
 
 
+class VpcDot1qTunnelGatheredPolicyFilterModel(NDNestedModel):
+    """Validate the policy fields accepted as partial gathered filters."""
+
+    admin_state: bool | None = Field(default=None)
+    access_vlan: int | None = Field(default=None, ge=1, le=4094)
+
+
 class VpcDot1qTunnelInterfaceModel(NDBaseModel):
     """
     # Summary
@@ -384,6 +392,14 @@ class VpcDot1qTunnelInterfaceModel(NDBaseModel):
 
     identifiers: ClassVar[list[str] | None] = ["switch_ip", "interface_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
+
+    supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "switch_ip",
+        "interface_name",
+        "config_data.network_os.policy.admin_state",
+        "config_data.network_os.policy.access_vlan",
+    )
 
     # --- Serialization Configuration ---
 
@@ -427,6 +443,22 @@ class VpcDot1qTunnelInterfaceModel(NDBaseModel):
                 policy.pop(field)
         return data
 
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """Normalize partial criteria without requiring a complete writable policy."""
+        normalized = deepcopy(filter_item)
+        for field in ("switch_ip", "interface_name"):
+            if isinstance(normalized.get(field), str):
+                normalized[field] = normalized[field].strip()
+        if isinstance(normalized.get("interface_name"), str):
+            normalized["interface_name"] = normalized["interface_name"].lower()
+        network_os = (normalized.get("config_data") or {}).get("network_os") or {}
+        policy = network_os.get("policy")
+        if isinstance(policy, dict):
+            validated = VpcDot1qTunnelGatheredPolicyFilterModel.model_validate(policy, by_name=True, context={"mode": "config", "state": "gathered"})
+            network_os["policy"] = validated.model_dump(by_alias=False, exclude_none=True, context={"mode": "config"})
+        return normalized
+
     # --- Argument Spec ---
 
     @classmethod
@@ -447,10 +479,10 @@ class VpcDot1qTunnelInterfaceModel(NDBaseModel):
             config=dict(
                 type="list",
                 elements="dict",
-                required=True,
+                required=False,
                 options=dict(
-                    switch_ip=dict(type="str", required=True),
-                    interface_name=dict(type="str", required=True),
+                    switch_ip=dict(type="str"),
+                    interface_name=dict(type="str"),
                     config_data=dict(
                         type="dict",
                         options=dict(
@@ -514,6 +546,6 @@ class VpcDot1qTunnelInterfaceModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "replaced", "overridden", "deleted"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
         )
