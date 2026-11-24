@@ -63,6 +63,10 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     supports_bulk_delete: ClassVar[bool] = False
     # TODO: Remove this compatibility bridge when PR #525 unifies execution.
     supports_mutation_outcomes: ClassVar[bool] = False
+    # Synchronous CRUD adopters use the same journal while retaining their existing dispatch and retry behavior.
+    track_mutation_outcomes: ClassVar[bool] = False
+    # Only endpoint-specific rejections can prove there was no write effect from an HTTP status alone.
+    mutation_rejection_statuses: ClassVar[frozenset[int]] = frozenset()
 
     # Opt-in. Existing orchestrators do not receive gathered filters.
     supports_gathered_server_filtering: ClassVar[bool] = False

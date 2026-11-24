@@ -20,6 +20,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types impor
 
 class LocalUserOrchestrator(NDBaseOrchestrator[LocalUserModel]):
     model_class: ClassVar[type[NDBaseModel]] = LocalUserModel
+    track_mutation_outcomes: ClassVar[bool] = True
+    mutation_rejection_statuses: ClassVar[frozenset[int]] = frozenset({400})
     supports_gathered_server_filtering: ClassVar[bool] = False
 
     create_endpoint: type[NDEndpointBaseModel] = EpInfraAaaLocalUsersPost

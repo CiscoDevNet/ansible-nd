@@ -195,6 +195,28 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+  description: Whether a write was confirmed, or whether check mode predicts a change.
+  returned: always
+  type: bool
+after:
+  description: The known configuration after the run, or the predicted configuration in check mode.
+  returned: when the final configuration is known or the module runs in check mode
+  type: list
+  elements: dict
+after_status:
+  description: Whether the final configuration is C(confirmed) or C(unknown).
+  returned: after an attempted write
+  type: str
+action_results:
+  description: The outcome of each attempted resource operation.
+  returned: after an attempted write
+  type: list
+  elements: dict
+may_have_changed:
+  description: Whether an attempted write may have changed a resource whose outcome is unknown.
+  returned: after an attempted write
+  type: bool
 """
 
 from ansible.module_utils.basic import AnsibleModule
