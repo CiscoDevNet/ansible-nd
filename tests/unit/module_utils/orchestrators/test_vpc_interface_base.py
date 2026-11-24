@@ -2312,3 +2312,74 @@ def test_vpc_member_public_preflight_rejects_existing_owner_for_each_family(
         instance.preflight([proposed])
 
     assert instance.rest_send.response_count == 0
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "implicit_default",
+        "explicit1500",
+        "explicit9000",
+        "unproven_mtu",
+        "unproven_filter",
+        "unproven_mode",
+        "foreign_member",
+        "foreign_command",
+        "old_family",
+    ],
+)
+def test_dot1q_delete_preview_accepts_only_proven_member_setting_removals(fault):
+    """A pending dot1q delete can be observed before the one final deployment."""
+    from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_dot1q_tunnel_interface import VpcDot1qTunnelInterfaceOrchestrator
+
+    orchestrator = VpcDot1qTunnelInterfaceOrchestrator.__new__(VpcDot1qTunnelInterfaceOrchestrator)
+    if fault == "old_family":
+        orchestrator = AccessVpcHostInterfaceOrchestrator.__new__(AccessVpcHostInterfaceOrchestrator)
+    rows = []
+    for serial in ("SERIAL1", "SERIAL2"):
+        running = (
+            "interface port-channel262\n switchport mode dot1q-tunnel\n vpc 262\n"
+            "interface Ethernet1/46\n channel-group 262 mode active\n mtu 9216\n"
+            " spanning-tree bpdufilter enable\n switchport access vlan 2502\n switchport mode dot1q-tunnel\n"
+        )
+        pending = (
+            "no interface port-channel262\ninterface Ethernet1/46\n no channel-group 262 force mode active\n"
+            " no mtu 9216\n no spanning-tree bpdufilter enable\n no switchport access vlan 2502\n no switchport mode dot1q-tunnel\n"
+            "interface Ethernet1/46\n switchport\n switchport mode trunk\n switchport trunk allowed vlan none\n"
+            " spanning-tree port type edge trunk\n no shutdown\nconfigure terminal\n"
+        )
+        if serial == "SERIAL2":
+            if fault in {"implicit_default", "old_family"}:
+                running = running.replace(" mtu 9216\n", "")
+            elif fault in {"explicit1500", "explicit9000"}:
+                running = running.replace("mtu 9216", "mtu " + fault.removeprefix("explicit"))
+            elif fault == "unproven_mtu":
+                pending = pending.replace("no mtu 9216", "no mtu 9000")
+            elif fault == "unproven_filter":
+                running = running.replace(" spanning-tree bpdufilter enable\n", "")
+            elif fault == "unproven_mode":
+                running = running.replace(" switchport mode dot1q-tunnel\n", "")
+            elif fault == "foreign_member":
+                pending = pending.replace("Ethernet1/46", "Ethernet1/47")
+            elif fault == "foreign_command":
+                pending = pending.replace(" no mtu 9216", " no ip address 192.0.2.1/24")
+        rows.append(
+            {
+                "switchId": serial,
+                "interfaceName": "vpc262",
+                "status": "success",
+                "combinedConfigs": [
+                    {"configType": "running", "config": running, "lines": len(running.splitlines())},
+                    {"configType": "pending", "config": pending, "lines": len(pending.splitlines())},
+                    {"configType": "expected", "config": "", "lines": 0},
+                ],
+            }
+        )
+    if fault not in {None, "implicit_default"}:
+        with pytest.raises(RuntimeError, match="unproven command|non-member interface"):
+            orchestrator._validate_absent_vpc_delete_preview({"configurationDiffs": rows}, "vpc262", "SERIAL1", "SERIAL2")
+    else:
+        footprints = orchestrator._validate_absent_vpc_delete_preview({"configurationDiffs": rows}, "vpc262", "SERIAL1", "SERIAL2")
+        assert tuple(item.switch_id for item in footprints) == ("SERIAL1", "SERIAL2")
+        assert all(item.running_member_ports == item.reset_member_ports == ("Ethernet1/46",) for item in footprints)

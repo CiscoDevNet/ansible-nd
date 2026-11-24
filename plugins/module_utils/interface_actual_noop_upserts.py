@@ -123,7 +123,11 @@ def actual_noop_upserts(*, params, plan, snapshot, request_sha256, desired_diges
                         if not isinstance(local, dict):
                             raise ValueError("Generated vPC port-channel is absent")
                         config, os_data, local_policy = _policy(local)
-                        expected_policy = "accessVpcMember" if pair["mode"] == "access" else "trunkVpcMember"
+                        # Each vPC mode has a different generated local policy.
+                        # An unknown mode must not be accepted as a trunk peer.
+                        expected_policy = {"access": "accessVpcMember", "trunk": "trunkVpcMember"}.get(pair["mode"])
+                        if expected_policy is None:
+                            raise ValueError("Generated vPC policy has not been qualified for this no-op proof")
                         if (
                             not snapshot.has_switch(owner)
                             or local.get("switchId") != owner

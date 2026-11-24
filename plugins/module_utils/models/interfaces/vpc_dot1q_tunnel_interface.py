@@ -1,0 +1,551 @@
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+"""
+vPC dot1q-tunnel (dot1qTunnelVpc) interface Pydantic models for Nexus Dashboard.
+
+This module defines nested Pydantic models that mirror the ND Manage Interfaces API payload
+structure for vPC dot1qTunnelVpc interfaces (`int_vpc_dot1q_tunnel.template`). The playbook
+config uses the same nesting so that `to_payload()` and `from_response()` work via standard
+Pydantic serialization with no custom wrapping or flattening.
+
+A vPC dot1q-tunnel interface spans two switches in a vPC pair. The user supplies one peer's
+management IP as `switch_ip`; the orchestrator auto-resolves the peer serial via the
+`vpcPair` endpoint and injects it as `peerSwitchId` in the payload. Per-peer policy fields
+use the ND-native `peer1_*` / `peer2_*` naming where `peer1` corresponds to `switch_ip`
+(the switch in the URL path) and `peer2` corresponds to the auto-resolved peer.
+
+## Model Hierarchy
+
+- `VpcDot1qTunnelInterfaceModel` (top-level, `NDBaseModel`)
+    - `switch_ip` (composite identifier; primary peer's management IP)
+    - `interface_name` (composite identifier; e.g. `vpc100`)
+    - `interface_type` (frozen: "vpc")
+    - `config_data` -> `VpcDot1qTunnelConfigDataModel`
+        - `mode` (frozen: "dot1qTunnel")
+        - `network_os` -> `VpcDot1qTunnelNetworkOSModel`
+            - `network_os_type` (frozen: "nx-os")
+            - `policy` -> `VpcDot1qTunnelPolicyModel`
+                - `policy_type` (fixed: "dot1qTunnelVpc")
+                - `peer_switch_id` (orchestrator-injected; not in argspec)
+                - per-peer fields: `peer1_*`, `peer2_*`
+                - shared fields: `admin_state`, `cdp`, `lacp_rate`, `mtu`, etc.
+"""
+
+from __future__ import annotations
+
+import re
+from copy import deepcopy
+from typing import Any, ClassVar, Literal
+
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    Field,
+    field_validator,
+    model_validator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
+    BpduFilterEnum,
+    BpduGuardEnum,
+    DuplexModeEnum,
+    LacpRateEnum,
+    LinkTypeEnum,
+    MtuEnum,
+    PortChannelModeEnum,
+    SpeedEnum,
+    StormControlActionEnum,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.netflow import NetflowAtomicMergeMixin, netflow_validation_suspended
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.policy_base import InterfacePolicyStrictBase
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
+
+# Splits an interface name into its leading alphabetic prefix and the rest (digits/separators).
+_INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
+
+# Member interfaces of a vPC are always physical ethernet ports, so the canonical wire prefix is always
+# "Ethernet". Any case-insensitive NX-OS abbreviation (e.g. "e", "eth", "ether") expands to the full form so
+# user input matches the wire key and idempotency holds.
+_CANONICAL_MEMBER_TYPE = "Ethernet"
+
+
+class VpcDot1qTunnelPolicyModel(NetflowAtomicMergeMixin, InterfacePolicyStrictBase):
+    """
+    # Summary
+
+    Policy fields for a vPC `dot1qTunnelVpc` interface. Maps directly to the `configData.networkOS.policy` object in the ND API.
+
+    Per-peer fields use the API-native `peer1*` / `peer2*` naming. `peer1` corresponds to the switch in the URL path
+    (the user-supplied `switch_ip`); `peer2` corresponds to the auto-resolved peer (the value of `peerSwitchId`).
+
+    `peer_switch_id` is set by the orchestrator from the vPC pair record. It is not exposed in the module argument spec.
+
+    ## Raises
+
+    None
+    """
+
+    # `peerSwitchId` is orchestrator-injected (resolved from the vPC pair record; not in the argspec), so the
+    # proposed config can never express it. ND echoes it on reads; without this exclusion the reverse pass of
+    # `get_diff` would count it as a removal on every replaced/overridden run, breaking idempotency.
+    reverse_diff_exclude: ClassVar[set[str]] = {"peerSwitchId"}
+
+    # TODO(4.2.1) get-echoes-schema-defaults-for-unset-fields
+    # ND 4.2.1 `int_vpc_dot1q_tunnel` template defaults (schema-sourced via nd-openapi `intVpcDot1qTunnelTemplate`). ND echoes these
+    # for every field the user never set; the reverse pass of `get_diff` normalizes existing-side matches to absent
+    # so replaced/overridden removal detection (issue #410) stays idempotent against default echoes.
+    reverse_diff_defaults: ClassVar[dict[str, Any]] = {
+        "adminState": True,
+        "bpduFilter": "enable",
+        "bpduGuard": "enable",
+        "cdp": True,
+        "copyDescription": False,
+        "duplexMode": "auto",
+        "lacpPortPriority": 32768,
+        "lacpRate": "normal",
+        "lacpSuspend": False,
+        "lacpVpcConvergence": False,
+        "linkType": "auto",
+        "mirrorConfig": False,
+        "mtu": "jumbo",
+        "negotiateAuto": True,
+        "netflow": False,
+        "pfc": False,
+        "peer1MemberPorts": [],
+        "peer2MemberPorts": [],
+        "portChannelMode": "active",
+        "portTypeEdgeTrunk": True,
+        "qos": False,
+        "speed": "auto",
+        "stormControl": False,
+        "stormControlAction": "default",
+    }
+
+    # --- Policy Discriminator ---
+
+    policy_type: Literal["dot1qTunnelVpc"] = Field(default="dot1qTunnelVpc", alias="policyType")
+
+    # --- Orchestrator-Injected (Not In Argspec) ---
+
+    peer_switch_id: str | None = Field(
+        default=None,
+        alias="peerSwitchId",
+        description="Peer switch serial number, auto-resolved by the orchestrator from the vPC pair record",
+    )
+
+    # Keep one VLAN in Ansible and the diff. The orchestrator changes only
+    # the write shape for ND 4.2, whose template needs the same VLAN per peer.
+    access_vlan: int | None = Field(default=None, alias="accessVlan", ge=1, le=4094, description="VLAN for the access port on both peers")
+
+    # --- Per-Peer Fields (peer1 = switch_ip, peer2 = peer_switch_id) ---
+
+    peer1_member_ports: list[str] = Field(default_factory=list, alias="peer1MemberPorts", description="Member interface names on Peer-1")
+    peer1_port_channel_configuration: str | None = Field(
+        default=None, alias="peer1PortChannelConfiguration", description="Additional CLI for Peer-1's port-channel"
+    )
+    peer1_port_channel_description: AsciiDescription = Field(
+        default=None, alias="peer1PortChannelDescription", max_length=254, description="Description for Peer-1's port-channel"
+    )
+    peer1_port_channel_id: int | None = Field(default=None, alias="peer1PortChannelId", ge=1, le=4096, description="Peer-1 vPC port-channel number")
+    peer2_member_ports: list[str] = Field(default_factory=list, alias="peer2MemberPorts", description="Member interface names on Peer-2")
+    peer2_port_channel_configuration: str | None = Field(
+        default=None, alias="peer2PortChannelConfiguration", description="Additional CLI for Peer-2's port-channel"
+    )
+    peer2_port_channel_description: AsciiDescription = Field(
+        default=None, alias="peer2PortChannelDescription", max_length=254, description="Description for Peer-2's port-channel"
+    )
+    peer2_port_channel_id: int | None = Field(default=None, alias="peer2PortChannelId", ge=1, le=4096, description="Peer-2 vPC port-channel number")
+
+    # --- Shared Policy Fields ---
+
+    admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
+    bandwidth: int | None = Field(default=None, alias="bandwidth", ge=1, le=100000000, description="Configured bandwidth value for the interface")
+    bpdu_filter: BpduFilterEnum | None = Field(default=None, alias="bpduFilter", description="Configure spanning-tree BPDU filter")
+    bpdu_guard: BpduGuardEnum | None = Field(default=None, alias="bpduGuard", description="Enable spanning-tree BPDU guard")
+    cdp: bool | None = Field(default=None, alias="cdp", description="Enable CDP on the interface")
+    copy_description: bool | None = Field(
+        default=None,
+        alias="copyDescription",
+        description="Propagate the port-channel description to all member interfaces (per-peer)",
+    )
+    duplex_mode: DuplexModeEnum | None = Field(default=None, alias="duplexMode", description="Port duplex mode")
+    inherit_bandwidth: int | None = Field(
+        default=None,
+        alias="inheritBandwidth",
+        ge=1,
+        le=100000000,
+        description="Bandwidth value inherited by sub-interfaces",
+    )
+    lacp_port_priority: int | None = Field(default=None, alias="lacpPortPriority", ge=1, le=65535, description="LACP port priority (1-65535, default 32768)")
+    lacp_rate: LacpRateEnum | None = Field(default=None, alias="lacpRate", description="LACP rate (normal=30s, fast=1s)")
+    lacp_suspend: bool | None = Field(default=None, alias="lacpSuspend", description="Suspend port if LACP PDUs not received")
+    lacp_vpc_convergence: bool | None = Field(default=None, alias="lacpVpcConvergence", description="Enable LACP convergence for vPC port-channels")
+    link_type: LinkTypeEnum | None = Field(default=None, alias="linkType", description="Spanning-tree link type")
+    mirror_config: bool | None = Field(default=None, alias="mirrorConfig", description="Copy Peer-1 config to Peer-2")
+    mtu: MtuEnum | None = Field(default=None, alias="mtu", description="Interface MTU")
+    negotiate_auto: bool | None = Field(default=None, alias="negotiateAuto", description="Enable link auto-negotiation")
+    netflow: bool | None = Field(default=None, alias="netflow", description="Enable Netflow on the interface")
+    netflow_monitor: str | None = Field(default=None, alias="netflowMonitor", description="Layer 2 Netflow monitor name")
+    netflow_sampler: str | None = Field(default=None, alias="netflowSampler", description="Netflow sampler name (N7K only)")
+    pfc: bool | None = Field(default=None, alias="pfc", description="Enable priority flow control")
+    port_channel_mode: PortChannelModeEnum | None = Field(default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive)")
+    port_type_edge_trunk: bool | None = Field(default=None, alias="portTypeEdgeTrunk", description="Enable spanning-tree edge port (PortFast) behavior")
+    qos: bool | None = Field(default=None, alias="qos", description="Enable QoS configuration for this interface")
+    qos_policy: str | None = Field(default=None, alias="qosPolicy", description="Custom QoS policy name")
+    queuing_policy: str | None = Field(default=None, alias="queuingPolicy", description="Custom queuing policy name")
+    speed: SpeedEnum | None = Field(default=None, alias="speed", description="Interface speed")
+    storm_control: bool | None = Field(default=None, alias="stormControl", description="Enable traffic storm control")
+    storm_control_action: StormControlActionEnum | None = Field(
+        default=None, alias="stormControlAction", description="Storm control action on threshold violation"
+    )
+    storm_control_broadcast_level: float | None = Field(
+        default=None,
+        alias="stormControlBroadcastLevel",
+        ge=0.0,
+        le=100.0,
+        description="Broadcast storm control level in percentage (0.00-100.00)",
+    )
+    storm_control_broadcast_level_pps: int | None = Field(
+        default=None,
+        alias="stormControlBroadcastLevelPps",
+        ge=0,
+        le=200000000,
+        description="Broadcast storm control level in packets per second",
+    )
+    storm_control_multicast_level: float | None = Field(
+        default=None,
+        alias="stormControlMulticastLevel",
+        ge=0.0,
+        le=100.0,
+        description="Multicast storm control level in percentage (0.00-100.00)",
+    )
+    storm_control_multicast_level_pps: int | None = Field(
+        default=None,
+        alias="stormControlMulticastLevelPps",
+        ge=0,
+        le=200000000,
+        description="Multicast storm control level in packets per second",
+    )
+    storm_control_unicast_level: float | None = Field(
+        default=None,
+        alias="stormControlUnicastLevel",
+        ge=0.0,
+        le=100.0,
+        description="Unicast storm control level in percentage (0.00-100.00)",
+    )
+    storm_control_unicast_level_pps: int | None = Field(
+        default=None,
+        alias="stormControlUnicastLevelPps",
+        ge=0,
+        le=200000000,
+        description="Unicast storm control level in packets per second",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_peer_access_vlans(cls, data: Any) -> Any:
+        """Accept a legacy response only when both peers specify the same VLAN."""
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        legacy = [data.pop(key) for key in ("peer1AccessVlan", "peer2AccessVlan") if key in data]
+        if legacy:
+            if len(legacy) != 2 or legacy[0] != legacy[1]:
+                raise ValueError("dot1q vPC peer access VLANs must both exist and be equal")
+            canonical = data.get("access_vlan", data.get("accessVlan"))
+            if canonical is not None and canonical != legacy[0]:
+                raise ValueError("access_vlan conflicts with the legacy peer access VLANs")
+            data["accessVlan"] = legacy[0]
+        return data
+
+    @model_validator(mode="after")
+    def validate_netflow_monitor(self) -> "VpcDot1qTunnelPolicyModel":
+        """Require a monitor when enabling NetFlow, including after a merge."""
+        if not netflow_validation_suspended() and self.netflow is True and not self.netflow_monitor:
+            raise ValueError("netflow_monitor must be provided when netflow is true.")
+        return self
+
+    def merge_would_change(self, other: NDBaseModel) -> bool:
+        """An explicit empty peer description clears its current nonempty value."""
+        for field in ("peer1_port_channel_description", "peer2_port_channel_description"):
+            if field in other.model_fields_set and getattr(other, field) == "" and getattr(self, field) not in (None, ""):
+                return True
+        return super().merge_would_change(other)
+
+    # --- Validators ---
+
+    @field_validator("peer1_member_ports", "peer2_member_ports", mode="before")
+    @classmethod
+    def normalize_member_ports(cls, value):
+        """
+        # Summary
+
+        Normalize each per-peer member interface name to ND's canonical `Ethernet` form so any user-supplied casing or
+        NX-OS abbreviation round-trips against the wire form. Members are always physical ethernet ports. Examples:
+
+        - `ethernet1/1` -> `Ethernet1/1`
+        - `eth1/1` -> `Ethernet1/1` (abbreviation expanded)
+        - `e1/1` -> `Ethernet1/1` (abbreviation expanded)
+        - `Ethernet1/1` -> `Ethernet1/1` (idempotent)
+
+        An abbreviated prefix that is not expanded would never match ND's `Ethernet...` wire key, silently breaking
+        idempotency (the vPC re-deploys on every run). Only the leading alphabetic run is rewritten; digits and
+        separators are preserved verbatim.
+
+        ## Raises
+
+        None
+        """
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return value
+        return [cls._normalize_member_name(name) for name in value]
+
+    @staticmethod
+    def _normalize_member_name(name):
+        """
+        # Summary
+
+        Normalize a single member interface name to ND's canonical `Ethernet` form (see `normalize_member_ports`).
+        Non-string or empty values are returned unchanged.
+
+        ## Raises
+
+        None
+        """
+        if not isinstance(name, str) or not name:
+            return name
+        match = _INTERFACE_NAME_PREFIX_RE.match(name)
+        if not match:
+            return name
+        prefix, rest = match.groups()
+        if _CANONICAL_MEMBER_TYPE.lower().startswith(prefix.lower()):
+            return _CANONICAL_MEMBER_TYPE + rest
+        return prefix[0].upper() + prefix[1:].lower() + rest
+
+
+class VpcDot1qTunnelNetworkOSModel(NDNestedModel):
+    """
+    # Summary
+
+    Network OS container for a vPC `dot1qTunnelVpc` interface. Maps to `configData.networkOS` in the ND API.
+
+    ## Raises
+
+    None
+    """
+
+    network_os_type: Literal["nx-os"] = Field(default="nx-os", alias="networkOSType", frozen=True)
+    policy: VpcDot1qTunnelPolicyModel | None = Field(default=None, alias="policy")
+
+
+class VpcDot1qTunnelConfigDataModel(NDNestedModel):
+    """
+    # Summary
+
+    Config data container for a vPC `dot1qTunnelVpc` interface. Maps to `configData` in the ND API.
+
+    ## Raises
+
+    None
+    """
+
+    mode: Literal["dot1qTunnel"] = Field(default="dot1qTunnel", alias="mode", frozen=True)
+    network_os: VpcDot1qTunnelNetworkOSModel = Field(alias="networkOS")
+
+
+class VpcDot1qTunnelGatheredPolicyFilterModel(NDNestedModel):
+    """Validate the policy fields accepted as partial gathered filters."""
+
+    admin_state: bool | None = Field(default=None)
+    access_vlan: int | None = Field(default=None, ge=1, le=4094)
+
+
+class VpcDot1qTunnelInterfaceModel(NDBaseModel):
+    """
+    # Summary
+
+    vPC `dot1qTunnelVpc` interface configuration for Nexus Dashboard.
+
+    Uses a composite identifier (`switch_ip`, `interface_name`). The nested model structure mirrors the ND Manage
+    Interfaces API payload, so `to_payload()` and `from_response()` work via standard Pydantic serialization.
+
+    The `interface_name` is the vPC's own name (e.g. `vpc100`), not a member interface. Member interfaces are listed
+    per-peer in `config_data.network_os.policy.peer1_member_ports` and `peer2_member_ports`.
+
+    ## Raises
+
+    None
+    """
+
+    # --- Identifier Configuration ---
+    # TODO(4.2.1) vpc-interface-dual-peer-duplicate
+    # A vPC interface is a single fabric-level resource, but ND echoes it from BOTH peer switches in the per-switch
+    # `/interfaces` GET (identical `configData`; only `switchId` / `peerSwitchId` swap). Standalone reads dedupe that
+    # echo in `VpcInterfaceBaseOrchestrator.query_all`; the aggregate workflow selects one echo using its authoritative
+    # unordered peer-pair inventory. Both key on `interfaceName` plus the pair set, so the composite identifier below
+    # stays safe: two vPC pairs in one fabric may legally reuse the same vPC id (ND's `vpcId` resource pool is
+    # devicePair-scoped; issue #356), which a name-only identity cannot represent. `switch_ip` remains excluded from
+    # payload and diff because it is routing-only on the wire.
+
+    identifiers: ClassVar[list[str] | None] = ["switch_ip", "interface_name"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
+
+    supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "switch_ip",
+        "interface_name",
+        "config_data.network_os.policy.admin_state",
+        "config_data.network_os.policy.access_vlan",
+    )
+
+    # --- Serialization Configuration ---
+
+    payload_exclude_fields: ClassVar[set[str]] = {"switch_ip"}
+    exclude_from_diff: ClassVar[set[str]] = {"switch_ip"}
+
+    # --- Fields ---
+
+    switch_ip: str = Field(alias="switchIp")
+    interface_name: str = Field(alias="interfaceName")
+    interface_type: Literal["vpc"] = Field(default="vpc", alias="interfaceType", frozen=True)
+    config_data: VpcDot1qTunnelConfigDataModel | None = Field(default=None, alias="configData")
+
+    @field_validator("interface_name", mode="before")
+    @classmethod
+    def normalize_interface_name(cls, value):
+        """
+        # Summary
+
+        Normalize the vPC interface name to lowercase to match ND API convention (e.g. `Vpc100` -> `vpc100`).
+
+        ## Raises
+
+        None
+        """
+        if isinstance(value, str):
+            return value.lower()
+        return value
+
+    def to_diff_dict(self, **kwargs) -> dict[str, Any]:
+        """Compare an explicit peer-description clear with ND's absent readback.
+
+        The outgoing write omits empty descriptions because ND rejects empty
+        strings. Keep nonempty current descriptions in the comparison so a
+        clear remains a change until ND has accepted it.
+        """
+        data = super().to_diff_dict(**kwargs)
+        policy = ((data.get("configData") or {}).get("networkOS") or {}).get("policy") or {}
+        for field in ("peer1PortChannelDescription", "peer2PortChannelDescription"):
+            if policy.get(field) == "":
+                policy.pop(field)
+        return data
+
+    @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """Normalize partial criteria without requiring a complete writable policy."""
+        normalized = deepcopy(filter_item)
+        for field in ("switch_ip", "interface_name"):
+            if isinstance(normalized.get(field), str):
+                normalized[field] = normalized[field].strip()
+        if isinstance(normalized.get("interface_name"), str):
+            normalized["interface_name"] = normalized["interface_name"].lower()
+        network_os = (normalized.get("config_data") or {}).get("network_os") or {}
+        policy = network_os.get("policy")
+        if isinstance(policy, dict):
+            validated = VpcDot1qTunnelGatheredPolicyFilterModel.model_validate(policy, by_name=True, context={"mode": "config", "state": "gathered"})
+            network_os["policy"] = validated.model_dump(by_alias=False, exclude_none=True, context={"mode": "config"})
+        return normalized
+
+    # --- Argument Spec ---
+
+    @classmethod
+    def get_argument_spec(cls) -> dict:
+        """
+        # Summary
+
+        Return the Ansible argument spec for the `nd_interface_vpc_dot1q_tunnel` module. Frozen scaffolding fields
+        (`interface_type`, `mode`, `network_os_type`, `policy_type`) are intentionally NOT exposed. `peer_switch_id`
+        is orchestrator-injected and NOT exposed.
+
+        ## Raises
+
+        None
+        """
+        return dict(
+            fabric_name=dict(type="str", required=True),
+            config=dict(
+                type="list",
+                elements="dict",
+                required=False,
+                options=dict(
+                    switch_ip=dict(type="str"),
+                    interface_name=dict(type="str"),
+                    config_data=dict(
+                        type="dict",
+                        options=dict(
+                            network_os=dict(
+                                type="dict",
+                                options=dict(
+                                    policy=dict(
+                                        type="dict",
+                                        options=dict(
+                                            admin_state=dict(type="bool"),
+                                            bandwidth=dict(type="int"),
+                                            bpdu_filter=dict(type="str", choices=[e.value for e in BpduFilterEnum]),
+                                            bpdu_guard=dict(type="str", choices=[e.value for e in BpduGuardEnum]),
+                                            cdp=dict(type="bool"),
+                                            copy_description=dict(type="bool"),
+                                            duplex_mode=dict(type="str", choices=[e.value for e in DuplexModeEnum]),
+                                            inherit_bandwidth=dict(type="int"),
+                                            lacp_port_priority=dict(type="int"),
+                                            lacp_rate=dict(type="str", choices=[e.value for e in LacpRateEnum]),
+                                            lacp_suspend=dict(type="bool"),
+                                            lacp_vpc_convergence=dict(type="bool"),
+                                            link_type=dict(type="str", choices=[e.value for e in LinkTypeEnum]),
+                                            mirror_config=dict(type="bool"),
+                                            mtu=dict(type="str", choices=[e.value for e in MtuEnum]),
+                                            negotiate_auto=dict(type="bool"),
+                                            netflow=dict(type="bool"),
+                                            netflow_monitor=dict(type="str"),
+                                            netflow_sampler=dict(type="str"),
+                                            access_vlan=dict(type="int"),
+                                            peer1_member_ports=dict(type="list", elements="str"),
+                                            peer1_port_channel_configuration=dict(type="str"),
+                                            peer1_port_channel_description=dict(type="str"),
+                                            peer1_port_channel_id=dict(type="int"),
+                                            peer2_member_ports=dict(type="list", elements="str"),
+                                            peer2_port_channel_configuration=dict(type="str"),
+                                            peer2_port_channel_description=dict(type="str"),
+                                            peer2_port_channel_id=dict(type="int"),
+                                            pfc=dict(type="bool"),
+                                            port_channel_mode=dict(type="str", choices=[e.value for e in PortChannelModeEnum]),
+                                            port_type_edge_trunk=dict(type="bool"),
+                                            qos=dict(type="bool"),
+                                            qos_policy=dict(type="str"),
+                                            queuing_policy=dict(type="str"),
+                                            speed=dict(type="str", choices=[e.value for e in SpeedEnum]),
+                                            storm_control=dict(type="bool"),
+                                            storm_control_action=dict(type="str", choices=[e.value for e in StormControlActionEnum]),
+                                            storm_control_broadcast_level=dict(type="float"),
+                                            storm_control_broadcast_level_pps=dict(type="int"),
+                                            storm_control_multicast_level=dict(type="float"),
+                                            storm_control_multicast_level_pps=dict(type="int"),
+                                            storm_control_unicast_level=dict(type="float"),
+                                            storm_control_unicast_level_pps=dict(type="int"),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            state=dict(
+                type="str",
+                default="merged",
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
+            ),
+        )

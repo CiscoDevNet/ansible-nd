@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from contextvars import ContextVar
+from copy import deepcopy
 from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ConfigDict, Field, ValidationInfo, field_validator, model_validator
@@ -183,12 +184,26 @@ class EthernetDot1qTunnelHostConfigDataModel(NDNestedModel):
     network_os: EthernetDot1qTunnelHostNetworkOSModel = Field(default_factory=EthernetDot1qTunnelHostNetworkOSModel, alias="networkOS")
 
 
+class EthernetDot1qTunnelHostGatheredPolicyFilterModel(NDNestedModel):
+    """Validate the policy criteria accepted by gathered requests."""
+
+    admin_state: bool | None = Field(default=None, alias="adminState")
+    access_vlan: int | None = Field(default=None, alias="accessVlan", ge=1, le=4094)
+
+
 class EthernetDot1qTunnelHostInterfaceModel(NDBaseModel):
     """Standalone NX-OS Ethernet dot1q-tunnel host configuration."""
 
     identifiers: ClassVar[list[str]] = ["switch_ip", "interface_name"]
     identifier_strategy: ClassVar[Literal["composite"]] = "composite"
     payload_exclude_fields: ClassVar[set[str]] = {"switch_ip"}
+    supports_gathered_filtering: ClassVar[bool] = True
+    gathered_filter_properties: ClassVar[tuple[str, ...]] = (
+        "switch_ip",
+        "interface_name",
+        "config_data.network_os.policy.admin_state",
+        "config_data.network_os.policy.access_vlan",
+    )
 
     switch_ip: str = Field(alias="switchIp")
     interface_name: str = Field(alias="interfaceName")
@@ -217,6 +232,36 @@ class EthernetDot1qTunnelHostInterfaceModel(NDBaseModel):
         return normalize_ethernet_interface_name(value)
 
     @classmethod
+    def normalize_gathered_filter(cls, filter_item: dict) -> dict:
+        """Validate partial filters without requiring a complete interface policy."""
+        normalized = deepcopy(filter_item)
+        switch_ip = normalized.get("switch_ip")
+        if isinstance(switch_ip, str):
+            normalized["switch_ip"] = switch_ip.strip()
+        if "interface_name" in normalized:
+            name = normalized["interface_name"]
+            normalized["interface_name"] = normalize_ethernet_interface_name(name.strip() if isinstance(name, str) else name)
+        config_data = normalized.get("config_data")
+        if not isinstance(config_data, dict):
+            return normalized
+        network_os = config_data.get("network_os")
+        if not isinstance(network_os, dict):
+            return normalized
+        policy = network_os.get("policy")
+        if isinstance(policy, dict):
+            validated = EthernetDot1qTunnelHostGatheredPolicyFilterModel.model_validate(policy, by_name=True, context={"mode": "config", "state": "gathered"})
+            network_os["policy"] = validated.model_dump(by_alias=False, exclude_none=True, context={"mode": "config"})
+        return normalized
+
+    def to_gathered_config(self, **kwargs: Any) -> dict[str, Any]:
+        """Return Ethernet names in the grouped shape accepted by this module."""
+        config = super().to_gathered_config(**kwargs)
+        name = config.pop("interface_name", None)
+        if name is not None:
+            config["interface_names"] = [name]
+        return config
+
+    @classmethod
     def get_argument_spec(cls) -> dict:
         """Return grouped-name Ansible options for the standalone module."""
         return dict(
@@ -224,17 +269,17 @@ class EthernetDot1qTunnelHostInterfaceModel(NDBaseModel):
             config=dict(
                 type="list",
                 elements="dict",
-                required=True,
+                required=False,
                 options=dict(
-                    switch_ip=dict(type="str", required=True),
-                    interface_names=dict(type="list", elements="str", required=True),
+                    switch_ip=dict(type="str", required=False),
+                    interface_names=dict(type="list", elements="str", required=False),
                     config_data=dict(
                         type="dict",
                         options=dict(
                             network_os=dict(
                                 type="dict",
                                 options=dict(
-                                    network_os_type=dict(type="str", default="nx-os", choices=["nx-os"]),
+                                    network_os_type=dict(type="str", choices=["nx-os"]),
                                     policy=dict(
                                         type="dict",
                                         options=dict(
@@ -282,5 +327,5 @@ class EthernetDot1qTunnelHostInterfaceModel(NDBaseModel):
                     ),
                 ),
             ),
-            state=dict(type="str", default="merged", choices=["merged", "replaced", "overridden", "deleted"]),
+            state=dict(type="str", default="merged", choices=["merged", "replaced", "overridden", "deleted", "gathered"]),
         )

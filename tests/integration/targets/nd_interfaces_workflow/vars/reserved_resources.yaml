@@ -38,6 +38,16 @@ nd_iw_reserved_resources:
         - "{{ nd_iw_port_channel_access_member1 | default('Ethernet1/46', true) }}"
       secondary_ports:
         - "{{ nd_iw_port_channel_access_member3 | default('Ethernet1/48', true) }}"
+    port_channel_dot1q_tunnel_host:
+      primary_name: "port-channel{{ nd_iw_port_channel_dot1q_primary_id | default(931) }}"
+      secondary_name: "port-channel{{ nd_iw_port_channel_dot1q_secondary_id | default(932) }}"
+      primary_ports:
+        - "{{ nd_iw_port_channel_dot1q_member1 | default('Ethernet1/58', true) }}"
+        - "{{ nd_iw_port_channel_dot1q_member2 | default('Ethernet1/59', true) }}"
+      alternate_ports:
+        - "{{ nd_iw_port_channel_dot1q_member1 | default('Ethernet1/58', true) }}"
+      secondary_ports:
+        - "{{ nd_iw_port_channel_dot1q_member3 | default('Ethernet1/60', true) }}"
     port_channel_trunk_host:
       primary_name: "port-channel{{ nd_iw_port_channel_trunk_primary_id | default(911) }}"
       secondary_name: "port-channel{{ nd_iw_port_channel_trunk_secondary_id | default(912) }}"
@@ -101,6 +111,19 @@ nd_iw_reserved_resources:
         - "{{ nd_iw_vpc_access_peer1_member2 | default('Ethernet1/6', true) }}"
       peer2_secondary_ports:
         - "{{ nd_iw_vpc_access_peer2_member2 | default('Ethernet1/6', true) }}"
+    vpc_dot1q_tunnel:
+      primary_name: "vpc{{ nd_iw_vpc_dot1q_primary_id | default(971) }}"
+      secondary_name: "vpc{{ nd_iw_vpc_dot1q_secondary_id | default(972) }}"
+      primary_port_channel_id: "{{ nd_iw_vpc_dot1q_primary_id | default(971) }}"
+      secondary_port_channel_id: "{{ nd_iw_vpc_dot1q_secondary_id | default(972) }}"
+      peer1_primary_ports:
+        - "{{ nd_iw_vpc_dot1q_peer1_member1 | default('Ethernet1/10', true) }}"
+      peer2_primary_ports:
+        - "{{ nd_iw_vpc_dot1q_peer2_member1 | default('Ethernet1/10', true) }}"
+      peer1_secondary_ports:
+        - "{{ nd_iw_vpc_dot1q_peer1_member2 | default('Ethernet1/11', true) }}"
+      peer2_secondary_ports:
+        - "{{ nd_iw_vpc_dot1q_peer2_member2 | default('Ethernet1/11', true) }}"
     vpc_trunk_host:
       primary_name: "vpc{{ nd_iw_vpc_trunk_primary_id | default(961) }}"
       secondary_name: "vpc{{ nd_iw_vpc_trunk_secondary_id | default(962) }}"
@@ -177,6 +200,13 @@ nd_iw_cleanup_resources:
         interface_name: "{{ nd_iw_active_resources.vpc_access.primary_name }}"
       - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
         interface_name: "{{ nd_iw_active_resources.vpc_access.secondary_name }}"
+  - type: vpc_dot1q_tunnel
+    state: deleted
+    config:
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_dot1q_tunnel.primary_name }}"
+      - switch_ip: "{{ nd_iw_active_switches.vpc_peer1 }}"
+        interface_name: "{{ nd_iw_active_resources.vpc_dot1q_tunnel.secondary_name }}"
   - type: vpc_trunk_host
     state: deleted
     config:
@@ -191,6 +221,13 @@ nd_iw_cleanup_resources:
         interface_name: "{{ nd_iw_active_resources.port_channel_access.primary_name }}"
       - switch_ip: "{{ nd_iw_active_switches.primary }}"
         interface_name: "{{ nd_iw_active_resources.port_channel_access.secondary_name }}"
+  - type: port_channel_dot1q_tunnel_host
+    state: deleted
+    config:
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_dot1q_tunnel_host.primary_name }}"
+      - switch_ip: "{{ nd_iw_active_switches.primary }}"
+        interface_name: "{{ nd_iw_active_resources.port_channel_dot1q_tunnel_host.secondary_name }}"
   - type: port_channel_trunk_host
     state: deleted
     config:

@@ -58,12 +58,14 @@ options:
         - Configured V(loopback) items require C(config_data.network_os.network_os_type) plus
           C(config_data.network_os.policy.policy_type). Identifier-only V(deleted) items may omit C(config_data).
         - V(port_channel_access) uses M(cisco.nd.nd_interface_port_channel_access).
+        - V(port_channel_dot1q_tunnel_host) uses M(cisco.nd.nd_interface_port_channel_dot1q_tunnel_host) for NX-OS dot1q tunnel hosts.
         - V(port_channel_routed) uses M(cisco.nd.nd_interface_port_channel_routed).
         - V(port_channel_trunk_host) uses M(cisco.nd.nd_interface_port_channel_trunk_host).
         - V(subinterface_managed) uses M(cisco.nd.nd_interface_subinterface_managed).
         - V(subinterface_unmanaged) uses M(cisco.nd.nd_interface_subinterface_unmanaged).
         - V(svi) uses M(cisco.nd.nd_interface_svi).
         - V(vpc_access) uses M(cisco.nd.nd_interface_vpc_access).
+        - V(vpc_dot1q_tunnel) uses M(cisco.nd.nd_interface_vpc_dot1q_tunnel) for NX-OS dot1q tunnel vPCs.
         - V(vpc_trunk_host) uses M(cisco.nd.nd_interface_vpc_trunk_host).
         type: str
         required: true
@@ -74,12 +76,14 @@ options:
         - ethernet_trunk_host
         - loopback
         - port_channel_access
+        - port_channel_dot1q_tunnel_host
         - port_channel_routed
         - port_channel_trunk_host
         - subinterface_managed
         - subinterface_unmanaged
         - svi
         - vpc_access
+        - vpc_dot1q_tunnel
         - vpc_trunk_host
       state:
         description:
@@ -97,7 +101,7 @@ options:
         - V(deleted) acts on each explicitly listed identity regardless of its current policy family, provided the current interface is in
           the same structural domain and is safe to delete. Physical Ethernet interfaces are reset to the unconfigured fabric-default
           policy; deletable logical interfaces are removed.
-        - All thirteen interface adapters support all four values.
+        - All fifteen interface adapters support all four values.
         type: str
         choices: [ merged, replaced, overridden, deleted ]
         default: merged

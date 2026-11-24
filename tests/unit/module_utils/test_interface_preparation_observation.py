@@ -58,7 +58,7 @@ def fixture(family="ethernet_access", *, changed=False, members=False):
     domain = adapter.ownership_domain
     name = "Ethernet1/1" if domain == "ethernet" else "port-channel10" if domain == "port_channel" else "vpc10"
     policy = {"policy_type": next(p for p in adapter.policy_types if not p.startswith("iosXe"))}
-    if family.endswith("access"):
+    if family.endswith("access") or family in {"port_channel_dot1q_tunnel_host", "vpc_dot1q_tunnel"}:
         policy["access_vlan"] = 100
     else:
         policy["allowed_vlans"] = "100-200"
@@ -97,8 +97,10 @@ def fixture(family="ethernet_access", *, changed=False, members=False):
     if members:
         member_policy = {
             "port_channel_access": "accessPoMember",
+            "port_channel_dot1q_tunnel_host": "dot1qTunnelPoMember",
             "port_channel_trunk_host": "poMember",
             "vpc_access": "accessVpcPoMember",
+            "vpc_dot1q_tunnel": "dot1qTunnelVpcPoMember",
             "vpc_trunk_host": "vpcMember",
         }[family]
         for serial, member_name, po_id in [
@@ -149,8 +151,10 @@ def observe(plan, snapshot, **kwargs):
         "ethernet_access",
         "ethernet_trunk_host",
         "port_channel_access",
+        "port_channel_dot1q_tunnel_host",
         "port_channel_trunk_host",
         "vpc_access",
+        "vpc_dot1q_tunnel",
         "vpc_trunk_host",
     ],
 )
@@ -165,7 +169,7 @@ def test_ready_l2_configurations_use_only_actual_cached_rows(family):
 
 @pytest.mark.parametrize(
     "family",
-    ["port_channel_access", "port_channel_trunk_host", "vpc_access", "vpc_trunk_host"],
+    ["port_channel_access", "port_channel_dot1q_tunnel_host", "port_channel_trunk_host", "vpc_access", "vpc_dot1q_tunnel", "vpc_trunk_host"],
 )
 def test_configured_members_are_ready_without_operational_lacp(family):
     plan, snapshot = fixture(family, members=True)
@@ -517,6 +521,27 @@ def test_membership_retirement_without_exact_current_readiness_still_rejects(fau
     coordinator.executor_factory = lambda **_kwargs: pytest.fail("Unsafe preparation must not write")
     with pytest.raises(InterfaceWorkflowValidationError):
         coordinator.run()
+
+
+def test_dot1q_generated_vpc_noop_keeps_unqualified_shortcut_disabled():
+    """A dot1q local port-channel must never be validated as a trunk member."""
+    plan, snapshot = fixture("vpc_dot1q_tunnel", members=True)
+    plan.mutation_count = 0
+    for serial, number in (("S1", 10), ("S2", 20)):
+        snapshot._interfaces_by_switch[serial][f"port-channel{number}"] = {
+            "switchId": serial,
+            "interfaceName": f"port-channel{number}",
+            "interfaceType": "portChannel",
+            "configData": {
+                "mode": "dot1qTunnel",
+                "networkOS": {
+                    "networkOSType": "nx-os",
+                    "policy": {"policyType": "dot1qTunnelVpcMember", "primaryInterface": "vpc10", "portChannelId": str(number), "accessVlan": 100},
+                },
+            },
+        }
+    proof = _actual_noop(plan, snapshot)
+    assert not proof["complete"] and not proof["all_satisfied"]
 
 
 def _explicit_member_fixture(family="port_channel_trunk_host", *, safe_fields=False):

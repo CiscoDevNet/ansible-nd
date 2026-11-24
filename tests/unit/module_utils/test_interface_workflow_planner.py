@@ -223,7 +223,7 @@ def _summary_row(
     return row
 
 
-def test_registry_is_the_exact_thirteen_family_scope_and_delegates_model_ownership() -> None:
+def test_registry_is_the_exact_fifteen_family_scope_and_delegates_model_ownership() -> None:
     """The authoritative registry excludes flow-rules and derives every model from its orchestrator."""
     assert set(INTERFACE_FAMILY_ADAPTERS) == {
         "ethernet_access",
@@ -232,12 +232,14 @@ def test_registry_is_the_exact_thirteen_family_scope_and_delegates_model_ownersh
         "ethernet_trunk_host",
         "loopback",
         "port_channel_access",
+        "port_channel_dot1q_tunnel_host",
         "port_channel_routed",
         "port_channel_trunk_host",
         "subinterface_managed",
         "subinterface_unmanaged",
         "svi",
         "vpc_access",
+        "vpc_dot1q_tunnel",
         "vpc_trunk_host",
     }
     assert "flow_rules" not in INTERFACE_FAMILY_ADAPTERS
@@ -269,11 +271,13 @@ def test_adapter_policy_sets_match_standalone_orchestrator_contracts() -> None:
         "ethernet_routed",
         "ethernet_trunk_host",
         "port_channel_access",
+        "port_channel_dot1q_tunnel_host",
         "port_channel_routed",
         "port_channel_trunk_host",
         "subinterface_managed",
         "svi",
         "vpc_access",
+        "vpc_dot1q_tunnel",
         "vpc_trunk_host",
     }
 
@@ -308,12 +312,14 @@ def test_registry_declares_generic_transition_delete_and_structural_safety_metad
         "ethernet_trunk_host": (InterfaceDeleteStrategy.NORMALIZE, False, False, True),
         "loopback": (InterfaceDeleteStrategy.REMOVE, False, False, False),
         "port_channel_access": (InterfaceDeleteStrategy.REMOVE, False, True, True),
+        "port_channel_dot1q_tunnel_host": (InterfaceDeleteStrategy.REMOVE, False, True, True),
         "port_channel_routed": (InterfaceDeleteStrategy.REMOVE, False, True, True),
         "port_channel_trunk_host": (InterfaceDeleteStrategy.REMOVE, False, True, True),
         "subinterface_managed": (InterfaceDeleteStrategy.REMOVE, False, False, False),
         "subinterface_unmanaged": (InterfaceDeleteStrategy.REMOVE, False, False, False),
         "svi": (InterfaceDeleteStrategy.REMOVE, False, False, False),
         "vpc_access": (InterfaceDeleteStrategy.DELETE, True, True, False),
+        "vpc_dot1q_tunnel": (InterfaceDeleteStrategy.DELETE, True, True, False),
         "vpc_trunk_host": (InterfaceDeleteStrategy.DELETE, True, True, False),
     }
 
@@ -841,6 +847,7 @@ def test_legacy_allow_policy_transition_key_is_rejected_before_inventory() -> No
         ("ethernet_trunk_host", _ethernet("192.0.2.1", "Ethernet1/11", trunk=True), "Ethernet1/11", "ethernet"),
         ("loopback", _loopback("192.0.2.1", "loopback10"), "loopback10", "loopback"),
         ("port_channel_access", _port_channel("192.0.2.1", "port-channel10"), "port-channel10", "portChannel"),
+        ("port_channel_dot1q_tunnel_host", _port_channel("192.0.2.1", "port-channel12"), "port-channel12", "portChannel"),
         ("port_channel_trunk_host", _port_channel("192.0.2.1", "port-channel11"), "port-channel11", "portChannel"),
         (
             "subinterface_managed",
@@ -1054,9 +1061,9 @@ def test_ios_xe_managed_subinterface_full_and_admin_variants_transition_in_both_
     assert transition.to_policy_type == desired_policy_type
 
 
-@pytest.mark.parametrize(("resource_type", "trunk"), [("vpc_access", False), ("vpc_trunk_host", True)])
+@pytest.mark.parametrize(("resource_type", "trunk"), [("vpc_access", False), ("vpc_dot1q_tunnel", False), ("vpc_trunk_host", True)])
 def test_implicit_transition_requires_and_accepts_a_consistent_vpc_pair(resource_type: str, trunk: bool) -> None:
-    """Both vPC adapters transition only after equivalent records and safety rows exist on both peers."""
+    """Every vPC adapter requires equivalent records and safety rows on both peers."""
     primary = _wire_interface("vpc10", "vpc", "foreignVpcPolicy")
     peer = _wire_interface("vpc10", "vpc", "foreignVpcPolicy")
     pairs = {"192.0.2.1": ("192.0.2.1", "192.0.2.2")}
@@ -1214,6 +1221,7 @@ def test_deleted_subinterface_accepts_only_exact_preview_proven_tombstone(monkey
         ("svi", "vlan3901", "svi", "no interface vlan3901\nno vlan 3901\nconfigure terminal\n"),
         ("loopback", "loopback901", "loopback", "no interface loopback901\nconfigure terminal\n"),
         ("port_channel_routed", "port-channel921", "portChannel", "no interface port-channel921\nconfigure terminal\n"),
+        ("port_channel_dot1q_tunnel_host", "port-channel922", "portChannel", "no interface port-channel922\nconfigure terminal\n"),
     ],
 )
 def test_deleted_logical_tombstone_replays_only_exact_pending_removal(monkeypatch, family, name, interface_type, pending_command) -> None:
@@ -1928,7 +1936,7 @@ def test_multiple_routed_ios_xe_deletes_share_one_link_inventory(monkeypatch: py
     assert len(recorder.calls) == 2
 
 
-@pytest.mark.parametrize("resource_type", ["vpc_access", "vpc_trunk_host"])
+@pytest.mark.parametrize("resource_type", ["vpc_access", "vpc_dot1q_tunnel", "vpc_trunk_host"])
 def test_vpc_deleted_is_policy_independent_and_pair_consistent(resource_type: str) -> None:
     """vPC deleted accepts a foreign policy only when both peers agree and are deletable."""
     primary = _wire_interface("vpc10", "vpc", "foreignVpcPolicy")
@@ -1992,8 +2000,9 @@ def test_vpc_deleted_accepts_reciprocal_peer_fields_on_nd_431() -> None:
     assert len(plan.resources[0].operations.deletes) == 1
 
 
+@pytest.mark.parametrize("family", ["vpc_access", "vpc_dot1q_tunnel"])
 @pytest.mark.parametrize("complete_preview", [True, False])
-def test_vpc_deleted_replays_one_sided_policyless_echo_only_with_exact_pair_preview(monkeypatch, complete_preview: bool) -> None:
+def test_vpc_deleted_replays_one_sided_policyless_echo_only_with_exact_pair_preview(monkeypatch, complete_preview: bool, family: str) -> None:
     """A discovery echo on one peer cannot suppress a staged delete on both peers without proof."""
     echo = {
         "interfaceName": "vpc951",
@@ -2022,7 +2031,7 @@ def test_vpc_deleted_replays_one_sided_policyless_echo_only_with_exact_pair_prev
         responses=[{"interfaces": [echo]}, {"interfaces": []}],
         vpc_pairs={"192.0.2.1": ("192.0.2.1", "192.0.2.2")},
     )
-    request = [{"type": "vpc_access", "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": "vpc951"}]}]
+    request = [{"type": family, "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": "vpc951"}]}]
 
     if not complete_preview:
         with pytest.raises(InterfaceWorkflowValidationError, match="missing on peer"):
@@ -2031,6 +2040,10 @@ def test_vpc_deleted_replays_one_sided_policyless_echo_only_with_exact_pair_prev
     plan = planner.plan(request)
     assert not plan.changed
     assert plan.staged_delete_targets == (("vpc951", "SERIAL1"),)
+    from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_coordinator import InterfaceWorkflowCoordinator
+
+    (receipt,) = InterfaceWorkflowCoordinator._vpc_staged_deletions(plan)
+    assert receipt["type"] == family and receipt["peer_switch_ids"] == ["SERIAL1", "SERIAL2"]
 
 
 @pytest.mark.parametrize("peer_is_absent", [True, False])
@@ -4312,3 +4325,112 @@ def test_check_mode_planning_keeps_an_unchanged_mpls_loopback_a_no_op() -> None:
 
     assert plan.changed is False
     assert len(recorder.calls) == 1
+
+
+@pytest.mark.parametrize("family", ["port_channel_dot1q_tunnel_host", "vpc_dot1q_tunnel"])
+@pytest.mark.parametrize("state", ["merged", "replaced"])
+def test_dot1q_aggregate_create_uses_one_cached_inventory_per_switch(family, state):
+    """New parent families use the shared snapshot and never deploy during planning."""
+    paired = family == "vpc_dot1q_tunnel"
+    planner, recorder = _planner(vpc_pairs={"192.0.2.1": ("192.0.2.1", "192.0.2.2")} if paired else None)
+    configs = (
+        [_vpc("192.0.2.1", peer1_members=["Ethernet1/10"], peer2_members=["Ethernet1/10"])]
+        if paired
+        else [_port_channel(address, "port-channel12", ["Ethernet1/10"]) for address in ("192.0.2.1", "192.0.2.2")]
+    )
+    plan = planner.plan([{"type": family, "state": state, "config": configs}])
+    assert len(plan.resources[0].operations.creates) == (1 if paired else 2)
+    assert plan.request_stats["interface_inventory_gets"] == 2
+    assert all(call["verb"] == HttpVerbEnum.GET for call in recorder.calls)
+    assert {item.config_data.network_os.policy.policy_type for item in plan.resources[0].operations.creates} == {
+        "dot1qTunnelVpc" if paired else "dot1qTunnelPoHost"
+    }
+
+
+@pytest.mark.parametrize("family,name", [("port_channel_dot1q_tunnel_host", "port-channel12"), ("vpc_dot1q_tunnel", "vpc12")])
+def test_dot1q_aggregate_identifier_delete_rejects_non_nx_os_inventory(family, name):
+    current = _wire_interface(name, "vpc" if family.startswith("vpc") else "portChannel", "foreignPolicy", network_os_type="ios-xe")
+    planner, _recorder = _planner(
+        responses=[{"interfaces": [current]}, {"interfaces": [current]}],
+        vpc_pairs={"192.0.2.1": ("192.0.2.1", "192.0.2.2")} if family.startswith("vpc") else None,
+    )
+    with pytest.raises(InterfaceWorkflowValidationError, match="supports NX-OS only"):
+        planner.plan([{"type": family, "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": name}]}])
+
+
+@pytest.mark.parametrize("with_member", [False, True, "implicit_default", "explicit1500", "explicit9000", "unproven_mode", "old_family"])
+def test_dot1q_port_channel_staged_delete_publishes_exact_current_receipt(monkeypatch, with_member):
+    """A retry can recognize an accepted parent removal without deleting it twice."""
+    from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_coordinator import InterfaceWorkflowCoordinator
+
+    name = "port-channel922"
+    tombstone = {
+        "switchId": "SERIAL1",
+        "interfaceName": name,
+        "interfaceType": "portChannel",
+        "configData": {"networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "userDefined", "templateName": "interface_delete"}}},
+    }
+    preview = {
+        "configurationDiffs": [
+            {
+                "switchId": "SERIAL1",
+                "interfaceName": name,
+                "status": "success",
+                "combinedConfigs": [
+                    {"configType": "running", "config": f"interface {name}\n switchport mode dot1q-tunnel\n", "lines": 2},
+                    {"configType": "pending", "config": f"no interface {name}\nconfigure terminal\n", "lines": 2},
+                    {"configType": "expected", "config": "", "lines": 0},
+                ],
+            }
+        ],
+    }
+    inventory = [tombstone]
+    if with_member:
+        member = _wire_interface("Ethernet1/46", "ethernet", "trunkHost", mode="trunk", allowedVlans="none")
+        member["switchId"] = "SERIAL1"
+        member["operData"] = {"portChannelId": 922}
+        inventory.append(member)
+        preview["configurationDiffs"][0]["combinedConfigs"][0]["config"] += (
+            "interface Ethernet1/46\n channel-group 922 mode active\n mtu 9216\n" " spanning-tree bpdufilter enable\n switchport mode dot1q-tunnel\n"
+        )
+        if with_member == "implicit_default":
+            preview["configurationDiffs"][0]["combinedConfigs"][0]["config"] = preview["configurationDiffs"][0]["combinedConfigs"][0]["config"].replace(
+                " mtu 9216\n", ""
+            )
+        elif with_member in {"explicit1500", "explicit9000", "unproven_mode"}:
+            current_running = preview["configurationDiffs"][0]["combinedConfigs"][0]["config"]
+            if with_member == "unproven_mode":
+                current_running = current_running.replace(" switchport mode dot1q-tunnel\n", "")
+            else:
+                current_running = current_running.replace("mtu 9216", "mtu " + with_member.removeprefix("explicit"))
+            preview["configurationDiffs"][0]["combinedConfigs"][0]["config"] = current_running
+        pending = (
+            "no interface port-channel922\ninterface Ethernet1/46\n no channel-group 922 force mode active\n"
+            " no mtu 9216\n no spanning-tree bpdufilter enable\n no switchport mode dot1q-tunnel\n"
+            " switchport\n switchport mode trunk\n switchport trunk allowed vlan none\n"
+            " spanning-tree port type edge trunk\n no shutdown\nconfigure terminal\n"
+        )
+        preview["configurationDiffs"][0]["combinedConfigs"][1].update(config=pending, lines=len(pending.splitlines()))
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "_preview_interfaces", lambda _self, _payload: preview)
+    planner, _recorder = _planner(switches={"192.0.2.1": "SERIAL1"}, responses=[{"interfaces": inventory}])
+    family = "port_channel_access" if with_member == "old_family" else "port_channel_dot1q_tunnel_host"
+    request = [{"type": family, "state": "deleted", "config": [{"switch_ip": "192.0.2.1", "interface_name": name}]}]
+    if with_member in {"explicit1500", "explicit9000", "unproven_mode", "old_family"}:
+        adapter = INTERFACE_FAMILY_ADAPTERS[family]
+        desired = next(iter(adapter.validate_config(request[0]["config"], "deleted", 0)))
+        resource = SimpleNamespace(
+            state="deleted",
+            adapter=adapter,
+            resource_type=family,
+            resource_index=0,
+            orchestrator=adapter.build_orchestrator(rest_send=RestSend({"fabric_name": "fabric_1", "check_mode": True}), snapshot=planner.snapshot),
+        )
+        assert not planner._staged_logical_delete_echo(resource, desired, (("SERIAL1", tombstone),), planner._inventory(), {("SERIAL1", "922")})
+        return
+    plan = planner.plan(request)
+    assert not plan.changed
+    assert len(plan.logical_staged_deletions) == 1
+    (receipt,) = InterfaceWorkflowCoordinator._staged_deletions(plan)
+    assert receipt["type"] == "port_channel_dot1q_tunnel_host"
+    assert receipt["interface_name"] == name and receipt["switch_id"] == "SERIAL1"
+    assert receipt["status"] == "staged"

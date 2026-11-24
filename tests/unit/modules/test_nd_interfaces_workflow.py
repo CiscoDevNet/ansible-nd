@@ -17,7 +17,7 @@ def test_argument_spec_uses_exact_registry_and_excludes_flow_rules():
     resource_options = spec["resources"]["options"]
     choices = resource_options["type"]["choices"]
 
-    assert len(choices) == 13
+    assert len(choices) == 15
     assert set(choices) == {
         "ethernet_access",
         "ethernet_dot1q_tunnel_host",
@@ -25,12 +25,14 @@ def test_argument_spec_uses_exact_registry_and_excludes_flow_rules():
         "ethernet_trunk_host",
         "loopback",
         "port_channel_access",
+        "port_channel_dot1q_tunnel_host",
         "port_channel_routed",
         "port_channel_trunk_host",
         "subinterface_managed",
         "subinterface_unmanaged",
         "svi",
         "vpc_access",
+        "vpc_dot1q_tunnel",
         "vpc_trunk_host",
     }
     assert "flow_rules" not in choices
@@ -63,12 +65,14 @@ def test_documentation_links_every_standalone_module_and_not_flow_rules():
         "nd_interface_ethernet_trunk_host",
         "nd_interface_loopback",
         "nd_interface_port_channel_access",
+        "nd_interface_port_channel_dot1q_tunnel_host",
         "nd_interface_port_channel_routed",
         "nd_interface_port_channel_trunk_host",
         "nd_interface_subinterface_managed",
         "nd_interface_subinterface_unmanaged",
         "nd_interface_svi",
         "nd_interface_vpc_access",
+        "nd_interface_vpc_dot1q_tunnel",
         "nd_interface_vpc_trunk_host",
     ):
         assert f"M(cisco.nd.{module_name})" in nd_interfaces_workflow.DOCUMENTATION
@@ -259,7 +263,7 @@ def test_main_preserves_structured_execution_failure():
 
 
 def test_dot1q_documentation_keeps_standalone_scope_and_stage_only_example():
-    assert "All thirteen interface adapters" in nd_interfaces_workflow.DOCUMENTATION
+    assert "All fifteen interface adapters" in nd_interfaces_workflow.DOCUMENTATION
     assert "Dot1q port-channel and vPC member policies remain protected" in nd_interfaces_workflow.DOCUMENTATION
     examples = yaml.safe_load(nd_interfaces_workflow.EXAMPLES)
     module_args = next(

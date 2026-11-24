@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import pytest
+from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
 from pydantic import ValidationError
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_dot1q_tunnel_host_interface import (
@@ -246,7 +247,58 @@ def test_empty_description_clear_diff_is_idempotent_after_controller_omits_it() 
 def test_grouped_argument_spec_is_nx_os_only() -> None:
     spec = EthernetDot1qTunnelHostInterfaceModel.get_argument_spec()
     options = spec["config"]["options"]
-    assert options["interface_names"]["required"] is True
+    assert options["interface_names"]["required"] is False
+    assert spec["config"]["required"] is False
+    assert "gathered" in spec["state"]["choices"]
     os_options = options["config_data"]["options"]["network_os"]["options"]
     assert os_options["network_os_type"]["choices"] == ["nx-os"]
     assert os_options["policy"]["options"]["policy_type"]["choices"] == ["dot1qTunnelHost"]
+
+
+@pytest.mark.parametrize("vlan", [0, 4095])
+def test_gathered_filter_validates_vlan_without_a_complete_policy(vlan) -> None:
+    criteria = {"config_data": {"network_os": {"policy": {"access_vlan": vlan}}}}
+    with pytest.raises(ValidationError):
+        EthernetDot1qTunnelHostInterfaceModel.normalize_gathered_filter(criteria)
+
+
+def test_gathered_filter_preserves_false_and_normalizes_identifiers() -> None:
+    criteria = {
+        "switch_ip": " 192.0.2.11 ",
+        "interface_name": " e1/40 ",
+        "config_data": {"network_os": {"policy": {"admin_state": False}}},
+    }
+    normalized = EthernetDot1qTunnelHostInterfaceModel.normalize_gathered_filter(criteria)
+    assert normalized["switch_ip"] == "192.0.2.11"
+    assert normalized["interface_name"] == "Ethernet1/40"
+    assert normalized["config_data"]["network_os"]["policy"] == {"admin_state": False}
+    assert criteria["interface_name"] == " e1/40 "
+
+
+def test_gathered_output_uses_the_grouped_input_shape() -> None:
+    model = EthernetDot1qTunnelHostInterfaceModel.from_response(
+        {
+            "switchIp": "192.0.2.11",
+            "interfaceName": "Ethernet1/40",
+            "interfaceType": "ethernet",
+            "configData": {"mode": "dot1qTunnel", "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "dot1qTunnelHost", "accessVlan": 150}}},
+        }
+    )
+    config = model.to_gathered_config()
+    assert config["interface_names"] == ["Ethernet1/40"]
+    assert "interface_name" not in config
+
+
+def test_parser_omitted_network_os_still_selects_nx_os_for_writes() -> None:
+    result = ArgumentSpecValidator(EthernetDot1qTunnelHostInterfaceModel.get_argument_spec()).validate(
+        {
+            "fabric_name": "fabric2",
+            "config": [{"switch_ip": "192.0.2.11", "interface_names": ["e1/40"], "config_data": {"network_os": {"policy": {"access_vlan": 150}}}}],
+        }
+    )
+    assert result.error_messages == []
+    config = dict(result.validated_parameters["config"][0])
+    config["interface_name"] = config.pop("interface_names")[0]
+    model = EthernetDot1qTunnelHostInterfaceModel.from_config(config)
+    assert model.config_data.network_os.network_os_type == "nx-os"
+    assert model.policy_type == "dot1qTunnelHost"

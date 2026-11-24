@@ -27,7 +27,7 @@
         nd_iw_absent_matches | length == 0
         or
         ((nd_iw_assert_family | default(nd_iw_current_case.family | default('')))
-         in ['vpc_access', 'vpc_trunk_host']
+         in ['vpc_access', 'vpc_dot1q_tunnel', 'vpc_trunk_host']
          and nd_iw_absent_matches
              | rejectattr('interface_type', 'equalto', 'vpc') | list | length == 0
          and nd_iw_absent_matches

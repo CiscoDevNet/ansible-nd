@@ -9,6 +9,7 @@ from copy import deepcopy
 import pytest
 
 from ansible_collections.cisco.nd.plugins.module_utils import interface_missing_member_preparation as helper
+from ansible_collections.cisco.nd.plugins.module_utils.interface_family_adapters import INTERFACE_FAMILY_ADAPTERS
 from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
 from ansible_collections.cisco.nd.tests.unit.module_utils import test_interface_missing_member_preparation as preparation_fakes
 from ansible_collections.cisco.nd.tests.unit.module_utils.member_review_fakes import Controller, explicit_request, run_module, wire
@@ -153,3 +154,70 @@ def test_incompatible_fresh_pair_providers_cannot_share_an_index():
 
     assert snapshot.invalidations == 1
     assert snapshot.refreshes == []
+
+
+@pytest.mark.parametrize("family", ["port_channel_dot1q_tunnel_host", "vpc_dot1q_tunnel"])
+@pytest.mark.parametrize("member_count", [1, 10, 100])
+def test_existing_dot1q_parents_do_not_enter_explicit_member_refreshes(monkeypatch, family, member_count):
+    """Ordinary dot1q runs read each switch once, without missing-member phases."""
+    metrics, phases = _measure_phase_work(monkeypatch)
+    paired = family == "vpc_dot1q_tunnel"
+    controller = Controller(paired=paired)
+    names = [f"Ethernet1/{number}" for number in range(10, 10 + member_count)]
+    policy = {"access_vlan": 100}
+    if paired:
+        policy.update(peer1_port_channel_id=10, peer2_port_channel_id=20, peer1_member_ports=names, peer2_member_ports=names)
+    else:
+        policy["ports"] = names
+    config = {"switch_ip": "192.0.2.1", "interface_name": "vpc10" if paired else "port-channel10", "config_data": {"network_os": {"policy": policy}}}
+    model = next(iter(INTERFACE_FAMILY_ADAPTERS[family].validate_config([config], "replaced", 0)))
+    switch_ids = ("S1", "S2") if paired else ("S1",)
+    for switch_id in switch_ids:
+        parent = {**model.to_payload(), "switchId": switch_id}
+        if paired:
+            parent["configData"]["networkOS"]["policy"]["peerSwitchId"] = "S2" if switch_id == "S1" else "S1"
+        controller.rows[switch_id][parent["interfaceName"].casefold()] = parent
+        port_channel_id = 20 if switch_id == "S2" else 10
+        if paired:
+            controller.rows[switch_id][f"port-channel{port_channel_id}"] = wire(
+                f"port-channel{port_channel_id}",
+                "dot1qTunnelVpcMember",
+                switch_id=switch_id,
+                interface_type="portChannel",
+                mode="dot1qTunnel",
+                primaryInterface="vpc10",
+                portChannelId=str(port_channel_id),
+                accessVlan=100,
+            )
+        for name in names:
+            controller.rows[switch_id][name.casefold()] = wire(
+                name,
+                "dot1qTunnelVpcPoMember" if paired else "dot1qTunnelPoMember",
+                switch_id=switch_id,
+                mode="dot1qTunnel",
+                portChannelId=str(port_channel_id),
+                **({"primaryInterface": "vpc10"} if paired else {}),
+            )
+    before = deepcopy(controller.rows)
+    outcome = run_module(
+        monkeypatch,
+        {
+            "fabric_name": "fab",
+            "resources": [{"type": family, "state": "replaced", "config": [config]}],
+            "config_actions": {"deploy": False},
+            "verify": {"enabled": True},
+        },
+        controller,
+    )
+
+    assert outcome.failed is False, outcome.result.get("msg")
+    assert outcome.result["changed"] is False
+    assert controller.writes == []
+    assert controller.rows == before
+    assert "member_verifications" not in outcome.result
+    assert phases == []
+    assert metrics["indexes"] == 0
+    interface_reads = [call["path"] for call in controller.calls if call["verb"] == "GET" and call["path"].split("?", 1)[0].endswith("/interfaces")]
+    assert len(interface_reads) == len(switch_ids), controller.calls
+    for switch_id in switch_ids:
+        assert sum(f"/switches/{switch_id}/interfaces" in path for path in interface_reads) == 1

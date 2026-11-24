@@ -42,6 +42,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_ro
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_trunk_host_interface import EthernetTrunkHostInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_access_interface import PortChannelAccessInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_dot1q_tunnel_host_interface import (
+    PortChannelDot1qTunnelHostInterfaceOrchestrator,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_routed_interface import PortChannelRoutedInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_trunk_host_interface import (
     PortChannelTrunkHostInterfaceOrchestrator,
@@ -54,6 +57,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.subinterfac
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.svi_interface import SviInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_access_interface import AccessVpcHostInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_dot1q_tunnel_interface import VpcDot1qTunnelInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vpc_trunk_host_interface import TrunkVpcHostInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
@@ -277,6 +281,16 @@ _ADAPTER_DEFINITIONS = (
         "safety": InterfaceFamilySafety(owns_physical_members=True, guards_child_subinterfaces=True),
     },
     {
+        "resource_type": "port_channel_dot1q_tunnel_host",
+        "module_name": "cisco.nd.nd_interface_port_channel_dot1q_tunnel_host",
+        "orchestrator_class": PortChannelDot1qTunnelHostInterfaceOrchestrator,
+        "ownership_domain": "port_channel",
+        "interface_types": frozenset({"portChannel"}),
+        "policy_types": frozenset({"dot1qTunnelPoHost"}),
+        "delete_strategy": InterfaceDeleteStrategy.REMOVE,
+        "safety": InterfaceFamilySafety(owns_physical_members=True, guards_child_subinterfaces=True),
+    },
+    {
         "resource_type": "port_channel_trunk_host",
         "module_name": "cisco.nd.nd_interface_port_channel_trunk_host",
         "orchestrator_class": PortChannelTrunkHostInterfaceOrchestrator,
@@ -332,6 +346,16 @@ _ADAPTER_DEFINITIONS = (
         "ownership_domain": "vpc",
         "interface_types": frozenset({"vpc"}),
         "policy_types": frozenset({"accessVpcHost"}),
+        "delete_strategy": InterfaceDeleteStrategy.DELETE,
+        "safety": InterfaceFamilySafety(requires_pair_consistency=True, owns_physical_members=True),
+    },
+    {
+        "resource_type": "vpc_dot1q_tunnel",
+        "module_name": "cisco.nd.nd_interface_vpc_dot1q_tunnel",
+        "orchestrator_class": VpcDot1qTunnelInterfaceOrchestrator,
+        "ownership_domain": "vpc",
+        "interface_types": frozenset({"vpc"}),
+        "policy_types": frozenset({"dot1qTunnelVpc"}),
         "delete_strategy": InterfaceDeleteStrategy.DELETE,
         "safety": InterfaceFamilySafety(requires_pair_consistency=True, owns_physical_members=True),
     },

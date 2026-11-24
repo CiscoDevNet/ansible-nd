@@ -48,6 +48,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.interface_membership import (
     EthernetMembershipIndex,
     MembershipValidationError,
+    is_dot1q_default_mtu_removal,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -607,13 +608,17 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             # running config before accepting *any* commands beneath it.
             running_member = None
             owned_members = set()
+            member_running_commands: dict[str, set[str]] = {}
             for line in running_lines:
                 if (member_match := re.fullmatch(r"interface (ethernet[0-9/]+)", line)) is not None:
                     running_member = member_match.group(1)
+                    member_running_commands.setdefault(running_member, set())
                 elif line.startswith("interface "):
                     running_member = None
-                elif running_member and re.fullmatch(rf"channel-group {po_id} mode (?:active|passive|on)", line):
-                    owned_members.add(running_member)
+                elif running_member:
+                    member_running_commands[running_member].add(line)
+                    if re.fullmatch(rf"channel-group {po_id} mode (?:active|passive|on)", line):
+                        owned_members.add(running_member)
 
             allowed_member_commands = (
                 rf"no channel-group {po_id} force mode (?:active|passive|on)",
@@ -645,7 +650,20 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                         raise RuntimeError(f"Absent vPC delete preview touches a non-member interface: {line!r}.")
                     reset_members.add(pending_member)
                     continue
-                if pending_member is None or not any(re.fullmatch(pattern, line) for pattern in allowed_member_commands):
+                # Dot1q cleanup removes the member's tunnel mode and BPDU
+                # filter only when its own running stanza has those settings.
+                # The inherited jumbo MTU is a separate bounded reset: ND
+                # omits it from scoped running CLI but emits no mtu 9216.
+                dot1q_removal = (
+                    "dot1qTunnelVpc" in self._managed_policy_types()
+                    and pending_member in owned_members
+                    and (
+                        re.fullmatch(r"no (?:mtu [0-9]+|spanning-tree bpdufilter enable|switchport mode dot1q-tunnel)", line) is not None
+                        and line.removeprefix("no ") in member_running_commands.get(pending_member, set())
+                        or is_dot1q_default_mtu_removal(line, member_running_commands.get(pending_member, set()))
+                    )
+                )
+                if pending_member is None or not (dot1q_removal or any(re.fullmatch(pattern, line) for pattern in allowed_member_commands)):
                     raise RuntimeError(f"Absent vPC delete preview includes an unproven command: {line!r}.")
 
             def canonical_member(name):

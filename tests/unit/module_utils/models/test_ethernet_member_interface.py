@@ -43,7 +43,7 @@ def member_record(policy_type="poMember", *, mode="trunk", network_os="nx-os"):
         "extraConfig": "logging event link-status",
         "adminState": True,
     }
-    if network_os == "nx-os":
+    if network_os == "nx-os" and not policy_type.startswith("dot1qTunnel"):
         policy["ptp"] = False
     if policy_type in {"poMember", "vpcMember"}:
         policy.update(
@@ -57,7 +57,7 @@ def member_record(policy_type="poMember", *, mode="trunk", network_os="nx-os"):
                 "fec": "auto",
             }
         )
-    if policy_type in {"accessPoMember", "accessVpcPoMember"}:
+    if policy_type in {"accessPoMember", "accessVpcPoMember", "dot1qTunnelPoMember", "dot1qTunnelVpcPoMember"}:
         policy.update(
             {
                 "cdp": False,
@@ -68,7 +68,7 @@ def member_record(policy_type="poMember", *, mode="trunk", network_os="nx-os"):
                 "fec": "off",
             }
         )
-    if policy_type in {"vpcMember", "accessVpcPoMember"}:
+    if policy_type in {"vpcMember", "accessVpcPoMember", "dot1qTunnelVpcPoMember"}:
         policy["primaryInterface"] = "vPC20"
     return {
         "switchId": "SERIAL1",
@@ -88,6 +88,8 @@ def member_record(policy_type="poMember", *, mode="trunk", network_os="nx-os"):
     "policy_type,family,network_os,wire_mode,parent_type,parent_policy,parent_mode,parent_os,pair_aware",
     [
         ("poMember", "trunk", "nx-os", "trunk", "portChannel", "trunkPoHost", "trunk", "nx-os", False),
+        ("dot1qTunnelPoMember", "dot1qTunnel", "nx-os", "dot1qTunnel", "portChannel", "dot1qTunnelPoHost", "dot1qTunnel", "nx-os", False),
+        ("dot1qTunnelVpcPoMember", "dot1qTunnel", "nx-os", "dot1qTunnel", "vpc", "dot1qTunnelVpc", "dot1qTunnel", "nx-os", True),
         (
             "accessPoMember",
             "access",
@@ -173,6 +175,9 @@ def test_member_policy_descriptor_metadata(
 def test_member_policy_classification_fails_closed():
     assert classify_member_policy("poMember") == MemberPolicyDisposition.SUPPORTED
     assert classify_member_policy("vpcMember") == MemberPolicyDisposition.PAIR_AWARE
+    assert classify_member_policy("dot1qTunnelPoMember") == MemberPolicyDisposition.SUPPORTED
+    assert classify_member_policy("dot1qTunnelVpcPoMember") == MemberPolicyDisposition.PAIR_AWARE
+    assert classify_member_policy("dot1qTunnelVpcMember") == MemberPolicyDisposition.PROTECTED
     assert classify_member_policy("l3PoMemberInternal") == MemberPolicyDisposition.PROTECTED
     assert classify_member_policy("futureControllerMember") == MemberPolicyDisposition.PROTECTED
     assert classify_member_policy("trunkHost") == MemberPolicyDisposition.NOT_MEMBER
@@ -239,6 +244,8 @@ def test_normalize_port_channel_id_rejects_invalid_values(value):
     [
         ("poMember", "trunk", "nx-os"),
         ("accessPoMember", "access", "nx-os"),
+        ("dot1qTunnelPoMember", "dot1qTunnel", "nx-os"),
+        ("dot1qTunnelVpcPoMember", "dot1qTunnel", "nx-os"),
         ("l3PoMember", "routed", "nx-os"),
         ("iosXeAccessPoMember", "access", "ios-xe"),
         ("iosXeTrunkPoMember", "trunk", "ios-xe"),
@@ -324,8 +331,9 @@ def test_parse_rejects_unclassified_nested_configuration(path):
         ("portMode", False),
     ],
 )
-def test_parse_rejects_malformed_response_only_field(field, value):
-    response = member_record(policy_type="accessPoMember", mode="access")
+@pytest.mark.parametrize("policy_type", ["accessPoMember", "dot1qTunnelPoMember", "dot1qTunnelVpcPoMember"])
+def test_parse_rejects_malformed_response_only_field(field, value, policy_type):
+    response = member_record(policy_type=policy_type, mode="access" if policy_type == "accessPoMember" else "dot1qTunnel")
     response["configData"]["networkOS"]["policy"][field] = value
 
     with pytest.raises(UnmodeledMemberConfigurationError, match=field):
@@ -340,6 +348,8 @@ def test_parse_rejects_malformed_response_only_field(field, value):
         ("accessVpcPoMember", "access"),
         ("vpcMember", "trunk"),
         ("l3PoMember", "routed"),
+        ("dot1qTunnelPoMember", "dot1qTunnel"),
+        ("dot1qTunnelVpcPoMember", "dot1qTunnel"),
     ],
 )
 @pytest.mark.parametrize("ptp", [True, False, "true", "false"])
@@ -352,7 +362,7 @@ def test_qualified_ptp_echo_is_accepted_but_never_replayed(policy_type, mode, pt
     payload = build_member_update_payload(
         response,
         {"description": "updated"},
-        pair_validated=policy_type in {"accessVpcPoMember", "vpcMember"},
+        pair_validated=policy_type in {"accessVpcPoMember", "vpcMember", "dot1qTunnelVpcPoMember"},
     )
 
     policy = payload["configData"]["networkOS"]["policy"]
@@ -421,6 +431,8 @@ def test_ios_xe_trunk_member_rejects_malformed_returned_allowed_vlans(allowed_vl
     [
         ("poMember", "trunk", "nx-os"),
         ("accessPoMember", "access", "nx-os"),
+        ("dot1qTunnelPoMember", "dot1qTunnel", "nx-os"),
+        ("dot1qTunnelVpcPoMember", "dot1qTunnel", "nx-os"),
         ("l3PoMember", "routed", "nx-os"),
         ("vpcMember", "trunk", "nx-os"),
         ("accessVpcPoMember", "access", "nx-os"),
@@ -438,7 +450,7 @@ def test_safe_overlay_preserves_untouched_raw_member_strings(policy_type, mode, 
     payload = build_member_update_payload(
         response,
         {"admin_state": False},
-        pair_validated=policy_type in {"vpcMember", "accessVpcPoMember"},
+        pair_validated=policy_type in {"vpcMember", "accessVpcPoMember", "dot1qTunnelVpcPoMember"},
     )
 
     policy = payload["configData"]["networkOS"]["policy"]

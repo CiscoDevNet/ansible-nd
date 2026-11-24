@@ -33,6 +33,8 @@ def _member(
     metadata = {
         "poMember": ("trunk", "nx-os"),
         "accessPoMember": ("access", "nx-os"),
+        "dot1qTunnelPoMember": ("dot1qTunnel", "nx-os"),
+        "dot1qTunnelVpcPoMember": ("dot1qTunnel", "nx-os"),
         "l3PoMember": ("routed", "nx-os"),
         "iosXeAccessPoMember": ("access", "ios-xe"),
         "iosXeTrunkPoMember": ("trunk", "ios-xe"),
@@ -49,6 +51,8 @@ def _member(
         "description": "existing member",
         "extraConfig": "logging event link-status",
     }
+    if policy_type in {"dot1qTunnelPoMember", "dot1qTunnelVpcPoMember"}:
+        policy["ptp"] = "false"
     if primary_interface is not None:
         policy["primaryInterface"] = primary_interface
     return {
@@ -78,6 +82,7 @@ def _parent(
     mode, network_os = {
         "trunkPoHost": ("trunk", "nx-os"),
         "accessPoHost": ("access", "nx-os"),
+        "dot1qTunnelPoHost": ("dot1qTunnel", "nx-os"),
         "l3Po": ("routed", "nx-os"),
         "iosXeAccessPoHost": ("access", "ios-xe"),
         "iosXeTrunkPoHost": ("trunk", "ios-xe"),
@@ -108,7 +113,7 @@ def _vpc_parent(
     peer2_members,
     policy_extra=None,
 ):
-    mode = {"trunkVpcHost": "trunk", "accessVpcHost": "access"}.get(policy_type, "trunk")
+    mode = {"trunkVpcHost": "trunk", "accessVpcHost": "access", "dot1qTunnelVpc": "dot1qTunnel"}.get(policy_type, "trunk")
     policy = {
         "policyType": policy_type,
         "peerSwitchId": peer_switch_id,
@@ -133,7 +138,7 @@ def _vpc_parent(
 
 
 def _vpc_parent_side_port_channel(switch_id, port_channel_id, policy_type):
-    mode = "access" if policy_type == "accessVpcMember" else "trunk"
+    mode = {"accessVpcMember": "access", "dot1qTunnelVpcMember": "dot1qTunnel"}.get(policy_type, "trunk")
     return {
         "switchId": switch_id,
         "interfaceName": f"port-channel{port_channel_id}",
@@ -157,10 +162,12 @@ def _valid_vpc_inventories(*, policy_type="vpcMember"):
     parent_policy = {
         "vpcMember": "trunkVpcHost",
         "accessVpcPoMember": "accessVpcHost",
+        "dot1qTunnelVpcPoMember": "dot1qTunnelVpc",
     }[policy_type]
     parent_side_policy = {
         "vpcMember": "trunkVpcMember",
         "accessVpcPoMember": "accessVpcMember",
+        "dot1qTunnelVpcPoMember": "dot1qTunnelVpcMember",
     }[policy_type]
     s1_member = _member(
         "SERIAL1",
@@ -207,6 +214,7 @@ def _valid_vpc_inventories(*, policy_type="vpcMember"):
     [
         ("poMember", "trunkPoHost"),
         ("accessPoMember", "accessPoHost"),
+        ("dot1qTunnelPoMember", "dot1qTunnelPoHost"),
         ("l3PoMember", "l3Po"),
         ("iosXeAccessPoMember", "iosXeAccessPoHost"),
         ("iosXeTrunkPoMember", "iosXeTrunkPoHost"),
@@ -356,6 +364,7 @@ def test_parent_must_claim_standalone_member_through_ports():
     [
         ("poMember", "trunkPoHost"),
         ("accessPoMember", "accessPoHost"),
+        ("dot1qTunnelPoMember", "dot1qTunnelPoHost"),
         ("l3PoMember", "l3Po"),
         ("iosXeAccessPoMember", "iosXeAccessPoHost"),
         ("iosXeTrunkPoMember", "iosXeTrunkPoHost"),
@@ -377,7 +386,7 @@ def test_standalone_parent_requires_matching_mode_and_network_os(policy_type, pa
         EthernetMembershipIndex({"SERIAL1": _inventory(member, parent)}).validate("SERIAL1", "Ethernet1/24")
 
 
-@pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember"])
+@pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember", "dot1qTunnelVpcPoMember"])
 def test_validate_vpc_member_requires_reciprocal_pair_evidence(policy_type):
     inventories = _valid_vpc_inventories(policy_type=policy_type)
 
@@ -393,7 +402,7 @@ def test_validate_vpc_member_requires_reciprocal_pair_evidence(policy_type):
     assert result.pair_validated is True
 
 
-@pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember"])
+@pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember", "dot1qTunnelVpcPoMember"])
 def test_vpc_literal_peer2_slot_maps_to_second_switch(policy_type):
     inventories = _valid_vpc_inventories(policy_type=policy_type)
 
@@ -470,7 +479,7 @@ def test_vpc_parent_copies_require_consistent_full_config_data():
         EthernetMembershipIndex(inventories).validate("SERIAL1", "Ethernet1/24")
 
 
-@pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember"])
+@pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember", "dot1qTunnelVpcPoMember"])
 def test_vpc_parent_copies_accept_complete_peer_slot_reorientation(policy_type):
     """ND may label each switch-local side as peer1 without changing pair intent."""
 
@@ -502,7 +511,7 @@ def test_vpc_parent_copies_accept_complete_peer_slot_reorientation(policy_type):
     assert result.peer_owner.switch_id == "SERIAL2"
 
 
-@pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember"])
+@pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember", "dot1qTunnelVpcPoMember"])
 def test_vpc_switch_local_peer1_resolves_symmetric_live_slots(policy_type):
     """Reciprocal slot reversal resolves ND's otherwise symmetric live shape."""
 
@@ -643,7 +652,7 @@ def test_vpc_non_target_peer_member_rejects_a_second_stale_parent_claim():
         EthernetMembershipIndex(inventories).validate("SERIAL1", "Ethernet1/24")
 
 
-@pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember"])
+@pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember", "dot1qTunnelVpcPoMember"])
 def test_vpc_remote_slot_name_reuse_does_not_create_a_local_owner(policy_type):
     """A remote member name reused by another local vPC is not a second claim."""
 
@@ -651,10 +660,12 @@ def test_vpc_remote_slot_name_reuse_does_not_create_a_local_owner(policy_type):
     parent_policy = {
         "vpcMember": "trunkVpcHost",
         "accessVpcPoMember": "accessVpcHost",
+        "dot1qTunnelVpcPoMember": "dot1qTunnelVpc",
     }[policy_type]
     parent_side_policy = {
         "vpcMember": "trunkVpcMember",
         "accessVpcPoMember": "accessVpcMember",
+        "dot1qTunnelVpcPoMember": "dot1qTunnelVpcMember",
     }[policy_type]
     inventories["SERIAL1"]["ethernet1/25"] = _member(
         "SERIAL1",
@@ -707,7 +718,7 @@ def test_vpc_remote_slot_name_reuse_does_not_create_a_local_owner(policy_type):
     assert reused.owner.interface_name == "vpc200"
 
 
-@pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember"])
+@pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember", "dot1qTunnelVpcPoMember"])
 @pytest.mark.parametrize("empty_side", ["SERIAL1", "SERIAL2"])
 @pytest.mark.parametrize("switch_local_peer1", [False, True])
 @pytest.mark.parametrize("empty_echo", ["explicit", "missing", "null"])
@@ -785,7 +796,7 @@ def test_vpc_empty_member_list_echoes_are_fingerprint_equivalent(local_echo, pee
     assert result.owner.switch_id == "SERIAL1"
 
 
-@pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember"])
+@pytest.mark.parametrize("policy_type", ["vpcMember", "accessVpcPoMember", "dot1qTunnelVpcPoMember"])
 @pytest.mark.parametrize("side", ["SERIAL1", "SERIAL2"])
 @pytest.mark.parametrize("field", ["mode", "network_os"])
 def test_vpc_parent_requires_matching_mode_and_network_os(policy_type, side, field):

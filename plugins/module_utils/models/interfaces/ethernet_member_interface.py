@@ -73,12 +73,12 @@ class MemberPolicyDescriptor:
     """Static relationship between a member policy and its owning parent policy."""
 
     policy_type: str
-    family: Literal["access", "trunk", "routed"]
+    family: Literal["access", "trunk", "routed", "dot1qTunnel"]
     network_os: Literal["nx-os", "ios-xe"]
-    wire_mode: Literal["access", "trunk", "routed"]
+    wire_mode: Literal["access", "trunk", "routed", "dot1qTunnel"]
     parent_interface_type: Literal["portChannel", "vpc"]
     parent_policy_types: tuple[str, ...]
-    parent_wire_mode: Literal["access", "trunk", "routed"]
+    parent_wire_mode: Literal["access", "trunk", "routed", "dot1qTunnel"]
     parent_network_os: Literal["nx-os", "ios-xe"]
     parent_member_fields: tuple[str, ...] = ("ports",)
     pair_aware: bool = False
@@ -171,6 +171,12 @@ class AccessPoMemberPolicyModel(NexusPortChannelMemberPolicyBase):
     policy_type: Literal["accessPoMember"] = Field(alias="policyType")
 
 
+class Dot1qTunnelPoMemberPolicyModel(NexusPortChannelMemberPolicyBase):
+    """NX-OS physical member of a dot1q tunnel port-channel."""
+
+    policy_type: Literal["dot1qTunnelPoMember"] = Field(alias="policyType")
+
+
 class L3PoMemberPolicyModel(InterfacePolicyStrictBase):
     """NX-OS standalone routed port-channel member (``l3PoMember``)."""
 
@@ -246,12 +252,21 @@ class AccessVpcPoMemberPolicyModel(AccessPoMemberPolicyModel):
     primary_interface: str | None = Field(default=None, alias="primaryInterface", description="Owning vPC interface")
 
 
+class Dot1qTunnelVpcPoMemberPolicyModel(Dot1qTunnelPoMemberPolicyModel):
+    """NX-OS physical dot1q vPC member; ownership requires both peers."""
+
+    policy_type: Literal["dot1qTunnelVpcPoMember"] = Field(alias="policyType")
+    primary_interface: str | None = Field(default=None, alias="primaryInterface", description="Owning vPC interface")
+
+
 NexusMemberPolicyModel = Union[
     PoMemberPolicyModel,
     AccessPoMemberPolicyModel,
+    Dot1qTunnelPoMemberPolicyModel,
     L3PoMemberPolicyModel,
     VpcMemberPolicyModel,
     AccessVpcPoMemberPolicyModel,
+    Dot1qTunnelVpcPoMemberPolicyModel,
 ]
 
 IosXeMemberPolicyModel = Union[
@@ -278,7 +293,7 @@ class IosXeEthernetMemberNetworkOSModel(NDNestedModel):
 class EthernetMemberConfigDataModel(NDNestedModel):
     """Configuration envelope shared by the supported member records."""
 
-    mode: Literal["access", "trunk", "routed"] = Field(alias="mode")
+    mode: Literal["access", "trunk", "routed", "dot1qTunnel"] = Field(alias="mode")
     network_os: NexusEthernetMemberNetworkOSModel | IosXeEthernetMemberNetworkOSModel = Field(
         alias="networkOS",
         discriminator="network_os_type",
@@ -339,6 +354,28 @@ class EthernetMemberInterfaceModel(NDBaseModel):
 
 
 _MEMBER_POLICY_RELATIONSHIPS = (
+    MemberPolicyDescriptor(
+        policy_type="dot1qTunnelPoMember",
+        family="dot1qTunnel",
+        network_os="nx-os",
+        wire_mode="dot1qTunnel",
+        parent_interface_type="portChannel",
+        parent_policy_types=("dot1qTunnelPoHost",),
+        parent_wire_mode="dot1qTunnel",
+        parent_network_os="nx-os",
+    ),
+    MemberPolicyDescriptor(
+        policy_type="dot1qTunnelVpcPoMember",
+        family="dot1qTunnel",
+        network_os="nx-os",
+        wire_mode="dot1qTunnel",
+        parent_interface_type="vpc",
+        parent_policy_types=("dot1qTunnelVpc",),
+        parent_wire_mode="dot1qTunnel",
+        parent_network_os="nx-os",
+        parent_member_fields=("peer1MemberPorts", "peer2MemberPorts"),
+        pair_aware=True,
+    ),
     MemberPolicyDescriptor(
         policy_type="poMember",
         family="trunk",
@@ -464,9 +501,9 @@ PROTECTED_MEMBER_POLICY_TYPES = frozenset(
         "accessVpcMember",
         "csrMultisiteIfcMember",
         "dataBrokerPoMember",
-        "dot1qTunnelPoMember",
+        # ND generates this logical port-channel below a vPC. It is not a
+        # physical Ethernet member and must never receive an Ethernet PUT.
         "dot1qTunnelVpcMember",
-        "dot1qTunnelVpcPoMember",
         "fexPoMember",
         "iosXeInternalL3PoMember",
         "iosXeStackwiseLinkMember",
@@ -511,6 +548,10 @@ _RESPONSE_ONLY_POLICY_FIELDS: dict[str, Mapping[str, Callable[[object], bool]]] 
     "accessVpcPoMember": {"ptp": _is_boolean_response_echo},
     "vpcMember": {"ptp": _is_boolean_response_echo},
     "l3PoMember": {"ptp": _is_boolean_response_echo},
+    # ND 4.3.1 also echoes ptp on both physical dot1q member policies,
+    # although neither member template declares it as writable configuration.
+    "dot1qTunnelPoMember": {"ptp": _is_boolean_response_echo},
+    "dot1qTunnelVpcPoMember": {"ptp": _is_boolean_response_echo},
 }
 """Qualified controller echoes that may be discarded before a member PUT."""
 

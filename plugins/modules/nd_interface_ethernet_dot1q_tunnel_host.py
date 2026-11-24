@@ -32,21 +32,22 @@ options:
     description:
     - Groups of Ethernet interfaces to manage.
     - An empty list with O(state=overridden) resets every managed dot1q-tunnel host in the fabric.
+    - Required for configuration states; omit or pass an empty list with O(state=gathered) to read all dot1q hosts.
+    - For O(state=gathered), supported filters are C(switch_ip), C(interface_names), and nested policy fields C(admin_state) and C(access_vlan).
+      Criteria within one list item use AND; separate items use OR. Other nonempty properties are rejected as filters.
     type: list
     elements: dict
-    required: true
     suboptions:
       switch_ip:
-        description: Management IP of the switch in O(fabric_name).
+        description: Management IP of the switch in O(fabric_name); required for configuration states and optional for O(state=gathered).
         type: str
-        required: true
       interface_names:
         description:
         - Physical Ethernet interface names in this group; a group must name at least one interface.
         - Use an empty top-level O(config) list, not an empty group, to reset all dot1q hosts with O(state=overridden).
+        - Optional for O(state=gathered); supplied names filter the returned interfaces.
         type: list
         elements: str
-        required: true
       config_data:
         description:
         - Desired dot1q-tunnel host configuration; omit for an identifier-only O(state=deleted) item.
@@ -58,9 +59,8 @@ options:
             type: dict
             suboptions:
               network_os_type:
-                description: Only NX-OS implements this ND policy.
+                description: Only NX-OS implements this ND policy; configuration states select V(nx-os) when omitted.
                 type: str
-                default: nx-os
                 choices: [ nx-os ]
               policy:
                 description: C(dot1qTunnelHost) policy properties.
@@ -193,6 +193,7 @@ options:
         description:
         - V(false) stages ND intent without deploying to switches.
         - V(true) deploys exact queued interface targets after mutations, including accepted changes from a partial request.
+        - Ignored for O(state=gathered), which never deploys changes.
         type: bool
         default: false
   state:
@@ -201,9 +202,10 @@ options:
     - V(replaced) replaces the named host policy fields.
     - V(overridden) additionally resets every omitted C(dot1qTunnelHost) interface in the entire fabric; use with care.
     - V(deleted) resets named physical Ethernet interfaces to the fabric default rather than removing them.
+    - V(gathered) reads dot1q host intent without changing or deploying configuration, including during deployment freeze.
     type: str
     default: merged
-    choices: [ merged, replaced, overridden, deleted ]
+    choices: [ merged, replaced, overridden, deleted, gathered ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -232,6 +234,24 @@ EXAMPLES = r"""
     state: merged
     config_actions:
       deploy: false
+
+- name: Gather all dot1q Ethernet hosts without changing configuration
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host:
+    fabric_name: my_fabric
+    state: gathered
+  register: dot1q_hosts
+
+- name: Gather dot1q hosts on one switch with service VLAN 150
+  cisco.nd.nd_interface_ethernet_dot1q_tunnel_host:
+    fabric_name: my_fabric
+    state: gathered
+    config:
+      - switch_ip: 192.0.2.11
+        config_data:
+          network_os:
+            policy:
+              access_vlan: 150
+  register: filtered_dot1q_hosts
 
 - name: Reset this dot1q-tunnel host to its fabric-default Ethernet policy
   cisco.nd.nd_interface_ethernet_dot1q_tunnel_host:
@@ -286,26 +306,32 @@ output_level:
   type: str
   sample: normal
 before:
-  description: Managed dot1q-tunnel host interfaces before the operation.
+  description: Managed dot1q-tunnel host interfaces before the operation; an empty list for O(state=gathered).
   returned: always
   type: list
   elements: dict
   sample: []
 after:
-  description: Managed dot1q-tunnel host interfaces after the operation, or projected state in check mode.
+  description: Managed dot1q-tunnel host interfaces after the operation, or projected state in check mode; an empty list for O(state=gathered).
   returned: always
   type: list
   elements: dict
   sample: []
 diff:
   description: Reserved per-interface differences; compare before and after directly.
-  returned: always
+  returned: when O(state) is not V(gathered)
+  type: list
+  elements: dict
+  sample: []
+gathered:
+  description: Dot1q-tunnel Ethernet host intent in the grouped format accepted by O(config).
+  returned: when O(state=gathered)
   type: list
   elements: dict
   sample: []
 proposed:
   description: Configuration proposed before controller reconciliation.
-  returned: when O(output_level) is V(info) or V(debug)
+  returned: when O(state) is not V(gathered) and O(output_level) is V(info) or V(debug)
   type: list
   elements: dict
   sample: []
@@ -327,7 +353,11 @@ import logging
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
-from ansible_collections.cisco.nd.plugins.module_utils.interface_config_normalizer import expand_ethernet_dot1q_tunnel_host_config
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import get_raw_module_args
+from ansible_collections.cisco.nd.plugins.module_utils.interface_config_normalizer import (
+    expand_ethernet_dot1q_tunnel_host_config,
+    expand_ethernet_gathered_filters,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_dot1q_tunnel_host_interface import (
     EthernetDot1qTunnelHostInterfaceModel,
 )
@@ -351,15 +381,30 @@ def main() -> None:
     argument_spec.update(EthernetDot1qTunnelHostInterfaceModel.get_argument_spec())
     argument_spec.update(config_actions_spec(include=("deploy",)))
 
-    module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=True)
+    module = AnsibleModule(
+        argument_spec=argument_spec,
+        supports_check_mode=True,
+        required_if=[
+            ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
+            ("state", "overridden", ["config"]),
+            ("state", "deleted", ["config"]),
+        ],
+    )
     require_pydantic(module)
     setup_logging(module)
     module_log = logging.getLogger("nd.nd_interface_ethernet_dot1q_tunnel_host")
 
-    try:
-        module.params["config"] = expand_config(module.params["config"])
-    except ValueError as exc:
-        module.fail_json(msg=f"Configuration error: {exc}")
+    if module.params["state"] == "gathered":
+        try:
+            module.params["config"] = expand_ethernet_gathered_filters(module.params.get("config"), raw_config_list=get_raw_module_args().get("config"))
+        except (ValueError, TypeError) as exc:
+            module.fail_json(msg=f"Gathered filter error: {exc}")
+    else:
+        try:
+            module.params["config"] = expand_config(module.params["config"])
+        except ValueError as exc:
+            module.fail_json(msg=f"Configuration error: {exc}")
 
     nd_state_machine = None
     try:
@@ -368,7 +413,7 @@ def main() -> None:
             raise AssertionError(f"Expected NDBaseInterfaceOrchestrator, got {type(nd_state_machine.model_orchestrator)}")
         nd_state_machine.model_orchestrator.apply_config_actions(module.params)
         nd_state_machine.manage_state()
-        if not module.check_mode:
+        if not module.check_mode and module.params["state"] != "gathered":
             nd_state_machine.model_orchestrator.remove_pending()
             nd_state_machine.model_orchestrator.deploy_pending()
         module.exit_json(**nd_state_machine.output.format())

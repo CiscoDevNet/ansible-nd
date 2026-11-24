@@ -9,6 +9,7 @@ from copy import deepcopy
 from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.gathered_filter import GatheredLuceneSpec
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_dot1q_tunnel_host_interface import (
     EthernetDot1qTunnelHostInterfaceModel,
@@ -31,6 +32,11 @@ class EthernetDot1qTunnelHostInterfaceOrchestrator(EthernetBaseOrchestrator):
 
     model_class: ClassVar[type[NDBaseModel]] = EthernetDot1qTunnelHostInterfaceModel
     MEMBER_FAMILY: ClassVar[str] = ""
+    supports_gathered_server_filtering: ClassVar[bool] = True
+    gathered_lucene_spec: ClassVar[GatheredLuceneSpec] = GatheredLuceneSpec(
+        base_terms=(("interfaceType", "ethernet"),),
+        field_map={("interface_name",): "interfaceName"},
+    )
     # ND 4.3.1 accepts typed dot1q full-policy updates with a nonempty description.
     # An empty or omitted outgoing description keeps the singular PUT retry below.
     supports_bulk_full_modify: ClassVar[bool] = True
