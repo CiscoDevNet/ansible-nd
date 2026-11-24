@@ -432,6 +432,12 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self._payload = None
 
     @property
+    def mutation_dispatch_count(self) -> int:
+        """Count writes handed to the connection, even if no response was retained."""
+        dispatches = getattr(self._sender, "mutation_dispatch_count", None)
+        return dispatches if isinstance(dispatches, int) else self.mutation_attempt_count
+
+    @property
     def max_attempts(self) -> int | None:
         """Limit request-loop sends without altering the default retry policy."""
         return self._max_attempts

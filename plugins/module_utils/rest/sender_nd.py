@@ -85,6 +85,7 @@ class Sender:
         self._payload: Optional[Union[dict, list]] = payload
         self._response: Optional[dict[str, Any]] = None
         self._verb: Optional[HttpVerbEnum] = verb
+        self.mutation_dispatch_count = 0
 
         msg = "ENTERED Sender(): "
         self.log.debug(msg)
@@ -137,18 +138,15 @@ class Sender:
         msg += "Calling Connection().send_request: "
         msg += f"verb {self.verb.value}, path {self.path}"
         try:
-            if self.payload is None:
-                self.log.debug(msg)
-                response = self._connection.send_request(self.verb.value, self.path)
-            else:
+            request_args = [self.verb.value, self.path]
+            if self.payload is not None:
                 msg += ", payload: "
                 msg += f"{json.dumps(self.payload, indent=4, sort_keys=True)}"
-                self.log.debug(msg)
-                response = self._connection.send_request(
-                    self.verb.value,
-                    self.path,
-                    json.dumps(self.payload),
-                )
+                request_args.append(json.dumps(self.payload))
+            self.log.debug(msg)
+            if self.verb != HttpVerbEnum.GET:
+                self.mutation_dispatch_count += 1
+            response = self._connection.send_request(*request_args)
             # Normalize response: if JSON parsing failed, DATA will be None
             # and raw content will be in the "raw" key. Convert to consistent format.
             response = self._normalize_response(response)

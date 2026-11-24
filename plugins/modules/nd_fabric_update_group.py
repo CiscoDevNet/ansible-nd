@@ -289,7 +289,7 @@ after:
   - In check mode for per-group configuration states, this is the configuration that would result if the module ran outside check mode.
   - For O(state=gathered), this is an empty list because no reconciliation is performed.
   - For O(auto_assign), this contains the update groups captured after the controller action. In check mode, the action is skipped.
-  returned: always
+  returned: when the final configuration is known or the module runs in check mode
   type: list
   elements: dict
   sample:
@@ -323,9 +323,24 @@ diff:
   description:
   - The per-update-group difference between C(before) and C(after).
   - For O(auto_assign), this is empty because the fabric-wide action does not create a per-group configuration diff.
-  returned: when O(state) is not V(gathered)
+  returned: for a known final configuration in write states
   type: list
   elements: dict
+after_status:
+  description: Whether the final configuration is C(confirmed) or C(unknown).
+  returned: after an attempted per-group write
+  type: str
+action_results:
+  description:
+  - Per-group mutation outcomes and controller statuses.
+  - An attachment can succeed while the group's full configuration remains unknown.
+  returned: after an attempted per-group write
+  type: list
+  elements: dict
+may_have_changed:
+  description: Whether uncertainty remains about an attempted group's final configuration.
+  returned: after an attempted per-group write
+  type: bool
 proposed:
   description:
   - The fabric update-group configuration proposed before reconciliation with the controller.

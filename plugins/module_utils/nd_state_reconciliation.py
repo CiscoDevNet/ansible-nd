@@ -64,13 +64,24 @@ class MutationResourceOutcome:
 
     identifier: Any
     outcome: MutationOutcome
+    after_known: bool
     _statuses: tuple[Any, ...] = field(repr=False)
     _messages: tuple[Any, ...] = field(repr=False)
     _evidence: tuple[Any, ...] = field(repr=False)
 
-    def __init__(self, identifier: Any, outcome: MutationOutcome, *, statuses: Iterable[Any] = (), messages: Iterable[Any] = (), evidence: Iterable[Any] = ()):
+    def __init__(
+        self,
+        identifier: Any,
+        outcome: MutationOutcome,
+        *,
+        after_known: bool = True,
+        statuses: Iterable[Any] = (),
+        messages: Iterable[Any] = (),
+        evidence: Iterable[Any] = (),
+    ):
         object.__setattr__(self, "identifier", deepcopy(identifier))
         object.__setattr__(self, "outcome", outcome)
+        object.__setattr__(self, "after_known", after_known)
         object.__setattr__(self, "_statuses", tuple(deepcopy(tuple(statuses))))
         object.__setattr__(self, "_messages", tuple(deepcopy(tuple(messages))))
         object.__setattr__(self, "_evidence", tuple(deepcopy(tuple(evidence))))
@@ -101,6 +112,14 @@ class MutationResult:
     def __post_init__(self):
         object.__setattr__(self, "outcomes", tuple(deepcopy(self.outcomes)))
         object.__setattr__(self, "protocol_errors", tuple(self.protocol_errors))
+
+
+class MutationResultError(RuntimeError):
+    """Preserve endpoint-specific mutation evidence alongside the original failure."""
+
+    def __init__(self, message: str, result: MutationResult):
+        super().__init__(message)
+        self.result = result
 
 
 @dataclass
@@ -177,21 +196,22 @@ class MutationCheckpoint:
                 )
             )
         states = {item.outcome for item in normalized}
-        unknown = bool(errors) or MutationOutcome.UNKNOWN in states
+        unknown = bool(errors) or MutationOutcome.UNKNOWN in states or any(not item.after_known for item in normalized)
         aggregate = MutationOutcome.UNKNOWN if unknown else (MutationOutcome.FAILED if MutationOutcome.FAILED in states else MutationOutcome.SUCCEEDED)
         self.resource_outcomes = tuple(normalized)
         self.resolve(
             aggregate,
             changed=MutationOutcome.SUCCEEDED in states,
             may_have_changed=unknown,
-            error="; ".join(errors) or ("One or more resource effects failed or are unknown" if aggregate is not MutationOutcome.SUCCEEDED else None),
+            error="; ".join(errors)
+            or ("One or more resource effects failed or are unknown" if states & {MutationOutcome.FAILED, MutationOutcome.UNKNOWN} else None),
         )
 
     @property
     def confirmed_effects(self) -> tuple[MutationEffect, ...]:
         """Return proven successes, independently of the aggregate request outcome."""
         if self.resource_outcomes:
-            keys = {item.identifier for item in self.resource_outcomes if item.outcome is MutationOutcome.SUCCEEDED}
+            keys = {item.identifier for item in self.resource_outcomes if item.outcome is MutationOutcome.SUCCEEDED and item.after_known}
             return tuple(effect for effect in self.effects if effect.identifier in keys)
         return self.effects if self.outcome is MutationOutcome.SUCCEEDED else ()
 
@@ -199,7 +219,7 @@ class MutationCheckpoint:
     def unknown_identifiers(self) -> tuple[Any, ...]:
         """Return only uncertain scopes, not known successes from the same request."""
         if self.resource_outcomes:
-            return tuple(item.identifier for item in self.resource_outcomes if item.outcome is MutationOutcome.UNKNOWN)
+            return tuple(item.identifier for item in self.resource_outcomes if item.outcome is MutationOutcome.UNKNOWN or not item.after_known)
         return self.affected_identifiers if self.outcome is MutationOutcome.UNKNOWN else ()
 
 

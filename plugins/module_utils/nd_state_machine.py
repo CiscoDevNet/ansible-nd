@@ -29,11 +29,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_state_plan import (
     NDStatePlanner,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_reconciliation import (
+    MutationCheckpoint,
     MutationEffect,
     MutationJournal,
     MutationOperation,
     MutationOutcome,
     MutationResult,
+    MutationResultError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
     NDBaseOrchestrator,
@@ -197,6 +199,9 @@ class NDStateMachine:
                 self.confirmed = self.before.copy()
                 self.journal = MutationJournal()
                 self._update_output_from_journal()
+            elif getattr(self.model_orchestrator, "track_mutation_outcomes", False):
+                self.confirmed = self.existing
+                self.journal = MutationJournal()
 
         except Exception as e:
             raise NDStateMachineError(f"Initialization failed: {str(e)}") from e
@@ -241,6 +246,20 @@ class NDStateMachine:
             self._manage_outcome_state()
             return
 
+        if not getattr(self.model_orchestrator, "track_mutation_outcomes", False):
+            self._manage_standard_state()
+            return
+
+        try:
+            self._manage_standard_state()
+        except Exception as error:
+            if self.journal.checkpoints:
+                self._finalize_outcome_failure(error)
+            raise
+        if self.journal.checkpoints:
+            self._update_output_from_journal()
+
+    def _manage_standard_state(self) -> None:
         plan = self._build_plan()
         if self.state in ["merged", "replaced", "overridden"]:
             proposed_items = list(self.proposed)
@@ -376,16 +395,7 @@ class NDStateMachine:
 
     def _execute_outcome_request(self, operation: MutationOperation, items, method, *args) -> None:
         """Reconcile resource evidence before propagating task failure."""
-        effects = tuple(
-            MutationEffect(
-                operation,
-                item.get_identifier_value(),
-                self.confirmed.get(item.get_identifier_value()),
-                None if operation is MutationOperation.DELETE else item,
-            )
-            for item in items
-        )
-        checkpoint = self.journal.open(phase=operation.value, effects=effects)
+        checkpoint = self._open_mutation_checkpoint(operation, items)
         request_transport = self.model_orchestrator.rest_send
         previous_max_attempts = request_transport.max_attempts
         request_transport.max_attempts = 1
@@ -403,6 +413,18 @@ class NDStateMachine:
         self._apply_confirmed_effects(checkpoint)
         if checkpoint.outcome is not MutationOutcome.SUCCEEDED:
             raise NDStateMachineError(f"{operation.value} failed: {checkpoint.error or checkpoint.outcome.value}")
+
+    def _open_mutation_checkpoint(self, operation: MutationOperation, items: Sequence[NDBaseModel]) -> MutationCheckpoint:
+        effects = tuple(
+            MutationEffect(
+                operation,
+                item.get_identifier_value(),
+                self.confirmed.get(item.get_identifier_value()),
+                None if operation is MutationOperation.DELETE else item,
+            )
+            for item in items
+        )
+        return self.journal.open(phase=operation.value, effects=effects)
 
     def _apply_confirmed_effects(self, checkpoint) -> None:
         """Apply a successful subset even when its enclosing request failed."""
@@ -428,25 +450,31 @@ class NDStateMachine:
 
     def _update_output_from_journal(self) -> None:
         """Publish proven change and preserve per-resource failure evidence."""
+        standard_result = not self.model_orchestrator.supports_mutation_outcomes
         action_results = []
         for checkpoint in self.journal.checkpoints:
             outcomes = {item.identifier: item for item in checkpoint.resource_outcomes}
             confirmed_identifiers = {effect.identifier for effect in checkpoint.confirmed_effects}
             for effect in checkpoint.effects:
                 outcome = outcomes.get(effect.identifier)
+                status = outcome.outcome if outcome else checkpoint.outcome
+                after_known = outcome is None or outcome.after_known
                 record = {
                     "identifier": effect.identifier,
                     "operation": effect.operation.value,
-                    "outcome": outcome.outcome.value if outcome else checkpoint.outcome.value,
-                    "effect_confirmed": effect.identifier in confirmed_identifiers,
+                    "outcome": status.value,
+                    "effect_confirmed": effect.identifier in confirmed_identifiers or (not after_known and status is MutationOutcome.SUCCEEDED),
                     "statuses": list(outcome.statuses) if outcome else [],
                     "messages": list(outcome.messages) if outcome else [checkpoint.error] if checkpoint.error else [],
                     "correlation": list(outcome.evidence) if outcome else [],
                 }
+                if not after_known:
+                    record["after_known"] = False
                 action_results.append(record)
         self.output.set_changed(self.journal.changed)
+        if not standard_result:
+            self.output.assign(failed=self.journal.has_failed)
         self.output.assign(
-            failed=self.journal.has_failed,
             action_results=action_results,
             may_have_changed=self.journal.may_have_changed,
             reconciliation_complete=not self.journal.has_unknown,
@@ -473,6 +501,9 @@ class NDStateMachine:
             )
         if self.journal.has_unknown:
             self.output.mark_after_unknown()
+        elif standard_result:
+            # Keep the standard executor's diff format and let the module report task failure.
+            self.output.assign(after=self.confirmed, after_status="confirmed")
         else:
             self.output.set_after_state(self.confirmed)
             self._assign_snapshot_diff(self.confirmed)
@@ -482,6 +513,7 @@ class NDStateMachine:
         operation: Callable[..., ResponseType],
         *args: Any,
         error_msg_prefix: str = "Operation failed",
+        mutation: tuple[MutationOperation, Sequence[NDBaseModel]] | None = None,
         **kwargs: Any,
     ) -> bool:
         """
@@ -497,15 +529,53 @@ class NDStateMachine:
 
         - If the operation raises and `ignore_errors` is false.
         """
-        try:
-            if not self.check_mode:
-                operation(*args, **kwargs)
+        if self.check_mode:
             return True
+
+        checkpoint = None
+        if mutation is not None and getattr(self.model_orchestrator, "track_mutation_outcomes", False):
+            checkpoint = self._open_mutation_checkpoint(*mutation)
+            transport = self.model_orchestrator.rest_send
+            dispatches_before = transport.mutation_dispatch_count
+            responses_before = transport.response_count
+
+        try:
+            response = operation(*args, **kwargs)
         except Exception as e:
+            if checkpoint is not None:
+                if isinstance(e, MutationResultError):
+                    checkpoint.resolve_resources(e.result)
+                    self._apply_confirmed_effects(checkpoint)
+                else:
+                    dispatches = transport.mutation_dispatch_count - dispatches_before
+                    rejected = (
+                        dispatches == 1
+                        and transport.response_count == responses_before + 1
+                        and transport.return_code in self.model_orchestrator.mutation_rejection_statuses
+                    )
+                    unknown = dispatches > 0 and not rejected
+                    checkpoint.resolve(
+                        MutationOutcome.UNKNOWN if unknown else MutationOutcome.FAILED,
+                        may_have_changed=unknown,
+                        error="Write outcome could not be confirmed" if unknown else "Write failed",
+                    )
             error_msg = f"{error_msg_prefix}: {e}"
             if not self.ignore_errors:
                 raise NDStateMachineError(error_msg) from e
-        return False
+            return False
+
+        if checkpoint is not None:
+            if isinstance(response, MutationResult):
+                checkpoint.resolve_resources(response)
+            else:
+                dispatches = transport.mutation_dispatch_count - dispatches_before
+                unchanged_receipt = transport.response_count == responses_before + 1 and transport.result_current.get("changed") is False
+                if unchanged_receipt and dispatches > 1:
+                    # A no-op retry cannot establish whether a preceding attempt applied the change.
+                    checkpoint.resolve(MutationOutcome.UNKNOWN, may_have_changed=True, error="Earlier write outcome could not be confirmed")
+                else:
+                    checkpoint.resolve(MutationOutcome.SUCCEEDED, changed=dispatches > 0 and not unchanged_receipt)
+        return True
 
     def _build_plan(self, state: str | None = None) -> NDStatePlan:
         """Calculate all operations without invoking an orchestrator mutation method."""
@@ -651,6 +721,7 @@ class NDStateMachine:
                     item,
                     previous_model=previous,
                     error_msg_prefix=f"Failed to update {item.get_identifier_value()}",
+                    mutation=(MutationOperation.UPDATE, (item,)),
                 )
             except Exception:
                 apply_accepted_post_write(item)
@@ -738,7 +809,12 @@ class NDStateMachine:
                 self._create_bulk_deferred(items_to_create)
             else:
                 for item in items_to_create:
-                    if self._execute_operation(self.model_orchestrator.create, item, error_msg_prefix=f"Failed to create {item.get_identifier_value()}"):
+                    if self._execute_operation(
+                        self.model_orchestrator.create,
+                        item,
+                        error_msg_prefix=f"Failed to create {item.get_identifier_value()}",
+                        mutation=(MutationOperation.CREATE, (item,)),
+                    ):
                         self._apply_accepted([item])
 
         # Log operation
@@ -780,7 +856,9 @@ class NDStateMachine:
         - If the bulk create fails and `ignore_errors` is false; re-raised after the accepted subset is applied.
         """
         try:
-            succeeded = self._execute_operation(self.model_orchestrator.create_bulk, items, error_msg_prefix="Failed to create in bulk")
+            succeeded = self._execute_operation(
+                self.model_orchestrator.create_bulk, items, error_msg_prefix="Failed to create in bulk", mutation=(MutationOperation.CREATE, items)
+            )
         except NDStateMachineError:
             self._apply_accepted(self._hook_result("accepted_mutations", items) or [])
             raise
@@ -853,14 +931,21 @@ class NDStateMachine:
             return
 
         if self.supports_bulk_delete:
-            succeeded = self._execute_operation(self.model_orchestrator.delete_bulk, items, error_msg_prefix="Failed to delete in bulk")
+            succeeded = self._execute_operation(
+                self.model_orchestrator.delete_bulk, items, error_msg_prefix="Failed to delete in bulk", mutation=(MutationOperation.DELETE, items)
+            )
             self._apply_removed(items if succeeded else [])
             return
 
         accepted: list[NDBaseModel] = []
         try:
             for item in items:
-                if self._execute_operation(self.model_orchestrator.delete, item, error_msg_prefix=f"Failed to delete {item.get_identifier_value()}"):
+                if self._execute_operation(
+                    self.model_orchestrator.delete,
+                    item,
+                    error_msg_prefix=f"Failed to delete {item.get_identifier_value()}",
+                    mutation=(MutationOperation.DELETE, (item,)),
+                ):
                     accepted.append(item)
         except NDStateMachineError:
             self._apply_removed(accepted)
