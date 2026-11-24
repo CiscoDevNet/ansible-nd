@@ -203,7 +203,8 @@ class MutationCheckpoint:
             aggregate,
             changed=MutationOutcome.SUCCEEDED in states,
             may_have_changed=unknown,
-            error="; ".join(errors) or ("One or more resource effects failed or are unknown" if aggregate is not MutationOutcome.SUCCEEDED else None),
+            error="; ".join(errors)
+            or ("One or more resource effects failed or are unknown" if states & {MutationOutcome.FAILED, MutationOutcome.UNKNOWN} else None),
         )
 
     @property

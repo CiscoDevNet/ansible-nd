@@ -62,7 +62,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_state_reconciliation i
     MutationResultError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import MutationResponseType, ResponseType
 
 # Wire payload keys whose list-valued contents are switch identifiers (IP or switchId)
 _SWITCH_LIST_PAYLOAD_KEYS = ("updateGroupSwitches", "installationOrderDevices")
@@ -459,6 +459,14 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
             )
         return MutationResult(tuple(outcomes), tuple(protocol_errors))
 
+    @staticmethod
+    def _membership_change_acknowledged(response: ResponseType, response_key: str, group_name: str) -> bool:
+        """Require the action response to name and acknowledge the requested group."""
+        rows = response.get(response_key) if isinstance(response, dict) else None
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+            return False
+        return rows[0].get("updateGroupName") == group_name and rows[0].get("status") == "success"
+
     def _detach(self, detach_items: list[dict]) -> ResponseType:
         """
         # Summary
@@ -597,7 +605,7 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         except Exception as e:
             raise RuntimeError(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def create_bulk(self, model_instances: list[FabricUpdateGroupModel], **kwargs) -> ResponseType:
+    def create_bulk(self, model_instances: list[FabricUpdateGroupModel], **kwargs) -> MutationResponseType:
         """
         # Summary
 
@@ -632,11 +640,15 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
             for model_instance in model_instances:
                 self._apply_settings(model_instance)
                 complete_groups.add(model_instance.update_group_name)
-            return {}
         except Exception as error:
             complete_groups = self._groups_with_independent_membership(complete_groups, model_instances, attach_items)
             result = self._bulk_attach_result(attach_result, group_names, complete_groups)
             raise MutationResultError(f"Bulk create failed: {error}", result) from error
+
+        independent_groups = self._groups_with_independent_membership(complete_groups, model_instances, attach_items)
+        if independent_groups != complete_groups:
+            return self._bulk_attach_result(attach_result, group_names, independent_groups)
+        return {}
 
     def update(self, model_instance: FabricUpdateGroupModel, **kwargs) -> ResponseType:
         """
@@ -660,6 +672,7 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
           membership is kept and only group settings are applied. This is what makes a settings-only
           update (e.g. changing `execution` or `reports`) possible without re-listing every switch.
         """
+        acknowledged_actions = []
         try:
             update_group_name = model_instance.update_group_name
             current_raw = self._get_group_raw(update_group_name)
@@ -675,13 +688,27 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
             to_add = [s for s in desired_ids if s not in current_ids]
             to_remove = [s for s in current_ids if s not in desired_ids]
             if to_add:
-                self._attach([self._attach_item(model_instance, switch_ids=to_add)])
+                response = self._attach([self._attach_item(model_instance, switch_ids=to_add)])
+                if self._membership_change_acknowledged(response, "attachUpdateGroups", update_group_name):
+                    acknowledged_actions.append("attachGroup")
             if to_remove:
-                self._detach([{"updateGroupName": update_group_name, "switchIds": to_remove}])
+                response = self._detach([{"updateGroupName": update_group_name, "switchIds": to_remove}])
+                if self._membership_change_acknowledged(response, "detachUpdateGroups", update_group_name):
+                    acknowledged_actions.append("detachGroup")
             self._apply_settings(model_instance, current_raw=current_raw)
             return {}
-        except Exception as e:
-            raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
+        except Exception as error:
+            message = f"Update failed for {model_instance.get_identifier_value()}: {error}"
+            if acknowledged_actions:
+                outcome = MutationResourceOutcome(
+                    update_group_name,
+                    MutationOutcome.SUCCEEDED,
+                    statuses=("success",) * len(acknowledged_actions),
+                    evidence=tuple({"source": action, "match": "exact_update_group_name"} for action in acknowledged_actions),
+                    after_known=False,
+                )
+                raise MutationResultError(message, MutationResult((outcome,))) from error
+            raise RuntimeError(message) from error
 
     def delete(self, model_instance: FabricUpdateGroupModel, **kwargs) -> ResponseType:
         """

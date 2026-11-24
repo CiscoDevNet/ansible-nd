@@ -261,7 +261,8 @@ def test_local_user_definite_rejection_preserves_known_snapshot(monkeypatch):
     assert output["after"][0]["first_name"] == "Before"
 
 
-def test_local_user_terminal_rejection_after_retry_keeps_final_state_unknown(monkeypatch):
+@pytest.mark.parametrize("terminal_rejection", [True, False])
+def test_local_user_retry_keeps_earlier_write_outcome_unknown(monkeypatch, terminal_rejection):
     monkeypatch.setattr(rest_send, "sleep", lambda _interval: None)
     user = {"loginID": "uncertain", "firstName": "Before"}
     requests = []
@@ -274,7 +275,9 @@ def test_local_user_terminal_rejection_after_retry_keeps_final_state_unknown(mon
         if user["firstName"] == "Before":
             user.update(payload)
             return _response(503, "Service Unavailable", {})
-        return _response(400, "Bad Request", {"message": "simulated terminal rejection"})
+        if terminal_rejection:
+            return _response(400, "Bad Request", {"message": "simulated terminal rejection"})
+        return {**_response(200, "OK", {}), "modified": "false"}
 
     config = [{"login_id": "uncertain", "first_name": "After"}]
     result = _run_module(monkeypatch, nd_local_user, config, False, send)
@@ -282,10 +285,29 @@ def test_local_user_terminal_rejection_after_retry_keeps_final_state_unknown(mon
 
     assert requests == [("GET", "localUsers"), ("PUT", "uncertain"), ("PUT", "uncertain")], output.get("msg")
     assert user["firstName"] == "After"
-    assert result.failed
+    assert result.failed is terminal_rejection
     assert output["changed"] is False
     assert output["may_have_changed"] is True
     assert output["after_status"] == "unknown"
     assert output["unknown_identifiers"] == ["uncertain"]
     assert "after" not in output
     assert "diff" not in output
+
+
+def test_local_user_respects_unchanged_write_receipt(monkeypatch):
+    requests = []
+
+    def send(verb, path, _payload):
+        requests.append((verb, path.rsplit("/", 1)[-1]))
+        if verb == "GET":
+            return _response(200, "OK", {"localusers": [{"loginID": "user", "firstName": "Before"}]})
+        assert verb == "PUT"
+        return {**_response(200, "OK", {}), "modified": "false"}
+
+    config = [{"login_id": "user", "first_name": "After"}]
+    result = _run_module(monkeypatch, nd_local_user, config, False, send)
+
+    assert requests == [("GET", "localUsers"), ("PUT", "user")], result.output.get("msg")
+    assert not result.failed
+    assert result.output["changed"] is False
+    assert result.output["after_status"] == "confirmed"

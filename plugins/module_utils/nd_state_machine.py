@@ -540,7 +540,7 @@ class NDStateMachine:
             responses_before = transport.response_count
 
         try:
-            operation(*args, **kwargs)
+            response = operation(*args, **kwargs)
         except Exception as e:
             if checkpoint is not None:
                 if isinstance(e, MutationResultError):
@@ -565,7 +565,16 @@ class NDStateMachine:
             return False
 
         if checkpoint is not None:
-            checkpoint.resolve(MutationOutcome.SUCCEEDED, changed=transport.mutation_dispatch_count > dispatches_before)
+            if isinstance(response, MutationResult):
+                checkpoint.resolve_resources(response)
+            else:
+                dispatches = transport.mutation_dispatch_count - dispatches_before
+                unchanged_receipt = transport.response_count == responses_before + 1 and transport.result_current.get("changed") is False
+                if unchanged_receipt and dispatches > 1:
+                    # A no-op retry cannot establish whether a preceding attempt applied the change.
+                    checkpoint.resolve(MutationOutcome.UNKNOWN, may_have_changed=True, error="Earlier write outcome could not be confirmed")
+                else:
+                    checkpoint.resolve(MutationOutcome.SUCCEEDED, changed=dispatches > 0 and not unchanged_receipt)
         return True
 
     def _build_plan(self, state: str | None = None) -> NDStatePlan:
