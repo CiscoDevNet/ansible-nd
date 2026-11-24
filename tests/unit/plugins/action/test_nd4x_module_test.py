@@ -1408,7 +1408,7 @@ def test_jsonpath_values_support_extended_filters(action_plugin):
             "network_name": "harness-nd-network-replaced",
             "network_id": 9110002,
             "vlan_id": 3902,
-            "layer": "layer2",
+            "network_mode": "layer2",
             "l2_data": {
                 "vlan_name": "harness_nd_network_replaced_vlan",
                 "rt_auto": False,
@@ -1419,7 +1419,7 @@ def test_jsonpath_values_support_extended_filters(action_plugin):
             "networkName": "harness-nd-network-replaced",
             "networkId": 9110002,
             "vlanId": 3902,
-            "layer": "layer2",
+            "network_mode": "layer2",
             "l2Data": {
                 "vlanName": "harness_nd_network_replaced_vlan",
                 "rtAuto": False,
@@ -1435,11 +1435,10 @@ def test_summarize_network_config_item(action_plugin, network_item):
         "vlan_id": 3902,
         "vlan_name": "harness_nd_network_replaced_vlan",
         "is_l2only": None,
-        "layer": "layer2",
+        "network_mode": "layer2",
         "enable_ir": False,
         "rt_auto": False,
         "deploy": None,
-        "deploy_type": None,
     }
 
 
@@ -1472,11 +1471,10 @@ def test_summarize_gathered_module_result(action_plugin):
                 "vlan_id": 3903,
                 "vlan_name": None,
                 "is_l2only": None,
-                "layer": None,
+                "network_mode": None,
                 "enable_ir": None,
                 "rt_auto": None,
                 "deploy": None,
-                "deploy_type": None,
             }
         ],
     }

@@ -63,7 +63,8 @@ def test_expand_desired_attachments_with_vpc_peers_applies_peer_payload_mutator(
         }
     ]
 
-    def clear_interfaces(peer_payload: dict[str, Any]) -> None:
+    def clear_interfaces(peer_payload: dict[str, Any], peer_detail: dict[str, Any]) -> None:
+        assert peer_detail == {}
         peer_payload["interfaces"] = []
 
     expanded = expand_desired_attachments_with_vpc_peers(

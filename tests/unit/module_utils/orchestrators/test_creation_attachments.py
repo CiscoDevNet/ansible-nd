@@ -143,7 +143,7 @@ def _entry(resource, name, identifier=31001):
         "attach": [{"ip_address": "192.0.2.10", **({"deploy": False} if resource == "network" else {})}],
     }
     if resource == "network":
-        entry["layer"] = "layer2"
+        entry["network_mode"] = "layer2"
     return entry
 
 
@@ -282,6 +282,7 @@ def test_mixed_preview_retains_existing_pending_deployment(workflow, resource, t
     result = coordinator([existing, new], check=check).run()
     assert result["changed"] is True
     assert controller.missing_queries == []
+    # Resource scope keeps the attached switch target in every topology.
     expected = {controller.names: ["EXISTING"], "switchIds": ["SW1"]}
     if check:
         assert result["check_mode_deploy_payloads"] == [expected]
@@ -352,7 +353,7 @@ def test_merged_sparse_attachment_update_preserves_cached_bindings(workflow, res
         "attach": [
             {
                 "ip_address": "192.0.2.10",
-                **({"deploy": False, "attachment_options": {"svi_enabled": True}} if resource == "network" else {"freeform_config": ""}),
+                **({"deploy": False, "attachment_options": {"svi_enabled": False}} if resource == "network" else {"freeform_config": ""}),
             }
         ],
     }

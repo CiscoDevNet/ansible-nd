@@ -57,10 +57,11 @@ def test_merged_never_removes_omitted_ports():
     assert Attachments.planned_detach_payloads("merged", [], current, desired) == []
 
 
-def test_absent_interfaces_does_not_authorize_port_removal():
+def test_authoritative_absent_interfaces_clears_ports():
     current = {("BLUE", "S1"): _attachment()}
     desired = {("BLUE", "S1"): {"networkName": "BLUE", "switchId": "S1", "attach": True}}
-    assert Attachments.planned_detach_payloads("staged", [], current, desired) == []
+    assert Attachments.planned_detach_payloads("staged", [], current, desired) == [{"networkName": "BLUE", "switchId": "S1", "vlanId": 191, "attach": False}]
+    assert Attachments.planned_detach_payloads("merged", [], current, desired) == []
 
 
 def test_explicit_empty_interfaces_removes_ports_but_reattaches_network_to_switch():
@@ -143,7 +144,7 @@ def test_changed_or_removed_group_target_stages_bounded_detach_and_exact_reattac
     calls, remaining = _record_attachment_phases(state, current, desired)
 
     assert calls == [
-        (OperationType.DELETE, [{"networkName": "BLUE", "switchId": "S1", "vlanId": 191, "attach": False}], {}),
+        (OperationType.DELETE, [{"networkName": "BLUE", "switchId": "S1", "vlanId": 191, "attach": False}], {"BLUE": {"S1"}}),
         (OperationType.CREATE, [desired[("BLUE", "S1")]], {}),
     ]
     assert remaining[("SHARED", "S1")] == current[("SHARED", "S1")]
@@ -159,7 +160,7 @@ def test_merged_explicit_group_change_updates_without_detach_or_inventing_a_unio
     before = deepcopy((current, desired))
 
     assert Attachments.planned_detach_payloads("merged", [{"network_name": "BLUE"}], current, desired) == []
-    assert Attachments.planned_attach_payloads(current, desired, preserve_omitted_fields=True) == [desired[("BLUE", "S1")]]
+    assert Attachments.planned_attach_payloads(current, desired, state="merged") == [desired[("BLUE", "S1")]]
     assert (current, desired) == before
 
 
@@ -210,7 +211,7 @@ def test_known_ios_xe_target_change_stages_exact_attachment_replacement(state, o
     calls, remaining = _record_attachment_phases(state, current, desired)
 
     assert calls == [
-        (OperationType.DELETE, [{"networkName": "BLUE", "switchId": "S1", "vlanId": 191, "attach": False}], {}),
+        (OperationType.DELETE, [{"networkName": "BLUE", "switchId": "S1", "vlanId": 191, "attach": False}], {"BLUE": {"S1"}}),
         (OperationType.CREATE, [desired[("BLUE", "S1")]], {}),
     ]
     assert remaining[("SHARED", "S1")] == current[("SHARED", "S1")]

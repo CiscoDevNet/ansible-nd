@@ -269,7 +269,15 @@ def test_child_type6_preflight_precedes_all_parent_writes(invoke, strategy_cls, 
     else:
         child.update(bgp_password="aabbccdd", bgp_passwd_encrypt="type6")
     config = [{"vrf_name": "NEW", "vrf_id": 30212, "vlan_id": 212, "deploy": False, "child_fabric_config": [child]}]
+    if inherited and state != "merged":
+        controller.attachments = []
     result, controller = invoke(config, state=state, check=check, strategy=strategy, controller=controller)
+    if inherited and state != "merged":
+        assert not result.get("failed"), result
+        child_puts = [payload for method, path, payload in controller.mutations if method == "PUT" and "/CHILD/vrfs/" in path]
+        assert len(child_puts) == (0 if check else 1)
+        assert all("bgpPassword" not in payload.get("fabricData", {}) and "bgpPasswordKeyType" not in payload.get("fabricData", {}) for payload in child_puts)
+        return
     _assert_rejected(result, controller)
     assert all("/fabrics/CHILD/vrfs" in path for method, path, _payload in controller.calls if method == "GET")
     assert [row["vrfName"] for row in controller.rows["PARENT"]] == ["OLD"]

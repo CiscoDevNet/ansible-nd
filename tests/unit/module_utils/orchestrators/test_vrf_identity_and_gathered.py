@@ -56,8 +56,10 @@ def _coordinator(monkeypatch, strategy, state, observed, *, check=False, version
     return coordinator, calls
 
 
-def _readback(strategy):
-    orchestrator = NDVrfOrchestrator(rest_send=RestSend({"state": "replaced"}), strategy=strategy)
+def _readback(strategy, version=None):
+    rest_send = RestSend({"state": "replaced"})
+    rest_send.controller_version = version
+    orchestrator = NDVrfOrchestrator(rest_send=rest_send, strategy=strategy)
     config = {"vrf_name": "BLUE", "vrf_id": 50001}
     data = orchestrator.prepare_config_data([config])[0]
     wire = VrfDataModel.from_config(data).to_payload()
@@ -89,7 +91,7 @@ def _manage(coordinator, intent, state):
 @pytest.mark.parametrize("state", ["merged", "replaced", "overridden", "staged"])
 def test_bgp_pair_and_sparse_updates_converge_through_actual_state_preparation(monkeypatch, topology, version, key_type, number, state):
     strategy = _strategy(topology)
-    observed = _readback(strategy)
+    observed = _readback(strategy, version)
     observed.setdefault("fabricData", {}).update(bgpPassword="aabbccdd", bgpPasswordKeyType=number if version.startswith("4.2.") else key_type)
     if strategy.is_child:
         observed["vrfType"] = "vxlanIbgp"

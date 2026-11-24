@@ -20,6 +20,7 @@ from unittest.mock import patch
 
 from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field, ValidationError
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.types import ConfigActions
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
@@ -115,9 +116,6 @@ class _StagedVrfAttachmentCoordinator:
     def _planned_detach_payloads(self, state, config, current, desired):
         return VrfAttachmentManager(self).planned_detach_payloads(state, config, current, desired)
 
-    def _planned_attach_payloads(self, current, desired):
-        return VrfAttachmentManager(self).planned_attach_payloads(current, desired)
-
     @staticmethod
     def _record_deploy_target(deploy_targets, vrf_name, switch_id):
         deploy_targets.setdefault(vrf_name, set())
@@ -188,13 +186,12 @@ def test_vrf_workflow_coordinator_resolves_strategy_with_gen3_restsend():
     assert coordinator.workflow_trace[0]["event"] == "fabric_resolver_start"
 
 
-def test_vrf_parent_child_task_args_use_merged_for_mutating_partial_child_overrides():
+def test_vrf_parent_child_task_args_follow_property_state_without_child_deletion():
     """
     # Summary
 
-    Verify generated child tasks use merged semantics for parent mutating
-    states because child_fabric_config carries partial per-child overrides, not
-    full child VRF definitions.
+    Verify merged child intent stays sparse, while authoritative parent states
+    replace named child definitions without using child-wide deletion scope.
     """
     strategy = MulticlusterParentVrfStrategy(
         fabric_name="MCFG_R",
@@ -207,7 +204,7 @@ def test_vrf_parent_child_task_args_use_merged_for_mutating_partial_child_overri
             vrf_configs=[{"vrf_name": "BLUE", "adv_host_routes": True}],
             state=state,
         )
-        assert args["state"] == "merged"
+        assert args["state"] == ("merged" if state == "merged" else "replaced")
 
     args = strategy.build_child_task_args(
         child_fabric_name="AK-VXLAN",
@@ -349,6 +346,15 @@ def test_parent_sparse_child_trm_update_inherits_enabled_state_and_converges(
     validated = validator.validate({"config": config})
     assert not validated.error_messages
 
+    if state != "merged":
+        args = {"fabric_name": "PARENT", "state": state, "config": deepcopy(validated.validated_parameters["config"]), "output_level": "normal"}
+        coordinator = VrfWorkflowCoordinator(_Module(args, check_mode=True), strategy)
+        with pytest.raises(ValueError, match="require|TRM"):
+            coordinator._handle_parent_workflow(args, strategy.fabric_type)
+        assert controller["parents"] == []
+        assert controller["writes"] == []
+        return
+
     for run, check_mode in enumerate((True, False, False, True)):
         args = {"fabric_name": "PARENT", "state": state, "config": deepcopy(validated.validated_parameters["config"]), "output_level": "normal"}
         coordinator = VrfWorkflowCoordinator(_Module(args, check_mode=check_mode), strategy)
@@ -370,6 +376,46 @@ def test_parent_sparse_child_trm_update_inherits_enabled_state_and_converges(
     assert controller["inventory"][0]["vrfId"] == 50000
     assert controller["inventory"][0]["vlanId"] == 2001
     assert all("rp_address" not in task["config"][0] and "trm_enable" not in task["config"][0] for task in controller["parents"])
+
+
+@pytest.mark.parametrize("strategy_cls", [MultisiteParentVrfStrategy, MulticlusterParentVrfStrategy])
+@pytest.mark.parametrize("state", ["replaced", "overridden", "staged"])
+@pytest.mark.parametrize("explicit_member", [False, True])
+def test_authoritative_parent_resets_omitted_child_options_and_preserves_parent_context(strategy_cls, state, explicit_member, child_vrf_trm_controller):
+    controller = child_vrf_trm_controller
+    row = controller["inventory"][0]
+    row["coreData"] = {"vrfVlanName": "INHERITED", "mtu": 9000, "routeTargetImport": ["65000:90"]}
+    row["fabricData"] = {
+        "l3VniWithoutVlan": False,
+        "bgpAsOverride": True,
+        "bgpAllowAsIn": True,
+        "bgpAllowAsInNum": 6,
+        "bgpLogNeighborChange": True,
+        "bgpPassword": "aabbccdd",
+        "bgpPasswordKeyType": "type6",
+        "trmData": {"ipv4Trm": True, "v4RpAbsent": True, "l3VniMulticastGroup": "239.1.1.1", "mvpnRouteTargetImport": ["65000:1"]},
+    }
+    member = {"fabricName": "c1", "fabricState": "member", "managementType": "vxlanIbgp"}
+    if strategy_cls is MulticlusterParentVrfStrategy:
+        member["clusterName"] = "cluster1"
+    strategy = strategy_cls(fabric_name="PARENT", fabric_data={"members": [member]})
+    config = [{"vrf_name": "BLUE", **({"child_fabric_config": [{"fabric_name": "c1"}]} if explicit_member else {})}]
+    inherited = deepcopy(row["coreData"])
+    for run, check_mode in enumerate((True, False, False, True)):
+        args = {"fabric_name": "PARENT", "state": state, "config": deepcopy(config), "output_level": "normal"}
+        result = VrfWorkflowCoordinator(_Module(args, check_mode=check_mode), strategy)._handle_parent_workflow(args, strategy.fabric_type)
+        assert not result.get("failed"), result
+        assert result["changed"] is (run < 2)
+        assert len(controller["writes"]) == (0 if run == 0 else 1)
+        assert controller["inventory"][0]["coreData"] == inherited
+        assert controller["inventory"][0]["vrfId"] == 50000
+        assert controller["inventory"][0]["vlanId"] == 2001
+    fabric = controller["writes"][0]["fabricData"]
+    assert fabric["bgpAsOverride"] is False
+    assert fabric["bgpAllowAsIn"] is False and fabric["bgpAllowAsInNum"] == 3
+    assert fabric["trmData"]["ipv4Trm"] is False
+    assert "bgpPassword" not in fabric and "bgpPasswordKeyType" not in fabric
+    assert not fabric["trmData"].get("mvpnRouteTargetImport")
 
 
 @pytest.mark.parametrize("strategy_cls", [MultisiteParentVrfStrategy, MulticlusterParentVrfStrategy])
@@ -474,12 +520,18 @@ def test_sparse_new_child_type_uses_cached_fabric_context(multicluster, state, v
     try:
         proposed = sm.proposed.get(("BLUE", "c1"))
         assert isinstance(proposed, _ConcreteVxlanVrfModel)
-        assert proposed.to_payload(exclude_unset=True) == {
+        payload = proposed.to_payload(exclude_unset=True)
+        assert {key: value for key, value in payload.items() if key != "fabricData"} == {
             "fabricName": "c1",
             "vrfName": "BLUE",
             "vrfType": vrf_type,
-            "fabricData": {"bgpLogNeighborChange": False},
         }
+        assert payload["fabricData"]["bgpLogNeighborChange"] is False
+        if state == "merged":
+            assert payload["fabricData"] == {"bgpLogNeighborChange": False}
+        else:
+            assert payload["fabricData"]["bgpAllowAsInNum"] == 3
+            assert payload["fabricData"]["trmData"]["ipv4Trm"] is False
         assert sm.output.format()["proposed"][0]["vrf_type"] == vrf_type
         assert controller["queries"] == [("c1", multicluster)]
         assert controller["writes"] == []
@@ -947,9 +999,6 @@ class _ReplacedVrfCoordinator:
     def _planned_detach_payloads(self, state, config, current, desired):
         return self.attachments.planned_detach_payloads(state, config, current, desired)
 
-    def _planned_attach_payloads(self, current, desired):
-        return self.attachments.planned_attach_payloads(current, desired)
-
     def _attachment_map_after_detach(self, current, payloads):
         return self.attachments.attachment_map_after_detach(current, payloads)
 
@@ -1416,7 +1465,7 @@ def test_vrf_delete_wait_blocks_on_pending_attachment_even_when_vrf_status_is_re
         )
 
 
-def test_vrf_delete_wait_retries_undeploy_for_pending_status():
+def test_vrf_delete_wait_does_not_retry_name_only_without_switch_targets():
     class Module:
         params = {}
 
@@ -1449,7 +1498,7 @@ def test_vrf_delete_wait_retries_undeploy_for_pending_status():
             _StandaloneStrategy(),
         )
 
-    assert deploy_payloads == [{"vrfNames": ["BLUE"]}]
+    assert deploy_payloads == []
 
 
 @pytest.mark.parametrize(
@@ -1496,10 +1545,8 @@ def test_vrf_delete_wait_retries_and_blocks_failed_or_out_of_sync_status(source,
             _StandaloneStrategy(),
         )
 
-    expected = {"vrfNames": ["BLUE"]}
-    if source == "attachment" and switch_id:
-        expected["switchIds"] = [switch_id]
-    assert deploy_payloads == [expected]
+    expected = [{"vrfNames": ["BLUE"], "switchIds": [switch_id]}] if switch_id else []
+    assert deploy_payloads == expected
 
 
 @pytest.mark.parametrize(
@@ -1928,11 +1975,11 @@ def test_vrf_workflow_coordinator_attachment_match_compares_extra_config_only_wh
     assert VrfAttachmentManager.attachment_matches(existing, explicit_clear) is False
 
 
-def test_vrf_workflow_coordinator_attachment_match_compares_instance_values_only_when_supplied():
+def test_vrf_workflow_coordinator_attachment_match_compares_complete_effective_options():
     """
     # Summary
 
-    Verify omitted attachment_options is not treated as an implicit clear.
+    Verify the comparator recognizes cleared siblings in complete effective options.
     """
     existing = {
         "vrfName": "ansible-vrf",
@@ -1965,7 +2012,7 @@ def test_vrf_workflow_coordinator_attachment_match_compares_instance_values_only
 
     assert VrfAttachmentManager.attachment_matches(existing, omitted) is True
     assert VrfAttachmentManager.attachment_matches(existing, explicit_clear) is False
-    assert VrfAttachmentManager.attachment_matches(existing, explicit_subset) is True
+    assert VrfAttachmentManager.attachment_matches(existing, explicit_subset) is False
 
 
 def test_vrf_workflow_coordinator_00004_child_write_ignores_null_parser_defaults():
@@ -2332,10 +2379,10 @@ def test_vrf_workflow_coordinator_00020_parent_deploy_deferred_after_child_tasks
         "fabric_name": "msd_p",
         "state": "merged",
         "output_level": "debug",
+        "config_actions": {"type": "switch"},
         "config": [
             {
                 "vrf_name": "ansible-msd-vrf",
-                "deploy": True,
                 "attach": [{"ip_address": "192.168.1.224"}],
                 "child_fabric_config": [
                     {
@@ -2358,7 +2405,6 @@ def test_vrf_workflow_coordinator_00020_parent_deploy_deferred_after_child_tasks
         parent_vrf = args["config"][0]
         assert defer_deploy is True
         assert parent_vrf["attach"] == [{"ip_address": "192.168.1.224"}]
-        assert parent_vrf["deploy"] is True
         assert "child_fabric_config" not in parent_vrf
         return {
             "changed": True,
@@ -2390,15 +2436,12 @@ def test_vrf_workflow_coordinator_00020_parent_deploy_deferred_after_child_tasks
 
     def deploy_parent(_args, _strategy, payload):
         call_order.append("deploy")
-        assert payload == {
-            "vrfNames": ["ansible-msd-vrf"],
-            "switchIds": ["SERIAL1"],
-        }
+        assert payload == {"switchIds": ["SERIAL1"]}
         return {}
 
     object.__setattr__(coordinator, "_run_state_machine_with_attachments", run_parent)
     object.__setattr__(coordinator, "_run_child_task", run_child)
-    object.__setattr__(coordinator, "_deploy_vrf_attachments", deploy_parent)
+    object.__setattr__(coordinator, "_deploy_vrf_switches", deploy_parent)
 
     result = coordinator._handle_parent_workflow(dict(module_args), "multisite_parent")
 
@@ -2475,12 +2518,7 @@ def test_vrf_workflow_coordinator_00030_build_pending_vrf_deploy_payload():
         _ParentStrategy(),
     )
 
-    assert payloads == [
-        {
-            "switchIds": ["SERIAL1"],
-            "vrfNames": ["ansible-msd-vrf"],
-        }
-    ]
+    assert payloads == [{"vrfNames": ["ansible-deployed", "ansible-msd-vrf"]}]
 
 
 def test_vrf_workflow_coordinator_00031_build_pending_vrf_deploy_payload_for_pending_detach():
@@ -2507,12 +2545,7 @@ def test_vrf_workflow_coordinator_00031_build_pending_vrf_deploy_payload_for_pen
         _ParentStrategy(),
     )
 
-    assert payloads == [
-        {
-            "switchIds": ["SERIAL1"],
-            "vrfNames": ["ansible-msd-vrf"],
-        }
-    ]
+    assert payloads == [{"vrfNames": ["ansible-msd-vrf"], "switchIds": ["SERIAL1"]}]
 
 
 def test_vrf_workflow_coordinator_00031a_build_pending_vrf_deploy_payload_for_pending_attach():
@@ -2539,12 +2572,7 @@ def test_vrf_workflow_coordinator_00031a_build_pending_vrf_deploy_payload_for_pe
         _ParentStrategy(),
     )
 
-    assert payloads == [
-        {
-            "switchIds": ["SERIAL1"],
-            "vrfNames": ["ansible-msd-vrf"],
-        }
-    ]
+    assert payloads == [{"vrfNames": ["ansible-msd-vrf"], "switchIds": ["SERIAL1"]}]
 
 
 def test_vrf_workflow_coordinator_00032_pending_detach_deploy_payload_honors_deploy_false():
@@ -2573,18 +2601,18 @@ def test_vrf_workflow_coordinator_00032_pending_detach_deploy_payload_honors_dep
     assert payloads == []
 
 
-def test_vrf_workflow_coordinator_00040_build_vrf_level_deploy_payload():
+def test_vrf_workflow_coordinator_00040_resource_scope_groups_names_by_switch_ids():
     """
     # Summary
 
-    Verify deploy_type=vrf omits switchIds even when attachment changes
-    provide affected switch IDs.
+    Verify resource scope groups VRFs by their exact target switches.
     """
     coordinator = VrfWorkflowCoordinator.__new__(VrfWorkflowCoordinator)
+    coordinator.config_actions = ConfigActions(save=False, deploy=True, type="resource", provided=True)
     payloads = coordinator._build_deploy_payloads(
         [
-            {"vrf_name": "ansible-switch-scope", "deploy_type": "switch"},
-            {"vrf_name": "ansible-vrf-scope", "deploy_type": "vrf"},
+            {"vrf_name": "ansible-switch-scope"},
+            {"vrf_name": "ansible-vrf-scope"},
         ],
         {
             "ansible-switch-scope": {"SERIAL1"},
@@ -2593,30 +2621,51 @@ def test_vrf_workflow_coordinator_00040_build_vrf_level_deploy_payload():
     )
 
     assert payloads == [
-        {
-            "switchIds": ["SERIAL1"],
-            "vrfNames": ["ansible-switch-scope"],
-        },
-        {
-            "vrfNames": ["ansible-vrf-scope"],
-        },
+        {"vrfNames": ["ansible-switch-scope"], "switchIds": ["SERIAL1"]},
+        {"vrfNames": ["ansible-vrf-scope"], "switchIds": ["SERIAL2"]},
     ]
 
 
-def test_vrf_workflow_coordinator_00045_build_switch_level_deploy_payload_batches_by_switch_set():
+def test_vrf_msd_parent_resource_scope_includes_attached_switch_targets():
+    strategy = MultisiteParentVrfStrategy(fabric_name="MSD", fabric_data={"members": []})
+    coordinator = VrfWorkflowCoordinator(
+        module=_Module({"fabric_name": "MSD", "state": "merged", "config": []}),
+        strategy=strategy,
+    )
+    coordinator.config_actions = ConfigActions(save=False, deploy=True, type="resource", provided=False)
+
+    payloads = coordinator._build_deploy_payloads([{"vrf_name": "BLUE"}], {"BLUE": {"SERIAL1", "SERIAL2"}})
+
+    assert payloads == [{"vrfNames": ["BLUE"], "switchIds": ["SERIAL1", "SERIAL2"]}]
+
+
+def test_vrf_msd_parent_resource_scope_without_attachments_keeps_name_scope():
+    strategy = MultisiteParentVrfStrategy(fabric_name="MSD", fabric_data={"members": []})
+    coordinator = VrfWorkflowCoordinator(
+        module=_Module({"fabric_name": "MSD", "state": "merged", "config": []}),
+        strategy=strategy,
+    )
+    coordinator.config_actions = ConfigActions(save=False, deploy=True, type="resource", provided=False)
+
+    payloads = coordinator._build_deploy_payloads([{"vrf_name": "BLUE"}], {"BLUE": set()})
+
+    assert payloads == [{"vrfNames": ["BLUE"]}]
+
+
+def test_vrf_workflow_coordinator_00045_build_switch_scope_deploy_payload_unions_switch_ids():
     """
     # Summary
 
-    Verify switch-level deploy payloads batch VRFs that share the same switch
-    set instead of emitting one deploy request per VRF.
+    Verify switch-level deploy payloads target the union of affected switches.
     """
     coordinator = VrfWorkflowCoordinator.__new__(VrfWorkflowCoordinator)
+    coordinator.config_actions = ConfigActions(save=False, deploy=True, type="switch", provided=True)
     payloads = coordinator._build_deploy_payloads(
         [
-            {"vrf_name": "ansible-vrf-a", "deploy_type": "switch"},
-            {"vrf_name": "ansible-vrf-b", "deploy_type": "switch"},
-            {"vrf_name": "ansible-vrf-c", "deploy_type": "switch"},
-            {"vrf_name": "ansible-vrf-d", "deploy_type": "vrf"},
+            {"vrf_name": "ansible-vrf-a"},
+            {"vrf_name": "ansible-vrf-b"},
+            {"vrf_name": "ansible-vrf-c"},
+            {"vrf_name": "ansible-vrf-d"},
         ],
         {
             "ansible-vrf-a": {"SERIAL1", "SERIAL2"},
@@ -2626,19 +2675,7 @@ def test_vrf_workflow_coordinator_00045_build_switch_level_deploy_payload_batche
         },
     )
 
-    assert payloads == [
-        {
-            "switchIds": ["SERIAL1", "SERIAL2"],
-            "vrfNames": ["ansible-vrf-a", "ansible-vrf-b"],
-        },
-        {
-            "switchIds": ["SERIAL3"],
-            "vrfNames": ["ansible-vrf-c"],
-        },
-        {
-            "vrfNames": ["ansible-vrf-d"],
-        },
-    ]
+    assert payloads == [{"switchIds": ["SERIAL1", "SERIAL2", "SERIAL3", "SERIAL4"]}]
 
 
 def test_vrf_workflow_coordinator_00050_deleted_ignores_child_fabric_config():
@@ -2795,7 +2832,6 @@ def test_vrf_workflow_coordinator_00070_deleted_deploys_before_delete():
             {
                 "vrf_name": "ansible-msd-vrf",
                 "deploy": False,
-                "deploy_type": "vrf",
             }
         ],
     }
@@ -2812,7 +2848,7 @@ def test_vrf_workflow_coordinator_00070_deleted_deploys_before_delete():
 
     def deploy(_args, _strategy, payload):
         call_order.append("deploy")
-        assert payload == {"vrfNames": ["ansible-msd-vrf"]}
+        assert payload == {"vrfNames": ["ansible-msd-vrf"], "switchIds": ["SERIAL1"]}
         return {}
 
     def wait(_args, _strategy, vrf_names=None):
@@ -2947,8 +2983,8 @@ def test_vrf_workflow_coordinator_00075_deleted_empty_config_deletes_state_machi
     def detach(args, _strategy, vrf_names=None):
         call_order.append("detach")
         assert args["config"] == [
-            {"vrf_name": "ansible-msd-a", "deploy_type": "vrf"},
-            {"vrf_name": "ansible-msd-b", "deploy_type": "vrf"},
+            {"vrf_name": "ansible-msd-a"},
+            {"vrf_name": "ansible-msd-b"},
         ]
         assert module_args["config"] == []
         assert vrf_names == ["ansible-msd-a", "ansible-msd-b"]
@@ -3076,6 +3112,7 @@ def test_vrf_workflow_coordinator_00080_overridden_deploys_omitted_detach_before
         call_order.append("deploy")
         assert payload == {
             "vrfNames": ["ansible-delete-vrf"],
+            "switchIds": ["SERIAL1"],
         }
         return {}
 
@@ -3187,12 +3224,7 @@ def test_vrf_workflow_coordinator_overridden_omitted_delete_keeps_switch_scope_o
         ],
     )
 
-    assert deploy_payloads == [
-        {
-            "switchIds": ["SERIAL1"],
-            "vrfNames": ["ansible-delete-vrf"],
-        }
-    ]
+    assert deploy_payloads == [{"vrfNames": ["ansible-delete-vrf"], "switchIds": ["SERIAL1"]}]
     assert traces == [{"deploy_targets": {"ansible-delete-vrf": {"SERIAL1"}}}, {}]
 
 
@@ -3204,7 +3236,6 @@ def test_vrf_workflow_coordinator_check_mode_deleted_skips_deploy_and_wait():
         "config": [
             {
                 "vrf_name": "ansible-msd-vrf",
-                "deploy_type": "vrf",
             }
         ],
     }
@@ -3253,7 +3284,7 @@ def test_vrf_workflow_coordinator_check_mode_deleted_skips_deploy_and_wait():
 
     assert call_order == ["detach", "delete"]
     assert result["changed"] is True
-    assert result["check_mode_deploy_payloads"] == [{"vrfNames": ["ansible-msd-vrf"]}]
+    assert result["check_mode_deploy_payloads"] == [{"vrfNames": ["ansible-msd-vrf"], "switchIds": ["SERIAL1"]}]
 
 
 def test_vrf_workflow_coordinator_deleted_deploys_pending_vrfs_before_delete():
@@ -3280,7 +3311,7 @@ def test_vrf_workflow_coordinator_deleted_deploys_pending_vrfs_before_delete():
         call_order.append("deploy")
         assert args == module_args
         assert strategy.fabric_name == "MCFG_C"
-        assert payload == {"vrfNames": ["ansible-nd-vrf-mcfg-merged"]}
+        assert payload == {"vrfNames": ["ansible-nd-vrf-mcfg-merged"], "switchIds": ["SERIAL1"]}
         return {"changed": True, "failed": False}
 
     def wait(args, strategy, vrf_names):
@@ -3289,6 +3320,9 @@ def test_vrf_workflow_coordinator_deleted_deploys_pending_vrfs_before_delete():
         assert strategy.fabric_name == "MCFG_C"
         assert vrf_names == ["ansible-nd-vrf-mcfg-merged"]
 
+    object.__setattr__(
+        coordinator, "_current_attachment_details", lambda *_args: [{"vrfName": "ansible-nd-vrf-mcfg-merged", "switchId": "SERIAL1", "attach": True}]
+    )
     object.__setattr__(coordinator, "_deploy_vrf_attachments", deploy)
     object.__setattr__(coordinator, "_wait_for_vrfs_delete_ready", wait)
 
@@ -3303,7 +3337,7 @@ def test_vrf_workflow_coordinator_deleted_deploys_pending_vrfs_before_delete():
     assert traces == [{"changed": True, "failed": False}]
 
 
-def test_vrf_workflow_coordinator_delete_all_parent_cleanup_uses_vrf_deploy_scope():
+def test_vrf_workflow_coordinator_delete_all_parent_cleanup_uses_shared_action_scope():
     coordinator = VrfWorkflowCoordinator(
         module=_Module({"fabric_name": "MCFG_C", "state": "deleted", "config": []}),
         strategy=_McfgParentStrategy(),
@@ -3314,10 +3348,7 @@ def test_vrf_workflow_coordinator_delete_all_parent_cleanup_uses_vrf_deploy_scop
         _McfgParentStrategy(),
     )
 
-    assert config == {
-        "vrf_name": "ansible-nd-vrf-mcfg-merged",
-        "deploy_type": "vrf",
-    }
+    assert config == {"vrf_name": "ansible-nd-vrf-mcfg-merged"}
 
 
 def test_vrf_workflow_coordinator_mcfg_parent_uses_manage_deploy_endpoint():
@@ -3328,6 +3359,69 @@ def test_vrf_workflow_coordinator_mcfg_parent_uses_manage_deploy_endpoint():
     endpoint = strategy.vrf_actions_deploy_post_cls()(fabric_name="MCFG_C")
 
     assert endpoint.path == "/api/v1/oneManage/manage/fabrics/MCFG_C/vrfActions/deploy"
+
+
+@pytest.mark.parametrize(
+    "strategy,expected_path",
+    [
+        (
+            StandaloneVrfStrategy(fabric_name="AK-VXLAN", fabric_data={"managementType": "vxlanIbgp"}),
+            "/api/v1/manage/fabrics/AK-VXLAN/switchActions/deploy?forceShowRun=false",
+        ),
+        (
+            MultisiteParentVrfStrategy(fabric_name="MSD_FAB", fabric_data={"managementType": "vxlanIbgp"}),
+            "/api/v1/manage/fabrics/MSD_FAB/switchActions/deploy?forceShowRun=false",
+        ),
+        (
+            MulticlusterParentVrfStrategy(fabric_name="MCFG_FAB", fabric_data={"managementType": "vxlanIbgp"}),
+            "/api/v1/oneManage/manage/fabrics/MCFG_FAB/switchActions/deploy?forceShowRun=false",
+        ),
+    ],
+)
+def test_vrf_switch_scope_uses_switch_actions_endpoint(strategy, expected_path):
+    class Coordinator:
+        def __init__(self):
+            self.requests = []
+
+        def _new_vrf_orchestrator(self, _module_args, _strategy):
+            coordinator = self
+
+            class FakeOrchestrator:
+                def _make_endpoint(self, endpoint_cls):
+                    endpoint = endpoint_cls()
+                    endpoint.fabric_name = strategy.fabric_name
+                    strategy.configure_endpoint(endpoint)
+                    return endpoint
+
+                def _request(self, **kwargs):
+                    coordinator.requests.append(kwargs)
+                    return {"status": "accepted"}
+
+            return FakeOrchestrator(), object()
+
+        def _finalize_api_trace(self, _results):
+            return {"changed": True, "failed": False}
+
+        def _trace(self, _event, **_details):
+            pass
+
+    coordinator = Coordinator()
+    manager = VrfAttachmentManager(coordinator)
+
+    manager.deploy_vrf_switches(
+        {"config": []},
+        strategy,
+        {"switchIds": ["983U3ECVGVA", "96TF3333WAO"]},
+    )
+
+    assert coordinator.requests == [
+        {
+            "path": expected_path,
+            "verb": HttpVerbEnum.POST,
+            "data": {"switchIds": ["983U3ECVGVA", "96TF3333WAO"]},
+            "operation_type": OperationType.UPDATE,
+        }
+    ]
 
 
 def test_vrf_workflow_coordinator_check_mode_attachment_phase_returns_planned_payload():

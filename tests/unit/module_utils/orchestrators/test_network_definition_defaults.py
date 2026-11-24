@@ -27,7 +27,7 @@ def _plan(fixture, explicit_multicast=True):
     wanted = deepcopy(fixture["desired_config"])
     # Preserve the captured desired intent using the canonical module fields.
     for row in wanted:
-        row["layer"] = "layer2" if row.pop("is_l2only") else "layer3"
+        row["network_mode"] = "layer2" if row.pop("is_l2only") else "layer3"
     if explicit_multicast:
         groups = {row["networkName"]: row["l2Data"]["fabricData"]["multicastGroup"] for row in fixture["network_definitions"]}
         for row in wanted:
@@ -97,7 +97,7 @@ def test_removed_rt_auto_readback_does_not_invent_a_manageable_difference():
 
 
 @pytest.mark.parametrize(
-    "network_type,layer,vlan_network_type",
+    "network_type,network_mode,vlan_network_type",
     [
         ("vxlanIbgp", "layer2", "normal"),
         ("vxlanIbgp", "layer2WithVrf", "normal"),
@@ -106,11 +106,25 @@ def test_removed_rt_auto_readback_does_not_invent_a_manageable_difference():
         ("vxlanCampus", "layer3", "normal"),
     ],
 )
-def test_observed_normal_l3_ibgp_defaults_do_not_change_other_network_contracts(network_type, layer, vlan_network_type):
+def test_observed_normal_l3_ibgp_defaults_do_not_change_other_network_contracts(network_type, network_mode, vlan_network_type):
     row = deepcopy(_fixture()["network_definitions"][0])
-    row.update(networkType=network_type, networkMode=layer, vlanNetworkType=vlan_network_type)
+    row.update(networkType=network_type, networkMode=network_mode, vlanNetworkType=vlan_network_type)
     model = NetworkBaseModel.from_response(row)
     assert model.to_reverse_diff_dict()["l2Data"]["xConnect"] is False
+
+
+@pytest.mark.parametrize("trm_enabled,igmp_version,ignored", [(False, 2, True), (False, 3, False), (True, 2, False), (None, 2, False)])
+def test_campus_ignores_only_confirmed_inactive_default_igmp_echo(trm_enabled, igmp_version, ignored):
+    row = deepcopy(_fixture()["network_definitions"][0])
+    row["networkType"] = "vxlanCampus"
+    fabric = row["l3Data"]["fabricData"]
+    fabric.update(ipv4Trm=trm_enabled, igmpVersion=igmp_version)
+    model = NetworkBaseModel.from_response(row)
+    reverse = model.to_reverse_diff_dict()["l3Data"]["fabricData"]
+    assert ("igmpVersion" not in reverse) is ignored
+    assert model.to_payload()["l3Data"]["fabricData"]["igmpVersion"] == igmp_version
+    assert model.to_diff_dict()["l3Data"]["fabricData"]["igmpVersion"] == igmp_version
+    assert row["l3Data"]["fabricData"]["igmpVersion"] == igmp_version
 
 
 def test_custom_explicit_multicast_group_is_not_replaced_by_a_global_default():

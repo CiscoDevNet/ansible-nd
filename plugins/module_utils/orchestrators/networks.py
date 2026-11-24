@@ -14,7 +14,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
-    NetworkLayer,
+    NetworkMode,
     NetworkType,
     VlanNetworkType,
 )
@@ -119,21 +119,21 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 return candidate
         return NetworkType.VXLAN_IBGP.value
 
-    def _network_layer(self, config: dict[str, Any]) -> str | None:
-        explicit = self._value(config, "layer")
+    def _network_mode(self, config: dict[str, Any]) -> str | None:
+        explicit = self._value(config, "network_mode")
         if explicit:
             return explicit
-        if self.should_defer_omitted_layer(config, self.rest_send.params.get("state", "merged")):
+        if self.should_defer_omitted_network_mode(config, self.rest_send.params.get("state", "merged")):
             return None
-        return NetworkLayer.LAYER3.value
+        return NetworkMode.LAYER3.value
 
     @staticmethod
     def _allows_l3_data(vlan_network_type: str | None) -> bool:
         return vlan_network_type in (None, VlanNetworkType.NORMAL.value, VlanNetworkType.PRIVATE_PRIMARY.value)
 
     @staticmethod
-    def _network_mode_allows_l3_data(layer: str | None) -> bool:
-        return layer in (NetworkLayer.LAYER3.value, NetworkLayer.LAYER2_WITH_VRF.value)
+    def _network_mode_allows_l3_data(network_mode: str | None) -> bool:
+        return network_mode in (NetworkMode.LAYER3.value, NetworkMode.LAYER2_WITH_VRF.value)
 
     def _l2_data(self, config: dict[str, Any], network_type: str) -> dict[str, Any] | None:
         fabric_data_payload = None
@@ -166,15 +166,15 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 }
             )
             model = DefaultL2DataModel(**{k: v for k, v in kwargs.items() if v is not None})
-        payload = model.to_payload(exclude_unset=self.rest_send.params.get("state", "merged") == "merged" or bool(self.strategy and self.strategy.is_child))
+        payload = model.to_payload(exclude_unset=self.rest_send.params.get("state", "merged") == "merged")
         if fabric_data_payload and isinstance(payload, dict):
             payload["fabricData"] = fabric_data_payload
-        return payload or ({} if self._network_layer(config) is not None else None)
+        return payload or ({} if self._network_mode(config) is not None else None)
 
     def _l3_data(self, config: dict[str, Any], network_type: str) -> dict[str, Any] | None:
         # Merged definitions retain supplied fields; creation defaults remain on the payload models.
         sparse = self.rest_send.params.get("state", "merged") == "merged"
-        exclude_unset = sparse or bool(self.strategy and self.strategy.is_child)
+        exclude_unset = sparse
         common = {
             "gateway_ipv4_address": self._value(config, "gateway_ipv4_address", "gatewayIpv4Address"),
             "gateway_ipv6_address": self._value(config, "gateway_ipv6_address", "gatewayIpv6Address"),
@@ -187,7 +187,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             NetworkType.AIML_ROUTED.value,
             NetworkType.CLASSIC_LAN_ENHANCED.value,
         ):
-            if self._network_layer(config) == NetworkLayer.LAYER2.value:
+            if self._network_mode(config) == NetworkMode.LAYER2.value:
                 return None
             model = ClassicOrRoutedL3DataModel(**{k: v for k, v in common.items() if v is not None})
             payload = model.to_payload(exclude_unset=exclude_unset)
@@ -239,15 +239,15 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             fabric_data=fabric_data,
         )
         model = DefaultL3DataModel(**{key: value for key, value in l3_values.items() if value is not None})
-        if self._network_layer(config) == NetworkLayer.LAYER2.value:
+        if self._network_mode(config) == NetworkMode.LAYER2.value:
             return model.to_layer2_payload(exclude_unset=exclude_unset) or None
         payload = model.to_payload(exclude_unset=exclude_unset)
-        if self._network_layer(config) is None and not payload.get("fabricData"):
+        if self._network_mode(config) is None and not payload.get("fabricData"):
             payload.pop("fabricData", None)
         return payload or None
 
     def _transform_config_to_payload_model_data(self, config: dict[str, Any], fabric_name: str) -> dict[str, Any]:
-        if not self.has_network_definition_intent(config):
+        if not self.strategy.is_child and not self.has_network_definition_intent(config):
             return {
                 "fabric_name": self._value(config, "fabric_name", "fabricName", default=fabric_name),
                 "network_name": self._value(config, "network_name", "networkName"),
@@ -290,7 +290,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             return transformed
 
         if network_type == NetworkType.EXTERNAL_CONNECTIVITY.value:
-            transformed.update(layer=NetworkLayer.LAYER2.value, vrf_name="NA")
+            transformed.update(network_mode=NetworkMode.LAYER2.value, vrf_name="NA")
             vlan_name = self._value(config, "vlan_name", "vlanName")
             if vlan_name is not None:
                 transformed["l2_data"] = {"vlanName": vlan_name}
@@ -304,17 +304,21 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         if "vlan_network_type" in transformed:
             transformed["vlan_network_type"] = vlan_network_type
 
-        layer = self._network_layer(config)
-        if layer is not None:
-            transformed["layer"] = layer
-        if layer == NetworkLayer.LAYER2.value and transformed.get("vrf_name") in (None, ""):
+        network_mode = self._network_mode(config)
+        if network_mode is not None:
+            transformed["network_mode"] = network_mode
+        if network_mode == NetworkMode.LAYER2.value and transformed.get("vrf_name") in (None, ""):
             transformed["vrf_name"] = "NA"
         l2_data = self._l2_data(config, network_type)
         if vlan_network_type == VlanNetworkType.PRIVATE_PRIMARY.value and isinstance(l2_data, dict):
             l2_data.setdefault("fabricData", {})
         if l2_data is not None:
             transformed["l2_data"] = l2_data
-        if layer is None or self._network_mode_allows_l3_data(layer) or (layer == NetworkLayer.LAYER2.value and not self._is_mcfg_parent()):
+        if (
+            network_mode is None
+            or self._network_mode_allows_l3_data(network_mode)
+            or (network_mode == NetworkMode.LAYER2.value and not self._is_mcfg_parent())
+        ):
             l3_data = self._l3_data(config, network_type)
             if l3_data:
                 transformed["l3_data"] = l3_data
@@ -393,7 +397,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
     ) -> dict[str, Any]:
         template_config = {
             "isLayer2Only": "true",
-            "networkMode": NetworkLayer.LAYER2.value,
+            "networkMode": NetworkMode.LAYER2.value,
             "networkName": self._value(config, "network_name", "networkName"),
             "networkType": NetworkType.USER_DEFINED.value,
             "nveId": "1",
@@ -423,7 +427,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             "vrf_name": "NA",
             "network_id": transformed.get("network_id"),
             "vlan_id": self._value(config, "vlan_id", "vlanId"),
-            "layer": NetworkLayer.LAYER2.value,
+            "network_mode": NetworkMode.LAYER2.value,
             "network_template_name": "Pvlan_Secondary_Network",
             "network_extension_template_name": "Pvlan_Secondary_Network",
             "network_template_config": template_config,
@@ -483,44 +487,37 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         return any(config.get(key) is not None for key in cls.definition_intent_fields)
 
     @classmethod
-    def should_defer_omitted_layer(cls, config: Any, state: str) -> bool:
-        """Return True when omitted layer must not be locally derived before existing state is known."""
+    def should_defer_omitted_network_mode(cls, config: Any, state: str) -> bool:
+        """Return True when omitted network_mode must not be locally derived before existing state is known."""
         if not isinstance(config, dict):
             return False
-        if config.get("layer") is not None:
+        if config.get("network_mode") is not None:
             return False
         if state in ("deleted", "gathered"):
             return True
-        if not cls.has_network_definition_intent(config):
-            return False
-        vlan_network_type = config.get("vlan_network_type") or config.get("vlanNetworkType")
-        if vlan_network_type in _VLAN_NETWORK_TYPE_ALIASES:
-            vlan_network_type = _VLAN_NETWORK_TYPE_ALIASES[vlan_network_type]
-        if vlan_network_type in _PRIVATE_SECONDARY_TEMPLATE_BY_TYPE:
-            return False
-        return state == "merged" or vlan_network_type is None
+        return cls.has_network_definition_intent(config)
 
     def preflight_create(self, model_instances: Sequence[NDNetworkModel]) -> None:
         """
         # Summary
 
-        Require a layer and, for External Networks, a VLAN before creation.
+        Require a network_mode and, for External Networks, a VLAN before creation.
 
         ## Raises
 
         ### ValueError
 
-        - A new Network lacks its layer or a new External Network lacks its VLAN ID.
+        - A new Network lacks its network_mode or a new External Network lacks its VLAN ID.
         """
-        missing_layer = []
+        missing_network_mode = []
         missing_vlan = []
         for model in model_instances:
-            if getattr(model, "layer", None) is None:
-                missing_layer.append(model.network_name)
+            if getattr(model, "network_mode", None) is None:
+                missing_network_mode.append(model.network_name)
             if model.network_type == NetworkType.EXTERNAL_CONNECTIVITY.value and model.vlan_id is None:
                 missing_vlan.append(model.network_name)
-        if missing_layer:
-            raise ValueError("layer is required when creating new networks: " + ", ".join(str(name) for name in missing_layer))
+        if missing_network_mode:
+            raise ValueError("network_mode is required when creating new networks: " + ", ".join(str(name) for name in missing_network_mode))
         if missing_vlan:
             raise ValueError("vlan_id is required when creating External Networks: " + ", ".join(missing_vlan))
 
@@ -854,8 +851,8 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
 
         None
         """
-        if normalized.get("layer") is not None or normalized.get("networkMode") is not None:
-            converted.pop("layer", None)
+        if normalized.get("network_mode") is not None or normalized.get("networkMode") is not None:
+            converted.pop("network_mode", None)
         for key, value in converted.items():
             if key in ("l2Data", "l3Data") and isinstance(normalized.get(key), dict):
                 existing = normalized[key]
@@ -907,7 +904,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
 
         layer2_only = self._top_down_bool(template_config.get("isLayer2Only"))
         if layer2_only is not None:
-            converted["layer"] = NetworkLayer.LAYER2.value if layer2_only else NetworkLayer.LAYER3.value
+            converted["network_mode"] = NetworkMode.LAYER2.value if layer2_only else NetworkMode.LAYER3.value
 
         l2_fabric_data = {
             "multicastGroup": template_config.get("mcastGroup"),
@@ -1025,7 +1022,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
                 "networkName": model_instance.network_name,
                 "vlanId": self._template_value(model_instance.vlan_id),
                 "gatewayIpAddress": self._template_value(l3_data.get("gatewayIpv4Address")),
-                "isLayer2Only": model_instance.layer == NetworkLayer.LAYER2.value,
+                "isLayer2Only": model_instance.network_mode == NetworkMode.LAYER2.value,
                 "tag": self._template_value(l3_data.get("routingTag")),
                 "vlanName": self._template_value(l2_data.get("vlanName")),
                 "intfDescription": self._template_value(l3_data.get("vlanInterfaceDescription")),
@@ -1064,12 +1061,12 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         payload["fabricName"] = self.strategy.fabric_name
         payload.setdefault("networkType", self._default_network_type())
         payload.setdefault("displayName", model_instance.network_name)
-        network_mode = payload.pop("layer", None)
+        network_mode = payload.pop("network_mode", None)
         if network_mode:
             payload["networkMode"] = network_mode
         if payload.get("networkType") == NetworkType.VXLAN.value:
             payload.setdefault("vlanNetworkType", "normal")
-        if not payload.get("vrfName") and payload.get("networkMode") == NetworkLayer.LAYER2.value:
+        if not payload.get("vrfName") and payload.get("networkMode") == NetworkMode.LAYER2.value:
             payload["vrfName"] = "NA"
 
         l2_data = payload.get("l2Data")
@@ -1086,7 +1083,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             payload.pop("l3Data", None)
             return payload
 
-        if payload.get("networkMode") == NetworkLayer.LAYER2.value:
+        if payload.get("networkMode") == NetworkMode.LAYER2.value:
             payload["l3Data"] = self._mcfg_parent_default_l3_data()
             return payload
 
@@ -1116,9 +1113,9 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         payload.setdefault("displayName", payload["networkName"])
         payload["networkType"] = source.get("networkType") or payload.get("networkType") or self._default_network_type()
 
-        source_layer = source.get("layer")
-        payload_layer = payload.pop("layer", None)
-        network_mode = source_layer or payload_layer
+        source_network_mode = source.get("network_mode")
+        payload_network_mode = payload.pop("network_mode", None)
+        network_mode = source_network_mode or payload_network_mode
         if network_mode:
             payload["networkMode"] = network_mode
         if payload.get("networkType") in (
@@ -1129,7 +1126,7 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             NetworkType.AIML_VXLAN_EBGP.value,
         ):
             payload.setdefault("vlanNetworkType", "normal")
-        if not payload.get("vrfName") and payload.get("networkMode") == NetworkLayer.LAYER2.value:
+        if not payload.get("vrfName") and payload.get("networkMode") == NetworkMode.LAYER2.value:
             payload["vrfName"] = "NA"
 
         l2_fabric_data = self._nested_fabric_data(source.get("l2Data"))
@@ -1206,13 +1203,13 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             payload = self._mcfg_parent_network_payload(model_instance)
         else:
             payload = model_instance.to_payload()
-        if model_instance.layer == NetworkLayer.LAYER2.value and isinstance(model_instance.l3_data, DefaultL3DataModel):
+        if model_instance.network_mode == NetworkMode.LAYER2.value and isinstance(model_instance.l3_data, DefaultL3DataModel):
             applicable = model_instance.l3_data.to_layer2_payload()
             if applicable:
                 payload["l3Data"] = applicable
             else:
                 payload.pop("l3Data", None)
-        elif model_instance.layer == NetworkLayer.LAYER2.value and not self.strategy.is_child and not self._is_mcfg_parent():
+        elif model_instance.network_mode == NetworkMode.LAYER2.value and not self.strategy.is_child and not self._is_mcfg_parent():
             payload.pop("l3Data", None)
         if payload.get("vlanNetworkType") in _PRIVATE_SECONDARY_TEMPLATE_BY_TYPE:
             payload.pop("vlanId", None)
@@ -1220,6 +1217,12 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
             payload.pop("l3Data", None)
         if self.strategy.is_parent:
             payload = self._parent_definition_payload(payload)
+        l3_data = payload.get("l3Data")
+        if isinstance(l3_data, dict) and model_instance.network_mode != NetworkMode.LAYER2.value:
+            # ND requires key omission to clear a gateway.
+            for field in ("gatewayIpv4Address", "gatewayIpv6Address"):
+                if l3_data.get(field) == "":
+                    l3_data.pop(field)
         return payload
 
     def create(self, model_instance: NDNetworkModel, **kwargs) -> ResponseType:

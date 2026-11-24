@@ -64,7 +64,7 @@ class OperationStatus(str, Enum):
         return [e.value for e in cls]
 
 
-class NetworkLayer(str, Enum):
+class NetworkMode(str, Enum):
     """Layer values used by network schemas."""
 
     LAYER2 = "layer2"
@@ -76,7 +76,7 @@ class NetworkLayer(str, Enum):
         return [e.value for e in cls]
 
 
-class ClassicNetworkLayer(str, Enum):
+class ClassicNetworkMode(str, Enum):
     """Layer values used by classic/routed network schemas."""
 
     LAYER2 = "layer2"

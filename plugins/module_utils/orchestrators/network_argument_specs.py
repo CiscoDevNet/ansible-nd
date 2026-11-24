@@ -7,7 +7,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.co
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
     DpuAffinity,
     MappingType,
-    NetworkLayer,
+    NetworkMode,
     public_network_attachment_mode_choices,
 )
 
@@ -111,9 +111,8 @@ def network_base_argument_spec():
         network_name=dict(type="str"),
         display_name=dict(type="str"),
         vrf_name=dict(type="str"),
-        layer=dict(type="str", choices=NetworkLayer.choices()),
+        network_mode=dict(type="str", choices=NetworkMode.choices()),
         deploy=dict(type="bool", default=True),
-        deploy_type=dict(type="str", default="switch", choices=["switch", "network"]),
         attach=dict(type="list", elements="dict", options=_attachment_spec()),
     )
     spec.update(_shared_network_fields())

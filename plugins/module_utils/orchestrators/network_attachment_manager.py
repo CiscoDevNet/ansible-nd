@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import re
 import time
 
@@ -23,6 +25,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.on
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import (
     EpManageSwitchesListGet,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switch_actions import (
+    EpManageSwitchActionsDeployPost,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.onemanage_fabrics_networks import (
+    EpOneManageFabricsSwitchActionsDeployPost,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
     MappingType,
@@ -46,6 +54,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_ch
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.attachment_vpc_peer_expander import (
     expand_desired_attachments_with_vpc_peers,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.attachment_state import effective_attachment, instance_values, instance_values_match
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.delete_readiness import (
     DeleteReadinessPolicy,
 )
@@ -53,7 +62,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_sta
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_config_utils import (
     configured_network_names,
     deploy_enabled_by_network,
-    deploy_type_by_network,
+    deploy_scope_by_network,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_network import (
     BaseNetworkStrategy,
@@ -71,6 +80,9 @@ class NetworkAttachmentManager:
     delete_wait_max_timeout = 900
     undeploy_retry_attempts = 3
     attachment_query_page_size = 10000
+    managed_instance_fields = {"dpuSecure", "dpuAffinity", "sviEnabled", "switchRouteTargetImport", "switchRouteTargetExport", "isActive"}
+    instance_reset_defaults = {"dpuSecure": False, "sviEnabled": True}
+    reset_instance_values_intent_key = "_resetInstanceValues"
 
     def __init__(self, coordinator: Any):
         self.coordinator = coordinator
@@ -148,7 +160,7 @@ class NetworkAttachmentManager:
                 current_count=len(current),
             )
 
-        explicit_interface_keys = {key for key, payload in desired.items() if "interfaces" in payload}
+        explicit_interface_keys = {key for key, payload in desired.items() if state != "merged" or "interfaces" in payload}
         if desired:
             desired = self.expand_desired_attachments_with_vpc_peers(
                 desired,
@@ -159,25 +171,39 @@ class NetworkAttachmentManager:
         payloads = (
             self.planned_detach_payloads(state, config, current, desired, explicit_interface_keys)
             if phase == "pre"
-            else self.planned_attach_payloads(current, desired, preserve_omitted_fields=state == "merged")
+            else self.planned_attach_payloads(current, desired, state=state)
         )
         if not payloads:
             self._trace("network_attachment_phase_noop", phase=phase, desired_count=len(desired or {}), current_count=len(current or {}))
             return {"current": current} if phase == "pre" else {}
 
-        deploy_enabled = deploy_enabled_by_network(config)
+        deploy_enabled = deploy_enabled_by_network(config, getattr(self.coordinator, "config_actions", None))
         deploy_targets: dict[str, set[str]] = {}
+        reattach_desired = dict(desired)
         for payload in payloads:
             network_name = payload.get("networkName")
-            if deploy_enabled.get(network_name, True):
+            if phase == "pre" or deploy_enabled.get(network_name, True):
                 self.record_deploy_target(deploy_targets, network_name, payload.get("switchId"))
+            if phase == "pre":
+                key = (network_name, payload["switchId"])
+                if key in desired:
+                    reattach_desired[key] = effective_attachment(
+                        current.get(key),
+                        desired[key],
+                        state=state,
+                        model=NetworkAttachmentInstanceValuesModel,
+                        managed_options=self.managed_instance_fields,
+                        option_defaults=self.instance_reset_defaults,
+                        interfaces=True,
+                    )
 
         trace = self.post_network_attachments(
             module_args, strategy, payloads, deploy_targets, OperationType.DELETE if phase == "pre" else OperationType.CREATE
         )
         self._trace("network_attachment_phase_end", phase=phase, payload_count=len(payloads), deploy_target_count=len(deploy_targets))
         trace["current"] = current
-        trace["desired"] = desired
+        # Reattachment must retain allocation and reset intent from before detach.
+        trace["desired"] = reattach_desired
         trace["payloads"] = payloads
         return trace
 
@@ -432,15 +458,15 @@ class NetworkAttachmentManager:
     ) -> dict[tuple[str, str], dict[str, Any]]:
         """Add vPC peer attachments from attachment-query rows."""
 
-        def clear_peer_interfaces(peer_payload: dict[str, Any]) -> None:
+        def preserve_peer_interfaces(peer_payload: dict[str, Any], peer_detail: dict[str, Any]) -> None:
             if "interfaces" in peer_payload:
-                peer_payload["interfaces"] = []
+                peer_payload["interfaces"] = deepcopy(peer_detail.get("interfaces") or [])
 
         return expand_desired_attachments_with_vpc_peers(
             desired,
             attachment_details,
             "networkName",
-            peer_payload_mutator=clear_peer_interfaces,
+            peer_payload_mutator=preserve_peer_interfaces,
         )
 
     @staticmethod
@@ -473,20 +499,49 @@ class NetworkAttachmentManager:
     def planned_attach_payloads(
         current: dict[tuple[str, str], dict[str, Any]],
         desired: dict[tuple[str, str], dict[str, Any]],
-        preserve_omitted_fields: bool = False,
+        state: str = "merged",
     ) -> list[dict[str, Any]]:
         payloads = []
         for key, desired_payload in desired.items():
             current_payload = current.get(key)
-            if preserve_omitted_fields and current_payload is not None:
-                retained = {
-                    field: current_payload[field]
-                    for field in ("vlanId", "interfaces")
-                    if field not in desired_payload and current_payload.get(field) is not None
-                }
-                if retained:
-                    desired_payload = {**desired_payload, **retained}
+            desired_payload = effective_attachment(
+                current_payload,
+                desired_payload,
+                state=state,
+                model=NetworkAttachmentInstanceValuesModel,
+                managed_options=NetworkAttachmentManager.managed_instance_fields,
+                option_defaults=NetworkAttachmentManager.instance_reset_defaults,
+                interfaces=True,
+            )
             if current_payload is None or NetworkAttachmentManager._attachment_changed(current_payload, desired_payload):
+                if current_payload is not None:
+                    have = instance_values(current_payload.get("instanceValues"), NetworkAttachmentInstanceValuesModel)
+                    want = desired_payload.get("instanceValues") or {}
+                    if any(
+                        not NetworkAttachmentManager._empty_equivalent(value) and NetworkAttachmentManager._empty_equivalent(want.get(key))
+                        for key, value in have.items()
+                    ):
+                        unknown = (
+                            set(current_payload.get("instanceValues") or {})
+                            - NetworkAttachmentManager.managed_instance_fields
+                            - set(NetworkAttachmentInstanceValuesModel.model_fields)
+                        )
+                        if unknown:
+                            raise ValueError(
+                                f"Network '{key[0]}' attachment on '{key[1]}' cannot safely reset options with unrecognized saved fields: "
+                                + ", ".join(sorted(unknown))
+                            )
+                        if any(
+                            not NetworkAttachmentManager._empty_equivalent(value)
+                            and (
+                                field not in NetworkAttachmentManager.instance_reset_defaults
+                                or value != NetworkAttachmentManager.instance_reset_defaults[field]
+                            )
+                            for field, value in want.items()
+                        ):
+                            desired_payload[NetworkAttachmentManager.reset_instance_values_intent_key] = True
+                        else:
+                            desired_payload["instanceValues"] = {}
                 payloads.append(desired_payload)
         return payloads
 
@@ -509,12 +564,11 @@ class NetworkAttachmentManager:
             detach_keys = {key for key in current if key[0] in target_names and key not in desired}
         if state in ("replaced", "overridden", "staged"):
             for key in current.keys() & desired.keys():
-                # Peer expansion uses interfaces=[] as passive peer metadata.
-                # Only an explicitly configured switch attachment may authorize
-                # clearing ports on that switch before the exact reattachment.
+                # Inferred peers do not authorize clearing omitted ports.
                 if explicit_interface_keys is not None and key not in explicit_interface_keys:
                     continue
-                if NetworkAttachmentManager._has_removed_ports(current[key], desired[key]):
+                requested = desired[key] if "interfaces" in desired[key] else {**desired[key], "interfaces": []}
+                if NetworkAttachmentManager._has_removed_ports(current[key], requested):
                     detach_keys.add(key)
         payloads = []
         for name, switch_id in sorted(detach_keys):
@@ -615,15 +669,6 @@ class NetworkAttachmentManager:
 
     @staticmethod
     def _attachment_changed(current: dict[str, Any], desired: dict[str, Any]) -> bool:
-        def normalized_options(value):
-            if not isinstance(value, dict):
-                return value
-            aliases = {name: field.alias or name for name, field in NetworkAttachmentInstanceValuesModel.model_fields.items()}
-            normalized = {aliases.get(key, key): item for key, item in value.items()}
-            # Conflicting alias spellings must remain visible rather than having
-            # dictionary insertion order decide which intent wins.
-            return normalized if len(normalized) == len(value) else value
-
         for key in ("vlanId", "instanceValues", "extraConfig"):
             if key not in desired:
                 continue
@@ -631,7 +676,9 @@ class NetworkAttachmentManager:
                 continue
             want, have = desired.get(key), current.get(key)
             if key == "instanceValues":
-                want, have = normalized_options(want), normalized_options(have)
+                if not instance_values_match(have, want, NetworkAttachmentInstanceValuesModel, NetworkAttachmentManager.instance_reset_defaults):
+                    return True
+                continue
             if want != have:
                 return True
         if "interfaces" in desired and NetworkAttachmentManager._normalized_interfaces(
@@ -740,21 +787,33 @@ class NetworkAttachmentManager:
             deploy_target_count=len(deploy_targets),
         )
         if getattr(getattr(self.coordinator, "module", None), "check_mode", False):
+            resets: list[dict[str, Any]] = []
+            payloads = self._payloads_for_controller(payloads, None, instance_value_resets=resets, convert_interfaces=False)
             self._trace("network_attachment_post_check_mode", payload_count=len(payloads), deploy_target_count=len(deploy_targets))
-            return {
+            trace = {
                 "changed": True,
                 "failed": False,
                 "deploy_targets": deploy_targets,
                 "payloads": payloads,
                 "check_mode_attachment_payloads": payloads,
             }
+            if resets:
+                trace["check_mode_instance_value_reset_payloads"] = resets
+            return trace
         orchestrator, results = self.coordinator._new_network_orchestrator(module_args, strategy)
         controller_version = getattr(getattr(orchestrator, "rest_send", None), "controller_version", None)
         payloads = self._prepare_attachment_payloads(strategy, payloads)
-        payloads = self._payloads_for_controller(payloads, controller_version)
+        resets = []
+        payloads = self._payloads_for_controller(payloads, controller_version, instance_value_resets=resets)
         request = NetworkAttachDetachPayloadModel(attachments=[NetworkAttachmentModel(**payload) for payload in payloads])
         self.validate_attachment_interfaces(orchestrator, strategy, payloads)
         endpoint = orchestrator._make_endpoint(self._attachments_post_endpoint_cls(strategy))
+        if resets:
+            # ND merges nonempty option maps, so removing a value needs an empty-map reset first.
+            reset_request = NetworkAttachDetachPayloadModel(attachments=[NetworkAttachmentModel(**payload) for payload in resets])
+            self._trace("network_attachment_instance_values_reset", payload_count=len(resets))
+            reset_response = orchestrator._request(path=endpoint.path, verb=endpoint.verb, data=reset_request.to_payload(), operation_type=operation_type)
+            self._raise_on_failed_results(reset_response, "Network attachment option reset failed")
         response = orchestrator._request(
             path=endpoint.path,
             verb=endpoint.verb,
@@ -838,13 +897,22 @@ class NetworkAttachmentManager:
         return prepared
 
     @staticmethod
-    def _payloads_for_controller(payloads: list[dict[str, Any]], controller_version: str | None) -> list[dict[str, Any]]:
-        """Return attachment payload copies with interface modes converted to controller API spelling."""
+    def _payloads_for_controller(
+        payloads: list[dict[str, Any]],
+        controller_version: str | None,
+        *,
+        instance_value_resets: list[dict[str, Any]] | None = None,
+        convert_interfaces: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Copy final payloads, normalize interface modes and collect any required option-reset batch."""
         converted = []
         for payload in payloads:
             item = dict(payload)
-            if "interfaces" in item:
+            reset = item.pop(NetworkAttachmentManager.reset_instance_values_intent_key, False)
+            if convert_interfaces and "interfaces" in item:
                 item["interfaces"] = NetworkAttachmentManager._interfaces_for_controller(item.get("interfaces"), controller_version)
+            if reset and instance_value_resets is not None:
+                instance_value_resets.append({**item, "instanceValues": {}})
             converted.append(item)
         return converted
 
@@ -900,25 +968,34 @@ class NetworkAttachmentManager:
         config: list[dict],
         *deploy_target_maps: dict[str, set[str]],
         strategy: BaseNetworkStrategy | None = None,
+        actions: Any | None = None,
     ) -> list[dict[str, Any]]:
-        deploy_enabled = deploy_enabled_by_network(config)
-        deploy_types = deploy_type_by_network(config)
-        mcfg_parent = bool(strategy and strategy.is_multicluster and strategy.is_parent)
+        deploy_enabled = deploy_enabled_by_network(config, actions)
+        deploy_scopes = deploy_scope_by_network(config, actions)
         grouped: dict[tuple[str, ...], set[str]] = {}
-        network_level: set[str] = set()
+        no_target: set[str] = set()
+        switch_scope_targets: set[str] = set()
+        merged_targets: dict[str, set[str]] = {}
         for target_map in deploy_target_maps:
             for network_name, switch_ids in (target_map or {}).items():
-                if not deploy_enabled.get(network_name, True):
-                    continue
-                if not switch_ids or (deploy_types.get(network_name, "switch") == "network" and not mcfg_parent):
-                    network_level.add(network_name)
-                else:
-                    grouped.setdefault(tuple(sorted(switch_ids)), set()).add(network_name)
-        payloads = [
-            NetworkSwitchesListModel(network_names=sorted(names), switch_ids=list(switch_ids)).to_payload() for switch_ids, names in sorted(grouped.items())
-        ]
-        if network_level:
-            payloads.append(NetworkSwitchesListModel(network_names=sorted(network_level)).to_payload())
+                if deploy_enabled.get(network_name, True):
+                    merged_targets.setdefault(network_name, set()).update(switch_ids or set())
+        for network_name, switch_ids in merged_targets.items():
+            scope = deploy_scopes.get(network_name, "resource")
+            if scope == "switch" and switch_ids:
+                switch_scope_targets.update(switch_ids)
+            elif switch_ids:
+                grouped.setdefault(tuple(sorted(switch_ids)), set()).add(network_name)
+            else:
+                no_target.add(network_name)
+        payloads = [{"switchIds": sorted(switch_scope_targets)}] if switch_scope_targets else []
+        payloads.extend(
+            [NetworkSwitchesListModel(network_names=sorted(names), switch_ids=list(switch_ids)).to_payload() for switch_ids, names in sorted(grouped.items())]
+        )
+        # A names-only placeholder carries no targets to the shared controller,
+        # which reports a no_targets skip without calling the controller API.
+        if no_target and (not switch_scope_targets or grouped):
+            payloads.append(NetworkSwitchesListModel(network_names=sorted(no_target)).to_payload())
         return payloads
 
     @staticmethod
@@ -926,47 +1003,45 @@ class NetworkAttachmentManager:
         config: list[dict],
         *deploy_target_maps: dict[str, set[str]],
         strategy: BaseNetworkStrategy | None = None,
+        actions: Any | None = None,
     ) -> list[dict[str, Any]]:
         """
         Build Network deploy requests for detach cleanup at the selected scope.
 
         Delete must deploy the detach/undeploy work before the Network delete is
         attempted, regardless of per-Network ``deploy``. Standalone and MSD
-        honor ``deploy_type`` without deploying unrelated switch configuration.
-        Switch scope includes Network names and affected switch IDs; Network
-        scope includes Network names. MCFG parent retains affected switch IDs.
+        honor the selected config action scope without deploying unrelated switch configuration.
+        All scopes include Network names and affected switch IDs.
         Never widen a missing switch target to an unscoped Network request.
         """
-        deploy_types = deploy_type_by_network(config)
-        mcfg_parent = bool(strategy and strategy.is_multicluster and strategy.is_parent)
-        network_level: set[str] = set()
+        del config, strategy, actions
         network_groups: dict[tuple[str, ...], set[str]] = {}
+        merged_targets: dict[str, set[str]] = {}
         for target_map in deploy_target_maps:
             for network_name, target_switch_ids in (target_map or {}).items():
-                if not target_switch_ids:
-                    continue
-                if deploy_types.get(network_name, "switch") == "network" and not mcfg_parent:
-                    network_level.add(network_name)
-                else:
-                    network_groups.setdefault(tuple(sorted(target_switch_ids)), set()).add(network_name)
+                merged_targets.setdefault(network_name, set()).update(target_switch_ids or set())
+        for network_name, target_switch_ids in merged_targets.items():
+            if target_switch_ids:
+                network_groups.setdefault(tuple(sorted(target_switch_ids)), set()).add(network_name)
         payloads = [
             NetworkSwitchesListModel(network_names=sorted(names), switch_ids=list(target_ids)).to_payload()
             for target_ids, names in sorted(network_groups.items())
         ]
-        if network_level:
-            payloads.append(NetworkSwitchesListModel(network_names=sorted(network_level)).to_payload())
         return payloads
 
-    def build_pending_network_deploy_payloads(
+    def build_pending_network_deploy_targets(
         self,
         result: dict[str, Any],
         config: list[dict],
         module_args: dict,
         strategy: BaseNetworkStrategy,
         existing_names: set[str] | None = None,
-    ) -> list[dict[str, Any]]:
+        actions: Any | None = None,
+        changed_names: set[str] | None = None,
+    ) -> dict[str, set[str]]:
+        """Collect affected switches for configured Networks pending in ND."""
         configured = set(configured_network_names(config))
-        deploy_enabled = deploy_enabled_by_network(config)
+        deploy_enabled = deploy_enabled_by_network(config, actions)
         pending_statuses = {"pending", "outofsync", "failed", "inprogress", "deploymentinprogress"}
         deploy_targets: dict[str, set[str]] = {}
         after_names: set[str] = set()
@@ -979,27 +1054,50 @@ class NetworkAttachmentManager:
             if name in configured and deploy_enabled.get(name, True) and status.lower() in pending_statuses:
                 pending_network_names.add(name)
 
+        # The accepted/planned definition update can still carry an old
+        # controller status. Use exact per-resource state-machine evidence.
+        changed_deploy_names = {name for name in (changed_names or set()) if name in configured and deploy_enabled.get(name, True)}
+        pending_network_names.update(changed_deploy_names)
+        after_names.update(changed_deploy_names)
+
         # Simulated creations have no controller attachment metadata yet.
         queryable_names = after_names if existing_names is None else after_names.intersection(existing_names)
         deploy_enabled_names = sorted(name for name in queryable_names if deploy_enabled.get(name, True))
         if deploy_enabled_names:
             attachment_details = self.current_attachment_details_ignore_missing(module_args, strategy, deploy_enabled_names)
+            names_with_attached_switches: set[str] = set()
             for attachment in attachment_details:
                 network_name = attachment.get("networkName")
                 switch_id = attachment.get("switchId")
                 if network_name not in configured or not deploy_enabled.get(network_name, True):
                     continue
+                if attachment.get("attach") is True and switch_id:
+                    names_with_attached_switches.add(network_name)
                 attachment_pending = self.attachment_status(attachment).lower() in pending_statuses
-                if attachment.get("attach") is True and attachment_pending:
+                pending_definition = network_name in pending_network_names
+                if attachment.get("attach") is True and (attachment_pending or pending_definition):
                     self.record_deploy_target(deploy_targets, network_name, switch_id)
                 if attachment.get("attach") is False and self.attachment_has_pending_delete_work(attachment):
                     self.record_deploy_target(deploy_targets, network_name, switch_id)
+            for name in set(deploy_enabled_names) - names_with_attached_switches:
+                deploy_targets.setdefault(name, set())
         for network_name in pending_network_names:
             deploy_targets.setdefault(network_name, set())
 
-        if not deploy_targets:
-            return []
-        return self.build_deploy_payloads(config, deploy_targets, strategy=strategy)
+        return deploy_targets
+
+    def build_pending_network_deploy_payloads(
+        self,
+        result: dict[str, Any],
+        config: list[dict],
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        existing_names: set[str] | None = None,
+        actions: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        """Build deploy requests for configured Networks already pending in ND."""
+        targets = self.build_pending_network_deploy_targets(result, config, module_args, strategy, existing_names, actions)
+        return self.build_deploy_payloads(config, targets, strategy=strategy, actions=actions)
 
     def deploy_network_attachments(
         self,
@@ -1035,6 +1133,32 @@ class NetworkAttachmentManager:
         self._trace("network_attachment_deploy_end", changed=trace.get("changed"), failed=trace.get("failed"))
         return trace
 
+    def deploy_network_switches(
+        self,
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        deploy_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Deploy pending fabric configuration to the selected switches."""
+        switch_ids = deploy_payload.get("switchIds") or []
+        if not switch_ids:
+            raise ValueError("Switch deployment requires affected switch IDs.")
+        self._trace("network_switch_deploy_start", deploy_payload=deploy_payload)
+        orchestrator, results = self.coordinator._new_network_orchestrator(module_args, strategy)
+        endpoint_cls = EpOneManageFabricsSwitchActionsDeployPost if strategy.is_multicluster else EpManageSwitchActionsDeployPost
+        endpoint = orchestrator._make_endpoint(endpoint_cls)
+        if not strategy.is_multicluster:
+            endpoint.endpoint_params.force_show_run = False
+        orchestrator._request(
+            path=endpoint.path,
+            verb=endpoint.verb,
+            data={"switchIds": list(switch_ids)},
+            operation_type=OperationType.UPDATE,
+        )
+        trace = self.coordinator._finalize_api_trace(results)
+        self._trace("network_switch_deploy_end", changed=trace.get("changed"), failed=trace.get("failed"))
+        return trace
+
     def wait_for_attachments_delete_ready(
         self,
         module_args: dict,
@@ -1050,7 +1174,8 @@ class NetworkAttachmentManager:
             deadline, timeout_seconds = self.delete_wait_deadline(len(pending))
         started_at = DeleteReadinessPolicy.now()
         last_blockers: dict[str, list[dict[str, Any]]] = {}
-        retried_targets: dict[tuple[str, str], int] = {}
+        retried_targets: dict[tuple[str, str, str], int] = {}
+        actions = getattr(self.coordinator, "config_actions", None)
         while True:
             attachments = self._current_attachment_details_for_wait(module_args, strategy, sorted(pending))
             blockers: dict[str, list[dict[str, Any]]] = {name: [] for name in pending}
@@ -1075,7 +1200,7 @@ class NetworkAttachmentManager:
                             retry_targets[network_name].add(switch_id)
                         retried_targets[retry_key] = retried_targets.get(retry_key, 0) + 1
             if retry_targets:
-                for deploy_payload in self.build_delete_deploy_payloads(module_args.get("config") or [], retry_targets, strategy=strategy):
+                for deploy_payload in self.build_delete_deploy_payloads(module_args.get("config") or [], retry_targets, strategy=strategy, actions=actions):
                     self.deploy_network_attachments(module_args, strategy, deploy_payload, undeploy=True)
             ready = {name for name, values in blockers.items() if not values}
             pending.difference_update(ready)
@@ -1114,6 +1239,7 @@ class NetworkAttachmentManager:
         last_blockers: dict[str, list[dict[str, Any]]] = {}
         retried_targets: dict[tuple[str, str, str], int] = {}
         retried_networks: dict[str, int] = {}
+        actions = getattr(self.coordinator, "config_actions", None)
         while True:
             attachments = self._current_attachment_details_for_wait(module_args, strategy, sorted(pending))
             blockers: dict[str, list[dict[str, Any]]] = {name: [] for name in pending}
@@ -1155,7 +1281,7 @@ class NetworkAttachmentManager:
             }
             retry_targets = self._merge_deploy_target_maps(attachment_retry_targets, network_retry_targets)
             if retry_targets:
-                for deploy_payload in self.build_delete_deploy_payloads(module_args.get("config") or [], retry_targets, strategy=strategy):
+                for deploy_payload in self.build_delete_deploy_payloads(module_args.get("config") or [], retry_targets, strategy=strategy, actions=actions):
                     self.deploy_network_attachments(module_args, strategy, deploy_payload, undeploy=True)
                 for network_name in network_retry_targets:
                     retried_networks[network_name] = retried_networks.get(network_name, 0) + 1

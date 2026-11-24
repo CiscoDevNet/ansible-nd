@@ -49,9 +49,11 @@ options:
   state:
     description:
       - Desired state of Network resources.
-      - V(merged) creates or updates Networks that do not match the desired config.
-      - V(replaced) replaces existing Networks that match the desired config.
-      - V(overridden) replaces all Networks; removes any not in config.
+      - V(merged) creates named Networks when absent and updates supplied properties, preserving omitted properties and unlisted Networks.
+      - V(replaced) creates or replaces named Network definitions. Omitted manageable scalars reset to defaults or clear where supported;
+        omitted lists clear or default. Unlisted Networks remain unchanged.
+      - V(overridden) uses V(replaced) property semantics and deletes Networks omitted from O(config).
+      - Existing allocated Network IDs and VLAN IDs are retained when omitted. Attachment-only and deployment-only entries do not replace definitions.
       - V(deleted) removes specified Networks (or all if config is empty).
       - V(gathered) returns current Network state.
       - V(staged) uses V(replaced) definition semantics for listed Networks,
@@ -66,19 +68,43 @@ options:
     type: str
     choices: [ merged, replaced, overridden, deleted, gathered, staged ]
     default: merged
+  config_actions:
+    description:
+      - Controls optional deployment after Network changes.
+      - When omitted, deployment is enabled and scoped by Network name and affected switch IDs.
+      - C(type=switch) deploys pending configuration on affected switches, including configuration from other resources.
+      - In V(merged), when the task lists attachment switches, optional switch deployment is limited to those switches.
+        Existing attachments omitted from the task remain attached.
+      - When the task lists no switches, affected current attachments supply the switch targets; no targets are reported as a skip.
+      - C(type=resource) deploys the named Networks to their affected switches.
+      - When no switch targets exist, deployment is skipped with C(no_targets) for either scope.
+      - Per-item C(config[].deploy) overrides are supported only with C(type=resource).
+      - C(state=staged) always skips deployment.
+    type: dict
+    suboptions:
+      deploy:
+        description: Whether to deploy pending Network changes.
+        type: bool
+        default: true
+      type:
+        description: Scope for optional deployment.
+        type: str
+        choices: [ switch, resource ]
+        default: resource
   config:
     description:
       - List of Network definition configurations to manage.
       - Each element defines a Network with identity, VLAN, gateway,
         PVLAN, attachment, deployment, and other settings.
+      - Entries containing only the Network name and attachment or deployment settings manage those operations without replacing the definition.
       - On standalone fabrics, all Network definition, attachment, and deployment
         options are applied directly to the target fabric.
       - In V(merged), supplied IGMP or NetFlow monitor settings use existing
         TRM or NetFlow enablement when the corresponding flag is omitted.
         This applies at the same standalone or child-fabric scope.
       - For parent fabrics, each item may include a C(child_fabric_config) list
-        to provide per-child-fabric overrides. The parent-level C(attach),
-        C(deploy), and C(deploy_type) options are applied only on the parent
+        to provide per-child-fabric overrides. The parent-level C(attach) and
+        C(deploy) options are applied only on the parent
         fabric and are not sent to child fabrics.
       - On Fabric groups and Multi-cluster Fabric groups, child-only properties must be placed under
         C(child_fabric_config). Supplying them at the top level is rejected for
@@ -98,13 +124,16 @@ options:
       vrf_name:
         description: VRF name associated with the Network.
         type: str
-      layer:
+      network_mode:
         description:
-          - Network layer.
-          - When omitted in C(state=merged), existing Networks inherit their current layer before sparse updates are applied.
-          - New Networks and authoritative states require enough context to derive the layer. Layer 3 and Layer 2 with VRF require C(vrf_name).
+          - Network mode.
+          - When omitted, existing Networks retain their current network_mode in V(merged), V(replaced), V(overridden), and V(staged).
+          - Their existing VRF association is also retained when both C(network_mode) and C(vrf_name) are omitted.
+          - Specify C(network_mode) explicitly to request a network_mode change, or if the existing network_mode cannot be determined from controller readback.
+          - New ordinary Networks default to Layer 3. New primary PVLANs without L3 properties and secondary PVLANs resolve to Layer 2.
+          - New Layer 3 and Layer 2 with VRF Networks require C(vrf_name).
           - Layer 2 with VRF requires fabric Security Groups and MAC segmentation.
-          - External fabrics support only Layer 2 definitions. Omitted C(layer) resolves to Layer 2.
+          - External fabrics support only Layer 2 definitions. Omitted C(network_mode) resolves to Layer 2.
           - External definition options are C(network_name), C(vlan_id), optional C(vlan_name), and optional C(network_id).
           - ND assigns the External Network ID when C(network_id) is omitted during creation.
           - External Networks require C(vlan_id) on creation. VRF, gateway, PVLAN, and other feature settings are not supported.
@@ -116,7 +145,8 @@ options:
         type: bool
       deploy:
         description:
-          - Deploy pending Network attachment changes for this Network.
+          - Per-Network deployment override, valid only with C(config_actions.type=resource).
+          - When omitted, inherits C(config_actions.deploy).
           - For parent fabrics, deployment is performed once after all child
             fabric tasks complete.
           - Applies only to parent/standalone Network attachments, not child
@@ -126,20 +156,6 @@ options:
             scope, and then removes the Network.
         type: bool
         default: true
-      deploy_type:
-        description:
-          - Scope of Network deployment and undeployment.
-          - C(switch) deploys the selected Networks on the switches affected by
-            this attachment operation when switch identifiers are available.
-          - C(network) deploys the pending Network changes for this Network.
-          - On standalone fabrics and Fabric groups, attachment removals and Network deletion
-            use the selected Network scope, not whole-switch deployment.
-          - Deployment for Multi-cluster Fabric groups uses the OneManage Network endpoint and
-            retains affected switch identifiers regardless of C(deploy_type).
-          - Network deletion waits for detach deployment before removal.
-        type: str
-        choices: [ switch, network ]
-        default: switch
       attach:
         description:
           - Parent/standalone switch attachment entries for this Network.
@@ -166,6 +182,7 @@ options:
             description:
               - Interface attachment entries.
               - Under C(state=merged), omission preserves existing port bindings.
+              - Under V(replaced) and V(overridden), omission clears existing port bindings on a listed attachment.
               - An explicit empty list requests no interface bindings and also
                 supports a new switch-only attachment.
               - In V(replaced), V(overridden) and V(staged), removed ports cause the exact Network/switch attachment
@@ -215,7 +232,11 @@ options:
             type: bool
             default: true
           attachment_options:
-            description: Switch-specific attachment options.
+            description:
+              - Switch-specific attachment options.
+              - In V(merged), omitted options retain saved writable values; an empty dictionary resets the options.
+              - In V(replaced) and V(overridden), omitted options reset to defaults or are cleared, including route-target lists.
+              - Clearing saved options can require two batched writes to reset and restore the effective options before optional deployment.
             type: dict
             suboptions:
               dpu_secure:
@@ -240,7 +261,9 @@ options:
                 description: Active switch selection for classic and routed fabrics only.
                 type: bool
           freeform_config:
-            description: Additional free-form CLI configuration for this attachment.
+            description:
+              - Additional free-form CLI configuration for this attachment.
+              - Omission preserves the saved value in V(merged) and clears it in V(replaced) and V(overridden).
             type: str
       network_id:
         description:
@@ -261,7 +284,7 @@ options:
           - New Networks default to C(normal). Omission preserves an existing Network's type in all write states,
             including C(replaced), C(overridden), and C(staged).
           - C(primary) is mapped to the ND private primary Network type.
-          - C(primary) supports Layer 2 and Layer 3. When its layer is derived, VRF or L3-specific properties select Layer 3
+          - C(primary) supports Layer 2 and Layer 3. When its network_mode is derived, VRF or L3-specific properties select Layer 3
             and require O(config.vrf_name); otherwise it uses Layer 2.
           - C(community) and C(isolated) are mapped to private secondary Network templates and require O(config.primary_network_id).
           - C(primary), C(community), and C(isolated) are not supported on Multi-cluster Fabric groups.
@@ -282,10 +305,14 @@ options:
         description: VLAN name; names over 32 characters require switch support for long VLAN names.
         type: str
       gateway_ipv4_address:
-        description: IPv4 gateway address and prefix.
+        description:
+          - IPv4 gateway address and prefix.
+          - An empty string clears the gateway; omission in V(merged) preserves it.
         type: str
       gateway_ipv6_address:
-        description: IPv6 gateway address and prefix.
+        description:
+          - IPv6 gateway address and prefix.
+          - An empty string clears the gateway; omission in V(merged) preserves it.
         type: str
       secondary_gateway_ipv4_collection:
         description: Secondary IPv4 gateway addresses.
@@ -376,8 +403,10 @@ options:
           - Per-child-fabric override entries for Fabric groups and Multi-cluster Fabric groups.
           - Each entry targets a child member fabric and may override its
             fabric-instance multicast, DHCP, TRM, and NetFlow settings.
-          - Omitted fields are not explicitly changed on the child.
-          - C(attach), C(deploy), C(deploy_type), Network name, mode, VRF,
+          - In V(merged), omitted fields retain existing child settings.
+          - For definition requests in V(replaced) and V(overridden), omitted editable settings reset on member fabrics,
+            including when the member entry is omitted. Inherited parent fields and allocated multicast addresses are retained.
+          - C(attach), C(deploy), Network name, mode, VRF,
             Network ID, VLAN ID, VLAN name, gateways, interface description,
             MTU, routing tag, ARP suppression,
             and PVLAN fields remain parent-owned.
@@ -458,7 +487,7 @@ EXAMPLES = r"""
     state: merged
     config:
       - network_name: Network_BLUE
-        layer: layer2
+        network_mode: layer2
         network_id: 50010
         vlan_id: 2001
         vlan_name: Network_BLUE_VLAN
@@ -471,7 +500,7 @@ EXAMPLES = r"""
     state: merged
     config:
       - network_name: Network_BLUE
-        layer: layer2
+        network_mode: layer2
         network_id: 50010
         vlan_id: 2001
         vlan_name: Network_BLUE_VLAN
@@ -481,17 +510,19 @@ EXAMPLES = r"""
             interfaces:
               - mode: access
                 interface_range: Ethernet1/10
-        deploy: true
-        deploy_type: switch
+    config_actions:
+      type: switch
 
 # Standalone fabric - create an L3 Network
 - name: Create an L3 Network associated with a VRF
   cisco.nd.nd_manage_networks:
     fabric_name: fab1
     state: merged
+    config_actions:
+      type: resource
     config:
       - network_name: Network_L3
-        layer: layer3
+        network_mode: layer3
         vrf_name: Tenant_A
         network_id: 50020
         vlan_id: 2002
@@ -509,7 +540,7 @@ EXAMPLES = r"""
     config:
       - network_name: PVLAN_PRIMARY
         vlan_network_type: primary
-        layer: layer2
+        network_mode: layer2
         network_id: 50100
         vlan_id: 2100
         deploy: false
@@ -549,7 +580,7 @@ EXAMPLES = r"""
     state: merged
     config:
       - network_name: Network_PARENT
-        layer: layer3
+        network_mode: layer3
         vrf_name: TENANT_BLUE
         network_id: 50030
         vlan_id: 2030
@@ -573,7 +604,7 @@ EXAMPLES = r"""
     state: deleted
     config:
       - network_name: Network_BLUE
-        layer: layer2
+        network_mode: layer2
 
 # Replace Network configuration
 - name: Replace Network configuration
@@ -582,7 +613,7 @@ EXAMPLES = r"""
     state: replaced
     config:
       - network_name: Network_BLUE
-        layer: layer2
+        network_mode: layer2
         network_id: 50010
         vlan_id: 2001
         vlan_name: Network_BLUE_REPLACED
@@ -594,7 +625,7 @@ EXAMPLES = r"""
     state: overridden
     config:
       - network_name: Network_BLUE
-        layer: layer2
+        network_mode: layer2
         network_id: 50010
         vlan_id: 2001
 
@@ -604,7 +635,7 @@ EXAMPLES = r"""
     state: staged
     config:
       - network_name: Network_BLUE
-        layer: layer2
+        network_mode: layer2
         network_id: 50010
         vlan_id: 2001
         vlan_name: Network_BLUE_VLAN
@@ -615,7 +646,7 @@ EXAMPLES = r"""
               - interface_range: Ethernet1/10
                 mode: trunk
       - network_name: Network_GREEN
-        layer: layer2
+        network_mode: layer2
         network_id: 50011
         vlan_id: 2002
         vlan_name: Network_GREEN_VLAN
@@ -664,7 +695,7 @@ before:
   elements: dict
   sample:
     - network_name: Network_BLUE
-      layer: layer2
+      network_mode: layer2
       network_id: 50010
       vlan_id: 2001
 after:
@@ -676,7 +707,7 @@ after:
   elements: dict
   sample:
     - network_name: Network_BLUE
-      layer: layer2
+      network_mode: layer2
       network_id: 50010
       vlan_id: 2001
 diff:
@@ -694,7 +725,7 @@ proposed:
   elements: dict
   sample:
     - network_name: Network_BLUE
-      layer: layer2
+      network_mode: layer2
       network_id: 50010
       vlan_id: 2001
 gathered:
@@ -704,7 +735,7 @@ gathered:
   elements: dict
   sample:
     - network_name: Network_BLUE
-      layer: layer2
+      network_mode: layer2
       network_id: 50010
       vlan_id: 2001
 workflow_trace:
@@ -720,6 +751,11 @@ msg:
   returned: on failure and on selected no-op or child-fabric failure paths
   type: str
   sample: "Unexpected error: controller rejected Network payload"
+config_actions:
+  description: Per-target optional deploy plan and execution results.
+  returned: when an optional deploy is planned, completed, or skipped
+  type: list
+  elements: dict
 fabric_type:
   description:
     - Resolved fabric topology used by the workflow.
@@ -817,6 +853,8 @@ import logging
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.argument_spec import config_actions_spec
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import RESOURCE_CONFIG_ACTIONS
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
@@ -850,6 +888,7 @@ def main():
             options=network_module_argument_spec(),
         ),
     )
+    argument_spec.update(config_actions_spec(RESOURCE_CONFIG_ACTIONS))
 
     module = AnsibleModule(
         argument_spec=argument_spec,

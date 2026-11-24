@@ -54,7 +54,7 @@ def test_canonical_public_modes_match_controller_readback_without_port_churn(api
     [
         {"svi_enabled": False},
         {"svi_enabled": True, "futureOption": False},
-        {"sviEnabled": True, "dpu_secure": False},
+        {"sviEnabled": True, "dpu_secure": True},
         {"sviEnabled": True, "svi_enabled": False},
     ],
 )
@@ -66,7 +66,8 @@ def test_all_official_option_aliases_normalize_without_adding_model_defaults():
     current = _attachment(options={"sviEnabled": True, "dpuSecure": False, "dpuAffinity": "none", "switchRouteTargetImport": ["1:2"], "isActive": True})
     desired = _attachment(options={"svi_enabled": True, "dpu_secure": False, "dpu_affinity": "none", "switch_route_target_import": ["1:2"], "is_active": True})
     assert not NetworkAttachmentManager._attachment_changed(current, desired)
-    assert NetworkAttachmentManager._attachment_changed(_attachment(options={}), _attachment(options={"dpu_secure": False}))
+    assert not NetworkAttachmentManager._attachment_changed(_attachment(options={}), _attachment(options={"dpu_secure": False}))
+    assert NetworkAttachmentManager._attachment_changed(_attachment(options={}), _attachment(options={"dpu_secure": True}))
 
 
 @pytest.mark.parametrize("field,value", [("interfaceRange", "Ethernet1/47"), ("mode", "access"), ("nativeVlan", True), ("interfaceGroupName", "GROUP")])

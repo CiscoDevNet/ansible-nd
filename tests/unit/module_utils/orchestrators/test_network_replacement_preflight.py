@@ -95,6 +95,8 @@ class Controller:
                 else:
                     existing.update(deepcopy(row))
             data = {"results": [{"networkName": row["networkName"], "switchId": row["switchId"], "status": "success"} for row in body["attachments"]]}
+        elif method == "POST" and uri.endswith("/networkActions/deploy"):
+            data = {"status": "accepted"}
         elif method == "PUT" and "/networks/" in uri:
             data = {"results": [{"networkName": body["networkName"], "status": "success"}]}
         else:
@@ -107,7 +109,7 @@ def invoke(monkeypatch, state, *, reject=False, check=False, omit_shared=False):
     config = [
         {
             "network_name": "BLUE",
-            "layer": "layer2",
+            "network_mode": "layer2",
             "network_id": 20001,
             "vlan_id": 101,
             "deploy": False,
@@ -121,7 +123,7 @@ def invoke(monkeypatch, state, *, reject=False, check=False, omit_shared=False):
         config.append(
             {
                 "network_name": "SHARED",
-                "layer": "layer2",
+                "network_mode": "layer2",
                 "network_id": 20002,
                 "vlan_id": 102,
                 "deploy": False,
@@ -176,5 +178,7 @@ def test_valid_replacement_is_validated_before_detach_and_again_before_reattach(
     assert len(validations) == 2
     assert len(writes) == 2
     assert validations[0] < writes[0] < validations[1] < writes[1]
+    deploys = [call["body"] for call in controller.calls if call["path"].endswith("/networkActions/deploy")]
+    assert deploys == ([] if state == "staged" else [{"networkNames": ["BLUE"], "switchIds": ["S1"]}])
     assert controller.attachments[0]["interfaces"] == [{"mode": "trunk", "interfaceRange": "Ethernet1/2", "nativeVlan": False}]
     assert all(row["attach"] is True for row in controller.attachments)

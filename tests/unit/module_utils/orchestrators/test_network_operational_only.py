@@ -62,6 +62,29 @@ def test_shared_network_diff_rejects_incompatible_models():
         existing.get_diff(proposed)
 
 
+@pytest.mark.parametrize("strategy_cls", [MultisiteParentNetworkStrategy, MulticlusterParentNetworkStrategy])
+@pytest.mark.parametrize("state", ["replaced", "overridden", "staged"])
+@pytest.mark.parametrize("action", ["attach", "deploy"])
+def test_operational_parent_request_does_not_materialize_child_definition_resets(monkeypatch, strategy_cls, state, action):
+    entry = {"network_name": "N", action: True if action == "deploy" else [{"ip_address": "192.0.2.1"}]}
+    strategy = strategy_cls(fabric_name="fab1", fabric_data={"managementType": "vxlan", "members": [{"fabricName": "child1", "fabricState": "member"}]})
+    module = _Module(state, [entry], False)
+    coordinator = NetworkWorkflowCoordinator(module=module, strategy=strategy)
+
+    def no_children(tasks, requested_state):
+        assert tasks == {}
+        assert requested_state == state
+
+    def parent_only(_args, **_kwargs):
+        return {"changed": False, "output_level": "normal"}
+
+    monkeypatch.setattr(coordinator, "_preflight_child_feature_tasks", no_children)
+    monkeypatch.setattr(coordinator, "_run_state_machine_with_attachments", parent_only)
+    result = coordinator._handle_parent_workflow({"fabric_name": "fab1", "state": state, "config": [entry]}, strategy.fabric_type)
+    assert not result.get("failed")
+    assert result["changed"] is False
+
+
 def test_mixed_operational_and_sparse_networks_resolve_from_one_inventory(monkeypatch):
     entries = [{"network_name": "N", "deploy": False}, {"network_name": "M", "vlan_name": "UPDATED"}]
     strategy = StandaloneNetworkStrategy(fabric_name="fab1", fabric_data={"managementType": "vxlanIbgp"})
@@ -73,7 +96,7 @@ def test_mixed_operational_and_sparse_networks_resolve_from_one_inventory(monkey
     try:
         assert type(sm.proposed.get("N")) is type(sm.existing.get("N"))
         assert sm.existing.get("N").get_diff(sm.proposed.get("N"), exclude_unset=True)
-        assert sm.proposed.get("M").layer == "layer2"
+        assert sm.proposed.get("M").network_mode == "layer2"
     finally:
         coordinator._restore_state_machine_params(original_config, original_state)
 
@@ -120,7 +143,7 @@ def test_child_only_request_preserves_parent_definition(monkeypatch, strategy_cl
     monkeypatch.setattr(coordinator_module, "NDNetworkOrchestrator", _InventoryOrchestrator)
     parsed = coordinator._parse_config([entry], strategy.config_model_cls, state)
     assert parsed[0]["child_fabric_config"][0]["x_connect"] is False
-    assert parsed[0].get("layer") is None
+    assert parsed[0].get("network_mode") is None
     parent_entry = dict(parsed[0])
     parent_entry.pop("child_fabric_config")
     sm, original_config, original_state = coordinator._new_state_machine({"state": state, "config": [parent_entry]}, strategy)
@@ -156,7 +179,7 @@ def test_deploy_only_request_reaches_deploy_phase(monkeypatch, check_mode):
     _InventoryOrchestrator.writes = []
     monkeypatch.setattr(coordinator_module, "NDNetworkOrchestrator", _InventoryOrchestrator)
     deployed = []
-    monkeypatch.setattr(coordinator, "_build_pending_network_deploy_payloads", lambda *_args: [{"networkNames": ["N"]}])
+    monkeypatch.setattr(coordinator, "_build_pending_network_deploy_payloads", lambda *_args: [{"networkNames": ["N"], "switchIds": ["S1"]}])
     monkeypatch.setattr(coordinator, "_deploy_network_attachments", lambda *_args, **_kwargs: deployed.append(True) or {"changed": True})
     result = NetworkStateMachine(coordinator).run({"state": "merged", "config": [entry]}, strategy)
     assert result["changed"] is True

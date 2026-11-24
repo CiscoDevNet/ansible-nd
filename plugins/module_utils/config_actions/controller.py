@@ -93,6 +93,8 @@ class ConfigActionsController:
 
         if normalized_context.check_mode:
             planned_steps = self._planned_steps(actions, normalized_context)
+            if planned_steps and all(step.status == "skipped" for step in planned_steps):
+                return self._result(actions, targets, list(planned_steps))
             return ConfigActionsResult(
                 requested=actions,
                 effective=actions,
@@ -143,7 +145,7 @@ class ConfigActionsController:
             response = self.backend.deploy_switches(context, fabric_name, context.switch_ids)
             return ConfigActionStepResult(action="deploy", scope="switch", status="completed", target=fabric_name, response=response)
         if actions.type == "resource":
-            if not context.resources:
+            if not context.resources or (self.policy.resource_requires_switch_targets and not context.switch_ids):
                 return ConfigActionStepResult(action="deploy", scope="resource", status="skipped", target=fabric_name, error="no_targets")
             response = self.backend.deploy_resources(context, fabric_name, context.resources)
             return ConfigActionStepResult(action="deploy", scope="resource", status="completed", target=fabric_name, response=response)
@@ -192,7 +194,9 @@ class ConfigActionsController:
             if actions.deploy_requested():
                 if actions.type == "switch" and not fabric_context.switch_ids:
                     steps.append(ConfigActionStepResult(action="deploy", status="skipped", scope="switch", target=fabric_name, error="no_targets"))
-                elif actions.type == "resource" and not fabric_context.resources:
+                elif actions.type == "resource" and (
+                    not fabric_context.resources or (self.policy.resource_requires_switch_targets and not fabric_context.switch_ids)
+                ):
                     steps.append(ConfigActionStepResult(action="deploy", status="skipped", scope="resource", target=fabric_name, error="no_targets"))
                 else:
                     steps.append(ConfigActionStepResult(action="deploy", status="planned", scope=actions.type, target=fabric_name))
@@ -218,8 +222,7 @@ class ConfigActionsController:
             resources_by_fabric=ConfigActionsController._dedupe_target_map(context.resources_by_fabric),
         )
 
-    @staticmethod
-    def _validate_scoped_targets(actions: ConfigActions, context: ConfigActionsContext) -> None:
+    def _validate_scoped_targets(self, actions: ConfigActions, context: ConfigActionsContext) -> None:
         """
         # Summary
 
@@ -237,6 +240,8 @@ class ConfigActionsController:
             raise ValueError("switch deploy with multiple fabrics requires switch_ids_by_fabric instead of flat switch_ids.")
         if actions.type == "resource" and context.resources:
             raise ValueError("resource deploy with multiple fabrics requires resources_by_fabric instead of flat resources.")
+        if actions.type == "resource" and self.policy.resource_requires_switch_targets and context.switch_ids:
+            raise ValueError("resource deploy with multiple fabrics requires switch_ids_by_fabric instead of flat switch_ids.")
 
     @staticmethod
     def _context_for_fabric(context: ConfigActionsContext, fabric_name: str) -> ConfigActionsContext:

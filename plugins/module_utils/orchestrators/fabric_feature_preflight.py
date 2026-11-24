@@ -185,7 +185,8 @@ def preflight_feature_changes(
             continue
         if standalone_vrf and resource == "VRF":
             validate_standalone_vrf_trm_requirements(config, index, fabric_name)
-            validate_standalone_vrf_svi_requirements(config, proposed.to_gathered_config(), index, fabric_name)
+            requested = requested_config[index] if requested_config is not None else proposed.to_gathered_config()
+            validate_standalone_vrf_svi_requirements(config, requested, index, fabric_name)
         if (
             (resource == "Network" and config.get("vlan_network_type") in _PVLAN_TYPES)
             or config.get("trm_enable") is True
@@ -225,9 +226,11 @@ def preflight_workflow_features(
     - If a requested feature is unavailable on the owning fabric.
     """
     target_key = "networkName" if resource == "Network" else "vrfName"
-    attach_names = {payload[target_key] for payload in coordinator.attachments.planned_attach_payloads(current_attachments or {}, desired_attachments or {})}
-    resolver = getattr(coordinator, "_fabric_resolver", None)
     state = module_args.get("state", "merged")
+    attach_names = {
+        payload[target_key] for payload in coordinator.attachments.planned_attach_payloads(current_attachments or {}, desired_attachments or {}, state=state)
+    }
+    resolver = getattr(coordinator, "_fabric_resolver", None)
 
     def details_for(name: str, fabric_data: dict[str, Any]) -> dict[str, Any]:
         cached = fabric_data.get("manageFabricDetails")

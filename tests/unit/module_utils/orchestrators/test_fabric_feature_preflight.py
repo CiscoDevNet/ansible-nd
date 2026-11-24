@@ -435,7 +435,8 @@ def test_parent_checks_each_child_full_fabric_details():
 
     class Attachments:
         @staticmethod
-        def planned_attach_payloads(_current, _desired):
+        def planned_attach_payloads(_current, _desired, *, state):
+            assert state == "merged"
             return []
 
     resolver = Resolver()
