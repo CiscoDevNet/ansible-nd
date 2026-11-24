@@ -73,6 +73,7 @@ class SviInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SviInterfaceModel]):
     # Capability preflight (PR #571 review): `capableSwitches?interfaceType=svi&mode=managed` lists every switch of a VXLAN and a
     # Campus VXLAN fabric, Catalyst included (lab-verified 2026-09-21 on ND 4.2.1.10 and 4.3.1.175).
     interface_type: ClassVar[str] = "svi"
+    staged_delete_echo_interface_types: ClassVar[frozenset[str]] = frozenset({"svi"})
     interface_mode: ClassVar[str] = "managed"
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_full_modify: ClassVar[bool] = True

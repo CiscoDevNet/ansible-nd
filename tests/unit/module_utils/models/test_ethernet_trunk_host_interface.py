@@ -37,10 +37,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.etherne
     EthernetTrunkHostInterfaceModel,
     EthernetTrunkHostNetworkOSModel,
     EthernetTrunkHostPolicyModel,
-    EthernetTrunkHostVlanMappingEntryModel,
     XeEthernetTrunkHostNetworkOSModel,
     XeEthernetTrunkHostPolicyModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import VlanMappingEntryModel
 from pydantic import ValidationError
 
 
@@ -124,7 +124,7 @@ SAMPLE_ANSIBLE_CONFIG = {
 
 
 # =============================================================================
-# Test: EthernetTrunkHostVlanMappingEntryModel
+# Test: VlanMappingEntryModel
 # =============================================================================
 
 
@@ -141,10 +141,10 @@ def test_ethernet_trunk_host_interface_00010():
 
     ## Classes and Methods
 
-    - EthernetTrunkHostVlanMappingEntryModel.__init__()
+    - VlanMappingEntryModel.__init__()
     """
     with does_not_raise():
-        instance = EthernetTrunkHostVlanMappingEntryModel()
+        instance = VlanMappingEntryModel()
     assert instance.customer_inner_vlan_id is None
     assert instance.customer_vlan_id is None
     assert instance.dot1q_tunnel is None
@@ -164,10 +164,10 @@ def test_ethernet_trunk_host_interface_00020():
 
     ## Classes and Methods
 
-    - EthernetTrunkHostVlanMappingEntryModel.__init__()
+    - VlanMappingEntryModel.__init__()
     """
     with does_not_raise():
-        instance = EthernetTrunkHostVlanMappingEntryModel(
+        instance = VlanMappingEntryModel(
             customer_inner_vlan_id=100,
             customer_vlan_id=["10", "20-30"],
             dot1q_tunnel=True,
@@ -192,10 +192,10 @@ def test_ethernet_trunk_host_interface_00030():
 
     ## Classes and Methods
 
-    - EthernetTrunkHostVlanMappingEntryModel.__init__()
+    - VlanMappingEntryModel.__init__()
     """
     with does_not_raise():
-        instance = EthernetTrunkHostVlanMappingEntryModel(
+        instance = VlanMappingEntryModel(
             customerInnerVlanId=100,
             customerVlanId=["10"],
             dot1qTunnel=False,
@@ -243,14 +243,14 @@ def test_ethernet_trunk_host_interface_00040(field, value, should_raise):
 
     ## Classes and Methods
 
-    - EthernetTrunkHostVlanMappingEntryModel.__init__()
+    - VlanMappingEntryModel.__init__()
     """
     if should_raise:
         with pytest.raises(ValidationError):
-            EthernetTrunkHostVlanMappingEntryModel(**{field: value})
+            VlanMappingEntryModel(**{field: value})
     else:
         with does_not_raise():
-            instance = EthernetTrunkHostVlanMappingEntryModel(**{field: value})
+            instance = VlanMappingEntryModel(**{field: value})
         assert getattr(instance, field) == value
 
 
@@ -388,12 +388,12 @@ def test_ethernet_trunk_host_interface_00130():
     """
     # Summary
 
-    Verify nested `vlan_mapping_entries` list is coerced to `EthernetTrunkHostVlanMappingEntryModel` instances.
+    Verify nested `vlan_mapping_entries` list is coerced to `VlanMappingEntryModel` instances.
 
     ## Test
 
     - Construct with a list of dicts under vlan_mapping_entries
-    - Each entry is an EthernetTrunkHostVlanMappingEntryModel
+    - Each entry is an VlanMappingEntryModel
 
     ## Classes and Methods
 
@@ -409,7 +409,7 @@ def test_ethernet_trunk_host_interface_00130():
         )
     assert instance.vlan_mapping is True
     assert len(instance.vlan_mapping_entries) == 2
-    assert isinstance(instance.vlan_mapping_entries[0], EthernetTrunkHostVlanMappingEntryModel)
+    assert isinstance(instance.vlan_mapping_entries[0], VlanMappingEntryModel)
     assert instance.vlan_mapping_entries[0].customer_inner_vlan_id == 100
     assert instance.vlan_mapping_entries[1].provider_vlan_id == 201
 
@@ -448,7 +448,7 @@ def test_ethernet_trunk_host_interface_00150(value, expected):
     """
     # Summary
 
-    Verify `_validate_allowed_vlans` accepts valid values (including 1 and 4094 boundary values) and coerces integers to strings.
+    Verify `validate_allowed_vlans` accepts valid values (including 1 and 4094 boundary values) and coerces integers to strings.
 
     ## Test
 
@@ -457,7 +457,7 @@ def test_ethernet_trunk_host_interface_00150(value, expected):
 
     ## Classes and Methods
 
-    - ethernet_trunk_host_interface._validate_allowed_vlans()
+    - types.validate_allowed_vlans()
     """
     with does_not_raise():
         instance = EthernetTrunkHostPolicyModel(allowed_vlans=value)
@@ -499,7 +499,7 @@ def test_ethernet_trunk_host_interface_00160(value):
     """
     # Summary
 
-    Verify `_validate_allowed_vlans` rejects malformed values, out-of-range ids, and reversed ranges.
+    Verify `validate_allowed_vlans` rejects malformed values, out-of-range ids, and reversed ranges.
 
     ## Test
 
@@ -508,7 +508,7 @@ def test_ethernet_trunk_host_interface_00160(value):
 
     ## Classes and Methods
 
-    - ethernet_trunk_host_interface._validate_allowed_vlans()
+    - types.validate_allowed_vlans()
     """
     with pytest.raises(ValidationError, match=r"allowed_vlans"):
         EthernetTrunkHostPolicyModel(allowed_vlans=value)
@@ -537,7 +537,7 @@ def test_ethernet_trunk_host_interface_00162(value, match):
     """
     # Summary
 
-    Verify `_validate_allowed_vlans` raises `ValueError` with a specific, actionable message identifying the failure mode (out-of-bounds id,
+    Verify `validate_allowed_vlans` raises `ValueError` with a specific, actionable message identifying the failure mode (out-of-bounds id,
     out-of-bounds range, reversed range, or shape mismatch).
 
     ## Test
@@ -546,7 +546,7 @@ def test_ethernet_trunk_host_interface_00162(value, match):
 
     ## Classes and Methods
 
-    - ethernet_trunk_host_interface._validate_allowed_vlans()
+    - types.validate_allowed_vlans()
     """
     with pytest.raises(ValidationError, match=match):
         EthernetTrunkHostPolicyModel(allowed_vlans=value)
@@ -603,7 +603,7 @@ def test_ethernet_trunk_host_interface_00170(value, should_raise):
     """
     # Summary
 
-    Verify `_validate_customer_vlan_id_list` accepts a list of VLAN id or range strings where every id is in 1..4094 and every range start <= end,
+    Verify `validate_customer_vlan_id_list` accepts a list of VLAN id or range strings where every id is in 1..4094 and every range start <= end,
     and rejects malformed entries, out-of-range values, reversed ranges, comma-joined elements, empty strings, and non-string entries.
 
     ## Test
@@ -615,14 +615,14 @@ def test_ethernet_trunk_host_interface_00170(value, should_raise):
 
     ## Classes and Methods
 
-    - ethernet_trunk_host_interface._validate_customer_vlan_id_list()
+    - types.validate_customer_vlan_id_list()
     """
     if should_raise:
         with pytest.raises(ValidationError, match=r"customer_vlan_id"):
-            EthernetTrunkHostVlanMappingEntryModel(customer_vlan_id=value)
+            VlanMappingEntryModel(customer_vlan_id=value)
     else:
         with does_not_raise():
-            instance = EthernetTrunkHostVlanMappingEntryModel(customer_vlan_id=value)
+            instance = VlanMappingEntryModel(customer_vlan_id=value)
         assert instance.customer_vlan_id == value
 
 
@@ -639,7 +639,7 @@ def test_ethernet_trunk_host_interface_00171(value, expected):
     """
     # Summary
 
-    Verify `_validate_customer_vlan_id_list` coerces JSON int entries to strings, mirroring `_validate_allowed_vlans`.
+    Verify `validate_customer_vlan_id_list` coerces JSON int entries to strings, mirroring `validate_allowed_vlans`.
     ND returns single-id VLAN values as JSON ints (e.g. `100`); without coercion `from_response()` would raise on an
     interface whose `vlanMappingEntries` echo int customer VLAN ids, breaking the query / idempotency path.
 
@@ -650,10 +650,10 @@ def test_ethernet_trunk_host_interface_00171(value, expected):
 
     ## Classes and Methods
 
-    - ethernet_trunk_host_interface._validate_customer_vlan_id_list()
+    - types.validate_customer_vlan_id_list()
     """
     with does_not_raise():
-        instance = EthernetTrunkHostVlanMappingEntryModel(customer_vlan_id=value)
+        instance = VlanMappingEntryModel(customer_vlan_id=value)
     assert instance.customer_vlan_id == expected
 
 
@@ -682,7 +682,7 @@ def test_ethernet_trunk_host_interface_00172(value, match):
     """
     # Summary
 
-    Verify `_validate_customer_vlan_id_list` raises `ValueError` with a specific, actionable message identifying the failure mode.
+    Verify `validate_customer_vlan_id_list` raises `ValueError` with a specific, actionable message identifying the failure mode.
 
     ## Test
 
@@ -690,10 +690,10 @@ def test_ethernet_trunk_host_interface_00172(value, match):
 
     ## Classes and Methods
 
-    - ethernet_trunk_host_interface._validate_customer_vlan_id_list()
+    - types.validate_customer_vlan_id_list()
     """
     with pytest.raises(ValidationError, match=match):
-        EthernetTrunkHostVlanMappingEntryModel(customer_vlan_id=value)
+        VlanMappingEntryModel(customer_vlan_id=value)
 
 
 # =============================================================================

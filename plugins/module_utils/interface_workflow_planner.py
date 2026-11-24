@@ -1197,7 +1197,9 @@ class InterfaceWorkflowPlanner:
         if not isinstance(config, dict) or set(config) != {"networkOS"}:
             return
         network_os = config["networkOS"]
-        if not isinstance(network_os, dict) or set(network_os) != {"networkOSType", "policy"} or network_os["networkOSType"] != "nx-os":
+        if not isinstance(network_os, dict) or set(network_os) != {"networkOSType", "policy"}:
+            return
+        if not self._logical_delete_replay_supported(resource.resource_type, network_os["networkOSType"]):
             return
         policy = network_os["policy"]
         if (
@@ -1239,6 +1241,26 @@ class InterfaceWorkflowPlanner:
                 member_interfaces=tuple(member_interfaces),
             )
         )
+
+    @staticmethod
+    def _logical_delete_replay_supported(family: str, network_os_type: Any) -> bool:
+        """
+        # Summary
+
+        Return whether a staged `interface_delete` tombstone of `family` on `network_os_type` may be replayed or published as a current observation.
+
+        NX-OS is supported for every logical family. IOS-XE is supported for `loopback` and `svi` only: their preview is the bare
+        `no interface` (plus `no vlan` for an SVI) on both platforms (lab-verified 2026-11-10 on ND 4.2.1.10, issue #688), while the
+        port-channel member validation parses NX-OS CLI and has not been qualified against IOS-XE. Subinterfaces keep their own
+        NX-OS-only publication rule.
+
+        ## Raises
+
+        None
+        """
+        if network_os_type == "nx-os":
+            return True
+        return network_os_type == "ios-xe" and family in {"loopback", "svi"}
 
     def _staged_subinterface_delete_echo(
         self,
@@ -1433,12 +1455,14 @@ class InterfaceWorkflowPlanner:
         inventory: Mapping[tuple[str, str], dict[str, Any]],
         requested_po_ids: set[tuple[str, str]],
     ) -> bool:
-        """Replay only exact NX-OS logical deletions already staged by ND.
+        """Replay only exact logical deletions already staged by ND.
 
         A deployed logical delete can leave a ``userDefined/interface_delete``
         tombstone until its switch-side CLI is deployed. A port-channel preview
         may also reset members of other port-channels in the same delete task;
         every such member must be owned by a parent explicitly requested here.
+        Every family is replayed on NX-OS; on IOS-XE only loopback and SVI are
+        (see ``_logical_delete_replay_supported``).
         """
 
         family = resource.adapter.resource_type
@@ -1453,14 +1477,27 @@ class InterfaceWorkflowPlanner:
             str(current.get("interfaceName") or "").casefold() != name.casefold()
             or current.get("switchId") != switch_id
             or self._canonical_interface_type(current.get("interfaceType")) not in resource.adapter.interface_types
-            or self._wire_network_os_type(current) != "nx-os"
-            or policy.get("policyType") != "userDefined"
-            or policy.get("templateName") != "interface_delete"
+            or not self._logical_delete_replay_supported(family, self._wire_network_os_type(current))
         ):
+            return False
+        tombstone = policy.get("policyType") == "userDefined" and policy.get("templateName") == "interface_delete"
+        # TODO(4.2.1) staged-removal-before-discovery-lists-policyless-row
+        # A removal staged within seconds of the create deploy is listed as a loopback or SVI row with no policy instead of the
+        # tombstone, while the preview still reports `no interface` pending (lab 2026-11-10, 4.2.1.10 and 4.3.1.175). The same
+        # exact-preview proof therefore applies to that row; the switch `configSyncStatus` is optional and cannot stand in for it.
+        if not tombstone and (policy or family not in {"loopback", "svi"}):
             return False
         orchestrator = resource.orchestrator
         preview = orchestrator._preview_interfaces({"interfaces": [{"interfaceName": name, "switchId": switch_id}]})
         pending_pairs, error = orchestrator._pending_preview_pairs(preview, [(name, switch_id)])
+        if error is None and not pending_pairs:
+            # TODO(4.2.1) interface-list-lags-deployed-logical-removal
+            # ND keeps listing the tombstone for a few seconds after the deploy that pushed its removal, while interfacesSummary
+            # already reports no policy for it, and keeps a removed loopback or SVI as a row without a policy (`mode: unknown`,
+            # stale operData) for minutes; unmanaged interfaces (`Vlan1`) are listed the same way. A valid preview with zero
+            # pending lines proves nothing is left to deploy, so the delete is already satisfied: no staged target, no proof
+            # (lab 2026-11-10, 4.2.1.10 and 4.3.1.175, NX-OS and IOS-XE, issue #688).
+            return True
         if error is not None or pending_pairs != {orchestrator._normalized_interface_pair(name, switch_id)}:
             return False
         row = preview["configurationDiffs"][0]
@@ -1861,6 +1898,14 @@ class InterfaceWorkflowPlanner:
                     )
                 )
                 current_policy_type = InterfaceStateSnapshot.policy_type(current_records[0][1])
+                if current_policy_type is None and resource.adapter.resource_type in {"loopback", "svi"}:
+                    # `_staged_logical_delete_echo` accepts a row without a policy only when the preview of that exact name proves
+                    # nothing is pending or only its own removal is. Reaching here means the preview proved neither.
+                    errors.append(
+                        f"resources[{resource.resource_index}] cannot delete {getattr(desired, 'interface_name')}: ND lists it without a policy and "
+                        "its configuration preview does not show either nothing pending or only the removal of that interface."
+                    )
+                    continue
                 if current_policy_type in resource.adapter.policy_types:
                     deletes_by_index[resource.resource_index].append(self._port_channel_delete_model(resource, desired, current_records))
                     continue
