@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping
 from contextlib import nullcontext
+from copy import deepcopy
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -105,6 +106,7 @@ class InterfaceWorkflowCoordinator:
         self._rest_sends = []
         self._execution_options = workflow_options(module.params)
         self._preparation_deferrals = {}
+        self._member_verification_rows = None
 
     def _new_rest_send(self, params: dict[str, Any] | None = None, *, check_mode: bool | None = None) -> RestSend:
         """Build an authenticated collection REST runtime for this module invocation."""
@@ -320,12 +322,13 @@ class InterfaceWorkflowCoordinator:
             fabric_context=fabric_context,
             rest_send=rest_send,
         )
-        planner = self.planner_factory(
+        planner_options = dict(
             snapshot=snapshot,
             rest_send_factory=lambda params: self._new_rest_send(params=params, check_mode=True),
             vpc_pair_by_switch_ip=vpc_pair_by_switch_ip,
             run_capability_preflight=True,
         )
+        planner = self.planner_factory(**planner_options)
         return planner.plan(resources)
 
     @classmethod
@@ -1198,7 +1201,7 @@ class InterfaceWorkflowCoordinator:
         else:
             changed = (plan.changed or bool(deployment_targets)) if self.module.check_mode else False
 
-        return {
+        result = {
             "changed": changed,
             "planned_changed": plan.changed,
             "mutation_count": plan.mutation_count,
@@ -1210,6 +1213,16 @@ class InterfaceWorkflowCoordinator:
             "request_stats": request_stats,
             "execution": execution_result,
         }
+        if self._member_verification_rows is not None and not self.module.check_mode:
+            result["member_verifications"] = {
+                "version": 1,
+                "source": "native_explicit_member_ownership_v1",
+                "observed": True,
+                "complete": True,
+                "request_sha256": workflow_contract(self.module.params)["request_sha256"],
+                "members": deepcopy(self._member_verification_rows),
+            }
+        return result
 
     def run(self) -> dict[str, Any]:
         return self.attach_contract(self._run())
@@ -1230,9 +1243,15 @@ class InterfaceWorkflowCoordinator:
 
     def _run(self) -> dict[str, Any]:
         """Plan the complete workflow, then execute only after all validation succeeds."""
+        self._member_verification_rows = None
         profile = self._performance_profile
         with profile.phase("planning") if profile is not None else nullcontext():
             plan = self._build_plan()
+        if any(preparation.kind in {"missing_inventory", "explicit_host_conversion"} for preparation in getattr(plan, "member_preparations", ())):
+            if (self.module.params.get("config_actions") or {}).get("deploy", False) is not False:
+                raise InterfaceWorkflowValidationError("Explicit member preparation requires config_actions.deploy=false")
+            if (self.module.params.get("verify") or {}).get("enabled") is not True:
+                raise InterfaceWorkflowValidationError("Explicit member preparation requires verify.enabled=true")
         deploy = bool((self.module.params.get("config_actions") or {}).get("deploy", False))
         verify = bool((self.module.params.get("verify") or {}).get("enabled", False))
         preparation = self._execution_options.get("preparation_only") is True
@@ -1275,6 +1294,7 @@ class InterfaceWorkflowCoordinator:
                 result["performance_profile"] = profile.to_dict()
             return result
         if not plan.changed and not pending_deployment_targets:
+            self._verify_missing_member_success(plan)
             with profile.phase("output") if profile is not None else nullcontext():
                 result = self._format_result(plan)
             if self._execution_options["desired_equality"] and not self._preparation_deferrals:
@@ -1305,6 +1325,8 @@ class InterfaceWorkflowCoordinator:
         except Exception as exc:
             raise self._unexpected_execution_failure(plan, exc) from exc
         try:
+            if not execution.failed:
+                self._verify_missing_member_success(plan)
             with profile.phase("output") if profile is not None else nullcontext():
                 result = self._format_result(plan, execution)
         except Exception as exc:
@@ -1339,6 +1361,18 @@ class InterfaceWorkflowCoordinator:
         if profile is not None:
             result["performance_profile"] = profile.to_dict()
         return result
+
+    def _verify_missing_member_success(self, plan) -> None:
+        """Keep retained-host retries and no-ops bound to actual member intent."""
+        expectations = getattr(plan, "missing_member_verifications", ())
+        if not expectations or (self.module.params.get("config_actions") or {}).get("deploy") is True:
+            return
+        from ansible_collections.cisco.nd.plugins.module_utils.interface_missing_member_preparation import refresh_missing_preparations
+
+        rows = refresh_missing_preparations(expectations, self._snapshot, phase="member")
+        if not isinstance(rows, (tuple, list)) or len(rows) != len(expectations) or any(not isinstance(row, dict) for row in rows):
+            raise RuntimeError("Explicit member verification did not return complete observed ownership")
+        self._member_verification_rows = deepcopy(list(rows))
 
     @staticmethod
     def _unexpected_execution_failure(

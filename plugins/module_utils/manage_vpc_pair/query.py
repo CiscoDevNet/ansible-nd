@@ -343,25 +343,27 @@ def _extract_vpc_pairs_from_list_response(vpc_pairs_response: Any) -> list[dict[
 
     Returns:
         List of dicts with switchId, peerSwitchId, useVirtualPeerLink keys.
-        Empty list if response is invalid or contains no pairs.
+        Empty list only when the response contains a valid empty pair list.
+
+    Raises:
+        VpcPairResourceError: If the response or any pair identity is malformed.
     """
     if not isinstance(vpc_pairs_response, dict):
-        return []
+        raise VpcPairResourceError(msg="Intended vPC pair response must be an object.")
 
     candidates = None
     for key in (VpcFieldNames.VPC_PAIRS, "items", VpcFieldNames.DATA):
-        value = vpc_pairs_response.get(key)
-        if isinstance(value, list):
-            candidates = value
+        if key in vpc_pairs_response:
+            candidates = vpc_pairs_response[key]
             break
 
     if not isinstance(candidates, list):
-        return []
+        raise VpcPairResourceError(msg="Intended vPC pair response must contain a pair list.")
 
     extracted_pairs = []
     for item in candidates:
         if not isinstance(item, dict):
-            continue
+            raise VpcPairResourceError(msg="Intended vPC pair list contains a malformed entry.")
 
         switch_id = item.get(VpcFieldNames.SWITCH_ID)
         peer_switch_id = item.get(VpcFieldNames.PEER_SWITCH_ID)
@@ -371,15 +373,18 @@ def _extract_vpc_pairs_from_list_response(vpc_pairs_response: Any) -> list[dict[
             switch_id = switch_id.get("switch")
             peer_switch_id = peer_switch_id.get("peerSwitch")
 
-        if not switch_id or not peer_switch_id:
-            continue
+        if not all(isinstance(value, str) and value.strip() for value in (switch_id, peer_switch_id)) or switch_id == peer_switch_id:
+            raise VpcPairResourceError(msg="Intended vPC pair entry must contain two distinct non-empty switch IDs.")
+        if VpcFieldNames.USE_VIRTUAL_PEER_LINK in item and not isinstance(item[VpcFieldNames.USE_VIRTUAL_PEER_LINK], bool):
+            raise VpcPairResourceError(msg="Intended vPC pair useVirtualPeerLink must be a boolean.")
 
         extracted_pair = {
             VpcFieldNames.SWITCH_ID: switch_id,
             VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
-            VpcFieldNames.USE_VIRTUAL_PEER_LINK: item.get(VpcFieldNames.USE_VIRTUAL_PEER_LINK, False),
             VpcFieldNames.VPC_ACTION: VpcActionEnum.PAIR.value,
         }
+        if VpcFieldNames.USE_VIRTUAL_PEER_LINK in item:
+            extracted_pair[VpcFieldNames.USE_VIRTUAL_PEER_LINK] = item[VpcFieldNames.USE_VIRTUAL_PEER_LINK]
         if VpcFieldNames.VPC_PAIR_DETAILS in item:
             extracted_pair[VpcFieldNames.VPC_PAIR_DETAILS] = item.get(VpcFieldNames.VPC_PAIR_DETAILS)
 
@@ -388,11 +393,71 @@ def _extract_vpc_pairs_from_list_response(vpc_pairs_response: Any) -> list[dict[
     return extracted_pairs
 
 
+def _query_intended_vpc_pairs(nd_v2: Any, fabric_name: str) -> list[dict[str, Any]]:
+    """Read complete configured pair intent, including offline placeholders.
+
+    Both ND 4.2.1 and 4.3.1 document the intendedPairs view. Optional metadata
+    is validated when supplied; a partial page is never treated as full scope.
+    """
+    pairs = []
+    offset = 0
+    expected_total = None
+    seen = set()
+    paired_members = set()
+    while True:
+        path = VpcPairEndpoints.vpc_pairs_list(fabric_name, view="intendedPairs", offset=offset, max_results=500)
+        response = nd_v2.request(path, HttpVerbEnum.GET)
+        page = _extract_vpc_pairs_from_list_response(response)
+        meta = response.get("meta", {})
+        if not isinstance(meta, dict):
+            raise VpcPairResourceError(msg="Intended vPC pair metadata must be an object.")
+        counts = meta.get("counts")
+        links = meta.get("links", {})
+        if not isinstance(links, dict):
+            raise VpcPairResourceError(msg="Intended vPC pair pagination links must be an object.")
+        next_link = links.get("next")
+        if next_link is not None and not isinstance(next_link, str):
+            raise VpcPairResourceError(msg="Intended vPC pair next-page link must be a string.")
+        # Without counts, exhaust offsets to an empty page rather than assume
+        # the server honored our requested maximum or returned complete scope.
+        more = bool(next_link) or bool(page)
+        if "counts" in meta:
+            # Exact pagination integers must reject booleans that compare equal to zero or one.
+            if not isinstance(counts, dict) or any(
+                type(counts.get(key)) is not int or counts[key] < 0 for key in ("total", "remaining")  # pylint: disable=unidiomatic-typecheck
+            ):
+                raise VpcPairResourceError(msg="Intended vPC pair counts require non-negative integer total and remaining values.")
+            total, remaining = counts["total"], counts["remaining"]
+            if total != offset + len(page) + remaining or (expected_total is not None and total != expected_total):
+                raise VpcPairResourceError(msg="Intended vPC pair pagination counts are inconsistent.")
+            if next_link and not remaining:
+                raise VpcPairResourceError(msg="Intended vPC pair pagination link conflicts with its counts.")
+            expected_total = total
+            more = remaining > 0
+        for pair in page:
+            key = _vpc_pair_identity_key(pair)
+            if key in seen:
+                raise VpcPairResourceError(msg="Intended vPC pair pagination repeated a pair identity.")
+            if any(member in paired_members for member in key):
+                raise VpcPairResourceError(msg="Intended vPC pair list assigns a switch to multiple peers.")
+            seen.add(key)
+            paired_members.update(key)
+        pairs.extend(page)
+        if not more:
+            if expected_total is not None and len(pairs) != expected_total:
+                raise VpcPairResourceError(msg="Intended vPC pair pagination ended before the reported total.")
+            return pairs
+        if not page:
+            raise VpcPairResourceError(msg="Intended vPC pair pagination made no progress.")
+        offset += len(page)
+
+
 def _get_direct_vpc_pair(
     nd_v2: Any,
     fabric_name: str,
     switch_id: str,
     timeout: int | None = None,
+    diagnostics: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     """
     Best-effort per-switch /vpcPair lookup.
@@ -402,6 +467,7 @@ def _get_direct_vpc_pair(
         fabric_name: Fabric name
         switch_id: Switch serial number
         timeout: Optional timeout override (uses module query timeout policy if not specified)
+        diagnostics: Optional destination for a sanitized read-failure category.
 
     Returns:
         Direct vPC pair payload dict when available; otherwise None.
@@ -418,13 +484,24 @@ def _get_direct_vpc_pair(
     rest_send.timeout = timeout
     try:
         direct_vpc = nd_v2.request(path, HttpVerbEnum.GET)
-    except (NDModuleError, Exception):
+    except NDModuleError as error:
+        if diagnostics is not None:
+            if error.status in (408, 504) or any(marker in error.msg.lower() for marker in ("timed out", "timeout")):
+                diagnostics["cause"] = "request timed out"
+            else:
+                diagnostics["cause"] = f"HTTP {error.status}" if isinstance(error.status, int) else "controller request failed"
+        return None
+    except Exception as error:
+        if diagnostics is not None:
+            diagnostics["cause"] = "request timed out" if isinstance(error, TimeoutError) else "controller request failed"
         return None
     finally:
         rest_send.restore_settings()
 
     if isinstance(direct_vpc, dict):
         return direct_vpc
+    if diagnostics is not None:
+        diagnostics["cause"] = "detail response is not an object"
     return None
 
 
@@ -433,23 +510,28 @@ def _enrich_pairs_from_direct_vpc(
     fabric_name: str,
     pairs: list[dict[str, Any]],
     timeout: int | None = None,
+    require_complete_details: bool = False,
 ) -> list[dict[str, Any]]:
     """
     Enrich pair fields from per-switch /vpcPair endpoint when available.
 
     The /vpcPairs list response may omit fields like useVirtualPeerLink.
-    This helper preserves lightweight list discovery while improving field
-    accuracy for gathered output.
+    Every affected pair is queried because list fields alone do not guarantee
+    complete custom settings. List fields can supplement an unavailable or
+    partial detail response, but an unknown mode is never defaulted to false.
 
     Args:
         nd_v2: NDModuleV2 instance for RestSend
         fabric_name: Fabric name
         pairs: List of pair dicts from list endpoint
         timeout: Per-switch query timeout in seconds
+        require_complete_details: Require explicit list details, including null
+            for known absence, before accepting an unavailable detail read.
 
     Returns:
         List of enriched pair dicts with updated field values from direct queries.
-        Original values preserved when direct query fails.
+        Valid list values are preserved when direct query fails. Missing or
+        invalid required fields raise an error identifying the affected pair.
     """
     if not pairs:
         return []
@@ -465,17 +547,30 @@ def _enrich_pairs_from_direct_vpc(
             enriched_pairs.append(enriched)
             continue
 
+        diagnostics: dict[str, str] = {}
         direct_vpc = _get_direct_vpc_pair(
             nd_v2=nd_v2,
             fabric_name=fabric_name,
             switch_id=switch_id,
             timeout=timeout,
+            diagnostics=diagnostics,
         )
 
-        if isinstance(direct_vpc, dict):
+        if isinstance(direct_vpc, dict) and direct_vpc:
             peer_switch_id = direct_vpc.get(VpcFieldNames.PEER_SWITCH_ID)
-            if peer_switch_id:
-                enriched[VpcFieldNames.PEER_SWITCH_ID] = peer_switch_id
+            direct_switch_id = direct_vpc.get(VpcFieldNames.SWITCH_ID)
+            direct_fabric = direct_vpc.get("fabricName")
+            if (
+                (direct_switch_id is not None and direct_switch_id != switch_id)
+                or (direct_fabric is not None and direct_fabric != fabric_name)
+                or peer_switch_id != enriched.get(VpcFieldNames.PEER_SWITCH_ID)
+            ):
+                raise VpcPairResourceError(
+                    msg=f"Direct vPC pair identity conflicts with the intended pair list for fabric '{fabric_name}', "
+                    f"pair '{switch_id}' / '{enriched.get(VpcFieldNames.PEER_SWITCH_ID)}'.",
+                    fabric=fabric_name,
+                    vpc_pair_key=_vpc_pair_identity_key(enriched),
+                )
 
             use_virtual_peer_link = _get_api_field_value(
                 direct_vpc,
@@ -489,6 +584,19 @@ def _enrich_pairs_from_direct_vpc(
             if VpcFieldNames.VPC_PAIR_DETAILS in direct_vpc:
                 enriched[VpcFieldNames.VPC_PAIR_DETAILS] = direct_vpc.get(VpcFieldNames.VPC_PAIR_DETAILS)
 
+        missing_fields = []
+        if not isinstance(enriched.get(VpcFieldNames.USE_VIRTUAL_PEER_LINK), bool):
+            missing_fields.append(VpcFieldNames.USE_VIRTUAL_PEER_LINK)
+        if require_complete_details and not direct_vpc and VpcFieldNames.VPC_PAIR_DETAILS not in enriched:
+            missing_fields.append(VpcFieldNames.VPC_PAIR_DETAILS)
+        if missing_fields:
+            cause = diagnostics.get("cause", "detail response omits valid required fields" if direct_vpc else "detail endpoint unavailable")
+            raise VpcPairResourceError(
+                msg=f"Cannot read intended vPC pair {', '.join(missing_fields)} configuration for fabric '{fabric_name}', "
+                f"pair '{switch_id}' / '{enriched.get(VpcFieldNames.PEER_SWITCH_ID)}': {cause}.",
+                fabric=fabric_name,
+                vpc_pair_key=_vpc_pair_identity_key(enriched),
+            )
         enriched_pairs.append(enriched)
 
     return enriched_pairs
@@ -884,10 +992,12 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
     Query existing VPC pairs with state-aware enrichment.
 
     Flow:
-    - Base query from /vpcPairs list (always attempted first)
-    - gathered/deleted: use lightweight list-only data when available
-    - merged/replaced/overridden: enrich with switch inventory and recommendation
-      APIs to build have/pending_create/pending_delete sets
+    - Read configured pair intent from the documented intendedPairs list view
+    - gathered/deleted: use lightweight list data when available
+    - merged/replaced: enrich explicitly requested pairs while retaining all
+      intended identities for conflict checks and save/deploy signals
+    - overridden: enrich the full intended set, including potential removals
+    - Never treat offline intent as absent deployed state
 
     Args:
         nrm: VpcPairStateMachine or query context with .module attribute
@@ -948,17 +1058,19 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
         have = []
         list_query_succeeded = False
         try:
-            list_path = VpcPairEndpoints.vpc_pairs_list(fabric_name)
             rest_send = nd_v2._get_rest_send()
             rest_send.save_settings()
             rest_send.timeout = get_verify_timeout(nrm.module)
             try:
-                vpc_pairs_response = nd_v2.request(list_path, HttpVerbEnum.GET)
+                have = _query_intended_vpc_pairs(nd_v2, fabric_name)
             finally:
                 rest_send.restore_settings()
-            have.extend(_extract_vpc_pairs_from_list_response(vpc_pairs_response))
             list_query_succeeded = True
+        except VpcPairResourceError:
+            raise
         except Exception as list_error:
+            if state != "deleted" or not config:
+                raise VpcPairResourceError(msg="Cannot read complete intended vPC pairs.", fabric=fabric_name) from list_error
             nrm.module.warn(f"VPC pairs list query failed for fabric {fabric_name}: " f"{str(list_error).splitlines()[0]}.")
 
         if state == "deleted" and nrm.module.params.get("_post_apply_refresh"):
@@ -977,15 +1089,9 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
                         pairs=have,
                         timeout=get_verify_timeout(nrm.module),
                     )
-                    have = _filter_stale_vpc_pairs(
-                        nd_v2=nd_v2,
-                        fabric_name=fabric_name,
-                        pairs=have,
-                        module=nrm.module,
-                    )
-                    if have:
-                        return _set_lightweight_context(lightweight_have=have)
-                    nrm.module.warn("vPC list query returned no active pairs for gathered workflow. Falling back to switch-level discovery.")
+                    # Intended configuration remains valid before physical vPC
+                    # activation; an empty intended list is authoritative too.
+                    return _set_lightweight_context(lightweight_have=have)
                 elif have:
                     return _set_lightweight_context(_build_delete_existing_pairs(have, config, module=nrm.module))
                 elif config and list_query_succeeded:
@@ -1009,12 +1115,34 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
                 nrm.module.warn("Delete config did not contain complete vPC pairs. No delete intents can be built from list-query fallback.")
                 return _set_lightweight_context([])
 
+        # Keep complete pair ownership separate from detail reconciliation. A
+        # targeted merge/replace must not depend on another pair's detail GET,
+        # but still needs its identity to reject conflicting peer assignments.
+        intended_pairs = list(have) if list_query_succeeded else None
+        intended_have = None
+        if list_query_succeeded:
+            if state in ("merged", "replaced") and config and all(_vpc_pair_identity_key(item) for item in config):
+                have = _filter_vpc_pairs_by_requested_config(have, config)
+            # Merged updates inherit omitted custom settings. A failed detail
+            # read must not turn unknown settings into an empty inherited value.
+            # Other states retain their existing valid-list fallback behavior.
+            intended_have = _enrich_pairs_from_direct_vpc(
+                nd_v2,
+                fabric_name,
+                have,
+                timeout=get_verify_timeout(nrm.module),
+                require_complete_details=state == "merged" and bool(config),
+            )
+            have = list(intended_have)
+
         # Step 2 (write-state enrichment): Query and validate fabric switches.
         fabric_switches = preloaded_fabric_switches
         if fabric_switches is None:
             fabric_switches = _validate_fabric_switches(nd_v2, fabric_name)
 
         if not fabric_switches:
+            if intended_pairs:
+                raise VpcPairResourceError(msg="Intended vPC pairs exist but fabric switch inventory is empty.", fabric=fabric_name)
             nrm.module.warn(f"No switches found in fabric {fabric_name}")
             nrm.module.params["_fabric_switches"] = []
             nrm.module.params["_fabric_switches_count"] = 0
@@ -1041,7 +1169,9 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
         # Step 3: Track 3-state VPC pairs (have/pending_create/pending_delete).
         pending_create = []
         pending_delete = []
-        processed_switches = set()
+        # An intended member must not be reclassified as deleted merely because
+        # a placeholder or staged physical pair has no active overview yet.
+        processed_switches = {pair[field] for pair in (intended_pairs or []) for field in (VpcFieldNames.SWITCH_ID, VpcFieldNames.PEER_SWITCH_ID)}
 
         config_switch_ids = set()
         for item in config:
@@ -1240,14 +1370,20 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
                                 }
                             )
 
+        # Only intended membership is authoritative when that query succeeded.
+        # Inventory/direct discovery can still describe stale deployed state.
+        operational_have = list(have)
+        if intended_have is not None:
+            have = intended_have
+
         # Step 4: Store all states for use in create/update/delete.
-        nrm.module.params["_have"] = have
+        nrm.module.params["_have"] = intended_pairs if intended_pairs is not None else have
         nrm.module.params["_pending_create"] = pending_create
         nrm.module.params["_pending_delete"] = pending_delete
 
         # Build effective existing set for state reconciliation:
-        # - Include only active pairs (have).
-        # - Exclude pending-delete pairs from active set to avoid stale
+        # - Include configured intended pairs (have).
+        # - Exclude fallback pending-delete pairs to avoid stale
         #   idempotence false-negatives right after unpair operations.
         #
         # Pending-create candidates are transitional and not confirmed active pairs.
@@ -1279,7 +1415,10 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
             # still not saved/deployed/in-sync on the controller. Detection must
             # run whenever save OR deploy is requested so that "stage without
             # deploy" (save=true, deploy=false) can still save a pending pair.
-            for pair in existing_pairs:
+            # Active physical pairs may remain while an intended unpair awaits
+            # save/deploy. Keep that signal without restoring their intent.
+            sync_pairs = {_vpc_pair_identity_key(pair): pair for pair in (intended_pairs or []) + operational_have + existing_pairs}
+            for pair in sync_pairs.values():
                 switch_id = pair.get(VpcFieldNames.SWITCH_ID)
                 peer_switch_id = pair.get(VpcFieldNames.PEER_SWITCH_ID)
                 if not switch_id or not peer_switch_id:

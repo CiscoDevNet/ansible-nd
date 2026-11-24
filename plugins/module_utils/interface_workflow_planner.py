@@ -231,13 +231,18 @@ class InterfaceMemberPreparation:
     interface_name: str
     model: NDBaseModel = field(repr=False, compare=False)
     current: dict[str, Any] = field(repr=False, compare=False)
-    from_policy_type: str
+    from_policy_type: str | None
     to_policy_type: str
     parent_resource_index: int
     parent_action: str
     parent_switch_id: str
     parent_name: str
     parent_policy_type: str
+    kind: str = "existing_host_conversion"
+    orchestrator: NDBaseInterfaceOrchestrator | None = field(default=None, repr=False, compare=False)
+    requires_member_update: bool = True
+    expected_member_policy: str | None = None
+    parent_port_channel_id: int | None = None
 
     @property
     def key(self) -> tuple[int, str, str, str]:
@@ -248,7 +253,7 @@ class InterfaceMemberPreparation:
         return self.parent_resource_index, self.parent_action, self.parent_switch_id, self.parent_name.casefold()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "resource_index": self.resource_index,
             "type": self.resource_type,
             "action": "prepare_member",
@@ -262,6 +267,14 @@ class InterfaceMemberPreparation:
             "parent_interface_name": self.parent_name,
             "parent_policy_type": self.parent_policy_type,
         }
+        if self.kind in {"missing_inventory", "explicit_host_conversion"}:
+            result.update(
+                kind=self.kind,
+                parent_switch_id=self.parent_switch_id,
+                expected_member_policy=self.expected_member_policy,
+                parent_port_channel_id=self.parent_port_channel_id,
+            )
+        return result
 
 
 @dataclass(frozen=True)
@@ -303,6 +316,7 @@ class InterfaceWorkflowPlan:
     vpc_staged_deletions: tuple[VpcStagedDeletionProof, ...] = ()
     logical_staged_deletions: tuple[LogicalStagedDeletionProof, ...] = ()
     member_preparations: tuple[InterfaceMemberPreparation, ...] = field(default=(), repr=False, compare=False)
+    missing_member_verifications: tuple[InterfaceMemberPreparation, ...] = field(default=(), repr=False, compare=False)
 
     @property
     def changed(self) -> bool:
@@ -417,6 +431,15 @@ class InterfaceWorkflowPlanner:
                 resource.orchestrator.register_reset_negotiation_preview_scope(resource.proposed)
         resource_plans = self._rewrite_policy_operations(resource_plans)
         resource_plans = self._split_member_preparations(resource_plans)
+        from ansible_collections.cisco.nd.plugins.module_utils.interface_missing_member_preparation import (
+            plan_missing_members,
+            explicit_member_expectations,
+        )
+
+        resource_plans, preparations = plan_missing_members(self, resource_plans)
+        self._member_preparations.extend(preparations)
+        missing_member_verifications = explicit_member_expectations(self, resource_plans)
+        auxiliary_orchestrators = ()
         conflicts = self._find_conflicts(resource_plans)
         if conflicts:
             raise InterfaceWorkflowConflictError(conflicts)
@@ -425,7 +448,6 @@ class InterfaceWorkflowPlanner:
         parent_deployment_barriers = self._parent_deployment_barriers(resource_plans, execution_layers)
         self._apply_preflight_projections(resource_plans)
         self._run_preflights(resource_plans)
-        auxiliary_orchestrators: tuple[NDBaseInterfaceOrchestrator, ...] = ()
         request_stats = dict(self.snapshot.request_stats)
         request_stats["fabric_link_gets"] = self._fabric_link_gets([*(resource.orchestrator for resource in resource_plans), *auxiliary_orchestrators])
         return InterfaceWorkflowPlan(
@@ -439,6 +461,7 @@ class InterfaceWorkflowPlanner:
             auxiliary_orchestrators=auxiliary_orchestrators,
             execution_layers=execution_layers,
             member_preparations=tuple(self._member_preparations),
+            missing_member_verifications=missing_member_verifications,
             parent_deployment_barriers=parent_deployment_barriers,
         )
 
@@ -2201,11 +2224,14 @@ class InterfaceWorkflowPlanner:
         planned_parents = self._planned_parent_operations(resources)
         for preparation in self._member_preparations:
             update_key = preparation.resource_index, "update", preparation.switch_id, preparation.interface_name.casefold()
-            if preparation.key not in operations or preparation.parent_key not in operations or update_key not in operations:
+            if preparation.key not in operations or preparation.parent_key not in operations:
+                raise InterfaceWorkflowValidationError("A member preparation is missing its exact preparation or parent operation.")
+            if preparation.requires_member_update and update_key not in operations:
                 raise InterfaceWorkflowValidationError("A member preparation is missing its exact preparation, parent or final update operation.")
             edges.add((preparation.key, preparation.parent_key))
-            edges.add((preparation.parent_key, update_key))
-            refresh_before.add(update_key)
+            if preparation.requires_member_update:
+                edges.add((preparation.parent_key, update_key))
+                refresh_before.add(update_key)
         for resource in resources:
             if resource.adapter.ownership_domain != "subinterface":
                 continue
@@ -2830,7 +2856,27 @@ class InterfaceWorkflowPlanner:
         if len(final_claims) != 1:
             return None
         claim = final_claims[0]
-        if claim.current or claim.action not in {"create", "update"} or claim.resource.adapter.ownership_domain != "port_channel":
+        if claim.current or claim.action not in {"create", "update"}:
+            return None
+        explicit_prepared = next(
+            (
+                preparation
+                for preparation in self._member_preparations
+                if preparation.kind in {"missing_inventory", "explicit_host_conversion"}
+                and preparation.resource_index == resource.resource_index
+                and preparation.switch_id == member_identity.scope[0]
+                and preparation.interface_name.casefold() == member_identity.interface_name
+                and preparation.parent_key == self._operation_node(claim.resource, claim.action, claim.parent).key
+            ),
+            None,
+        )
+        if explicit_prepared is not None:
+            try:
+                orchestrator.validate_new_member_patch_intent(model)
+            except (RuntimeError, ValueError):
+                return None
+            return claim
+        if claim.resource.adapter.ownership_domain != "port_channel":
             return None
         descriptor = get_member_policy_descriptor_for_parent(self._desired_policy_type(claim.parent))
         if descriptor is None or descriptor.network_os != "nx-os" or descriptor.pair_aware or descriptor.family != orchestrator.MEMBER_FAMILY:
@@ -3039,13 +3085,15 @@ class InterfaceWorkflowPlanner:
                         if claim is not None:
                             resource.orchestrator.prepare_new_member_patch_intent(
                                 model,
-                                parent_switch_id=claim.owner_identity.scope[0],
+                                parent_switch_id=identity.scope[0],
                                 parent_name=getattr(claim.parent, "interface_name"),
                                 parent_policy_type=self._desired_policy_type(claim.parent),
                             )
                 create_candidates = [*resource.operations.creates, *(transition.desired for transition in resource.transitions)]
                 create_candidates.extend(
-                    preparation.model for preparation in self._member_preparations if preparation.resource_index == resource.resource_index
+                    preparation.model
+                    for preparation in self._member_preparations
+                    if preparation.resource_index == resource.resource_index and preparation.orchestrator is None
                 )
                 resource.orchestrator.preflight_create(create_candidates)
                 mutation_candidates = [
@@ -3063,3 +3111,14 @@ class InterfaceWorkflowPlanner:
                 raise InterfaceWorkflowValidationError(
                     f"resources[{resource.resource_index}] type '{resource.resource_type}' preflight failed: {exc}"
                 ) from exc
+        for preparation in self._member_preparations:
+            if preparation.kind not in {"missing_inventory", "explicit_host_conversion"}:
+                continue
+            try:
+                orchestrator = preparation.orchestrator
+                orchestrator.preflight_create([preparation.model])
+                orchestrator.preflight_safety([preparation.model])
+                if self.run_capability_preflight:
+                    orchestrator.validate_switches_capable([preparation.model])
+            except Exception as exc:
+                raise InterfaceWorkflowValidationError(f"Missing aggregate member preparation preflight failed: {exc}") from exc
