@@ -15,6 +15,12 @@ import json
 
 from ansible_collections.cisco.nd.plugins.module_utils.interface_membership import (
     EthernetMembershipIndex,
+    get_member_policy_descriptor_for_parent,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_member_interface import (
+    normalize_port_channel_id,
+    normalize_safe_member_updates,
+    parse_member_interface_response,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.interface_workflow_planner import (
     InterfaceWorkflowPlanner,
@@ -74,6 +80,111 @@ def _member_slots(domain):
             ("peer2_member_ports", "peer2MemberPorts"),
         )
     return ()
+
+
+def _explicit_member_expectation(plan, resource, desired, serial):
+    """Find the exact explicit Ethernet prerequisite, including unchanged retries."""
+    if resource.adapter.ownership_domain != "ethernet":
+        return None
+    matches = [
+        item
+        for item in getattr(plan, "missing_member_verifications", ())
+        if item.resource_index == resource.resource_index and item.switch_id == serial and item.interface_name.casefold() == desired.interface_name.casefold()
+    ]
+    if len(matches) > 1:
+        raise ValueError("Explicit Ethernet preparation has ambiguous parent expectations")
+    return matches[0] if matches else None
+
+
+def _observe_explicit_member(*, plan, resource, desired, serial, expectation, membership, peers, snapshot, target, observations):
+    """Prove actual aggregate ownership instead of projecting a host policy.
+
+    An explicit Ethernet resource describes its prerequisite host mode and safe
+    member properties. Once the parent is staged, its actual policy is a member
+    policy; the host discriminator must never be reported as observed intent.
+    """
+    if membership is None:
+        raise ValueError("Explicit Ethernet preparation has no aggregate ownership observation")
+    if resource.state != "merged":
+        raise ValueError("Explicit Ethernet member preparation requires merged intent")
+    parents = [item for item in plan.resources if item.resource_index == expectation.parent_resource_index]
+    if len(parents) != 1 or parents[0].adapter.ownership_domain not in {"port_channel", "vpc"}:
+        raise ValueError("Explicit Ethernet preparation has no exact parent resource")
+    parent = parents[0]
+    candidates = [
+        model
+        for model in parent.proposed
+        if snapshot.fabric_context.get_switch_id(model.switch_ip) == expectation.parent_switch_id
+        and model.interface_name.casefold() == expectation.parent_name.casefold()
+        and _model_policy(model).policy_type == expectation.parent_policy_type
+    ]
+    if len(candidates) != 1:
+        raise ValueError("Explicit Ethernet preparation parent differs from requested intent")
+    parent_model = candidates[0]
+    parent_policy = _model_policy(parent_model)
+    descriptor = get_member_policy_descriptor_for_parent(parent_policy.policy_type)
+    expected_hosts = {"access": "accessHost", "trunk": "trunkHost"}
+    if descriptor is None or descriptor.network_os != "nx-os" or descriptor.family not in expected_hosts:
+        raise ValueError("Explicit Ethernet preparation has an unsupported parent policy")
+    desired_policy = _model_policy(desired)
+    if desired_policy.policy_type != expected_hosts[descriptor.family]:
+        raise ValueError("Explicit Ethernet preparation host policy differs from its parent family")
+    if parent.adapter.ownership_domain == "port_channel":
+        if serial != expectation.parent_switch_id:
+            raise ValueError("Explicit Ethernet preparation belongs to a different parent switch")
+        names = parent_policy.ports
+        port_channel_id = normalize_port_channel_id(parent_model.interface_name)
+    else:
+        primary = expectation.parent_switch_id
+        if serial == primary:
+            names = parent_policy.peer1_member_ports
+            port_channel_id = normalize_port_channel_id(parent_policy.peer1_port_channel_id)
+        elif peers.get(primary) == serial and peers.get(serial) == primary:
+            names = parent_policy.peer2_member_ports
+            port_channel_id = normalize_port_channel_id(parent_policy.peer2_port_channel_id)
+        else:
+            raise ValueError("Explicit Ethernet preparation has no exact reciprocal parent slot")
+    if desired.interface_name.casefold() not in _names(names) or port_channel_id is None:
+        raise ValueError("Explicit Ethernet preparation is absent from requested parent membership")
+    ownership = membership.validate(serial, desired.interface_name)
+    if (
+        ownership.member.policy_type != expectation.expected_member_policy
+        or ownership.member.policy_type != descriptor.policy_type
+        or ownership.owner.switch_id != serial
+        or ownership.owner.interface_name.casefold() != expectation.parent_name.casefold()
+        or ownership.owner.policy_type != expectation.parent_policy_type
+        or ownership.owner.port_channel_id != expectation.parent_port_channel_id
+        or ownership.configured_port_channel_id != expectation.parent_port_channel_id
+        or ownership.configured_port_channel_id != port_channel_id
+        or descriptor.pair_aware
+        and not ownership.pair_validated
+    ):
+        raise ValueError("Explicit Ethernet preparation has incorrect actual aggregate ownership")
+    fields = desired_policy.model_fields_set - {"policy_type"}
+    expected_values = normalize_safe_member_updates({field: getattr(desired_policy, field) for field in fields})
+    observed = parse_member_interface_response(ownership.member.record)
+    raw_policy = _policy(ownership.member.record)[2]
+    normalize_safe_member_updates({"extra_config": raw_policy.get("extraConfig")})
+    for field, expected in expected_values.items():
+        alias = type(observed.policy).model_fields[field].alias or field
+        if getattr(observed.policy, field) != expected or (isinstance(expected, bool) and not isinstance(raw_policy.get(alias), bool)):
+            raise ValueError("Explicit Ethernet preparation member properties differ from requested intent")
+    target["aggregate_member"] = {
+        "parent_resource_index": parent.resource_index,
+        "parent_switch_id": expectation.parent_switch_id,
+        "owner_switch_id": ownership.owner.switch_id,
+        "parent_interface_name": ownership.owner.interface_name,
+        "parent_policy_type": ownership.owner.policy_type,
+        "configured_port_channel_id": ownership.configured_port_channel_id,
+        "policy_type": ownership.member.policy_type,
+        "pair_validated": ownership.pair_validated,
+    }
+    observations.append(dict(ownership.owner.record))
+    if ownership.peer_owner is not None:
+        observations.append(dict(ownership.peer_owner.record))
+        observations.extend(dict(item.record) for item in ownership.peer_members)
+    target["observation_revision"] = sha256(json.dumps(observations, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    target["satisfied"] = True
 
 
 def validate_preparation_plan(*, params, plan, snapshot):
@@ -204,6 +315,31 @@ def preparation_observation(*, params, plan, snapshot, request_sha256, check_mod
                 config, network, policy = _policy(raw)
                 target["policy_type"] = policy.get("policyType")
                 target["mode"] = config.get("mode")
+                expectation = _explicit_member_expectation(plan, resource, desired, serial)
+                if expectation is not None:
+                    if (
+                        raw.get("switchId") != serial
+                        or str(raw.get("interfaceName") or "").casefold() != desired.interface_name.casefold()
+                        or raw.get("interfaceType") != "ethernet"
+                        or network.get("networkOSType") != "nx-os"
+                    ):
+                        raise ValueError("Explicit Ethernet preparation has an incorrect observed interface identity")
+                    target["raw_routed_residue"] = bool(set(policy) & ROUTED_SIBLING_RESET_FIELDS)
+                    if target["raw_routed_residue"]:
+                        raise ValueError("Explicit Ethernet preparation contains conflicting routed policy fields")
+                    _observe_explicit_member(
+                        plan=plan,
+                        resource=resource,
+                        desired=desired,
+                        serial=serial,
+                        expectation=expectation,
+                        membership=membership,
+                        peers=peers,
+                        snapshot=snapshot,
+                        target=target,
+                        observations=observations,
+                    )
+                    continue
                 if (
                     raw.get("switchId") != serial
                     or str(raw.get("interfaceName") or "").casefold() != desired.interface_name.casefold()

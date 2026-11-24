@@ -20,6 +20,8 @@ description:
 - Supports normal discovery, POAP (bootstrap/preprovision), and RMA operations.
 - Uses Pydantic model validation for switch configurations.
 - Provides state-based operations with intelligent diff calculation.
+- Check mode observes complete POAP candidate scope to forecast interrupted import recovery without polling or changes.
+- Candidate wait failures preserve accepted earlier changes; a mixed request is not automatically rolled back.
 options:
     fabric:
         description:
@@ -70,6 +72,25 @@ options:
                 choices:
                 - switch
                 - global
+    bootstrap_wait:
+        description:
+        - Controls the wait for requested physical switches to appear in the POAP list.
+        - The complete bootstrap and serial-swap batch is awaited before onboarding writes.
+        - Pre-provision-only entries and check mode do not wait for physical switches.
+        type: dict
+        default: {}
+        suboptions:
+            timeout:
+                description:
+                - Maximum wait in seconds for all requested physical serial numbers.
+                - Set to C(0) for a single lookup without polling.
+                type: int
+                default: 300
+            interval:
+                description:
+                - Seconds between bootstrap-list queries. Must be greater than zero.
+                type: int
+                default: 5
     config:
         description:
         - List of switch configurations. Optional for state C(deleted).
@@ -147,10 +168,10 @@ options:
                 - C(serial_number) and C(hostname) are mandatory.
                 - Model, version, and config data are sourced from the bootstrap API at runtime.
                 - C(software_image) can be provided to select the software image used during POAP import.
-                - If the bootstrap API reports a different hostname or role, the API value
-                  overrides the user-provided value and a warning is logged.
+                - The authored hostname and switch role take precedence over device-reported values.
+                - If the role is omitted, the bootstrap API role is used when available.
                 - To perform a B(swap) operation, provide both C(poap) and C(preprovision)
-                  under the same switch config. Only C(serial_number) is required in each.
+                  under the same switch config, including each block's required fields.
                 - POAP and DHCP must be enabled in fabric before using.
                 type: dict
                 suboptions:
@@ -163,7 +184,7 @@ options:
                     hostname:
                         description:
                         - Hostname for the switch during bootstrap.
-                        - Overridden by the bootstrap API value when they differ (warning logged).
+                        - Takes precedence over the hostname reported by the bootstrap API.
                         type: str
                         required: true
                     discovery_username:
@@ -191,8 +212,9 @@ options:
                 - All five fields are mandatory since the controller has no physical switch
                   to pull values from.
                 - To perform a B(swap) operation, provide both C(poap) and C(preprovision)
-                  under the same switch config. Only C(serial_number) is required in each;
-                  extra fields are ignored with a warning.
+                  under the same switch config. The pre-provision serial identifies the
+                  existing placeholder; the POAP serial and hostname identify the physical switch.
+                - All required fields must be supplied for both blocks when performing a swap.
                 - POAP and DHCP must be enabled in fabric before using.
                 type: dict
                 suboptions:
@@ -244,6 +266,11 @@ options:
                                 - Gateway IP with subnet mask (e.g., 192.168.0.1/24).
                                 type: str
                                 required: true
+                            breakout:
+                                description:
+                                - NX-OS interface breakout commands to apply during bootstrap.
+                                - Multiple commands are separated by newlines.
+                                type: str
             rma:
                 description:
                 - RMA an existing switch with a new one.
@@ -280,10 +307,19 @@ notes:
   Both conditions must be true; a matching IP with a different serial is not
   treated as idempotent and will attempt the bootstrap again.
 - Idempotence for B(Pre-provision) - A pre-provision entry is considered idempotent
-  when the C(seed_ip) already exists in the fabric inventory, regardless of the
-  C(serial_number) value under C(preprovision). Because the pre-provision serial is
-  a placeholder that may differ from the real hardware serial, only the IP address
-  is used as the stable identity for idempotency checks.
+  when its IP, placeholder serial, authored role, model, version, and hostname
+  match the fabric inventory.
+- Idempotence for B(Swap) - An already manageable physical serial at the requested
+  management IP and role is preserved without repeating the swap or bootstrap.
+  A physical switch that is offline is also preserved unless ND reports its serial
+  in the active bootstrap list. An interrupted import can then resume without
+  repeating the serial replacement.
+- Authored role changes on already imported POAP switches are applied in place;
+  they do not restart bootstrap or remove the switch from inventory.
+- Gateway, module-list, and breakout settings are supplied when the placeholder
+  is created. They are not reconciled on an existing matching placeholder, which
+  remains idempotent even when it is absent from the active bootstrap list.
+  Explicitly remove and recreate the placeholder to apply changes to those settings.
 - Idempotence for B(normal discovery) - A switch is considered idempotent when
   its C(seed_ip) already exists in the fabric inventory with no configuration
   drift. If C(role) is omitted, role drift is ignored and the controller
@@ -548,6 +584,33 @@ api_metadata:
   sample:
     - action: discover
       state: merged
+accepted_operations:
+  description:
+  - Nonsecret summaries of registered successful changes preserved when a later bootstrap candidate wait fails.
+  - Contains at most 100 entries. This records accepted operations, not verified final controller state or rollback.
+  returned: on bootstrap candidate wait failure
+  type: list
+  elements: dict
+  sample:
+    - action: update_role
+      sequence_number: 1
+      changed: true
+accepted_operations_truncated:
+  description: Whether additional accepted-operation summaries exceed the 100-entry diagnostic bound.
+  returned: on bootstrap candidate wait failure
+  type: bool
+  sample: false
+bootstrap_wait_failure:
+  description:
+  - Fabric, timeout and missing physical serials from an expired candidate wait.
+  - A failed candidate observation reports C(reason=observation_failed) and C(requested_serials), without claiming that those serials are absent.
+  returned: on bootstrap candidate wait timeout or observation failure
+  type: dict
+  sample:
+    fabric_name: FAB1
+    timeout: 0
+    missing_serials:
+      - REAL1
 """
 
 import logging
@@ -561,6 +624,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.co
     SwitchConfigModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch_resources import (
+    BootstrapWaitError,
     NDSwitchResourceModule,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
@@ -569,6 +633,41 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     nd_argument_spec,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
+
+_ACCEPTED_SWITCH_ACTIONS = frozenset(
+    (
+        "create",
+        "delete",
+        "update_role",
+        "bootstrap",
+        "preprovision",
+        "swap_serial",
+        "save_credentials",
+        "config_save",
+        "deploy_switches",
+        "deploy_config",
+        "rma",
+    )
+)
+
+
+def _fail_bootstrap_wait(module, results, error):
+    """Retain accepted results at the real Ansible termination boundary."""
+    results.build_final_result()
+    final = results.final_result
+    accepted = [
+        {"action": row["action"], "sequence_number": row["sequence_number"], "changed": True}
+        for row in results.accepted_changes
+        if row.get("action") in _ACCEPTED_SWITCH_ACTIONS
+    ]
+    final.update(
+        failed=True,
+        changed=True in results.changed,
+        accepted_operations=accepted[:100],
+        accepted_operations_truncated=len(accepted) > 100,
+        bootstrap_wait_failure=error.to_dict(),
+    )
+    module.fail_json(msg=str(error), **final)
 
 
 def main():
@@ -593,6 +692,14 @@ def main():
     config_actions = module.params.get("config_actions") or {}
     if config_actions.get("deploy", True) and not config_actions.get("save", True):
         module.fail_json(msg="'config_actions.deploy: true' requires 'config_actions.save: true'")
+
+    bootstrap_wait = module.params.get("bootstrap_wait") or {}
+    bootstrap_timeout = bootstrap_wait.get("timeout", 300)
+    bootstrap_interval = bootstrap_wait.get("interval", 5)
+    if not isinstance(bootstrap_timeout, int) or bootstrap_timeout < 0:
+        module.fail_json(msg="'bootstrap_wait.timeout' must be greater than or equal to zero")
+    if not isinstance(bootstrap_interval, int) or bootstrap_interval <= 0:
+        module.fail_json(msg="'bootstrap_wait.interval' must be greater than zero")
 
     # Initialize logging
     try:
@@ -624,6 +731,10 @@ def main():
         # Exit with results
         log.info("State management completed successfully. Changed: %s", results.changed)
         sw_module.exit_json()
+
+    except BootstrapWaitError as error:
+        log.error("Bootstrap candidate wait failed: %s", error)
+        _fail_bootstrap_wait(module, results, error)
 
     except NDModuleError as error:
         # NDModule-specific errors (API failures, authentication issues, etc.)

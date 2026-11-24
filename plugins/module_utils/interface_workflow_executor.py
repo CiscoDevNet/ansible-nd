@@ -153,6 +153,7 @@ class InterfaceWorkflowExecutor:
         self._attempted_deploy_targets: set[Target] = set()
         self._preparation_items: dict[tuple[int, str, str, str], InterfaceExecutionItem] = {}
         self._verified_preparations: set[tuple[int, str, str, str]] = set()
+        self._verified_missing_members: set[tuple[int, str, str, str]] = set()
         self._sequence = 0
         self._preparation_verification_sequences: dict[tuple[int, str, str, str], int] = {}
         self._member_refresh_sequences: dict[tuple[int, str, str, str], int] = {}
@@ -524,7 +525,11 @@ class InterfaceWorkflowExecutor:
                 create_candidates = [
                     *resource.operations.creates,
                     *(transition.desired for transition in resource.transitions),
-                    *(preparation.model for preparation in plan.member_preparations if preparation.resource_index == resource.resource_index),
+                    *(
+                        preparation.model
+                        for preparation in plan.member_preparations
+                        if preparation.resource_index == resource.resource_index and preparation.orchestrator is None
+                    ),
                 ]
                 resource.orchestrator.preflight_create(create_candidates)
                 mutation_candidates = [
@@ -534,6 +539,10 @@ class InterfaceWorkflowExecutor:
                 ]
                 preflight_candidates = list(resource.proposed) if resource.state == "overridden" else mutation_candidates
                 resource.orchestrator.preflight(preflight_candidates)
+            for preparation in plan.member_preparations:
+                if preparation.kind in {"missing_inventory", "explicit_host_conversion"}:
+                    preparation.orchestrator.preflight_create([preparation.model])
+                    preparation.orchestrator.preflight([preparation.model])
         except Exception as exc:  # pylint: disable=broad-except
             self._errors.append(f"Pre-mutation prerequisite validation failed: {exc}")
             return False
@@ -1207,6 +1216,8 @@ class InterfaceWorkflowExecutor:
             else:
                 self._errors.append(f"Interface execution schedule contains unsupported action {action!r}.")
                 return False
+            if not self._verify_missing_members_after_parents(plan, layer):
+                return False
             parents = tuple(operation for operation in layer if operation.key in barrier_keys)
             if parents and not self._deploy_and_discover_parents(plan, parents):
                 return False
@@ -1242,19 +1253,26 @@ class InterfaceWorkflowExecutor:
         groups = defaultdict(list)
         for preparation in plan.member_preparations:
             if preparation.key in selected:
-                groups[(preparation.resource_index, preparation.switch_id, preparation.to_policy_type)].append(preparation)
+                groups[(preparation.resource_index, preparation.switch_id, preparation.to_policy_type, preparation.kind)].append(preparation)
         # Validate the complete phase before its first preparation write. All
         # families can then share the same fresh switch/peer observation.
         with self._refresh_boundary():
             for preparations in groups.values():
                 resource = by_resource[preparations[0].resource_index]
-                orchestrator = resource.orchestrator
+                orchestrator = preparations[0].orchestrator or resource.orchestrator
                 items = [self._preparation_items[preparation.key] for preparation in preparations]
                 try:
-                    orchestrator.refresh_new_member_preparation_contexts(
-                        [preparation.model for preparation in preparations],
-                        expected_records={(preparation.switch_id, preparation.interface_name.casefold()): preparation.current for preparation in preparations},
-                    )
+                    if preparations[0].kind in {"missing_inventory", "explicit_host_conversion"}:
+                        from ansible_collections.cisco.nd.plugins.module_utils.interface_missing_member_preparation import refresh_missing_preparations
+
+                        refresh_missing_preparations(preparations, self.snapshot, phase="absent")
+                    else:
+                        orchestrator.refresh_new_member_preparation_contexts(
+                            [preparation.model for preparation in preparations],
+                            expected_records={
+                                (preparation.switch_id, preparation.interface_name.casefold()): preparation.current for preparation in preparations
+                            },
+                        )
                 except Exception as exc:  # pylint: disable=broad-except
                     message = f"resources[{resource.resource_index}] standalone member preparation preflight failed: {exc}"
                     for item in items:
@@ -1263,7 +1281,7 @@ class InterfaceWorkflowExecutor:
                     return False
         for preparations in groups.values():
             resource = by_resource[preparations[0].resource_index]
-            orchestrator = resource.orchestrator
+            orchestrator = preparations[0].orchestrator or resource.orchestrator
             items = [self._preparation_items[preparation.key] for preparation in preparations]
             if not self._call_items(
                 orchestrator,
@@ -1281,22 +1299,48 @@ class InterfaceWorkflowExecutor:
         groups = defaultdict(list)
         for preparation in plan.member_preparations:
             if preparation.parent_key in parent_keys:
-                groups[preparation.resource_index].append(preparation)
+                groups[(preparation.resource_index, preparation.kind)].append(preparation)
         with self._refresh_boundary():
-            for resource_index, preparations in groups.items():
+            for (resource_index, kind), preparations in groups.items():
                 try:
                     if any(self._preparation_items[preparation.key].status != "succeeded" for preparation in preparations):
                         raise RuntimeError("The required standalone preparation has no exact accepted write receipt.")
-                    by_resource[resource_index].orchestrator.refresh_new_member_preparation_contexts(
-                        [preparation.model for preparation in preparations],
-                        require_prepared=True,
-                    )
+                    if kind in {"missing_inventory", "explicit_host_conversion"}:
+                        from ansible_collections.cisco.nd.plugins.module_utils.interface_missing_member_preparation import refresh_missing_preparations
+
+                        refresh_missing_preparations(preparations, self.snapshot, phase="prepared")
+                    else:
+                        by_resource[resource_index].orchestrator.refresh_new_member_preparation_contexts(
+                            [preparation.model for preparation in preparations],
+                            require_prepared=True,
+                        )
                 except Exception as exc:  # pylint: disable=broad-except
                     self._errors.append(f"resources[{resource_index}] prepared host intent verification before parent staging failed: {exc}")
                     return False
                 self._verified_preparations.update(preparation.key for preparation in preparations)
                 self._sequence += 1
                 self._preparation_verification_sequences.update((preparation.key, self._sequence) for preparation in preparations)
+        return True
+
+    def _verify_missing_members_after_parents(self, plan, operations) -> bool:
+        """Require actual controller-generated member ownership after attachment."""
+        parent_keys = {operation.key for operation in operations}
+        selected = [
+            preparation
+            for preparation in plan.member_preparations
+            if preparation.kind in {"missing_inventory", "explicit_host_conversion"} and preparation.parent_key in parent_keys
+        ]
+        if not selected:
+            return True
+        try:
+            from ansible_collections.cisco.nd.plugins.module_utils.interface_missing_member_preparation import refresh_missing_preparations
+
+            with self._refresh_boundary():
+                refresh_missing_preparations(selected, self.snapshot, phase="member")
+            self._verified_missing_members.update(preparation.key for preparation in selected)
+        except Exception as exc:  # pylint: disable=broad-except
+            self._errors.append(f"Missing member ownership verification after parent staging failed: {exc}")
+            return False
         return True
 
     def _member_preparation_results(self, plan: InterfaceWorkflowPlan) -> tuple[dict[str, Any], ...]:
@@ -1338,6 +1382,10 @@ class InterfaceWorkflowExecutor:
                 if update is not None
                 else {"status": "not_attempted", "execution_sequence": None}
             )
+            if preparation.kind in {"missing_inventory", "explicit_host_conversion"}:
+                value["verified_after_membership"] = preparation.key in self._verified_missing_members
+                if not preparation.requires_member_update:
+                    value["member_update"] = {"status": "not_requested", "execution_sequence": None}
             if item.message:
                 value["message"] = item.message
             result.append(value)

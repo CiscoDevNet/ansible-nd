@@ -119,6 +119,9 @@ def _build_orchestrator(
     [
         ("vpc", "unknown", None, True),
         ("vpc", "unknown", {"policyType": "trunkVpcHost"}, False),
+        ("vpc", "unknown", {"peerSwitchId": "SERIAL2"}, True),
+        ("vpc", "unknown", {"peerSwitchId": "SERIAL2", "policyType": "accessVpcHost"}, False),
+        ("vpc", "unknown", {"peerSwitchId": "SERIAL2", "templateName": "interface_delete"}, False),
         ("vpc", "access", None, False),
         ("portChannel", "unknown", None, False),
     ],

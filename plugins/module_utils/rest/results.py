@@ -845,6 +845,16 @@ class Results:
         self._current.check_mode = value
 
     @property
+    def accepted_changes(self) -> list[dict[str, Any]]:
+        """Copy metadata for registered successful changes, without payloads.
+
+        Callers may further allowlist their own action vocabulary. Read-only,
+        unchanged, and failed operations never constitute accepted changes.
+        This accessor does not alter result aggregation or task history.
+        """
+        return [copy.deepcopy(task.metadata) for task in self._tasks if task.changed and not task.failed]
+
+    @property
     def diffs(self) -> list[dict[str, Any]]:
         """
         # Summary

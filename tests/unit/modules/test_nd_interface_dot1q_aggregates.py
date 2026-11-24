@@ -24,6 +24,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.vpc_dot
     VpcDot1qTunnelInterfaceModel,
     VpcDot1qTunnelPolicyModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_access_interface import PortChannelAccessInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.port_channel_dot1q_tunnel_host_interface import (
     PortChannelDot1qTunnelHostInterfaceOrchestrator,
 )
@@ -588,3 +589,93 @@ def test_partial_gathered_criteria_do_not_relax_writable_model_identifiers(model
     config.pop(missing)
     with pytest.raises(ValidationError):
         model.from_config(config)
+
+
+def _dot1q_pc_delete_preview():
+    """ND's exact staged PC removal includes tunnel cleanup on proven members."""
+    running = (
+        "interface port-channel261\n  switchport mode dot1q-tunnel\n  mtu 9216\n"
+        "interface Ethernet1/48\n  switchport mode dot1q-tunnel\n"
+        "  spanning-tree bpdufilter enable\n  channel-group 261 mode active\n"
+        "interface Ethernet1/49\n  switchport mode dot1q-tunnel\n"
+        "  spanning-tree bpdufilter enable\n  channel-group 261 mode active\n"
+    )
+    pending = "no interface port-channel261\n"
+    for member in (48, 49):
+        pending += (
+            f"interface Ethernet1/{member}\n  no channel-group 261 force mode active\n"
+            "  no switchport mode dot1q-tunnel\n  no spanning-tree bpdufilter enable\n  no mtu 9216\n"
+            f"interface Ethernet1/{member}\n  switchport\n  switchport mode trunk\n"
+            "  switchport trunk allowed vlan none\n  mtu 9216\n  no shutdown\nconfigure terminal\n"
+        )
+    return {
+        "configurationDiffs": [
+            {
+                "interfaceName": "port-channel261",
+                "switchId": "S1",
+                "status": "success",
+                "combinedConfigs": [
+                    {"configType": "running", "config": running, "lines": len(running.splitlines())},
+                    {"configType": "pending", "config": pending, "lines": len(pending.splitlines())},
+                ],
+            }
+        ]
+    }
+
+
+@pytest.mark.parametrize("member_mtu", [None, 9216, 1500])
+def test_dot1q_pc_staged_delete_replay_reaches_shared_deployment(monkeypatch, member_mtu):
+    """A staged dot1q removal must pass its member checks before the later deployment."""
+    rest = RestSend({"fabric_name": "fabric1", "state": "deleted", "config": []})
+    orchestrator = PortChannelDot1qTunnelHostInterfaceOrchestrator(rest_send=rest)
+    model = PortChannelDot1qTunnelHostInterfaceModel.from_config({"switch_ip": "192.0.2.11", "interface_name": "port-channel261"})
+    calls = []
+    preview = _dot1q_pc_delete_preview()
+    if member_mtu is not None:
+        running, pending = preview["configurationDiffs"][0]["combinedConfigs"]
+        for member in (48, 49):
+            running["config"] = running["config"].replace(f"interface Ethernet1/{member}\n", f"interface Ethernet1/{member}\n  mtu {member_mtu}\n")
+        pending["config"] = pending["config"].replace("no mtu 9216", f"no mtu {member_mtu}")
+    monkeypatch.setattr(orchestrator, "_resolve_switch_id", lambda switch_ip: "S1")
+    monkeypatch.setattr(orchestrator, "_switch_interfaces", lambda switch_id: {})
+    monkeypatch.setattr(orchestrator, "_preview_interfaces", lambda payload: calls.append("preview") or preview)
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "reconcile_absent_deletes", lambda self, models: calls.append("shared deployment replay") or True)
+    orchestrator.deploy = False
+    assert orchestrator.reconcile_absent_deletes([model]) is False
+    assert calls == []
+    orchestrator.deploy = True
+    assert orchestrator.reconcile_absent_deletes([model]) is True
+    assert calls == ["preview", "shared deployment replay"]
+
+
+@pytest.mark.parametrize(
+    "fault",
+    ["wrong_parent", "unrelated_member", "missing_membership", "unknown_member_mode", "conflicting_mtu", "wrong_mtu_reset", "unrelated_command"],
+)
+def test_dot1q_pc_staged_delete_replay_rejects_unproven_member_resets(fault):
+    preview = _dot1q_pc_delete_preview()
+    row = preview["configurationDiffs"][0]
+    running, pending = row["combinedConfigs"]
+    if fault == "wrong_parent":
+        pending["config"] = pending["config"].replace("no interface port-channel261", "no interface port-channel262")
+    elif fault == "unrelated_member":
+        pending["config"] = pending["config"].replace("Ethernet1/48", "Ethernet1/50")
+    elif fault == "missing_membership":
+        running["config"] = running["config"].replace("channel-group 261 mode active", "channel-group 262 mode active")
+    elif fault == "unknown_member_mode":
+        running["config"] = running["config"].replace("switchport mode dot1q-tunnel", "switchport mode trunk")
+    elif fault == "conflicting_mtu":
+        running["config"] = running["config"].replace("interface Ethernet1/48\n", "interface Ethernet1/48\n  mtu 1500\n")
+    elif fault == "wrong_mtu_reset":
+        pending["config"] = pending["config"].replace("no mtu 9216", "no mtu 1500")
+    else:
+        pending["config"] = pending["config"].replace("  no mtu 9216", "  no ip address 192.0.2.1/30")
+    orchestrator = PortChannelDot1qTunnelHostInterfaceOrchestrator(rest_send=RestSend({"fabric_name": "fabric1", "state": "deleted", "config": []}))
+    with pytest.raises(RuntimeError, match="unproven|does not prove"):
+        orchestrator._validate_pending_absent_delete(preview, "port-channel261", "S1")
+
+
+def test_dot1q_pc_cleanup_does_not_relax_other_port_channel_families():
+    orchestrator = PortChannelAccessInterfaceOrchestrator(rest_send=RestSend({"fabric_name": "fabric1", "state": "deleted", "config": []}))
+    with pytest.raises(RuntimeError, match="unproven member command"):
+        orchestrator._validate_pending_absent_delete(_dot1q_pc_delete_preview(), "port-channel261", "S1")

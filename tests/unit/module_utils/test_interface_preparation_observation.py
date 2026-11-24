@@ -542,3 +542,168 @@ def test_dot1q_generated_vpc_noop_keeps_unqualified_shortcut_disabled():
         }
     proof = _actual_noop(plan, snapshot)
     assert not proof["complete"] and not proof["all_satisfied"]
+
+
+def _explicit_member_fixture(family="port_channel_trunk_host", *, safe_fields=False):
+    """One real parent plus explicitly requested hosts already converted to members."""
+    plan, snapshot = fixture(family, members=True)
+    parent = plan.resources[0]
+    parent_policy = next(iter(parent.proposed)).config_data.network_os.policy
+    access = family.endswith("access")
+    adapter = INTERFACE_FAMILY_ADAPTERS["ethernet_access" if access else "ethernet_trunk_host"]
+    resources, expectations = list(plan.resources), []
+    for serial, address, name, number in [
+        ("S1", "10.0.0.1", "Ethernet1/1", 10),
+        *(([("S2", "10.0.0.2", "Ethernet1/2", 20)]) if family.startswith("vpc_") else []),
+    ]:
+        policy = {"policy_type": "accessHost" if access else "trunkHost"}
+        if safe_fields:
+            policy.update(description="Server bundle member", admin_state=True)
+            raw_policy = snapshot._interfaces_by_switch[serial][name.casefold()]["configData"]["networkOS"]["policy"]
+            raw_policy.update(description="Server bundle member", adminState=True)
+        config = {
+            "switch_ip": address,
+            "interface_names": [name],
+            "config_data": {"network_os": {"network_os_type": "nx-os", "policy": policy}},
+        }
+        index = len(resources)
+        proposed = adapter.validate_config([config], "merged", index)
+        resources.append(
+            SimpleNamespace(
+                resource_index=index,
+                resource_type=adapter.resource_type,
+                adapter=adapter,
+                state="merged",
+                proposed=proposed,
+                orchestrator=SimpleNamespace(_peer_serial_cache={}),
+                operations=SimpleNamespace(creates=(), updates=(), deletes=()),
+                transitions=(),
+                platform_deletes=(),
+            )
+        )
+        expectations.append(
+            SimpleNamespace(
+                resource_index=index,
+                switch_id=serial,
+                interface_name=name,
+                parent_resource_index=parent.resource_index,
+                parent_switch_id="S1",
+                parent_name=next(iter(parent.proposed)).interface_name,
+                parent_policy_type=parent_policy.policy_type,
+                expected_member_policy=snapshot._interfaces_by_switch[serial][name.casefold()]["configData"]["networkOS"]["policy"]["policyType"],
+                parent_port_channel_id=number,
+            )
+        )
+    plan.resources = tuple(resources)
+    plan.missing_member_verifications = tuple(expectations)
+    return plan, snapshot
+
+
+@pytest.mark.parametrize("family", ["port_channel_access", "port_channel_trunk_host", "vpc_access", "vpc_trunk_host"])
+@pytest.mark.parametrize("safe_fields", [False, True])
+def test_explicit_ethernet_prerequisites_prove_actual_member_policies(family, safe_fields):
+    plan, snapshot = _explicit_member_fixture(family, safe_fields=safe_fields)
+    before = deepcopy(snapshot._interfaces_by_switch)
+
+    proof = observe(plan, snapshot)
+
+    assert proof["observed"] and proof["complete"] and proof["all_satisfied"], proof
+    for group, expected in zip(proof["resources"][1:], plan.missing_member_verifications):
+        target = group["targets"][0]
+        assert target["policy_type"] == expected.expected_member_policy
+        assert target["members"] == []
+        assert target["aggregate_member"] == {
+            "parent_resource_index": 0,
+            "parent_switch_id": "S1",
+            "owner_switch_id": expected.switch_id,
+            "parent_interface_name": expected.parent_name,
+            "parent_policy_type": expected.parent_policy_type,
+            "configured_port_channel_id": expected.parent_port_channel_id,
+            "policy_type": expected.expected_member_policy,
+            "pair_validated": family.startswith("vpc_"),
+        }
+    assert snapshot._interfaces_by_switch == before
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "duplicate_expectation",
+        "parent_index",
+        "parent_anchor",
+        "parent_policy",
+        "parent_id",
+        "member_policy",
+        "parent_members",
+        "host_policy",
+        "unsafe_host_vlan",
+        "replaced",
+        "wrong_description",
+        "boolean_echo",
+        "missing_verification",
+        "raw_routed_residue",
+        "unsafe_observed_cli",
+    ],
+)
+def test_explicit_member_proof_rejects_missing_or_mismatched_intent(fault):
+    plan, snapshot = _explicit_member_fixture(safe_fields=True)
+    expectation = plan.missing_member_verifications[0]
+    resource = plan.resources[1]
+    desired = next(iter(resource.proposed))
+    raw = snapshot._interfaces_by_switch["S1"]["ethernet1/1"]
+    raw_policy = raw["configData"]["networkOS"]["policy"]
+    if fault == "duplicate_expectation":
+        plan.missing_member_verifications += plan.missing_member_verifications
+    elif fault == "parent_index":
+        expectation.parent_resource_index = resource.resource_index
+    elif fault == "parent_anchor":
+        expectation.parent_switch_id = "OTHER"
+    elif fault == "parent_policy":
+        expectation.parent_policy_type = "accessPoHost"
+    elif fault == "parent_id":
+        expectation.parent_port_channel_id = 99
+    elif fault == "member_policy":
+        expectation.expected_member_policy = "accessPoMember"
+    elif fault == "parent_members":
+        next(iter(plan.resources[0].proposed)).config_data.network_os.policy.ports = []
+    elif fault == "host_policy":
+        raw_policy["policyType"] = "trunkHost"
+    elif fault == "unsafe_host_vlan":
+        desired.config_data.network_os.policy.allowed_vlans = "100-200"
+    elif fault == "replaced":
+        resource.state = "replaced"
+    elif fault == "wrong_description":
+        raw_policy["description"] = "Unexpected server"
+    elif fault == "boolean_echo":
+        raw_policy["adminState"] = 1
+    elif fault == "missing_verification":
+        plan.missing_member_verifications = ()
+    elif fault == "unsafe_observed_cli":
+        raw_policy["extraConfig"] = "channel-group 99 mode active"
+    else:
+        raw_policy["ip"] = "192.0.2.1"
+
+    proof = observe(plan, snapshot)
+
+    assert proof["all_satisfied"] is False, proof
+
+
+def test_explicit_vpc_peer_member_proof_keeps_parent_anchor_separate_from_local_owner():
+    plan, snapshot = _explicit_member_fixture("vpc_trunk_host")
+    proof = observe(plan, snapshot)
+    target = proof["resources"][2]["targets"][0]
+    assert target["switch_id"] == "S2"
+    assert target["aggregate_member"]["parent_switch_id"] == "S1"
+    assert target["aggregate_member"]["owner_switch_id"] == "S2"
+    assert target["aggregate_member"]["configured_port_channel_id"] == 20
+    assert target["aggregate_member"]["pair_validated"] is True
+
+
+def test_explicit_member_observation_revision_includes_actual_owning_parent():
+    plan, snapshot = _explicit_member_fixture()
+    plan.resources[0].state = "merged"
+    first = observe(plan, snapshot)
+    snapshot._interfaces_by_switch["S1"]["port-channel10"]["configData"]["networkOS"]["policy"]["description"] = "Changed parent"
+    second = observe(plan, snapshot)
+    assert first["all_satisfied"] and second["all_satisfied"]
+    assert first["resources"][1]["targets"][0]["observation_revision"] != second["resources"][1]["targets"][0]["observation_revision"]

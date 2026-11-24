@@ -57,6 +57,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_membership impo
     MemberPolicyDescriptor,
     MembershipValidationError,
     get_member_policy_descriptor_for_parent,
+    is_dot1q_default_mtu_removal,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import (
@@ -975,23 +976,28 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         running_members: set[str] = set()
         bare_on_members: set[str] = set()
+        member_running_commands: dict[str, set[str]] = {}
         running_member = None
         for line in running_lines[1:]:
             if (header := re.fullmatch(r"interface (ethernet[0-9/]+)", line)) is not None:
                 running_member = header.group(1)
+                member_running_commands.setdefault(running_member, set())
             elif line.startswith("interface "):
                 running_member = None
-            elif running_member is not None and re.fullmatch(rf"channel-group {po_id} (?:force )?mode (?:active|passive|on)", line):
-                running_members.add(running_member)
-            elif running_member is not None and line == f"channel-group {po_id}":
-                # NX-OS renders a deployed static (mode on) membership without
-                # the mode suffix. Its exact on-mode detach must still be proven.
-                running_members.add(running_member)
-                bare_on_members.add(running_member)
+            elif running_member is not None:
+                member_running_commands[running_member].add(line)
+                if re.fullmatch(rf"channel-group {po_id} (?:force )?mode (?:active|passive|on)", line):
+                    running_members.add(running_member)
+                elif line == f"channel-group {po_id}":
+                    # NX-OS renders a deployed static (mode on) membership without
+                    # the mode suffix. Its exact on-mode detach must still be proven.
+                    running_members.add(running_member)
+                    bare_on_members.add(running_member)
 
         allowed_member_command = (
             r"no (?:storm-control (?:action .+|(?:broadcast|multicast|unicast) level .+)"
             r"|switchport (?:access vlan|trunk native vlan) [0-9]+|switchport monitor"
+            r"|switchport trunk allowed vlan [0-9][0-9,-]*|switchport mode (?:access|trunk)"
             r"|lacp (?:rate fast|port-priority [0-9]+)|description .+"
             r"|duplex (?:full|half|auto)|speed [0-9]+"
             r"|spanning-tree (?:bpdufilter|bpduguard) (?:enable|disable)"
@@ -1000,8 +1006,13 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         touched_members: set[str] = set()
         detached_members: set[str] = set()
         current_member = None
-        for index, line in enumerate(pending_lines[1:], 1):
-            if line == "configure terminal" and index == len(pending_lines) - 1:
+        for line in pending_lines[1:]:
+            if line == "configure terminal":
+                # ND can delimit generated member-reset stanzas with a fresh
+                # configuration context, not only end the preview with one.
+                # Require a new proven member header before accepting any
+                # following member commands.
+                current_member = None
                 continue
             if (header := re.fullmatch(r"interface (ethernet[0-9/]+)", line)) is not None:
                 current_member = header.group(1)
@@ -1022,11 +1033,21 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                     raise RuntimeError(f"Absent port-channel delete preview lacks an on-mode detach for {current_member!r}.")
                 detached_members.add(current_member)
                 continue
+            # Dot1q cleanup may remove tunnel mode and an explicit member MTU.
+            # Require those commands in this exact member's running stanza. ND
+            # can omit inherited jumbo MTU there; the shared helper permits only
+            # its known `no mtu 9216` reset when no explicit MTU conflicts.
+            dot1q_removal = "dot1qTunnelPoHost" in self._managed_policy_types() and (
+                re.fullmatch(r"no (?:mtu [0-9]+|switchport mode dot1q-tunnel)", line) is not None
+                and line.removeprefix("no ") in member_running_commands.get(current_member, set())
+                or is_dot1q_default_mtu_removal(line, member_running_commands.get(current_member, set()))
+            )
             if not (
-                re.fullmatch(allowed_member_command, line)
+                dot1q_removal
+                or re.fullmatch(allowed_member_command, line)
                 or re.fullmatch(r"switchport(?: mode trunk| trunk allowed vlan none)?", line)
                 or re.fullmatch(r"mtu [0-9]+", line)
-                or line in {"spanning-tree port type edge trunk", "no shutdown", "cdp enable"}
+                or line in {"spanning-tree port type edge trunk", "no shutdown", "cdp enable", "no switchport"}
             ):
                 raise RuntimeError(f"Absent port-channel delete preview includes an unproven member command {line!r}.")
         if touched_members != detached_members:

@@ -50,6 +50,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.interface_membership impo
     MembershipValidationError,
     is_dot1q_default_mtu_removal,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.interface_state_snapshot import InterfaceStateSnapshot
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
     requires_bulk_support,
@@ -547,7 +548,7 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             self._queue_preview_derived_discovery(model_instance.interface_name, switch_id)
 
     def _can_replay_absent_delete(self, existing_data: dict | None) -> bool:
-        """Allow only ND's policy-less, structurally vPC discovery echo."""
+        """Allow only ND's structurally vPC discovery echo whose policy carries no intent (absent, or only `peerSwitchId` on ND 4.2.1)."""
 
         if existing_data is None:
             return True
@@ -555,7 +556,7 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             return False
         config_data = existing_data.get("configData") or {}
         network_os = config_data.get("networkOS") or {}
-        return config_data.get("mode") == "unknown" and not network_os.get("policy")
+        return config_data.get("mode") == "unknown" and InterfaceStateSnapshot.is_intent_free_vpc_policy(network_os.get("policy"))
 
     def _validate_absent_vpc_delete_preview(
         self,

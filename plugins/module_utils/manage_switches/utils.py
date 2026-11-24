@@ -17,6 +17,7 @@ import logging
 import time
 from copy import deepcopy
 from typing import Any
+from urllib.parse import parse_qsl, unquote, urljoin, urlsplit
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
     NDModuleError,
@@ -48,6 +49,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.en
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_details_cache import FabricDetailsCache
 
 _REQUEST_ERRORS = (NDModuleError, RuntimeError, TypeError, ValueError, AttributeError)
+_BOOTSTRAP_MAX_PAGES = 1000
 
 
 # =========================================================================
@@ -531,12 +533,64 @@ def group_switches_by_credentials(
 # =========================================================================
 
 
+def _bootstrap_page(result: Any, log: logging.Logger) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Validate a wrapped or legacy bare bootstrap page without inferring absence."""
+    if isinstance(result, list):
+        page, meta = result, {}
+    elif isinstance(result, dict):
+        ApiDataChecker.check(result, "Bootstrap observation", log)
+        page = result.get("switches")
+        meta = result.get("meta", result.get("metadata", {}))
+        if "meta" in result and "metadata" in result and result["meta"] != result["metadata"]:
+            raise SwitchOperationError("Bootstrap observation contains conflicting pagination metadata.")
+    else:
+        raise SwitchOperationError("Bootstrap observation must contain a switches list.")
+    if not isinstance(page, list) or any(not isinstance(row, dict) for row in page):
+        raise SwitchOperationError("Bootstrap observation must contain a valid switches list.")
+    if not isinstance(meta, dict):
+        raise SwitchOperationError("Bootstrap observation pagination metadata must be an object.")
+    return page, meta
+
+
+def _bootstrap_next_cursor(link: str, base_path: str, next_offset: int, page_size: int) -> tuple[int, int]:
+    """Use only a validated same-fabric cursor, never a response-provided origin."""
+    try:
+        if any(ord(character) < 32 for character in link):
+            raise ValueError("control character")
+        parts = urlsplit(urljoin(base_path, link))
+        if parts.netloc:
+            _unused_port = parts.port  # Validate authority syntax without requesting that authority.
+        if (
+            parts.scheme not in ("", "http", "https")
+            or bool(parts.scheme) != bool(parts.netloc)
+            or (parts.netloc and not parts.hostname)
+            or parts.username is not None
+            or parts.password is not None
+            or parts.fragment
+            or unquote(parts.path) != unquote(base_path)
+        ):
+            raise ValueError("scope")
+        pairs = parse_qsl(parts.query, keep_blank_values=True, strict_parsing=True)
+        query = dict(pairs)
+        if len(query) != len(pairs) or not set(query) <= {"offset", "max"} or "offset" not in query:
+            raise ValueError("parameters")
+        if any(not value or any(character not in "0123456789" for character in value) for value in query.values()):
+            raise ValueError("integer")
+        offset = int(query["offset"])
+        maximum = int(query.get("max", page_size))
+        if offset != next_offset or maximum <= 0:
+            raise ValueError("progress")
+    except (TypeError, ValueError) as error:
+        raise SwitchOperationError("Bootstrap next-page link has an invalid scope or non-progressing cursor.") from error
+    return offset, min(maximum, 500)
+
+
 def query_bootstrap_switches(
     nd,
     fabric: str,
     log: logging.Logger,
 ) -> list[dict[str, Any]]:
-    """GET switches currently in the bootstrap (POAP / PnP) loop.
+    """Read a complete bootstrap (POAP / PnP) snapshot before membership decisions.
 
     ## Parameters
 
@@ -547,33 +601,70 @@ def query_bootstrap_switches(
     ## Returns
 
     - List of raw switch dicts from the bootstrap API.
+
+    Count metadata must remain consistent across pages. Links contribute only
+    validated same-fabric cursors; all requests are rebuilt from the endpoint,
+    including when ND supplies an absolute next link. Without metadata, short
+    pages are complete and a full requested page is followed to exhaustion.
+
+    ## Raises
+
+    - `SwitchOperationError`: An incomplete, malformed or changing observation
+      cannot establish that a requested bootstrap serial is absent.
     """
     log.debug("ENTER: query_bootstrap_switches()")
-
     endpoint = EpManageFabricsBootstrapGet()
     endpoint.fabric_name = fabric
-    log.debug("Bootstrap endpoint: %s", endpoint.path)
-
-    try:
-        result = nd.request(
-            path=endpoint.path,
-            verb=endpoint.verb,
-        )
-    except _REQUEST_ERRORS as e:
-        msg = f"Failed to query bootstrap switches for " f"fabric '{fabric}': {e}"
-        log.error(msg)
-        nd.module.fail_json(msg=msg)
-
-    if isinstance(result, dict):
-        switches = result.get("switches", [])
-    elif isinstance(result, list):
-        switches = result
-    else:
-        switches = []
-
-    log.info("Bootstrap API returned %s switch(es) in POAP loop", len(switches))
-    log.debug("EXIT: query_bootstrap_switches()")
-    return switches
+    base_path = endpoint.path
+    switches, serials = [], set()
+    offset, page_size, expected_total = 0, 500, None
+    for _page_number in range(_BOOTSTRAP_MAX_PAGES):
+        endpoint.endpoint_params.offset = offset
+        endpoint.endpoint_params.max = page_size
+        try:
+            result = nd.request(path=endpoint.path, verb=endpoint.verb)
+        except _REQUEST_ERRORS as error:
+            raise SwitchOperationError(f"Failed to query bootstrap switches for fabric '{fabric}': {error}") from error
+        page, meta = _bootstrap_page(result, log)
+        links = meta.get("links", {})
+        if not isinstance(links, dict):
+            raise SwitchOperationError("Bootstrap pagination links must be an object.")
+        next_link = links.get("next")
+        if "next" in links and not isinstance(next_link, str):
+            raise SwitchOperationError("Bootstrap next-page link must be a string.")
+        received = offset + len(page)
+        if "counts" in meta:
+            counts = meta["counts"]
+            # Exact JSON counts must reject booleans and coerced integer values.
+            if not isinstance(counts, dict) or any(
+                type(counts.get(key)) is not int or counts[key] < 0 for key in ("total", "remaining")  # pylint: disable=unidiomatic-typecheck
+            ):
+                raise SwitchOperationError("Bootstrap pagination counts require non-negative integer total and remaining values.")
+            total, remaining = counts["total"], counts["remaining"]
+            if total != received + remaining or expected_total is not None and total != expected_total:
+                raise SwitchOperationError("Bootstrap pagination counts are inconsistent or changed during observation.")
+            expected_total = total
+        if expected_total is not None and received > expected_total:
+            raise SwitchOperationError("Bootstrap pagination exceeds the observed total.")
+        for row in page:
+            serial = row.get("serialNumber", row.get("serial_number"))
+            if not isinstance(serial, str) or not serial or serial != serial.strip() or serial in serials:
+                raise SwitchOperationError("Bootstrap pagination contains a missing or repeated serial identity.")
+            serials.add(serial)
+        switches.extend(page)
+        more = received < expected_total if expected_total is not None else bool(next_link) or len(page) >= page_size
+        if next_link and expected_total is not None and not more:
+            raise SwitchOperationError("Bootstrap next-page link contradicts complete pagination counts.")
+        if not more:
+            log.info("Bootstrap API returned %s switch(es) in POAP loop", len(switches))
+            log.debug("EXIT: query_bootstrap_switches()")
+            return switches
+        if not page:
+            raise SwitchOperationError("Bootstrap pagination made no progress before the observed scope was complete.")
+        offset = received
+        if next_link:
+            offset, page_size = _bootstrap_next_cursor(next_link, base_path, offset, page_size)
+    raise SwitchOperationError("Bootstrap pagination did not complete within its page budget.")
 
 
 def build_bootstrap_index(
@@ -611,6 +702,9 @@ def build_poap_data_block(poap_cfg) -> dict[str, Any] | None:
         data_block["gatewayIpMask"] = gateway
     if poap_cfg.config_data.models:
         data_block["models"] = poap_cfg.config_data.models
+    breakout = getattr(poap_cfg.config_data, "breakout", None)
+    if breakout:
+        data_block["breakout"] = breakout
     return data_block or None
 
 
