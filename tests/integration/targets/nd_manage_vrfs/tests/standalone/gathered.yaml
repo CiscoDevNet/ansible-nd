@@ -59,6 +59,7 @@
 
 - name: Gathered TC1 - Seed VRF
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_vrf_standalone_gathered_conf }}"
@@ -68,6 +69,7 @@
 
 - name: Gathered TC2 - Gather Standalone VRFs
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
     config: []

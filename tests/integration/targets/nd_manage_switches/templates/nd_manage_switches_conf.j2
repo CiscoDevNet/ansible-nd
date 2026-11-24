@@ -16,6 +16,9 @@
 {% endif %}
 {% set _ = switch_item.update({'username': switch_username}) %}
 {% set _ = switch_item.update({'password': switch_password}) %}
+{% if switch.use_credential_for_write is defined %}
+{% set _ = switch_item.update({'use_credential_for_write': switch.use_credential_for_write}) %}
+{% endif %}
 {% if switch.role is defined %}
 {% set _ = switch_item.update({'role': switch.role | default('') }) %}
 {% endif %}

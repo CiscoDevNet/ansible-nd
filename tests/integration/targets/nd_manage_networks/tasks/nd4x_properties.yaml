@@ -1,0 +1,10 @@
+---
+- name: Exercise property groups with independent clean baselines
+  ansible.builtin.include_tasks: nd4x_property.yaml
+  loop: "{{ nd4x_network_property_cases }}"
+  loop_control:
+    loop_var: nd4x_network_property_case
+    label: "{{ nd4x_network_property_case.label }}"
+  when:
+    - nd4x_network_property_case.feature | default('core') in (['core'] + (nd_network_harness_features | default([])))
+    - nd4x_network_property_case.minimum_version | default('4.2.1') is version(nd4x_network_version.current.platformVersion, '<=')

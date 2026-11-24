@@ -1,0 +1,40 @@
+---
+- name: Establish an empty owned-resource baseline for this case
+  ansible.builtin.include_tasks: nd4x_reset.yaml
+
+- name: "OVERRIDDEN SEED: Create the retained and omitted resources"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: merged
+    common_args: "{{ nd4x_network_common_args }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': [nd4x_network_seed, nd4x_network_extra]}) | from_yaml }}"
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+
+- name: Verify the full destructive scope immediately before overridden
+  ansible.builtin.include_tasks: nd4x_scope_preflight.yaml
+
+- name: "OVERRIDDEN: Retain the omitted network mode and remove the omitted owned resource"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: overridden
+    common_args: "{{ nd4x_network_common_args }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': [{'network_name': nd4x_network_names[0], 'vlan_name': 'ND4X_L2_OVERRIDDEN', 'deploy': false}]}) | from_yaml }}"
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+    nd_queries:
+      - name: Verify the overridden Network retains Layer 2
+        path: "{{ nd4x_network_definition_scope.api }}/networks/{{ nd4x_network_names[0] }}{{ nd4x_network_definition_scope.suffix }}"
+        expected_status: 200
+        expect:
+          - {jsonpath: '$.current.networkMode', equals: layer2}
+          - {jsonpath: '$.current.vrfName', equals: NA}
+      - name: Verify the omitted resource was removed
+        path: "{{ nd4x_network_api }}/networks/{{ nd4x_network_names[1] if 'network' == 'vrf' else nd4x_network_names[2] }}"
+        expected_status: 404
+        expected_failed: true
+
+- name: Verify Layer 3 scalar and list override
+  ansible.builtin.include_tasks: nd4x_definition_state.yaml
+  vars:
+    nd4x_definition_state: overridden

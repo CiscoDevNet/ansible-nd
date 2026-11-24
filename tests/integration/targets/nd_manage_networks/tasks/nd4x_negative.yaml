@@ -1,0 +1,31 @@
+---
+- name: Validate incompatible input without mutating controller state
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: "{{ nd4x_network_negative_case.state | default('merged') }}"
+    common_args: "{{ nd4x_network_common_args }}"
+    module_args: "{{ nd4x_network_negative_case.module_args | default({}) }}"
+    config: "{{ [nd4x_network_negative_case.config] }}"
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    idempotency: false
+    expected:
+      check_mode: {changed: false, failed: true}
+      apply: {changed: false, failed: true}
+  loop: "{{ nd4x_network_negative_cases }}"
+  loop_control:
+    loop_var: nd4x_network_negative_case
+    label: "{{ nd4x_network_negative_case.label }}"
+  register: nd4x_network_negative_results
+  when:
+    - not (nd4x_network_negative_case.standalone_only | default(false) | bool) or nd4x_network_topology == 'standalone'
+    - not (nd4x_network_negative_case.parent_only | default(false) | bool) or nd4x_network_topology != 'standalone'
+
+- name: Require the intended failure reason in predictive and apply results
+  ansible.builtin.assert:
+    that:
+      - item.nd4x_network_negative_case.message in (item.check_mode_result.msg | default(''))
+      - item.nd4x_network_negative_case.message in (item.first_run_result.msg | default(''))
+  loop: "{{ nd4x_network_negative_results.results }}"
+  loop_control:
+    label: "{{ item.nd4x_network_negative_case.label }}"
+  when: not (item.skipped | default(false))

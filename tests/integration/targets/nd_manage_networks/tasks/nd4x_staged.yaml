@@ -1,0 +1,54 @@
+---
+- name: Establish an empty owned-resource baseline for this case
+  ansible.builtin.include_tasks: nd4x_reset.yaml
+
+- name: "STAGED SEED: Create two resources without deployment"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: merged
+    common_args: "{{ nd4x_network_common_args }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': [nd4x_network_seed, nd4x_network_extra]}) | from_yaml }}"
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+
+- name: Verify the full attachment scope immediately before staged
+  ansible.builtin.include_tasks: nd4x_scope_preflight.yaml
+
+- name: "STAGED: Retain the omitted network mode without deleting omitted definitions"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: staged
+    common_args: "{{ nd4x_network_common_args }}"
+    module_args:
+      config_actions: {type: resource, deploy: true}
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': [{'network_name': nd4x_network_names[0], 'vlan_name': 'ND4X_STAGED', 'deploy': true}]}) | from_yaml }}"
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+    nd_queries:
+      - name: Verify the staged Network retains Layer 2
+        path: "{{ nd4x_network_definition_scope.api }}/networks/{{ nd4x_network_names[0] }}{{ nd4x_network_definition_scope.suffix }}"
+        expected_status: 200
+        expect:
+          - {jsonpath: '$.current.networkMode', equals: layer2}
+          - {jsonpath: '$.current.vrfName', equals: NA}
+      - name: Verify the omitted definition remains present
+        path: "{{ nd4x_network_api }}/networks/{{ nd4x_network_names[2] }}"
+        expected_status: 200
+        expect:
+          - {jsonpath: '$.current.networkName', equals: "{{ nd4x_network_names[2] }}"}
+
+  register: nd4x_network_staged
+
+- name: Select every standalone, parent and child API trace for staged verification
+  ansible.builtin.set_fact:
+    nd4x_network_staged_owner: "{{ nd4x_network_staged.first_run_result.parent_fabric | default(nd4x_network_staged.first_run_result) }}"
+    nd4x_network_staged_scopes: >-
+      {{ [nd4x_network_staged.first_run_result.parent_fabric | default(nd4x_network_staged.first_run_result)]
+         + (nd4x_network_staged.first_run_result.child_fabrics | default([])) }}
+
+- name: Verify staged did not deploy despite explicit deployment requests
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_staged_owner.api_paths is defined
+      - nd4x_network_staged_scopes | map(attribute='api_paths', default=[]) | flatten | select('search', '/deploy') | list | length == 0
+      - nd4x_network_staged.first_run_result.config_actions | selectattr('reason', 'equalto', 'staged_state') | list | length == 1

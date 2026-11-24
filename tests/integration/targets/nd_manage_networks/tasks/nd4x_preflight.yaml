@@ -1,0 +1,173 @@
+---
+- name: Require connection variables and an explicit supported topology
+  ansible.builtin.assert:
+    that:
+      - ansible_host is defined
+      - ansible_user is defined
+      - ansible_password is defined
+      - nd4x_network_topology in ['standalone', 'msd', 'mcfg']
+      - nd4x_network_fabric | length > 0
+      - nd4x_network_run_id is match('^[a-z0-9]{4,12}$')
+      - not ansible_check_mode
+      - nd_network_harness_page_size | int > 0
+      - nd_network_harness_page_size | int <= 10000
+    fail_msg: >-
+      Configure a test fabric/topology and a 4-12 character lowercase alphanumeric run ID.
+      Run normally: nd4x_module_test performs predictive execution internally.
+      A global --check run cannot create the prerequisites needed by later cases.
+
+- name: Discover the controller release
+  cisco.nd.nd_version:
+    output_level: debug
+  register: nd4x_network_version
+
+- name: Gate the resource harness on the supported release
+  ansible.builtin.set_fact:
+    nd4x_network_supported: "{{ nd4x_network_version.current.platformVersion is version('4.2.1', '>=') }}"
+    nd4x_network_ownership_claimed: false
+
+- name: Prepare supported resource tests
+  when: nd4x_network_supported | bool
+  block:
+    - name: Initialize snapshot scope and baseline inventory
+      ansible.builtin.set_fact:
+        nd4x_network_scopes:
+          - name: "{{ nd4x_network_fabric }}"
+            api: "{{ nd4x_network_api }}"
+            suffix: ""
+        nd4x_network_snapshots: []
+        nd4x_network_inventory_by_scope: {}
+
+    - name: Discover every member for parent-fabric snapshot coverage
+      cisco.nd.nd_rest:
+        path: "{{ nd4x_network_api }}/members"
+        method: get
+      register: nd4x_network_members_response
+      when: nd4x_network_topology != 'standalone'
+
+    - name: Normalize the member collection
+      ansible.builtin.set_fact:
+        nd4x_network_members: >-
+          {{ nd4x_network_members_response.current.members
+             | default(nd4x_network_members_response.current.fabrics
+             | default(nd4x_network_members_response.current)) }}
+      when: nd4x_network_topology != 'standalone'
+
+    - name: Reject incomplete or unknown membership responses
+      ansible.builtin.assert:
+        that:
+          - nd4x_network_members_response.status | int == 200
+          - nd4x_network_members is sequence and nd4x_network_members is not string and nd4x_network_members is not mapping
+          - nd4x_network_members | length > 0
+          - nd4x_network_members_response.current.meta.counts.remaining | default(0) | int == 0
+          - nd4x_network_members_response.current.metadata.counts.remaining | default(0) | int == 0
+          - nd4x_network_members_response.current.meta.counts.total | default(nd4x_network_members | length) | int == nd4x_network_members | length
+          - nd4x_network_members_response.current.metadata.counts.total | default(nd4x_network_members | length) | int == nd4x_network_members | length
+          - not (nd4x_network_members_response.current.meta.links.next | default(''))
+          - not (nd4x_network_members_response.current.metadata.links.next | default(''))
+      when: nd4x_network_topology != 'standalone'
+
+    - name: Validate member identity and multi-cluster routing
+      ansible.builtin.assert:
+        that:
+          - item.fabricName | default(item.name | default('')) | length > 0
+          - nd4x_network_topology != 'mcfg' or item.clusterName | default('') | length > 0
+      loop: "{{ nd4x_network_members | default([]) }}"
+      loop_control:
+        label: "{{ item.fabricName | default(item.name | default('unknown')) }}"
+
+    - name: Add every child to the predictive scope
+      ansible.builtin.set_fact:
+        nd4x_network_scopes: >-
+          {{ nd4x_network_scopes + [{
+               'name': item.fabricName | default(item.name),
+               'api': '/api/v1/manage/fabrics/' ~ ((item.fabricName | default(item.name)) | urlencode),
+               'suffix': ('?clusterName=' ~ (item.clusterName | urlencode)) if nd4x_network_topology == 'mcfg' else ''
+             }] }}
+      loop: "{{ nd4x_network_members | default([]) }}"
+
+    - name: Verify the selected child belongs to the parent
+      ansible.builtin.assert:
+        that:
+          - nd4x_network_scopes | selectattr('name', 'equalto', nd4x_network_child) | list | length == 1
+      when: nd4x_network_topology != 'standalone'
+
+    - name: Cache the receiving fabric settings once for capability checks
+      cisco.nd.nd_rest:
+        path: "{{ item.api }}{{ item.suffix }}"
+        method: get
+      loop: "{{ nd4x_network_scopes[1:] if nd4x_network_topology != 'standalone' else nd4x_network_scopes }}"
+      register: nd4x_network_receiving_fabrics
+
+    - name: Require VXLAN targets for these definition fixtures
+      ansible.builtin.assert:
+        that:
+          - item.status | int == 200
+          - item.current.management.type | default(item.current.type | default('')) in ['vxlanIbgp', 'vxlanEbgp', 'vxlanCampus']
+        fail_msg: These fixtures target VXLAN; External and routed/classic coverage requires separate inputs.
+      loop: "{{ nd4x_network_receiving_fabrics.results }}"
+
+    - name: Build complete predictive definition and attachment snapshots
+      ansible.builtin.set_fact:
+        nd4x_network_snapshots: >-
+          {{ nd4x_network_snapshots + [
+            {'name': 'Definitions in ' ~ item.name,
+             'path': item.api ~ '/networks' ~ item.suffix,
+             'expected_status': 200,
+             'pagination': {'page_size': nd_network_harness_page_size | int, 'collection_key': 'networks'},
+             'unordered_paths': ['/networks']},
+            {'name': 'Attachments in ' ~ item.name,
+             'path': item.api ~ '/networkAttachments/query' ~ item.suffix ~ ('&' if item.suffix else '?') ~ 'includeAll=true',
+             'method': 'post', 'content': {}, 'expected_status': 200,
+             'pagination': {'page_size': nd_network_harness_page_size | int, 'collection_key': 'attachments'},
+             'unordered_paths': ['/attachments', '/attachments/*/interfaces']}
+          ] }}
+      loop: "{{ nd4x_network_scopes }}"
+
+    - name: Read every baseline inventory page independently of the module
+      ansible.builtin.include_tasks: nd4x_inventory.yaml
+      loop: "{{ nd4x_network_scopes }}"
+      loop_control:
+        loop_var: nd4x_network_scope
+
+    - name: Refuse collisions with existing names and reserved identities
+      ansible.builtin.assert:
+        that:
+          - >-
+            nd4x_network_inventory_by_scope.values() | flatten
+            | map(attribute='networkName') | intersect(nd4x_network_names) | length == 0
+          - >-
+            nd4x_network_inventory_by_scope.values() | flatten
+            | selectattr('networkId', 'defined')
+            | map(attribute='networkId') | map('int')
+            | intersect(range(nd_network_base_id | int + 80, nd_network_base_id | int + 86) | list) | length == 0
+          - >-
+            nd4x_network_inventory_by_scope.values() | flatten | selectattr('vlanId', 'defined')
+            | map(attribute='vlanId') | map('int')
+            | intersect(range(nd_network_base_vlan | int + 80, nd_network_base_vlan | int + 86) | list) | length == 0
+        fail_msg: Reserved test names, VNIs or VLANs are occupied; nothing has been deleted.
+
+    - name: Retain the untouched baseline
+      ansible.builtin.set_fact:
+        nd4x_network_baseline: "{{ nd4x_network_inventory_by_scope }}"
+
+    - name: Verify the prerequisite VRF name is unused
+      cisco.nd.nd_rest:
+        path: "{{ nd4x_network_api }}/vrfs/{{ nd4x_network_vrf_name }}"
+        method: get
+      register: nd4x_network_vrf_probe
+      failed_when: false
+
+    - name: Require an absent prerequisite VRF before claiming ownership
+      ansible.builtin.assert:
+        that:
+          - nd4x_network_vrf_probe.status | default(0) | int == 404
+
+    - name: Claim only this run's reserved resources after preflight succeeds
+      ansible.builtin.set_fact:
+        nd4x_network_ownership_claimed: true
+
+- name: Explain unsupported controller skip
+  ansible.builtin.debug:
+    msg: "The resource harness requires ND 4.2.1 or later."
+  when: not nd4x_network_supported | bool

@@ -18,15 +18,15 @@
       - ndnetstgomit
     target_network_delete_config:
       - network_name: ndnetstgcreate
-        layer: layer2
+        network_mode: layer2
       - network_name: ndnetstgadd
-        layer: layer2
+        network_mode: layer2
       - network_name: ndnetstgremove
-        layer: layer2
+        network_mode: layer2
       - network_name: ndnetstgdetach
-        layer: layer2
+        network_mode: layer2
       - network_name: ndnetstgomit
-        layer: layer2
+        network_mode: layer2
     nd_network_staged_primary_attach_block: >-
       {{
         [
@@ -91,28 +91,28 @@
   ansible.builtin.set_fact:
     nd_network_staged_seed:
       - network_name: ndnetstgadd
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 70 }}"
         vlan_id: "{{ nd_network_base_vlan + 70 }}"
         vlan_name: ndnetstgadd_vlan
         attach: "{{ nd_network_staged_primary_attach_block }}"
         deploy: false
       - network_name: ndnetstgremove
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 71 }}"
         vlan_id: "{{ nd_network_base_vlan + 71 }}"
         vlan_name: ndnetstgremove_vlan
         attach: "{{ nd_network_staged_primary_attach_block + nd_network_staged_secondary_attach_block }}"
         deploy: false
       - network_name: ndnetstgdetach
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 74 }}"
         vlan_id: "{{ nd_network_base_vlan + 74 }}"
         vlan_name: ndnetstgdetach_vlan
         attach: "{{ nd_network_staged_primary_attach_block }}"
         deploy: false
       - network_name: ndnetstgomit
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 72 }}"
         vlan_id: "{{ nd_network_base_vlan + 72 }}"
         vlan_name: ndnetstgomit_vlan
@@ -120,7 +120,7 @@
         deploy: false
     nd_network_staged_create_config:
       - network_name: ndnetstgcreate
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 73 }}"
         vlan_id: "{{ nd_network_base_vlan + 73 }}"
         vlan_name: ndnetstgcreate_vlan
@@ -128,28 +128,28 @@
         deploy: true
     nd_network_staged_config:
       - network_name: ndnetstgcreate
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 73 }}"
         vlan_id: "{{ nd_network_base_vlan + 73 }}"
         vlan_name: ndnetstgcreate_vlan
         attach: "{{ nd_network_staged_create_attach_block }}"
         deploy: true
       - network_name: ndnetstgadd
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 70 }}"
         vlan_id: "{{ nd_network_base_vlan + 70 }}"
         vlan_name: ndnetstgadd_vlan
         attach: "{{ nd_network_staged_primary_attach_block + nd_network_staged_secondary_attach_block }}"
         deploy: true
       - network_name: ndnetstgremove
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 71 }}"
         vlan_id: "{{ nd_network_base_vlan + 71 }}"
         vlan_name: ndnetstgremove_vlan
         attach: "{{ nd_network_staged_primary_attach_block }}"
         deploy: true
       - network_name: ndnetstgdetach
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 74 }}"
         vlan_id: "{{ nd_network_base_vlan + 74 }}"
         vlan_name: ndnetstgdetach_vlan
@@ -201,6 +201,7 @@
 
 - name: Staged TC1 - Create Network With Attachment
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: staged
     config: "{{ nd_network_standalone_staged_create_conf }}"
@@ -271,6 +272,7 @@
 
 - name: Staged TC2 - Seed Existing Networks
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_standalone_staged_seed_conf }}"
@@ -284,6 +286,7 @@
 
 - name: Staged TC3 - Reconcile Attachments Without Deploy Or Definition Delete
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: staged
     config: "{{ nd_network_standalone_staged_conf }}"
@@ -307,6 +310,7 @@
 
 - name: Staged TC3 - Repeat Reconcile For Controller-State Idempotency
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: staged
     config: "{{ nd_network_standalone_staged_conf }}"
@@ -346,9 +350,10 @@
 
 - name: Staged TC4 - Gather Networks
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
-    config: "{{ target_network_delete_config }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': target_network_delete_config, 'name_only': true}) | from_yaml }}"
   register: staged_gather_result
   when:
     - nd_network_run_standalone | bool

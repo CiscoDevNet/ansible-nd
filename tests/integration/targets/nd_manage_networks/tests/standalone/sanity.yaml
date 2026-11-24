@@ -16,36 +16,36 @@
       - ansible-nd-net-sanity-c
     target_network_delete_config:
       - network_name: ansible-nd-net-sanity-a
-        layer: layer2
+        network_mode: layer2
       - network_name: ansible-nd-net-sanity-b
-        layer: layer2
+        network_mode: layer2
       - network_name: ansible-nd-net-sanity-c
-        layer: layer2
+        network_mode: layer2
     nd_network_sanity_merge_config:
       - network_name: ansible-nd-net-sanity-a
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 40 }}"
         vlan_id: "{{ nd_network_base_vlan + 40 }}"
         vlan_name: ansible_nd_net_sanity_a
         deploy: false
       - network_name: ansible-nd-net-sanity-b
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 41 }}"
         vlan_id: "{{ nd_network_base_vlan + 41 }}"
         vlan_name: ansible_nd_net_sanity_b
         deploy: false
     nd_network_sanity_replace_config:
       - network_name: ansible-nd-net-sanity-a
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 40 }}"
         vlan_id: "{{ nd_network_base_vlan + 40 }}"
         vlan_name: ans_nd_net_sanity_a_repl
         deploy: false
     nd_network_sanity_delete_config:
       - network_name: ansible-nd-net-sanity-a
-        layer: layer2
+        network_mode: layer2
       - network_name: ansible-nd-net-sanity-b
-        layer: layer2
+        network_mode: layer2
   delegate_to: localhost
   tags: sanity
 
@@ -80,6 +80,7 @@
 
 - name: Standalone Sanity TC1 - Merged
   cisco.nd.nd_manage_networks: &standalone_sanity_merge
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_standalone_sanity_merge_conf }}"
@@ -90,9 +91,10 @@
 
 - name: Standalone Sanity TC1 - Gather After Merged
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
-    config: "{{ nd_network_standalone_sanity_merge_conf }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': nd_network_standalone_sanity_merge_conf, 'name_only': true}) | from_yaml }}"
   register: standalone_sanity_gathered
   when: nd_network_run_standalone | bool
   tags: sanity
@@ -120,6 +122,7 @@
 
 - name: Standalone Sanity TC2 - Replaced
   cisco.nd.nd_manage_networks: &standalone_sanity_replace
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: replaced
     config: "{{ nd_network_standalone_sanity_replace_conf }}"
@@ -130,9 +133,10 @@
 
 - name: Standalone Sanity TC2 - Gather After Replaced
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
-    config: "{{ nd_network_standalone_sanity_replace_conf }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': nd_network_standalone_sanity_replace_conf, 'name_only': true}) | from_yaml }}"
   register: standalone_sanity_replaced_gathered
   when: nd_network_run_standalone | bool
   tags: sanity
@@ -160,6 +164,7 @@
 
 - name: Standalone Sanity TC3 - Deleted
   cisco.nd.nd_manage_networks: &standalone_sanity_delete
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: deleted
     config: "{{ nd_network_standalone_sanity_delete_conf }}"
@@ -170,9 +175,10 @@
 
 - name: Standalone Sanity TC3 - Gather After Deleted
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
-    config: "{{ nd_network_standalone_sanity_delete_conf }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': nd_network_standalone_sanity_delete_conf, 'name_only': true}) | from_yaml }}"
   register: standalone_sanity_deleted_gathered
   when: nd_network_run_standalone | bool
   tags: sanity

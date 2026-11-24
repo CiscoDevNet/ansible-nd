@@ -1,0 +1,145 @@
+---
+- name: "{{ nd4x_definition_state | upper }} L3 SEED: Save nondefault scalars and lists in the correct ownership scope"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: merged
+    common_args: "{{ nd4x_network_common_args }}"
+    config: >-
+      {{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': [
+        nd4x_network_l3 | combine({'arp_suppression': false}) | combine(
+          nd4x_network_state_fabric if nd4x_network_topology == 'standalone'
+          else {'child_fabric_config': [nd4x_network_state_fabric | combine({'fabric_name': nd4x_network_child})]}
+        )]}) | from_yaml }}
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+    nd_queries:
+      - name: Verify the actual saved primary and secondary gateways
+        path: "{{ nd4x_network_definition_scope.api }}/networks/{{ nd4x_network_names[1] }}{{ nd4x_network_definition_scope.suffix }}"
+        expected_status: 200
+        expect:
+          - {jsonpath: '$.current.l3Data.mtu', equals: 9000}
+          - {jsonpath: '$.current.l3Data.secondaryGatewayIpv4Collection', equals: [192.0.3.1/24]}
+          - {jsonpath: '$.current.l3Data.secondaryGatewayIpv6Collection', equals: ['2001:db8:5::1/64']}
+      - name: Verify nondefault child-owned DHCP and border gateway state
+        path: "{{ nd4x_network_state_child_api }}/networks/{{ nd4x_network_names[1] }}{{ nd4x_network_state_child_suffix }}"
+        expected_status: 200
+        expect:
+          - {jsonpath: '$.current.l3Data.fabricData.gatewayOnBorder', equals: true}
+          - {jsonpath: '$.current.l3Data.fabricData.dhcpServers[0].serverAddress', equals: 192.0.2.253}
+  vars:
+    nd4x_network_state_fabric:
+      gateway_on_border: true
+      dhcp_servers: [{server_address: 192.0.2.253, server_vrf: "{{ nd4x_network_vrf_name }}"}]
+    nd4x_network_state_child_api: >-
+      {{ nd4x_network_api if nd4x_network_topology == 'standalone'
+         else (nd4x_network_scopes | selectattr('name', 'equalto', nd4x_network_child) | first).api }}
+    nd4x_network_state_child_suffix: >-
+      {{ '' if nd4x_network_topology == 'standalone'
+         else (nd4x_network_scopes | selectattr('name', 'equalto', nd4x_network_child) | first).suffix }}
+
+- name: MERGED CLEAR IPv4 gateway and secondary list while retaining omitted IPv6 settings
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: merged
+    common_args: "{{ nd4x_network_common_args }}"
+    config:
+      - network_name: "{{ nd4x_network_names[1] }}"
+        gateway_ipv4_address: ''
+        secondary_gateway_ipv4_collection: []
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+    nd_queries:
+      - name: Verify preserved IPv6 gateway and secondary list after the IPv4 clear
+        path: "{{ nd4x_network_definition_scope.api }}/networks/{{ nd4x_network_names[1] }}{{ nd4x_network_definition_scope.suffix }}"
+        expected_status: 200
+        expect:
+          - {jsonpath: '$.current.l3Data.gatewayIpv6Address', equals: '2001:db8:4::1/64'}
+          - {jsonpath: '$.current.l3Data.secondaryGatewayIpv6Collection', equals: ['2001:db8:5::1/64']}
+  register: nd4x_network_explicit_clear
+
+- name: Require independently observed IPv4 removal
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_explicit_clear.nd_query_results[0].result.current.l3Data.gatewayIpv4Address | default('') == ''
+      - nd4x_network_explicit_clear.nd_query_results[0].result.current.l3Data.secondaryGatewayIpv4Collection | default([]) == []
+
+- name: Reestablish nondefault child options independently of the preceding parent update
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: merged
+    common_args: "{{ nd4x_network_common_args }}"
+    config:
+      - network_name: "{{ nd4x_network_names[1] }}"
+        child_fabric_config:
+          - fabric_name: "{{ nd4x_network_child }}"
+            gateway_on_border: true
+            dhcp_servers: [{server_address: 192.0.2.253, server_vrf: "{{ nd4x_network_vrf_name }}"}]
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected:
+      check_mode: {failed: false}
+      apply: {failed: false}
+      idempotency: {changed: false, failed: false}
+    nd_queries:
+      - name: Verify the child reset begins with actual nondefault values
+        path: "{{ (nd4x_network_scopes | selectattr('name', 'equalto', nd4x_network_child) | first).api }}/networks/{{ nd4x_network_names[1] }}{{ (nd4x_network_scopes | selectattr('name', 'equalto', nd4x_network_child) | first).suffix }}"
+        expected_status: 200
+        expect:
+          - {jsonpath: '$.current.l3Data.fabricData.gatewayOnBorder', equals: true}
+          - {jsonpath: '$.current.l3Data.fabricData.dhcpServers[0].serverAddress', equals: 192.0.2.253}
+  when: nd4x_network_topology != 'standalone'
+  register: nd4x_network_child_reseed
+
+- name: Require child reseeding to preserve the parent definition
+  ansible.builtin.assert:
+    that:
+      - not nd4x_network_child_reseed.first_run_result.parent_fabric.changed | bool
+  when: nd4x_network_topology != 'standalone'
+
+- name: Verify all Networks are owned before authoritative replacement
+  ansible.builtin.include_tasks: nd4x_scope_preflight.yaml
+  when: nd4x_definition_state == 'overridden'
+
+- name: "{{ nd4x_definition_state | upper }} L3: Retain omitted network mode and VRF while resetting other properties"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: "{{ nd4x_definition_state }}"
+    common_args: "{{ nd4x_network_common_args }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': [{'network_name': nd4x_network_names[1], 'routing_tag': 12345, 'deploy': false}]}) | from_yaml }}"
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+    nd_queries:
+      - name: Verify replacement core defaults and retained allocation
+        path: "{{ nd4x_network_definition_scope.api }}/networks/{{ nd4x_network_names[1] }}{{ nd4x_network_definition_scope.suffix }}"
+        expected_status: 200
+        expect:
+          - {jsonpath: '$.current.networkMode', equals: layer3}
+          - {jsonpath: '$.current.vrfName', equals: "{{ nd4x_network_vrf_name }}"}
+          - {jsonpath: '$.current.l3Data.mtu', equals: 9216}
+          - {jsonpath: '$.current.l3Data.arpSuppression', equals: false}
+      - name: Read the effective child-owned settings after reset
+        path: "{{ nd4x_network_state_child_api }}/networks/{{ nd4x_network_names[1] }}{{ nd4x_network_state_child_suffix }}"
+        expected_status: 200
+  vars:
+    nd4x_network_state_child_api: >-
+      {{ nd4x_network_api if nd4x_network_topology == 'standalone'
+         else (nd4x_network_scopes | selectattr('name', 'equalto', nd4x_network_child) | first).api }}
+    nd4x_network_state_child_suffix: >-
+      {{ '' if nd4x_network_topology == 'standalone'
+         else (nd4x_network_scopes | selectattr('name', 'equalto', nd4x_network_child) | first).suffix }}
+  register: nd4x_network_definition_reset
+
+- name: Require cleared lists, gateways and child overrides with stable identity
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_definition_reset.nd_query_results[0].result.current.networkId | int == nd_network_base_id | int + 81
+      - nd4x_network_definition_reset.nd_query_results[0].result.current.vlanId | int == nd_network_base_vlan | int + 81
+      - nd4x_network_definition_reset.nd_query_results[0].result.current.l3Data.gatewayIpv4Address | default('') == ''
+      - nd4x_network_definition_reset.nd_query_results[0].result.current.l3Data.gatewayIpv6Address | default('') == ''
+      - nd4x_network_definition_reset.nd_query_results[0].result.current.l3Data.secondaryGatewayIpv4Collection | default([]) == []
+      - nd4x_network_definition_reset.nd_query_results[0].result.current.l3Data.secondaryGatewayIpv6Collection | default([]) == []
+      - nd4x_network_definition_reset.nd_query_results[1].result.current.l3Data.fabricData.dhcpServers | default([]) == []
+      - not nd4x_network_definition_reset.nd_query_results[1].result.current.l3Data.fabricData.gatewayOnBorder | default(false) | bool
+
+- name: Verify omitted child fields reset independently of any parent definition change
+  ansible.builtin.include_tasks: nd4x_child_state.yaml
+  when: nd4x_network_topology != 'standalone'

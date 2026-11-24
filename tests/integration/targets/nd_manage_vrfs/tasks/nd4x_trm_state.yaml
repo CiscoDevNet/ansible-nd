@@ -1,0 +1,115 @@
+---
+- name: "{{ nd4x_definition_state | upper }} TRM SEED: Save active multicast and nonempty MVPN lists"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: merged
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config: >-
+      {{ lookup('ansible.builtin.template', 'nd_vrf_conf.j2', template_vars={'vrf_conf': [
+        {'vrf_name': nd4x_vrf_names[0], 'deploy': false} | combine(nd4x_trm_seed if nd4x_vrf_topology == 'standalone'
+          else {'child_fabric_config': [nd4x_trm_seed | combine({'fabric_name': nd4x_vrf_child})]})]}) | from_yaml }}
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_change }}"
+    nd_queries:
+      - name: Verify an enabled seed rather than an already-empty default
+        path: "{{ nd4x_vrf_trm_scope.api }}/vrfs/{{ nd4x_vrf_names[0] }}{{ nd4x_vrf_trm_scope.suffix }}"
+        expected_status: 200
+        expect:
+          - {jsonpath: '$.current.fabricData.trmData.ipv4Trm', equals: true}
+          - {jsonpath: '$.current.fabricData.trmData.mvpnRouteTargetImport', equals: ['65000:50981']}
+          - {jsonpath: '$.current.fabricData.trmData.mvpnRouteTargetExport', equals: ['65000:50982']}
+          - {jsonpath: '$.current.fabricData.advertiseHostRoute', equals: true}
+          - {jsonpath: '$.current.fabricData.advertiseDefaultRoute', equals: false}
+          - {jsonpath: '$.current.fabricData.configureStaticDefaultRoute', equals: false}
+          - {jsonpath: '$.current.fabricData.bgpAllowAsIn', equals: true}
+          - {jsonpath: '$.current.fabricData.bgpAllowAsInNum', equals: 5}
+          - {jsonpath: '$.current.fabricData.bgpAsOverride', equals: true}
+          - {jsonpath: '$.current.fabricData.bgpDisablePeerAsCheck', equals: true}
+          - {jsonpath: '$.current.fabricData.bgpSoftReconfigAlways', equals: true}
+          - {jsonpath: '$.current.fabricData.bgpBestPathRelax', equals: true}
+          - {jsonpath: '$.current.fabricData.bgpLogNeighborChange', equals: true}
+          - {jsonpath: '$.current.fabricData.bgpPasswordKeyType', exists: true}
+  vars:
+    nd4x_trm_seed:
+      trm_enable: true
+      no_rp: true
+      underlay_mcast_ip: 239.1.1.3
+      import_mvpn_rt: ['65000:50981']
+      export_mvpn_rt: ['65000:50982']
+      adv_host_routes: true
+      adv_default_routes: false
+      static_default_route: false
+      bgp_allow_as_in: true
+      bgp_allow_as_in_num: 5
+      bgp_as_override: true
+      bgp_disable_peer_as_check: true
+      bgp_soft_reconfig_always: true
+      bgp_best_path_relax: true
+      bgp_log_neighbor_change: true
+      bgp_password: aabbccdd
+      bgp_passwd_encrypt: 3des
+    nd4x_vrf_trm_scope: >-
+      {{ nd4x_vrf_scopes[0] if nd4x_vrf_topology == 'standalone'
+         else (nd4x_vrf_scopes | selectattr('name', 'equalto', nd4x_vrf_child) | first) }}
+  register: nd4x_vrf_trm_seed
+
+- name: Require actual saved authentication before verifying its omission resets
+  ansible.builtin.assert:
+    that:
+      - nd4x_vrf_trm_seed.nd_query_results[0].result.current.fabricData.bgpPassword | default('') | string | length > 0
+      - nd4x_vrf_trm_seed.nd_query_results[0].result.current.fabricData.bgpPasswordKeyType in [3, '3des']
+
+- name: Verify all VRFs are owned before the active TRM override
+  ansible.builtin.include_tasks: nd4x_scope_preflight.yaml
+  when: nd4x_definition_state == 'overridden'
+
+- name: "{{ nd4x_definition_state | upper }} TRM: Omitted MVPN lists clear while TRM remains enabled"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: "{{ nd4x_definition_state }}"
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config: >-
+      {{ lookup('ansible.builtin.template', 'nd_vrf_conf.j2', template_vars={'vrf_conf': [
+        {'vrf_name': nd4x_vrf_names[0], 'deploy': false} | combine(
+          nd4x_trm_retained if nd4x_vrf_topology == 'standalone'
+          else {'child_fabric_config': [nd4x_trm_retained | combine({'fabric_name': nd4x_vrf_child})]})]}) | from_yaml }}
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_change }}"
+    nd_queries:
+      - name: Read the stored active TRM state after list reset
+        path: "{{ nd4x_vrf_trm_scope.api }}/vrfs/{{ nd4x_vrf_names[0] }}{{ nd4x_vrf_trm_scope.suffix }}"
+        expected_status: 200
+        expect:
+          - {jsonpath: '$.current.fabricData.trmData.ipv4Trm', equals: true}
+          - {jsonpath: '$.current.fabricData.trmData.v4RpAbsent', equals: true}
+          - {jsonpath: '$.current.fabricData.trmData.l3VniMulticastGroup', equals: 239.1.1.3}
+          - {jsonpath: '$.current.fabricData.advertiseHostRoute', equals: false}
+          - {jsonpath: '$.current.fabricData.advertiseDefaultRoute', equals: true}
+          - {jsonpath: '$.current.fabricData.configureStaticDefaultRoute', equals: true}
+          - {jsonpath: '$.current.fabricData.bgpAllowAsIn', equals: false}
+          - {jsonpath: '$.current.fabricData.bgpAllowAsInNum', equals: 3}
+          - {jsonpath: '$.current.fabricData.bgpAsOverride', equals: false}
+          - {jsonpath: '$.current.fabricData.bgpDisablePeerAsCheck', equals: false}
+          - {jsonpath: '$.current.fabricData.bgpSoftReconfigAlways', equals: false}
+          - {jsonpath: '$.current.fabricData.bgpBestPathRelax', equals: false}
+          - {jsonpath: '$.current.fabricData.bgpLogNeighborChange', equals: false}
+  vars:
+    nd4x_trm_retained: {trm_enable: true, no_rp: true, underlay_mcast_ip: 239.1.1.3}
+    nd4x_vrf_trm_scope: >-
+      {{ nd4x_vrf_scopes[0] if nd4x_vrf_topology == 'standalone'
+         else (nd4x_vrf_scopes | selectattr('name', 'equalto', nd4x_vrf_child) | first) }}
+  register: nd4x_vrf_trm_reset
+
+- name: Require both MVPN target directions to be empty after authoritative replacement
+  ansible.builtin.assert:
+    that:
+      - nd4x_vrf_trm_reset.nd_query_results[0].result.current.fabricData.trmData.mvpnRouteTargetImport | default([]) == []
+      - nd4x_vrf_trm_reset.nd_query_results[0].result.current.fabricData.trmData.mvpnRouteTargetExport | default([]) == []
+      - nd4x_vrf_trm_reset.nd_query_results[0].result.current.fabricData.bgpPassword | default('') == ''
+
+- name: Prove the child list reset did not rely on an unrelated parent PUT
+  ansible.builtin.assert:
+    that:
+      - not nd4x_vrf_trm_reset.first_run_result.parent_fabric.changed | bool
+      - nd4x_vrf_trm_reset.first_run_result.child_fabrics | selectattr('changed', 'equalto', true) | list | length == 1
+  when: nd4x_vrf_topology != 'standalone'

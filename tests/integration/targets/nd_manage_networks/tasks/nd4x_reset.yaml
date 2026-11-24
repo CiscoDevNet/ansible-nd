@@ -1,0 +1,17 @@
+---
+- name: Remove owned secondary PVLANs before their primary
+  cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
+    fabric_name: "{{ nd4x_network_fabric }}"
+    state: deleted
+    config: "{{ nd4x_network_cleanup[4:6] }}"
+  when:
+    - nd4x_network_pvlan_enabled | bool
+    - nd4x_network_topology != 'mcfg'
+
+- name: Remove only this run's reserved networks
+  cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
+    fabric_name: "{{ nd4x_network_fabric }}"
+    state: deleted
+    config: "{{ nd4x_network_cleanup[0:4] }}"

@@ -60,7 +60,6 @@
           - "65000:50020"
         attach: "{{ nd_vrf_msd_attach_block }}"
         deploy: "{{ nd_vrf_msd_attach_block | length > 0 }}"
-        deploy_type: vrf
         child_fabric_config:
           - fabric_name: "{{ nd_vrf_msd_child_fabric }}"
             l3vni_wo_vlan: false
@@ -138,6 +137,7 @@
 
 - name: MSD Merged TC1 - Merge Parent and Child VRF
   cisco.nd.nd_manage_vrfs: &msd_merged_conf
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ nd_vrf_msd_parent_fabric }}"
     state: merged
     config: "{{ nd_vrf_msd_merged_conf }}"
@@ -165,6 +165,7 @@
 
 - name: MSD Merged TC1 - Gather Parent VRFs
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ nd_vrf_msd_parent_fabric }}"
     state: gathered
     config: []
@@ -185,6 +186,7 @@
 
 - name: MSD Merged TC1 - Gather Child VRFs
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ nd_vrf_msd_child_fabric }}"
     state: gathered
     config: []

@@ -1,0 +1,16 @@
+---
+- name: Reset one complete network inventory read
+  ansible.builtin.set_fact:
+    nd4x_network_rows: []
+    nd4x_network_offset: 0
+    nd4x_network_page_count: 0
+
+- name: Collect the complete controller inventory
+  ansible.builtin.include_tasks: nd4x_inventory_page.yaml
+
+- name: Retain the independently read inventory for this scope
+  ansible.builtin.set_fact:
+    nd4x_network_inventory_by_scope: >-
+      {{ nd4x_network_inventory_by_scope | combine({
+           nd4x_network_scope.api ~ nd4x_network_scope.suffix: nd4x_network_rows
+         }) }}

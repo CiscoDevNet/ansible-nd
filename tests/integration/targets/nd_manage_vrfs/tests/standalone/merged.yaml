@@ -63,7 +63,6 @@
         netflow_enable: false
         attach: "{{ nd_vrf_attach_block }}"
         deploy: "{{ nd_vrf_attach_block | length > 0 }}"
-        deploy_type: switch
       - vrf_name: ansible-nd-vrf-merged-l3vni
         vrf_id: "{{ nd_vrf_base_id + 11 }}"
         l3vni_wo_vlan: true
@@ -92,13 +91,12 @@
       - vrf_name: ansible-nd-vrf-merged-stage-switch
         vrf_id: "{{ nd_vrf_base_id + 12 }}"
         vlan_id: "{{ nd_vrf_base_vlan + 12 }}"
-        vrf_description: Ansible ND VRF merged staged switch deploy
+        vrf_description: Ansible ND VRF merged staged resource deploy
         adv_host_routes: true
         adv_default_routes: false
         static_default_route: false
         attach: "{{ nd_vrf_attach_block }}"
         deploy: false
-        deploy_type: switch
       - vrf_name: ansible-nd-vrf-merged-stage-resource
         vrf_id: "{{ nd_vrf_base_id + 13 }}"
         vlan_id: "{{ nd_vrf_base_vlan + 13 }}"
@@ -107,18 +105,16 @@
         adv_default_routes: true
         static_default_route: true
         deploy: false
-        deploy_type: vrf
     nd_vrf_merged_deploy_config:
       - vrf_name: ansible-nd-vrf-merged-stage-switch
         vrf_id: "{{ nd_vrf_base_id + 12 }}"
         vlan_id: "{{ nd_vrf_base_vlan + 12 }}"
-        vrf_description: Ansible ND VRF merged staged switch deploy
+        vrf_description: Ansible ND VRF merged staged resource deploy
         adv_host_routes: true
         adv_default_routes: false
         static_default_route: false
         attach: "{{ nd_vrf_attach_block }}"
         deploy: true
-        deploy_type: switch
       - vrf_name: ansible-nd-vrf-merged-stage-resource
         vrf_id: "{{ nd_vrf_base_id + 13 }}"
         vlan_id: "{{ nd_vrf_base_vlan + 13 }}"
@@ -127,7 +123,6 @@
         adv_default_routes: true
         static_default_route: true
         deploy: true
-        deploy_type: vrf
   delegate_to: localhost
   tags: merged
 
@@ -162,6 +157,7 @@
 
 - name: Merged TC1 - Merge VRF
   cisco.nd.nd_manage_vrfs: &merged_conf
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_vrf_standalone_merged_conf }}"
@@ -181,6 +177,7 @@
 
 - name: Merged TC1 - Gather VRFs
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
     config: []
@@ -211,6 +208,7 @@
 
 - name: Merged TC3 - Stage VRFs Without Deploy
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_vrf_standalone_merged_stage_conf }}"
@@ -229,6 +227,7 @@
 
 - name: Merged TC4 - Deploy Previously Staged VRFs
   cisco.nd.nd_manage_vrfs: &merged_deploy_conf
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_vrf_standalone_merged_deploy_conf }}"

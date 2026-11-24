@@ -15,25 +15,25 @@
       - ansible-nd-net-over-remove
     target_network_delete_config:
       - network_name: ansible-nd-net-over-keep
-        layer: layer2
+        network_mode: layer2
       - network_name: ansible-nd-net-over-remove
-        layer: layer2
+        network_mode: layer2
     nd_network_overridden_seed:
       - network_name: ansible-nd-net-over-keep
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 8 }}"
         vlan_id: "{{ nd_network_base_vlan + 8 }}"
         vlan_name: ansible_nd_net_over_keep_seed
         deploy: false
       - network_name: ansible-nd-net-over-remove
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 9 }}"
         vlan_id: "{{ nd_network_base_vlan + 9 }}"
         vlan_name: ansible_nd_net_over_remove_seed
         deploy: false
     nd_network_overridden_config:
       - network_name: ansible-nd-net-over-keep
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 8 }}"
         vlan_id: "{{ nd_network_base_vlan + 8 }}"
         vlan_name: ans_nd_net_over_keep_upd
@@ -70,6 +70,7 @@
 
 - name: Overridden TC1 - Seed Networks
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_standalone_over_seed_conf }}"
@@ -81,6 +82,7 @@
 
 - name: Overridden TC2 - Override Networks
   cisco.nd.nd_manage_networks: &override_conf
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: overridden
     config: "{{ nd_network_standalone_over_conf }}"
@@ -102,9 +104,10 @@
 
 - name: Overridden TC2 - Gather Networks
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
-    config: "{{ nd_network_overridden_seed }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': nd_network_overridden_seed, 'name_only': true}) | from_yaml }}"
   register: gathered_result
   when:
     - nd_network_run_standalone | bool

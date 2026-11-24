@@ -14,10 +14,10 @@
       - ansible-nd-net-msd-sanity
     target_network_delete_config:
       - network_name: ansible-nd-net-msd-sanity
-        layer: layer2
+        network_mode: layer2
     nd_network_msd_sanity_config:
       - network_name: ansible-nd-net-msd-sanity
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 20 }}"
         vlan_id: "{{ nd_network_base_vlan + 20 }}"
         vlan_name: ansible_nd_net_msd_sanity
@@ -42,6 +42,7 @@
 
 - name: MSD Sanity TC1 - Merge Parent Network
   cisco.nd.nd_manage_networks: &msd_sanity_merge
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_msd_sanity_conf }}"
@@ -74,9 +75,10 @@
 
 - name: MSD Sanity TC2 - Gather Parent Network
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
-    config: "{{ nd_network_msd_sanity_conf }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': nd_network_msd_sanity_conf, 'name_only': true}) | from_yaml }}"
   register: msd_sanity_gathered
   when: nd_network_run_msd | bool
   tags: sanity
@@ -90,6 +92,7 @@
 
 - name: MSD Sanity TC2 - Gather Child Network Directly
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ nd_network_msd_child_fabric }}"
     state: gathered
     config: []
@@ -110,6 +113,7 @@
 
 - name: MSD Sanity TC3 - Delete Parent Network
   cisco.nd.nd_manage_networks: &msd_sanity_delete
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: deleted
     config: "{{ target_network_delete_config }}"

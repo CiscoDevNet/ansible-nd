@@ -1,0 +1,88 @@
+---
+- name: "{{ nd4x_attachment_state | upper }} ATTACHMENT SEED: Save nondefault options and freeform"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: merged
+    common_args: "{{ nd4x_network_common_args }}"
+    config: >-
+      {{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': [
+        nd4x_network_l3 | combine({'arp_suppression': false, 'attach': [({
+          'ip_address': nd4x_network_switch, 'freeform_config': '! ND4X attachment state',
+          'attachment_options': {'svi_enabled': false,
+            'switch_route_target_import': ['65000:50981'], 'switch_route_target_export': ['65000:50982']}
+        } | combine({'interfaces': [{'mode': 'trunk', 'interface_range': nd4x_network_interface}]}
+          if nd_network_harness_interface_tests_enabled | default(false) | bool else {}))]})]}) | from_yaml }}
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+
+- name: MERGED ATTACHMENT CLEAR only the supplied import list
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: merged
+    common_args: "{{ nd4x_network_common_args }}"
+    config:
+      - network_name: "{{ nd4x_network_names[1] }}"
+        attach:
+          - ip_address: "{{ nd4x_network_switch }}"
+            attachment_options: {switch_route_target_import: []}
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+
+- name: Read the sparse Network attachment result independently
+  cisco.nd.nd_rest:
+    path: "{{ nd4x_network_api }}/networkAttachments/query?includeAll=true&isConsolidated=true&max=100&offset=0"
+    method: post
+    content:
+      networkNames: ["{{ nd4x_network_names[1] }}"]
+      switchIds: ["{{ nd_network_harness_switch_id }}"]
+  register: nd4x_network_sparse_binding
+
+- name: Require every omitted writable Network attachment sibling to survive
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_sparse_binding.current.attachments | length == 1
+      - nd4x_network_sparse_binding.current.attachments[0].instanceValues.switchRouteTargetImport | default([]) == []
+      - nd4x_network_sparse_binding.current.attachments[0].instanceValues.switchRouteTargetExport == ['65000:50982']
+      - not nd4x_network_sparse_binding.current.attachments[0].instanceValues.sviEnabled | bool
+      - nd4x_network_sparse_binding.current.attachments[0].extraConfig == '! ND4X attachment state'
+      - >-
+        not (nd_network_harness_interface_tests_enabled | default(false) | bool) or
+        (nd4x_network_interface | lower | regex_replace('^ethernet', 'eth')) in
+        (nd4x_network_sparse_binding.current.attachments[0].interfaces | selectattr('mode', 'equalto', 'trunk')
+         | map(attribute='interfaceRange') | map('lower') | map('regex_replace', '^ethernet', 'eth') | list)
+
+- name: Verify all Networks are owned before an overridden attachment test
+  ansible.builtin.include_tasks: nd4x_scope_preflight.yaml
+  when: nd4x_attachment_state == 'overridden'
+
+- name: "{{ nd4x_attachment_state | upper }} ATTACHMENT: Omitted options, freeform and ports reset"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: "{{ nd4x_attachment_state }}"
+    common_args: "{{ nd4x_network_common_args }}"
+    config:
+      - network_name: "{{ nd4x_network_names[1] }}"
+        attach:
+          - ip_address: "{{ nd4x_network_switch }}"
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+
+- name: Read the reset Network attachment independently
+  cisco.nd.nd_rest:
+    path: "{{ nd4x_network_api }}/networkAttachments/query?includeAll=true&isConsolidated=true&max=100&offset=0"
+    method: post
+    content:
+      networkNames: ["{{ nd4x_network_names[1] }}"]
+      switchIds: ["{{ nd_network_harness_switch_id }}"]
+  register: nd4x_network_reset_binding
+
+- name: Require default SVI, cleared lists and ports without detaching the Network
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_reset_binding.current.attachments | length == 1
+      - nd4x_network_reset_binding.current.attachments[0].attach | bool
+      - nd4x_network_reset_binding.current.attachments[0].instanceValues.sviEnabled | bool
+      - nd4x_network_reset_binding.current.attachments[0].instanceValues.switchRouteTargetImport | default([]) == []
+      - nd4x_network_reset_binding.current.attachments[0].instanceValues.switchRouteTargetExport | default([]) == []
+      - nd4x_network_reset_binding.current.attachments[0].extraConfig | default('') == ''
+      - nd4x_network_reset_binding.current.attachments[0].interfaces | default([]) == []

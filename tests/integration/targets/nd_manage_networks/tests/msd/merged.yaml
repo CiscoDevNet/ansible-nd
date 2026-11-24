@@ -14,45 +14,41 @@
     target_fabric: "{{ nd_network_msd_parent_fabric }}"
     target_network_delete_config:
       - network_name: ansible-nd-net-msd-merged-switch
-        layer: layer2
+        network_mode: layer2
       - network_name: ansible-nd-net-msd-merged-resource
-        layer: layer2
+        network_mode: layer2
     nd_network_msd_merged_stage_config:
       - network_name: ansible-nd-net-msd-merged-switch
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 201 }}"
         vlan_id: "{{ nd_network_base_vlan + 201 }}"
         vlan_name: ans_nd_net_msd_mrg_sw
         deploy: false
-        deploy_type: switch
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
       - network_name: ansible-nd-net-msd-merged-resource
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 202 }}"
         vlan_id: "{{ nd_network_base_vlan + 202 }}"
         vlan_name: ans_nd_net_msd_mrg_res
         deploy: false
-        deploy_type: network
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
     nd_network_msd_merged_deploy_config:
       - network_name: ansible-nd-net-msd-merged-switch
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 201 }}"
         vlan_id: "{{ nd_network_base_vlan + 201 }}"
         vlan_name: ans_nd_net_msd_mrg_sw
         deploy: true
-        deploy_type: switch
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
       - network_name: ansible-nd-net-msd-merged-resource
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 202 }}"
         vlan_id: "{{ nd_network_base_vlan + 202 }}"
         vlan_name: ans_nd_net_msd_mrg_res
         deploy: true
-        deploy_type: network
         child_fabric_config:
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
   delegate_to: localhost
@@ -89,6 +85,7 @@
 
 - name: MSD Merged TC1 - Stage Parent and Child Networks
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_msd_merged_stage_conf }}"
@@ -118,8 +115,9 @@
     - msd
     - merged
 
-- name: MSD Merged TC2 - Deploy Parent Once With Mixed Deploy Types
+- name: MSD Merged TC2 - Deploy Parent Once With Resource Scope
   cisco.nd.nd_manage_networks: &msd_merged_deploy_conf
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_msd_merged_deploy_conf }}"
@@ -142,9 +140,10 @@
 
 - name: MSD Merged TC3 - Gather Parent Networks
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
-    config: "{{ nd_network_msd_merged_stage_conf }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': nd_network_msd_merged_stage_conf, 'name_only': true}) | from_yaml }}"
   register: msd_merged_parent_gathered
   when: nd_network_run_msd | bool
   tags:
@@ -162,6 +161,7 @@
 
 - name: MSD Merged TC3 - Gather Child Networks
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ nd_network_msd_child_fabric }}"
     state: gathered
     config: []

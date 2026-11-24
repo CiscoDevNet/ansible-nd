@@ -24,3 +24,4 @@ nd_vrf_run_staged: true
 
 nd_vrf_base_id: 9008800
 nd_vrf_base_vlan: 2800
+nd_vrf_harness_page_size: 1000

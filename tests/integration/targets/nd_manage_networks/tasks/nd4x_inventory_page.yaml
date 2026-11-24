@@ -1,0 +1,53 @@
+---
+- name: Read one bounded network inventory page
+  cisco.nd.nd_rest:
+    path: >-
+      {{ nd4x_network_scope.api }}/networks{{ nd4x_network_scope.suffix }}{{ '&' if nd4x_network_scope.suffix else '?' }}max={{ nd_network_harness_page_size | int }}&offset={{ nd4x_network_offset }}&sort=networkName:asc
+    method: get
+  register: nd4x_network_page
+
+- name: Validate collection shape and reject repeated or non-progressing pages
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_page.status | int == 200
+      - nd4x_network_page.current.networks is sequence
+      - nd4x_network_page.current.networks is not string
+      - nd4x_network_page.current.networks is not mapping
+      - nd4x_network_page_count | int < 1000
+      - >-
+        nd4x_network_page.current.networks | map(attribute='networkName') | unique | length
+        == nd4x_network_page.current.networks | length
+      - >-
+        nd4x_network_rows | map(attribute='networkName')
+        | intersect(nd4x_network_page.current.networks | map(attribute='networkName')) | length == 0
+
+- name: Retain rows and pagination metadata
+  ansible.builtin.set_fact:
+    nd4x_network_rows: "{{ nd4x_network_rows + nd4x_network_page.current.networks }}"
+    nd4x_network_offset: "{{ nd4x_network_offset | int + nd4x_network_page.current.networks | length }}"
+    nd4x_network_page_count: "{{ nd4x_network_page_count | int + 1 }}"
+    nd4x_network_meta: "{{ nd4x_network_page.current.meta | default(nd4x_network_page.current.metadata | default({})) }}"
+
+- name: Reject contradictory collection counts
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_meta.counts.total is not defined or nd4x_network_meta.counts.total | int >= nd4x_network_offset | int
+      - >-
+        nd4x_network_meta.counts.total is not defined or nd4x_network_meta.counts.remaining is not defined or
+        nd4x_network_offset | int + nd4x_network_meta.counts.remaining | int == nd4x_network_meta.counts.total | int
+
+- name: Determine whether the next page is required
+  ansible.builtin.set_fact:
+    nd4x_network_more: >-
+      {{ (nd4x_network_meta.counts.remaining | int > 0) if nd4x_network_meta.counts.remaining is defined else
+         ((nd4x_network_offset | int < nd4x_network_meta.counts.total | int) if nd4x_network_meta.counts.total is defined else
+          ((nd4x_network_meta.links.next | default('', true) | length > 0) or (nd4x_network_page.current.networks | length == nd_network_harness_page_size | int))) }}
+
+- name: Reject an empty page that advertises more data
+  ansible.builtin.assert:
+    that:
+      - not nd4x_network_more | bool or nd4x_network_page.current.networks | length > 0
+
+- name: Read the next page without a fixed-size inventory cutoff
+  ansible.builtin.include_tasks: nd4x_inventory_page.yaml
+  when: nd4x_network_more | bool

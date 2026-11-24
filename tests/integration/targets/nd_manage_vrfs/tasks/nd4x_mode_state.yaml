@@ -1,0 +1,57 @@
+---
+- name: "{{ nd4x_definition_state | upper }} MODE SEED: Enable no-VLAN mode and a nondefault child flag"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: merged
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config: >-
+      {{ lookup('ansible.builtin.template', 'nd_vrf_conf.j2', template_vars={'vrf_conf': [{
+        'vrf_name': nd4x_vrf_names[2], 'vrf_id': nd_vrf_base_id | int + 82, 'deploy': false
+      } | combine(nd4x_mode_seed if nd4x_vrf_topology == 'standalone' else {
+        'child_fabric_config': [nd4x_mode_seed | combine({'fabric_name': nd4x_vrf_child})]
+      })]}) | from_yaml }}
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_change }}"
+    nd_queries:
+      - name: Verify that no-VLAN mode is actually enabled before testing its omission
+        path: "{{ nd4x_vrf_mode_scope.api }}/vrfs/{{ nd4x_vrf_names[2] }}{{ nd4x_vrf_mode_scope.suffix }}"
+        expected_status: 200
+        expect:
+          - {jsonpath: '$.current.fabricData.l3VniWithoutVlan', equals: true}
+          - {jsonpath: '$.current.fabricData.bgpLogNeighborChange', equals: true}
+  vars:
+    nd4x_mode_seed: {l3vni_wo_vlan: true, bgp_log_neighbor_change: true}
+    nd4x_vrf_mode_scope: >-
+      {{ nd4x_vrf_scopes[0] if nd4x_vrf_topology == 'standalone'
+         else (nd4x_vrf_scopes | selectattr('name', 'equalto', nd4x_vrf_child) | first) }}
+
+- name: Verify all VRFs are owned before overriding the no-VLAN resource
+  ansible.builtin.include_tasks: nd4x_scope_preflight.yaml
+  when: nd4x_definition_state == 'overridden'
+
+- name: "{{ nd4x_definition_state | upper }} MODE: Preserve omitted no-VLAN mode while resetting other flags"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_vrfs
+    state: "{{ nd4x_definition_state }}"
+    common_args: "{{ nd4x_vrf_common_args }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_vrf_conf.j2', template_vars={'vrf_conf': [{'vrf_name': nd4x_vrf_names[2], 'deploy': false}]}) | from_yaml }}"
+    check_mode_queries: "{{ nd4x_vrf_snapshots }}"
+    expected: "{{ nd4x_vrf_expected_change }}"
+    nd_queries:
+      - name: Verify preserved mode, stable identity and the independently reset flag
+        path: "{{ nd4x_vrf_mode_scope.api }}/vrfs/{{ nd4x_vrf_names[2] }}{{ nd4x_vrf_mode_scope.suffix }}"
+        expected_status: 200
+        expect:
+          - {jsonpath: '$.current.vrfId', exists: true}
+          - {jsonpath: '$.current.fabricData.l3VniWithoutVlan', equals: true}
+          - {jsonpath: '$.current.fabricData.bgpLogNeighborChange', equals: false}
+  vars:
+    nd4x_vrf_mode_scope: >-
+      {{ nd4x_vrf_scopes[0] if nd4x_vrf_topology == 'standalone'
+         else (nd4x_vrf_scopes | selectattr('name', 'equalto', nd4x_vrf_child) | first) }}
+  register: nd4x_vrf_mode_reset
+
+- name: Verify the preserved no-VLAN resource identity numerically
+  ansible.builtin.assert:
+    that:
+      - nd4x_vrf_mode_reset.nd_query_results[0].result.current.vrfId | int == nd_vrf_base_id | int + 82

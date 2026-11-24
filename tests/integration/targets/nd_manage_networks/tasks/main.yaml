@@ -1,18 +1,177 @@
 ---
-- name: Discover ND Network Test Cases
-  ansible.builtin.find:
-    paths: "{{ role_path }}/tests/{{ nd_network_test_topology }}"
-    patterns: "{{ testcase }}.yaml"
-    recurse: true
-  delegate_to: localhost
-  register: nd_network_testcases
-
-- name: Build List of ND Network Test Items
+- name: Select the tag-driven ND 4.x harness without running the legacy suite
   ansible.builtin.set_fact:
-    nd_network_test_items: "{{ nd_network_testcases.files | map(attribute='path') | list }}"
+    nd4x_network_harness_only: >-
+      {{ ansible_run_tags | default(['all']) | intersect(["nd4x","nd4x_preflight","nd4x_merged","nd4x_replaced","nd4x_gathered","nd4x_deleted","nd4x_overridden","nd4x_staged","nd4x_attachments","nd4x_properties","nd4x_negative","nd4x_pvlan"]) | length > 0 }}
+    nd4x_network_run_cases: "{{ ansible_run_tags | default(['all']) | difference(['nd4x_preflight']) | select('match', '^nd4x($|_)') | list | length > 0 }}"
+    nd4x_network_run_id: "{{ nd_network_harness_run_id | default(lookup('ansible.builtin.password', '/dev/null', length=8, chars=['ascii_lowercase', 'digits'])) }}"
+  tags: [always]
 
-- name: Run ND Network Test Cases
-  ansible.builtin.include_tasks: "{{ nd_network_test_case_to_run }}"
-  with_items: "{{ nd_network_test_items }}"
+- name: Read the installed resource module contract before any controller writes
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - -m
+      - ansible.cli.doc
+      - --json
+      - "{{ item }}"
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  loop: [cisco.nd.nd_manage_networks, cisco.nd.nd_manage_vrfs]
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+  check_mode: false
+  changed_when: false
+  register: nd4x_network_module_contracts
+  tags: [always]
+
+- name: Require resource config-actions wiring rather than the legacy deploy interface
+  ansible.builtin.assert:
+    that:
+      - "'config_actions' in nd4x_network_module_options"
+      - "'resource' in nd4x_network_module_options.config_actions.suboptions.type.choices"
+      - "'deploy_type' not in nd4x_network_module_options.config.suboptions"
+    quiet: true
+    fail_msg: >-
+      These integration tests require the resource config_actions deployment framework.
+      Install a collection with that framework wired into the VRF/Network modules;
+      no legacy deployment fallback is performed.
+  vars:
+    nd4x_network_module_options: >-
+      {{ (((nd4x_network_module_contracts.results | selectattr('item', 'equalto', item) | first).stdout | from_json)[item]).doc.options }}
+  loop: [cisco.nd.nd_manage_networks, cisco.nd.nd_manage_vrfs]
   loop_control:
-    loop_var: nd_network_test_case_to_run
+    label: "{{ item }}"
+  tags: [always]
+
+- name: Run the existing networks integration entry point
+  when: not nd4x_network_harness_only | bool
+  block:
+    - name: Discover legacy network tests
+      ansible.builtin.find:
+        paths: "{{ role_path }}/tests/{{ nd_network_test_topology }}"
+        patterns: "{{ testcase }}.yaml"
+        recurse: true
+      delegate_to: localhost
+      register: nd_network_testcases
+
+    - name: Run legacy network tests
+      ansible.builtin.include_tasks: "{{ nd_network_test_case_to_run }}"
+      loop: "{{ nd_network_testcases.files | map(attribute='path') | list }}"
+      loop_control:
+        loop_var: nd_network_test_case_to_run
+
+- name: Prepare the ND 4.x network harness
+  ansible.builtin.include_tasks:
+    file: nd4x_preflight.yaml
+    apply:
+      tags: [nd4x, nd4x_preflight, nd4x_merged, nd4x_replaced, nd4x_gathered, nd4x_deleted, nd4x_overridden, nd4x_staged, nd4x_attachments, nd4x_properties, nd4x_negative, nd4x_pvlan]
+  tags: [never, nd4x, nd4x_preflight, nd4x_merged, nd4x_replaced, nd4x_gathered, nd4x_deleted, nd4x_overridden, nd4x_staged, nd4x_attachments, nd4x_properties, nd4x_negative, nd4x_pvlan]
+  when: nd4x_network_harness_only | bool
+
+- name: Run and clean up the ND 4.x network harness
+  when:
+    - nd4x_network_harness_only | bool
+    - nd4x_network_supported | default(false) | bool
+    - nd4x_network_run_cases | bool
+  tags: [never]
+  environment:
+    ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"
+  vars:
+    ansible_command_timeout: "{{ nd_network_harness_command_timeout | default(600) }}"
+  block:
+    - name: Create the owned prerequisite VRF without attachment or deployment
+      cisco.nd.nd_manage_vrfs:
+        config_actions: {type: resource, deploy: false}
+        fabric_name: "{{ nd4x_network_fabric }}"
+        state: merged
+        config: "{{ [nd4x_network_vrf_config] }}"
+      tags: [nd4x, nd4x_merged, nd4x_replaced, nd4x_gathered, nd4x_deleted, nd4x_overridden, nd4x_staged, nd4x_attachments, nd4x_properties, nd4x_negative, nd4x_pvlan]
+
+    - name: Run merged network harness tests
+      ansible.builtin.include_tasks:
+        file: nd4x_merged.yaml
+        apply:
+          tags: [nd4x, nd4x_merged]
+      tags: [nd4x, nd4x_merged]
+
+    - name: Run replaced network harness tests
+      ansible.builtin.include_tasks:
+        file: nd4x_replaced.yaml
+        apply:
+          tags: [nd4x, nd4x_replaced]
+      tags: [nd4x, nd4x_replaced]
+
+    - name: Run gathered network harness tests
+      ansible.builtin.include_tasks:
+        file: nd4x_gathered.yaml
+        apply:
+          tags: [nd4x, nd4x_gathered]
+      tags: [nd4x, nd4x_gathered]
+
+    - name: Run deleted network harness tests
+      ansible.builtin.include_tasks:
+        file: nd4x_deleted.yaml
+        apply:
+          tags: [nd4x, nd4x_deleted]
+      tags: [nd4x, nd4x_deleted]
+
+    - name: Run overridden network harness tests
+      ansible.builtin.include_tasks:
+        file: nd4x_overridden.yaml
+        apply:
+          tags: [nd4x, nd4x_overridden]
+      tags: [nd4x, nd4x_overridden]
+      when: nd4x_network_destructive_enabled | bool
+
+    - name: Run staged network harness tests
+      ansible.builtin.include_tasks:
+        file: nd4x_staged.yaml
+        apply:
+          tags: [nd4x, nd4x_staged]
+      tags: [nd4x, nd4x_staged]
+      when: nd4x_network_destructive_enabled | bool
+
+    - name: Run attachments network harness tests
+      ansible.builtin.include_tasks:
+        file: nd4x_attachments.yaml
+        apply:
+          tags: [nd4x, nd4x_attachments]
+      tags: [nd4x, nd4x_attachments]
+      when: nd4x_network_attachments_enabled | bool
+
+    - name: Run properties network harness tests
+      ansible.builtin.include_tasks:
+        file: nd4x_properties.yaml
+        apply:
+          tags: [nd4x, nd4x_properties]
+      tags: [nd4x, nd4x_properties]
+      when: nd4x_network_properties_enabled | bool
+
+    - name: Run negative network harness tests
+      ansible.builtin.include_tasks:
+        file: nd4x_negative.yaml
+        apply:
+          tags: [nd4x, nd4x_negative]
+      tags: [nd4x, nd4x_negative]
+
+    - name: Run pvlan network harness tests
+      ansible.builtin.include_tasks:
+        file: nd4x_pvlan.yaml
+        apply:
+          tags: [nd4x, nd4x_pvlan]
+      tags: [nd4x, nd4x_pvlan]
+      when: nd4x_network_pvlan_enabled | bool
+
+  always:
+    - name: Remove only resources claimed by this harness run
+      ansible.builtin.include_tasks:
+        file: nd4x_cleanup.yaml
+        apply:
+          tags: [always]
+      tags: [always]
+      when:
+        - nd4x_network_ownership_claimed | default(false) | bool
+        - not ansible_check_mode

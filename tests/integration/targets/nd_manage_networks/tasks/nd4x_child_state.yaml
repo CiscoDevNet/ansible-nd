@@ -1,0 +1,59 @@
+---
+- name: CHILD RESET SEED changes only editable child fields on a normalized parent
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: merged
+    common_args: "{{ nd4x_network_common_args }}"
+    config:
+      - network_name: "{{ nd4x_network_names[1] }}"
+        child_fabric_config:
+          - fabric_name: "{{ nd4x_network_child }}"
+            gateway_on_border: true
+            dhcp_servers: [{server_address: 192.0.2.253, server_vrf: "{{ nd4x_network_vrf_name }}"}]
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+    nd_queries:
+      - name: Require nondefault saved values before testing child replacement
+        path: "{{ nd4x_network_child_reset_scope.api }}/networks/{{ nd4x_network_names[1] }}{{ nd4x_network_child_reset_scope.suffix }}"
+        expected_status: 200
+        expect:
+          - {jsonpath: '$.current.l3Data.fabricData.gatewayOnBorder', equals: true}
+          - {jsonpath: '$.current.l3Data.fabricData.dhcpServers[0].serverAddress', equals: 192.0.2.253}
+  vars:
+    nd4x_network_child_reset_scope: "{{ nd4x_network_scopes | selectattr('name', 'equalto', nd4x_network_child) | first }}"
+  register: nd4x_network_child_reset_seed
+
+- name: Require child reseeding not to change the parent
+  ansible.builtin.assert:
+    that:
+      - not nd4x_network_child_reset_seed.first_run_result.parent_fabric.changed | bool
+
+- name: Verify all Networks are owned before the independent child override
+  ansible.builtin.include_tasks: nd4x_scope_preflight.yaml
+  when: nd4x_definition_state == 'overridden'
+
+- name: "{{ nd4x_definition_state | upper }} CHILD RESET: Omitted member fields reset without a parent PUT"
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: "{{ nd4x_definition_state }}"
+    common_args: "{{ nd4x_network_common_args }}"
+    # Keep the preceding parent reset's routing tag explicit to isolate child changes.
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': [{'network_name': nd4x_network_names[1], 'network_mode': 'layer3', 'vrf_name': nd4x_network_vrf_name, 'routing_tag': 12345, 'deploy': false}]}) | from_yaml }}"
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+    nd_queries:
+      - name: Read the independently reset child
+        path: "{{ nd4x_network_child_reset_scope.api }}/networks/{{ nd4x_network_names[1] }}{{ nd4x_network_child_reset_scope.suffix }}"
+        expected_status: 200
+        expect:
+          - {jsonpath: '$.current.l3Data.fabricData.gatewayOnBorder', equals: false}
+  vars:
+    nd4x_network_child_reset_scope: "{{ nd4x_network_scopes | selectattr('name', 'equalto', nd4x_network_child) | first }}"
+  register: nd4x_network_independent_child_reset
+
+- name: Require cleared child lists and prove the parent did not perform the reset
+  ansible.builtin.assert:
+    that:
+      - not nd4x_network_independent_child_reset.first_run_result.parent_fabric.changed | bool
+      - nd4x_network_independent_child_reset.first_run_result.child_fabrics | selectattr('changed', 'equalto', true) | list | length == 1
+      - nd4x_network_independent_child_reset.nd_query_results[0].result.current.l3Data.fabricData.dhcpServers | default([]) == []

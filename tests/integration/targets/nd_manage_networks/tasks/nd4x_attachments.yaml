@@ -1,0 +1,187 @@
+---
+- name: Require an explicitly reserved switch and its controller identity
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_switch | length > 0
+      - nd_network_harness_switch_id | default('') | length > 0
+    fail_msg: Configure the reserved switch IP and nd_network_harness_switch_id.
+
+- name: Require an explicit port reservation when port binding tests are enabled
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_interface | length > 0
+      - "',' not in nd4x_network_interface"
+      - "'-' not in nd4x_network_interface"
+    fail_msg: Reserve one configured trunk interface; ranges are not selected automatically.
+  when: nd_network_harness_interface_tests_enabled | default(false) | bool
+
+- name: Establish an empty owned attachment baseline
+  ansible.builtin.include_tasks: nd4x_reset.yaml
+
+- name: Create and attach a fresh resource in one module call
+  # Keep this lifecycle independent of ARP-suppression TCAM provisioning.
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: merged
+    common_args: "{{ nd4x_network_common_args }}"
+    config: >-
+      {{ [nd4x_network_l3 | combine({'arp_suppression': false, 'attach': [{
+           'ip_address': nd4x_network_switch, 'interfaces': [], 'attachment_options': {'svi_enabled': true}
+         }]})] }}
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+
+- name: Read the saved binding independently through the query endpoint
+  cisco.nd.nd_rest:
+    path: "{{ nd4x_network_api }}/networkAttachments/query?includeAll=true&max=100&offset=0"
+    method: post
+    content:
+      networkNames: ["{{ nd4x_network_names[1] }}"]
+      switchIds: ["{{ nd_network_harness_switch_id }}"]
+  register: nd4x_network_attachment_readback
+
+- name: Verify the requested resource and switch really are bound
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_attachment_readback.status | int == 200
+      - >-
+        nd4x_network_attachment_readback.current.attachments
+        | selectattr('networkName', 'equalto', nd4x_network_names[1])
+        | selectattr('switchId', 'equalto', nd_network_harness_switch_id)
+        | selectattr('attach', 'equalto', true) | list | length == 1
+      - nd4x_network_attachment_readback.current.meta.counts.remaining | default(0) | int == 0
+
+- name: Bind a reserved trunk port before testing omitted interface intent
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: merged
+    common_args: "{{ nd4x_network_common_args }}"
+    config:
+      - network_name: "{{ nd4x_network_names[1] }}"
+        deploy: false
+        attach:
+          - ip_address: "{{ nd4x_network_switch }}"
+            interfaces:
+              - {mode: trunk, interface_range: "{{ nd4x_network_interface }}"}
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+  when: nd_network_harness_interface_tests_enabled | default(false) | bool
+
+- name: Repeat an attachment-only task without changing the definition
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: merged
+    common_args: "{{ nd4x_network_common_args }}"
+    config:
+      - network_name: "{{ nd4x_network_names[1] }}"
+        deploy: false
+        attach:
+          - ip_address: "{{ nd4x_network_switch }}"
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_no_change }}"
+
+- name: Manage an SVI option while omitting interfaces and attachment VLAN
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: merged
+    common_args: "{{ nd4x_network_common_args }}"
+    config:
+      - network_name: "{{ nd4x_network_names[1] }}"
+        deploy: false
+        attach:
+          - ip_address: "{{ nd4x_network_switch }}"
+            attachment_options: {svi_enabled: false}
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+
+- name: Read the options-only result and preserved port bindings
+  cisco.nd.nd_rest:
+    path: "{{ nd4x_network_api }}/networkAttachments/query?includeAll=true&isConsolidated=true&max=100&offset=0"
+    method: post
+    content:
+      networkNames: ["{{ nd4x_network_names[1] }}"]
+      switchIds: ["{{ nd_network_harness_switch_id }}"]
+  register: nd4x_network_options_readback
+
+- name: Require the saved SVI setting and any reserved port binding
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_options_readback.current.attachments | length == 1
+      - not nd4x_network_options_readback.current.attachments[0].instanceValues.sviEnabled | bool
+      - >-
+        not (nd_network_harness_interface_tests_enabled | default(false) | bool) or
+        (nd4x_network_interface | lower | regex_replace('^ethernet', 'eth')) in
+        (nd4x_network_options_readback.current.attachments[0].interfaces | selectattr('mode', 'equalto', 'trunk')
+         | map(attribute='interfaceRange') | map('lower') | map('regex_replace', '^ethernet', 'eth') | list)
+
+- name: Verify attachment option preservation and authoritative resets
+  ansible.builtin.include_tasks: nd4x_attachment_state.yaml
+  loop: "{{ ['replaced', 'overridden'] if nd4x_network_destructive_enabled | bool else ['replaced'] }}"
+  loop_control:
+    loop_var: nd4x_attachment_state
+
+- name: Deploy only the owned resource when device testing is explicitly enabled
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: merged
+    common_args: "{{ nd4x_network_common_args }}"
+    module_args:
+      config_actions: {type: resource, deploy: true}
+    config:
+      - network_name: "{{ nd4x_network_names[1] }}"
+        attach:
+          - ip_address: "{{ nd4x_network_switch }}"
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"
+    idempotency_retries: 3
+    idempotency_delay: 5
+  register: nd4x_network_deploy_result
+  when: nd_network_harness_deploy_tests_enabled | default(false) | bool
+
+- name: Select deployment reports from the owning standalone or parent scope
+  ansible.builtin.set_fact:
+    nd4x_network_deploy_check: >-
+      {{ nd4x_network_deploy_result.check_mode_result.parent_fabric | default(nd4x_network_deploy_result.check_mode_result) }}
+    nd4x_network_deploy_apply: >-
+      {{ nd4x_network_deploy_result.first_run_result.parent_fabric | default(nd4x_network_deploy_result.first_run_result) }}
+  when: nd_network_harness_deploy_tests_enabled | default(false) | bool
+
+- name: Require resource-scoped predictive and applied deployment targets
+  ansible.builtin.assert:
+    that:
+      - nd4x_network_deploy_check.config_actions | selectattr('status', 'equalto', 'planned') | list | length == 1
+      - nd4x_network_deploy_apply.config_actions | selectattr('status', 'equalto', 'completed') | list | length == 1
+      - nd4x_network_deploy_check.config_actions[0].effective.type == 'resource'
+      - nd4x_network_deploy_check.config_actions[0].targets.resources == [nd4x_network_names[1]]
+      - nd4x_network_deploy_check.config_actions[0].targets.switches == [nd_network_harness_switch_id]
+      - nd4x_network_deploy_apply.config_actions[0].targets == nd4x_network_deploy_check.config_actions[0].targets
+      - nd4x_network_deploy_apply.api_paths | select('search', '/switchActions/deploy') | list | length == 0
+  when: nd_network_harness_deploy_tests_enabled | default(false) | bool
+
+- name: Verify deployment completion rather than request acceptance
+  cisco.nd.nd_rest:
+    path: "{{ nd4x_network_api }}/networkAttachments/query?includeAll=true&max=100&offset=0"
+    method: post
+    content:
+      networkNames: ["{{ nd4x_network_names[1] }}"]
+      switchIds: ["{{ nd_network_harness_switch_id }}"]
+  register: nd4x_network_deploy_readback
+  until: >-
+    nd4x_network_deploy_readback.current.attachments | default([]) | length == 1 and
+    nd4x_network_deploy_readback.current.attachments[0].status in ['deployed', 'inSync']
+  retries: 12
+  delay: 5
+  when: nd_network_harness_deploy_tests_enabled | default(false) | bool
+
+- name: Verify an explicit empty options object uses one reset and preserves independent settings
+  ansible.builtin.include_tasks: nd4x_attachment_reset.yaml
+
+- name: Delete the attached resource using module-managed scoped cleanup
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_networks
+    state: deleted
+    common_args: "{{ nd4x_network_common_args }}"
+    config:
+      - network_name: "{{ nd4x_network_names[1] }}"
+    check_mode_queries: "{{ nd4x_network_snapshots }}"
+    expected: "{{ nd4x_network_expected_change }}"

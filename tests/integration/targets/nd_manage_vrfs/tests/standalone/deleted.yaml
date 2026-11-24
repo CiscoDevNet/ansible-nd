@@ -59,6 +59,7 @@
 
 - name: Deleted TC1 - Create VRF
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_vrf_standalone_delete_seed_conf }}"
@@ -68,6 +69,7 @@
 
 - name: Deleted TC2 - Delete VRF
   cisco.nd.nd_manage_vrfs: &delete_conf
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: deleted
     config: "{{ nd_vrf_standalone_delete_conf }}"
@@ -86,6 +88,7 @@
 
 - name: Deleted TC2 - Gather VRFs
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
     config: []

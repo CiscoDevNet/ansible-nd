@@ -14,10 +14,10 @@
     target_fabric: "{{ nd_network_msd_parent_fabric }}"
     target_network_delete_config:
       - network_name: ansible-nd-net-msd-replaced
-        layer: layer2
+        network_mode: layer2
     nd_network_msd_replace_base:
       - network_name: ansible-nd-net-msd-replaced
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 211 }}"
         vlan_id: "{{ nd_network_base_vlan + 211 }}"
         vlan_name: ans_nd_net_msd_repl_base
@@ -26,7 +26,7 @@
           - fabric_name: "{{ nd_network_msd_child_fabric }}"
     nd_network_msd_replace_config:
       - network_name: ansible-nd-net-msd-replaced
-        layer: layer2
+        network_mode: layer2
         network_id: "{{ nd_network_base_id + 211 }}"
         vlan_id: "{{ nd_network_base_vlan + 211 }}"
         vlan_name: ans_nd_net_msd_repl_upd
@@ -67,6 +67,7 @@
 
 - name: MSD Replaced TC1 - Create Base Network
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_network_msd_replace_base_conf }}"
@@ -78,6 +79,7 @@
 
 - name: MSD Replaced TC2 - Replace Parent and Child Network
   cisco.nd.nd_manage_networks: &msd_replace_conf
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: replaced
     config: "{{ nd_network_msd_replace_conf }}"
@@ -101,9 +103,10 @@
 
 - name: MSD Replaced TC2 - Gather Parent Networks
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
-    config: "{{ nd_network_msd_replace_conf }}"
+    config: "{{ lookup('ansible.builtin.template', 'nd_network_conf.j2', template_vars={'network_conf': nd_network_msd_replace_conf, 'name_only': true}) | from_yaml }}"
   register: msd_replace_parent_gathered
   when: nd_network_run_msd | bool
   tags:
@@ -121,6 +124,7 @@
 
 - name: MSD Replaced TC2 - Gather Child Networks
   cisco.nd.nd_manage_networks:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ nd_network_msd_child_fabric }}"
     state: gathered
     config: []

@@ -153,6 +153,7 @@
 
 - name: Staged TC1 - Create VRF With Attachment
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: staged
     config: "{{ nd_vrf_standalone_staged_create_conf }}"
@@ -223,6 +224,7 @@
 
 - name: Staged TC2 - Seed Existing VRFs
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_vrf_standalone_staged_seed_conf }}"
@@ -236,6 +238,7 @@
 
 - name: Staged TC3 - Reconcile Attachments Without Deploy Or Definition Delete
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: staged
     config: "{{ nd_vrf_standalone_staged_conf }}"
@@ -259,6 +262,7 @@
 
 - name: Staged TC3 - Repeat Reconcile For Controller-State Idempotency
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: staged
     config: "{{ nd_vrf_standalone_staged_conf }}"
@@ -298,6 +302,7 @@
 
 - name: Staged TC4 - Gather VRFs
   cisco.nd.nd_manage_vrfs:
+    config_actions: {type: resource, deploy: false}
     fabric_name: "{{ target_fabric }}"
     state: gathered
     config: []
