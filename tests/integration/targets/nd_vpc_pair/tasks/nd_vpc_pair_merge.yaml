@@ -869,11 +869,29 @@
   tags: merge
 
 # TC10 - Create vPC pair with deploy enabled (actual deployment path)
+# TC6b deployed the pair; remove it from the switches before the deploy test.
 - name: MERGE - TC10 - DELETE - Ensure vPC pair is absent before deploy test
   cisco.nd.nd_manage_vpc_pair:
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  failed_when: false
+  tags: merge
+
+# Polls until ND no longer reports the pair. Later waits in this file reuse it.
+- &wait_vpc_pair_absent
+  name: MERGE - TC10 - PREP - Wait until the vPC pair is absent
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
     config_actions:
       save: false
       deploy: false
@@ -881,7 +899,28 @@
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
-  failed_when: false
+  register: vpc_pair_wait_result
+  vars:
+    vpc_pair_wait_timeout: "{{ nd_vpc_pair_sync_wait_timeout | default(300) | int }}"
+    vpc_pair_wait_interval: "{{ [1, (nd_vpc_pair_sync_poll_interval | default(20) | int)] | max }}"
+  until:
+    - vpc_pair_wait_result is not failed
+    - >-
+      ((vpc_pair_wait_result.gathered | default({})).vpc_pairs | default([])
+      | selectattr('switch_id', 'in', [test_switch1, test_switch2])
+      | selectattr('peer_switch_id', 'in', [test_switch1, test_switch2])
+      | list | length) == 0
+  retries: >-
+    {{
+      [
+        1,
+        (
+          ((vpc_pair_wait_timeout | int) + (vpc_pair_wait_interval | int) - 1)
+          // (vpc_pair_wait_interval | int)
+        ),
+      ] | max
+    }}
+  delay: "{{ vpc_pair_wait_interval | int }}"
   tags: merge
 
 - name: MERGE - TC10 - MERGE - Create vPC pair with deploy true
@@ -1038,8 +1077,8 @@
   register: tc10_overview_ready
   failed_when: false
   vars:
-    tc10_sync_wait_timeout: "{{ nd_vpc_pair_sync_wait_timeout | default(120) | int }}"
-    tc10_sync_poll_interval: "{{ [1, (nd_vpc_pair_sync_poll_interval | default(10) | int)] | max }}"
+    tc10_sync_wait_timeout: "{{ nd_vpc_pair_sync_wait_timeout | default(300) | int }}"
+    tc10_sync_poll_interval: "{{ [1, (nd_vpc_pair_sync_poll_interval | default(20) | int)] | max }}"
     tc10_overview_current: "{{ tc10_overview_ready.current | default({}) }}"
     tc10_inventory_sync: "{{ tc10_overview_current.inventory.syncStatus | default({}) }}"
     tc10_overlay_network_sync: "{{ tc10_overview_current.overlay.networkCount | default({}) }}"
@@ -1214,20 +1253,25 @@
   tags: merge
 
 # TC12 - check_mode should not apply configuration changes
+# TC10/TC11 deployed the pair. An undeployed unpair leaves it active on the
+# switches, so later creates (TC12, TC15) become no-ops; deploy the removal.
 - name: MERGE - TC12 - DELETE - Ensure vPC pair is absent before check_mode test
   cisco.nd.nd_manage_vpc_pair:
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
     config_actions:
-      save: false
-      deploy: false
+      save: true
+      deploy: true
       type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
   failed_when: false
   tags: merge
+
+- name: MERGE - TC12 - PREP - Wait until the vPC pair is absent
+  <<: *wait_vpc_pair_absent
 
 - name: MERGE - TC12 - MERGE - Run check_mode create for vPC pair
   cisco.nd.nd_manage_vpc_pair:
@@ -1614,8 +1658,8 @@
     method: get
   register: tc18_overview
   vars:
-    tc18_sync_wait_timeout: "{{ nd_vpc_pair_sync_wait_timeout | default(120) | int }}"
-    tc18_sync_poll_interval: "{{ [1, (nd_vpc_pair_sync_poll_interval | default(10) | int)] | max }}"
+    tc18_sync_wait_timeout: "{{ nd_vpc_pair_sync_wait_timeout | default(300) | int }}"
+    tc18_sync_poll_interval: "{{ [1, (nd_vpc_pair_sync_poll_interval | default(20) | int)] | max }}"
     tc18_inventory_sync: "{{ tc18_overview.current.inventory.syncStatus | default({}) }}"
     tc18_overlay_network_sync: "{{ tc18_overview.current.overlay.networkCount | default({}) }}"
     tc18_overlay_vrf_sync: "{{ tc18_overview.current.overlay.vrfCount | default({}) }}"
@@ -1642,20 +1686,24 @@
   delay: "{{ tc18_sync_poll_interval | int }}"
   tags: merge
 
+# TC17 deployed the pair; deploy its removal so the save-only create starts clean.
 - name: MERGE - TC18 - DELETE - Ensure vPC pair is absent before save-only config_actions test
   cisco.nd.nd_manage_vpc_pair:
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
     config_actions:
-      save: false
-      deploy: false
+      save: true
+      deploy: true
       type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
   failed_when: false
   tags: merge
+
+- name: MERGE - TC18 - PREP - Wait until the vPC pair is absent
+  <<: *wait_vpc_pair_absent
 
 - name: MERGE - TC18 - MERGE - Create vPC pair with config_actions save-only
   cisco.nd.nd_manage_vpc_pair:
@@ -1845,20 +1893,24 @@
   tags: merge
 
 # TC21 - config_actions explicit switch action scope with save+deploy
+# TC19 deployed the pair; deploy its removal so the create starts clean.
 - name: MERGE - TC21 - DELETE - Ensure vPC pair is absent before switch config_actions test
   cisco.nd.nd_manage_vpc_pair:
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
     config_actions:
-      save: false
-      deploy: false
+      save: true
+      deploy: true
       type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
   failed_when: false
   tags: merge
+
+- name: MERGE - TC21 - PREP - Wait until the vPC pair is absent
+  <<: *wait_vpc_pair_absent
 
 - name: MERGE - TC21 - MERGE - Create vPC pair with config_actions switch save+deploy
   cisco.nd.nd_manage_vpc_pair:
@@ -1903,20 +1955,24 @@
   tags: merge
 
 # TC22 - Interaction: deploy=true + config_actions set (config_actions must win)
+# TC21 deployed the pair; deploy its removal so the create starts clean.
 - name: MERGE - TC22 - DELETE - Ensure vPC pair is absent before deploy/config_actions precedence test
   cisco.nd.nd_manage_vpc_pair:
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
     config_actions:
-      save: false
-      deploy: false
+      save: true
+      deploy: true
       type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
   failed_when: false
   tags: merge
+
+- name: MERGE - TC22 - PREP - Wait until the vPC pair is absent
+  <<: *wait_vpc_pair_absent
 
 - name: MERGE - TC22 - MERGE - Set deploy=true with conflicting config_actions deploy=false
   cisco.nd.nd_manage_vpc_pair:

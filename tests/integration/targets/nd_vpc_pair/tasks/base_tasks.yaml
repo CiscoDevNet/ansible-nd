@@ -151,11 +151,27 @@
 - name: BASE - Reset HTTPAPI socket before cleanup
   ansible.builtin.meta: reset_connection
 
+# A pair left deployed by an earlier run must be unpaired with deploy. An
+# undeployed unpair keeps it active, so the next create becomes a no-op.
 - name: BASE - Clean up existing vPC pairs
   cisco.nd.nd_manage_vpc_pair:
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  failed_when: false
+
+- name: BASE - Wait until the vPC pair is absent after cleanup
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
     config_actions:
       save: false
       deploy: false
@@ -163,4 +179,25 @@
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
-  failed_when: false
+  register: vpc_pair_wait_result
+  vars:
+    vpc_pair_wait_timeout: "{{ nd_vpc_pair_sync_wait_timeout | default(300) | int }}"
+    vpc_pair_wait_interval: "{{ [1, (nd_vpc_pair_sync_poll_interval | default(20) | int)] | max }}"
+  until:
+    - vpc_pair_wait_result is not failed
+    - >-
+      ((vpc_pair_wait_result.gathered | default({})).vpc_pairs | default([])
+      | selectattr('switch_id', 'in', [test_switch1, test_switch2])
+      | selectattr('peer_switch_id', 'in', [test_switch1, test_switch2])
+      | list | length) == 0
+  retries: >-
+    {{
+      [
+        1,
+        (
+          ((vpc_pair_wait_timeout | int) + (vpc_pair_wait_interval | int) - 1)
+          // (vpc_pair_wait_interval | int)
+        ),
+      ] | max
+    }}
+  delay: "{{ vpc_pair_wait_interval | int }}"
