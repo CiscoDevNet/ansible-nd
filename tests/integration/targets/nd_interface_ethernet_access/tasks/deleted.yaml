@@ -5,7 +5,8 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 # --- SETUP ---
-# At this point Ethernet1/45, Ethernet1/46, Ethernet1/47 exist from overridden tests.
+# At this point Ethernet1/45, Ethernet1/46, Ethernet1/47 exist from overridden tests, and
+# Ethernet1/41, Ethernet1/42, Ethernet1/43 exist from the gathered tests' seed task.
 
 # --- DELETED: SINGLE INTERFACE ---
 
