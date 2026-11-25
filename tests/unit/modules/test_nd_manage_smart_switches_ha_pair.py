@@ -22,7 +22,6 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.smart_switch_ha_pair_h
     recommendations_response,
 )
 
-
 # Module invocation
 
 

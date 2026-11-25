@@ -24,7 +24,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
-
 # Smart Switch onboarding and deboarding
 
 

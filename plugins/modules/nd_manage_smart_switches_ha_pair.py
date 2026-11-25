@@ -231,7 +231,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd 
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
 
-
 # HA pair argument validation
 
 

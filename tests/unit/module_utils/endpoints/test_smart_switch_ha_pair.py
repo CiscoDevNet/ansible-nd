@@ -17,7 +17,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
-
 # HA paths and HTTP methods
 
 

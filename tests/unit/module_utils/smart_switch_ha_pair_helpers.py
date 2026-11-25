@@ -10,7 +10,6 @@ from urllib.parse import urlsplit
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
 
-
 # Scripted controller transport
 
 ControllerResponse = dict[str, Any]

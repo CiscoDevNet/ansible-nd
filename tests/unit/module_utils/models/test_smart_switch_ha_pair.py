@@ -7,7 +7,6 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.models.smart_switches_ha_pair.pairing import SmartSwitchHaPairModel, SmartSwitchHaRows
 
-
 # Ansible pair identity and validation
 
 
