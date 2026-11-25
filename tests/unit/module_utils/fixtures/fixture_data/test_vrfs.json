@@ -1,0 +1,34 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for tests/unit/module_utils/orchestrators/test_vrfs.py.",
+        "Bodies follow the ND 4.2.1 / 4.3.1 Manage OpenAPI 207 examples for POST .../vrfs and POST .../vrfActions/remove:",
+        "results[].{vrfName, status, message}. Only the per-item failure tests load fixtures; the rest of the file patches _request directly.",
+        "Issue #640: these guard the shared NdV1Strategy per-item failure handling after the bespoke vrfs detector was retired."
+    ],
+    "test_vrfs_00110a": {
+        "TEST_NOTES": ["Bulk create: one success, one failed item."],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/AK-VXLAN/vrfs",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"status": "success", "vrfId": 50000, "vrfName": "ansible-vrf-a"},
+                {"status": "failed", "vrfId": 50001, "vrfName": "ansible-vrf-b", "message": "VRF ID 50001 is already in use"}
+            ]
+        }
+    },
+    "test_vrfs_00111a": {
+        "TEST_NOTES": ["Bulk remove: one success, one non-retryable failed item."],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/AK-VXLAN/vrfActions/remove",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"status": "success", "vrfName": "ansible-vrf-a"},
+                {"status": "failed", "vrfName": "ansible-vrf-b", "message": "Specified VRF does not exist"}
+            ]
+        }
+    }
+}
