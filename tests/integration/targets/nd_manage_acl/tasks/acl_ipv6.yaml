@@ -9,6 +9,11 @@
     nd_info: &nd_info
       output_level: '{{ nd_output_level | default("debug") }}'
 
+- name: "VALIDATION: Read the ND version for the IPv6 ACL readback gate"
+  cisco.nd.nd_version:
+    state: query
+  register: acl_nd_version
+
 #############################################################################
 # CLEANUP - ensure the IPv6 test ACL does not exist before starting
 #############################################################################
@@ -109,18 +114,16 @@
   ansible.builtin.set_fact:
     ipv6_acl_wire: "{{ ipv6_acl_query.json }}"
 
-# NOTE on the persisted wire payload (verified against live ND):
-#   * ND does NOT honour the ``type`` body field for IPv6 ACLs - the object is
-#     always stored and returned with ``type: ipv4`` regardless of the address
-#     family of its entries. The module's own ``after`` echoes the requested
-#     ``ipv6`` value, but a direct ND read always reports ``ipv4``.
-#   * ND returns port-range bounds as STRINGS (e.g. "80", "443"), so they are
-#     coerced with ``| int`` before comparison.
+# TODO(4.2.1) acl-ipv6-single-get-echoes-type-ipv4
+# The single-object ACL GET echoes ``type: ipv4`` for an IPv6 ACL on ND 4.2.1;
+# the list endpoint returns ``ipv6``. This readback defect is fixed on ND 4.3.1.
+# ND also returns port-range bounds as strings (e.g. "80", "443"), so the test
+# coerces them with ``| int`` before comparison.
 - name: "VALIDATION: Verify the persisted IPv6 ACL matches the configured entries"
   ansible.builtin.assert:
     that:
       - ipv6_acl_wire.name == acl_ipv6_name
-      - ipv6_acl_wire.type == "ipv4"
+      - ipv6_acl_wire.type == ("ipv6" if acl_nd_version.current.platformVersion is version("4.3.1", ">=") else "ipv4")
       - ipv6_acl_wire.entries | length == 2
       - (ipv6_acl_wire.entries | selectattr('sequenceNumber', 'equalto', 10) | list | first).dstPortAction == "portRange"
       - (ipv6_acl_wire.entries | selectattr('sequenceNumber', 'equalto', 10) | list | first).dstPortRangeStart | int == 80

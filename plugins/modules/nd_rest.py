@@ -293,12 +293,20 @@ def main():
         nd.result["jsondata"] = content
     else:
         nd.result["jsondata"] = nd.request(path, method=method, data=content, file=file_path)
+        # Empty response bodies are valid for successful REST operations. Keep
+        # current aligned with the response instead of returning the pre-write
+        # object fetched above.
         nd.existing = sanitize(nd.result["jsondata"], ND_REST_KEYS_TO_SANITIZE)
 
     # Report changes for idempotency depending on methods
     nd.result["status"] = nd.status
-    if sanitize(nd.result["jsondata"], ND_REST_KEYS_TO_SANITIZE) != nd.previous and method != "GET":
-        nd.result["changed"] = True
+    if method != "GET":
+        response_body = sanitize(nd.result["jsondata"], ND_REST_KEYS_TO_SANITIZE)
+        if response_body is None and not module.check_mode and 200 <= nd.status < 300:
+            # A successful write can mutate ND without returning an object.
+            nd.result["changed"] = True
+        elif response_body != nd.previous:
+            nd.result["changed"] = True
 
     # Report success
     nd.exit_json(**nd.result)
