@@ -1,0 +1,110 @@
+---
+- name: Verify the expected module failure on its reserved fixture
+  vars:
+    ss_ha_failure_args: >-
+      {{ ss_ha_failure_case.module_args | default({})
+         | combine({'config': ss_ha_failure_case.config} if ss_ha_failure_case.config is defined else {}) }}
+    ss_ha_failure_baseline: "{{ ss_ha_failure_case.seed_pairs | default([]) }}"
+    ss_ha_failure_seed_ids: >-
+      {{ (ss_ha_failure_baseline | map(attribute='switch_id') | list)
+         + (ss_ha_failure_baseline | map(attribute='peer_switch_id') | list) }}
+  block:
+    - name: Prepare the additional association required by this failure case
+      when: ss_ha_failure_baseline | length > 0
+      block:
+        - name: Reserve the fixture peers used for setup
+          ansible.builtin.set_fact:
+            ss_ha_cleanup_pending_ids: "{{ ss_ha_failure_seed_ids }}"
+
+        - name: Establish its deployed association
+          cisco.nd.nd4x_module_test:
+            module: cisco.nd.nd_manage_smart_switches_ha_pair
+            state: replaced
+            config: "{{ ss_ha_failure_baseline }}"
+            common_args: "{{ ss_ha_common_args }}"
+            module_args: "{{ ss_ha_switch_deploy_args }}"
+            check_mode: false
+            idempotency: false
+            expected:
+              apply: {changed: true, failed: false}
+
+        - name: Verify the prerequisite associations are deployed
+          ansible.builtin.include_tasks: confirm_deployment.yaml
+          vars:
+            ss_ha_confirm_pairs: "{{ ss_ha_failure_baseline }}"
+            ss_ha_confirm_ids: "{{ ss_ha_failure_seed_ids }}"
+
+    - name: Read the complete controller inventory before the invalid request
+      nd_smart_switch_ha_pair_observe:
+        path: "{{ ss_ha_inventory_path }}"
+      register: ss_ha_failure_before
+
+    - name: Confirm the fixture scope and the absent test serial
+      ansible.builtin.assert:
+        that:
+          - ss_ha_failure_before.present_pairs == ss_ha_failure_baseline
+          - ss_ha_failure_before.present_pairs | reject('in', ss_ha_fixture_pairs) | list == []
+          - ss_ha_missing_peer_id not in ss_ha_failure_before.switches
+
+    - name: Verify the topology preflight fails in check mode
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: "{{ ss_ha_failure_case.state }}"
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_failure_args }}"
+        check_mode_only: true
+        check_mode_queries: "{{ ss_ha_check_mode_queries }}"
+        idempotency: false
+        expected:
+          check_mode: {changed: false, failed: true}
+      register: ss_ha_failure_preview
+      when: (ss_ha_failure_case.predictive | default(false)) or ss_ha_failure_case.state == 'overridden'
+
+    - name: Confirm the preview failed for the expected reason
+      ansible.builtin.assert:
+        that:
+          - ss_ha_failure_preview.check_mode_result.msg is search(ss_ha_failure_case.message)
+          - ss_ha_failure_preview.check_mode_result.action_results | default([]) == []
+      when: (ss_ha_failure_case.predictive | default(false)) or ss_ha_failure_case.state == 'overridden'
+
+    - name: Reserve the fixture until the expected failure is verified
+      ansible.builtin.set_fact:
+        ss_ha_previous_cleanup_ids: "{{ ss_ha_cleanup_pending_ids }}"
+        ss_ha_cleanup_pending_ids: "{{ ss_ha_owned_ids }}"
+
+    - name: Submit the invalid request once and require failure without changes
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: "{{ ss_ha_failure_case.state }}"
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_failure_args }}"
+        check_mode: false
+        idempotency: false
+        expected:
+          apply: {changed: false, failed: true}
+      register: ss_ha_failure_apply
+
+    - name: Verify the diagnostic and absence of mutation evidence
+      ansible.builtin.assert:
+        that:
+          - ss_ha_error.msg is search(ss_ha_failure_case.message)
+          - ss_ha_error.action_results | default([]) == []
+          - not (ss_ha_error.may_have_changed | default(false))
+          - ss_ha_error.config_actions_result is not defined
+      vars:
+        ss_ha_error: "{{ ss_ha_failure_apply.first_run_result }}"
+
+    - name: Read the controller inventory again after the failure
+      nd_smart_switch_ha_pair_observe:
+        path: "{{ ss_ha_inventory_path }}"
+      register: ss_ha_failure_after
+
+    - name: Verify the failed request preserved exact associations and peer states
+      ansible.builtin.assert:
+        that:
+          - ss_ha_failure_after.present_pairs == ss_ha_failure_before.present_pairs
+          - ss_ha_failure_after.switches == ss_ha_failure_before.switches
+
+    - name: Restore the cleanup scope after verifying the failure
+      ansible.builtin.set_fact:
+        ss_ha_cleanup_pending_ids: "{{ ss_ha_previous_cleanup_ids }}"

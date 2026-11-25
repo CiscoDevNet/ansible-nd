@@ -1,0 +1,110 @@
+---
+- name: Verify the global deployment fabric contains only the fixture switches
+  nd_smart_switch_ha_pair_observe:
+    path: "{{ ss_ha_switch_inventory_path }}"
+  register: ss_ha_global_inventory
+
+- name: Require the exact fixture inventory before previewing global deployment
+  ansible.builtin.assert:
+    that: ss_ha_global_inventory.fabric_switches.keys() | sort(case_sensitive=true) == ss_ha_owned_ids
+    fail_msg: Global deployment requires a fabric made up of only the four reserved switches.
+
+- name: Exercise an explicitly fabric-scoped deployment
+  vars:
+    ss_ha_global_args:
+      config_actions: {save: true, deploy: true, type: global}
+  block:
+    - name: Establish an unpaired baseline for the reserved fixture
+      ansible.builtin.include_tasks: cleanup.yaml
+      when: ss_ha_baseline_cleanup_needed
+
+    - name: Preview fabric-wide deployment before applying it
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: replaced
+        config: ["{{ ss_ha_vpc_pair }}"]
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_global_args }}"
+        check_mode_only: true
+        check_mode_queries: "{{ ss_ha_check_mode_queries }}"
+        idempotency: false
+        expected:
+          check_mode: {changed: true, failed: false}
+      register: ss_ha_global_preview
+
+    - name: Confirm the preview plans only the fixture pair and fabric deployment
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ ss_ha_global_preview.check_mode_result }}"
+        ss_ha_result_status: planned
+        ss_ha_expected_before: []
+        ss_ha_expected_after: ["{{ ss_ha_vpc_pair }}"]
+        ss_ha_expected_config_steps: [save, deploy]
+        ss_ha_expected_scope: global
+
+    - name: Recheck the complete fabric scope before the real apply
+      nd_smart_switch_ha_pair_observe:
+        path: "{{ ss_ha_switch_inventory_path }}"
+      register: ss_ha_global_apply_inventory
+
+    - name: Require the same four owned switches before deployment
+      ansible.builtin.assert:
+        that: ss_ha_global_apply_inventory.fabric_switches == ss_ha_global_inventory.fabric_switches
+        fail_msg: The fabric inventory changed after the global deployment preview.
+
+    - name: Reserve the affected peers for cleanup
+      ansible.builtin.set_fact:
+        ss_ha_cleanup_pending_ids: "{{ ss_ha_vpc_ids }}"
+
+    - name: Pair the fixture vPC peers with a fabric-wide deployment
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: replaced
+        config: ["{{ ss_ha_vpc_pair }}"]
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_global_args }}"
+        check_mode: false
+        idempotency: false
+        expected:
+          apply: {changed: true, failed: false}
+      register: ss_ha_global_result
+
+    - name: Verify the completed steps use global scope
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ ss_ha_global_result.first_run_result }}"
+        ss_ha_result_status: confirmed
+        ss_ha_expected_before: []
+        ss_ha_expected_after: ["{{ ss_ha_vpc_pair }}"]
+        ss_ha_expected_config_steps: [save, deploy]
+        ss_ha_expected_scope: global
+
+    - name: Confirm convergence for all switches in the fixture fabric
+      ansible.builtin.include_tasks: confirm_deployment.yaml
+      vars:
+        ss_ha_confirm_pairs: ["{{ ss_ha_vpc_pair }}"]
+        ss_ha_confirm_ids: "{{ ss_ha_owned_ids }}"
+
+    - name: Repeat the global request once after the fabric is in sync
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: replaced
+        config: ["{{ ss_ha_vpc_pair }}"]
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_global_args }}"
+        check_mode: false
+        idempotency: false
+        expected:
+          apply: {changed: false, failed: false}
+      register: ss_ha_global_repeat
+
+    - name: Verify repetition triggered no pair, save, or deployment actions
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ ss_ha_global_repeat.first_run_result }}"
+        ss_ha_result_status: confirmed
+        ss_ha_expected_before: ["{{ ss_ha_vpc_pair }}"]
+        ss_ha_expected_after: ["{{ ss_ha_vpc_pair }}"]
+  always:
+    - name: Restore the owned fixture
+      ansible.builtin.include_tasks: cleanup.yaml

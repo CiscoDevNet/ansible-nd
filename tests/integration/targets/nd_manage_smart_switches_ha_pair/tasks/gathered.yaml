@@ -1,0 +1,31 @@
+---
+- name: Require an empty fixture for the read-only gather
+  ansible.builtin.assert:
+    that: not ss_ha_baseline_cleanup_needed
+    fail_msg: The gathered-only scenario requires an empty fixture.
+
+- name: Gather an empty fabric with omitted configuration
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_smart_switches_ha_pair
+    state: gathered
+    common_args: "{{ ss_ha_common_args }}"
+    check_mode_queries: "{{ ss_ha_check_mode_queries }}"
+    idempotency: false
+    expected:
+      check_mode: {changed: false, failed: false}
+      apply: {changed: false, failed: false}
+    nd_queries:
+      - name: Verify the independent HA read is available
+        path: "{{ ss_ha_inventory_path }}"
+        expected_status: 200
+  register: ss_ha_empty_gather
+
+- name: Verify gathered is empty and read-only in both phases
+  ansible.builtin.assert:
+    that:
+      - item.gathered == []
+      - item.config_actions_result is not defined
+      - item.api_verbs | default([]) | map('upper') | reject('equalto', 'GET') | list == []
+  loop: "{{ [ss_ha_empty_gather.check_mode_result, ss_ha_empty_gather.first_run_result] }}"
+  loop_control:
+    label: "{{ item.gathered }}"

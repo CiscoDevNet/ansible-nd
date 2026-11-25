@@ -1,0 +1,125 @@
+---
+- name: Exercise guarded empty-list override
+  block:
+    - name: Establish an unpaired baseline for the reserved fixture
+      ansible.builtin.include_tasks: cleanup.yaml
+      when: ss_ha_baseline_cleanup_needed
+
+    - name: Reserve the peers used for setup
+      ansible.builtin.set_fact:
+        ss_ha_cleanup_pending_ids: "{{ ss_ha_owned_ids }}"
+
+    - name: Establish both deployed fixture associations
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: replaced
+        config: "{{ ss_ha_fixture_pairs }}"
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_switch_deploy_args }}"
+        check_mode: false
+        idempotency: false
+        expected:
+          apply: {changed: true, failed: false}
+
+    - name: Wait for the prerequisite associations to be deployed
+      ansible.builtin.include_tasks: confirm_deployment.yaml
+      vars:
+        ss_ha_confirm_pairs: "{{ ss_ha_fixture_pairs }}"
+        ss_ha_confirm_ids: "{{ ss_ha_owned_ids }}"
+
+    - name: Preview clearing the fixture associations
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: overridden
+        config: []
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_switch_deploy_args }}"
+        check_mode_only: true
+        check_mode_queries: "{{ ss_ha_check_mode_queries }}"
+        idempotency: false
+        expected:
+          check_mode: {changed: true, failed: false}
+      register: ss_ha_override_preview
+
+    - name: Verify the exact predicted operations and configuration actions
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ ss_ha_override_preview.check_mode_result }}"
+        ss_ha_result_status: planned
+        ss_ha_expected_before: "{{ ss_ha_fixture_pairs }}"
+        ss_ha_expected_after: []
+        ss_ha_expected_config_steps: [save, deploy]
+
+    - name: Re-read the full fabric scope immediately before the override
+      nd_smart_switch_ha_pair_observe:
+        path: "{{ ss_ha_inventory_path }}"
+      register: ss_ha_override_inventory
+
+    - name: Require the exact fixture-owned associations before applying
+      ansible.builtin.assert:
+        that: ss_ha_override_inventory.present_pairs == ss_ha_fixture_pairs
+        fail_msg: The override requires the exact fixture associations in the isolated fabric.
+
+    - name: Reserve the affected peers for cleanup
+      ansible.builtin.set_fact:
+        ss_ha_cleanup_pending_ids: "{{ ss_ha_owned_ids }}"
+
+    - name: Clear only the verified fixture associations
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: overridden
+        config: []
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_switch_deploy_args }}"
+        check_mode: false
+        idempotency: false
+        expected:
+          apply: {changed: true, failed: false}
+      register: ss_ha_overridden
+
+    - name: Check the accepted HA operations and save and deploy steps
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ ss_ha_overridden.first_run_result }}"
+        ss_ha_result_status: confirmed
+        ss_ha_expected_before: "{{ ss_ha_fixture_pairs }}"
+        ss_ha_expected_after: []
+        ss_ha_expected_config_steps: [save, deploy]
+
+    - name: Verify one deployment result per affected switch
+      ansible.builtin.include_tasks: assert_switch_deployment.yaml
+      vars:
+        ss_ha_deployment_ids: "{{ ss_ha_owned_ids }}"
+        ss_ha_deployment_rows: "{{ ss_ha_overridden.first_run_result.config_actions_result.actions[-1].response.switchIds }}"
+
+    - name: Wait for the intended associations and switch synchronization
+      ansible.builtin.include_tasks: confirm_deployment.yaml
+      vars:
+        ss_ha_confirm_pairs: []
+        ss_ha_confirm_ids: "{{ ss_ha_owned_ids }}"
+
+    - name: Repeat empty override only if check mode predicts no removals
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: overridden
+        config: []
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_switch_deploy_args }}"
+        check_mode: true
+        check_mode_queries: "{{ ss_ha_check_mode_queries }}"
+        idempotency: false
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+      register: ss_ha_repeated
+
+    - name: Check the repeat preserved intent and triggered no actions
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ ss_ha_repeated.first_run_result }}"
+        ss_ha_result_status: confirmed
+        ss_ha_expected_before: []
+        ss_ha_expected_after: []
+  always:
+    - name: Restore the owned fixture
+      ansible.builtin.include_tasks: cleanup.yaml

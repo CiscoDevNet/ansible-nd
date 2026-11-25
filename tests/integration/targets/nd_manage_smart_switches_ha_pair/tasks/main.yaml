@@ -1,0 +1,133 @@
+---
+- name: Verify the Smart Switch HA testbed
+  ansible.builtin.include_tasks:
+    file: setup.yaml
+    apply:
+      tags: [always]
+  tags: [always]
+
+- name: Exercise staged HA intent with both save settings
+  tags: [nd4x_demo, nd4x_demo_staged, nd4x_demo_overridden]
+  when: nd_test_smart_switch_ha_allow_override is sameas true
+  block:
+    - name: Establish an unpaired baseline for the reserved fixture
+      ansible.builtin.include_tasks: cleanup.yaml
+      when: ss_ha_baseline_cleanup_needed
+
+    - name: Run the staged lifecycle in both topology orders
+      ansible.builtin.include_tasks:
+        file: staged.yaml
+        apply:
+          tags: [nd4x_demo, nd4x_demo_staged, nd4x_demo_overridden]
+      loop: "{{ ss_ha_staged_cycles | product(['replaced', 'overridden', 'deleted']) | list }}"
+      loop_control:
+        loop_var: ss_ha_staged_case
+        index_var: ss_ha_staged_index
+        label: "{{ ss_ha_staged_case[1] }}, {{ ss_ha_staged_case[0].first }} first, save={{ ss_ha_staged_case[0].save }}"
+  always:
+    - name: Restore fixture state after the staging matrix
+      ansible.builtin.include_tasks: cleanup.yaml
+
+- name: Verify adding and preserving HA associations
+  ansible.builtin.include_tasks:
+    file: replaced.yaml
+    apply:
+      tags: [nd4x_demo, nd4x_demo_replaced]
+  tags: [nd4x_demo, nd4x_demo_replaced]
+
+- name: Verify exact and empty-list deletion semantics
+  ansible.builtin.include_tasks:
+    file: deleted.yaml
+    apply:
+      tags: [nd4x_demo, nd4x_demo_deleted]
+  tags: [nd4x_demo, nd4x_demo_deleted]
+
+- name: Verify guarded empty-list override
+  ansible.builtin.include_tasks:
+    file: overridden.yaml
+    apply:
+      tags: [nd4x_demo, nd4x_demo_overridden]
+  tags: [nd4x_demo, nd4x_demo_overridden]
+  when: nd_test_smart_switch_ha_allow_override is sameas true
+
+- name: Verify module-triggered switch deployment
+  ansible.builtin.include_tasks:
+    file: deployment.yaml
+    apply:
+      tags: [nd4x_demo, nd4x_demo_deployment, nd4x_demo_overridden]
+  tags: [nd4x_demo, nd4x_demo_deployment, nd4x_demo_overridden]
+  when: nd_test_smart_switch_ha_allow_override is sameas true
+
+- name: Verify argument and topology failures
+  tags: [nd4x_demo, nd4x_demo_negative]
+  block:
+    - name: Establish an unpaired baseline for the reserved fixture
+      ansible.builtin.include_tasks: cleanup.yaml
+      when: ss_ha_baseline_cleanup_needed
+
+    - name: Run each expected failure against its fixture
+      ansible.builtin.include_tasks:
+        file: failures.yaml
+        apply:
+          tags: [nd4x_demo, nd4x_demo_negative]
+      loop: "{{ ss_ha_failure_cases }}"
+      loop_control:
+        loop_var: ss_ha_failure_case
+        label: "{{ ss_ha_failure_case.label }}"
+  always:
+    - name: Restore fixture state after the failure cases
+      ansible.builtin.include_tasks: cleanup.yaml
+
+- name: Verify a failed override preserves the existing fixture pair
+  tags: [nd4x_demo, nd4x_demo_negative, nd4x_demo_overridden]
+  when: nd_test_smart_switch_ha_allow_override is sameas true
+  block:
+    - name: Establish an unpaired baseline for the reserved fixture
+      ansible.builtin.include_tasks: cleanup.yaml
+      when: ss_ha_baseline_cleanup_needed
+
+    - name: Run the expected override failure
+      ansible.builtin.include_tasks:
+        file: failures.yaml
+        apply:
+          tags: [nd4x_demo, nd4x_demo_negative, nd4x_demo_overridden]
+      vars:
+        ss_ha_failure_case: "{{ ss_ha_override_failure }}"
+  always:
+    - name: Restore fixture state after the failed override
+      ansible.builtin.include_tasks: cleanup.yaml
+
+- name: Verify behavior during pending unpair transitions
+  ansible.builtin.include_tasks:
+    file: pending.yaml
+    apply:
+      tags: [nd4x_demo, nd4x_demo_pending]
+  loop: [vpc, standalone]
+  loop_control:
+    loop_var: ss_ha_pending_topology
+  tags: [nd4x_demo, nd4x_demo_pending]
+
+- name: Verify module-triggered switch deployment through a cluster route
+  ansible.builtin.include_tasks:
+    file: deployment.yaml
+    apply:
+      tags: [nd4x_demo_routed]
+  when:
+    - nd_test_smart_switch_ha_cluster_name | length > 0
+    - nd_test_smart_switch_ha_allow_override is sameas true
+  tags: [never, nd4x_demo_routed]
+
+- name: Verify global deployment on an explicitly reserved fabric
+  ansible.builtin.include_tasks:
+    file: global_deployment.yaml
+    apply:
+      tags: [nd4x_demo_global]
+  when: nd_test_smart_switch_ha_global_deploy is sameas true
+  tags: [never, nd4x_demo_global]
+
+- name: Verify the read-only gathered contract
+  ansible.builtin.include_tasks:
+    file: gathered.yaml
+    apply:
+      tags: [nd4x_demo, nd4x_demo_gathered]
+  tags: [nd4x_demo, nd4x_demo_gathered]

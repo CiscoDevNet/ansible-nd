@@ -1,0 +1,160 @@
+---
+- name: Exercise replacement and gathered state on the fixture
+  block:
+    - name: Establish an unpaired baseline for the reserved fixture
+      ansible.builtin.include_tasks: cleanup.yaml
+      when: ss_ha_baseline_cleanup_needed
+
+    - name: Reserve the peers used for setup
+      ansible.builtin.set_fact:
+        ss_ha_cleanup_pending_ids: "{{ ss_ha_vpc_ids }}"
+
+    - name: Establish a deployed vPC association
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: replaced
+        config: ["{{ ss_ha_vpc_pair }}"]
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_switch_deploy_args }}"
+        check_mode: false
+        idempotency: false
+        expected:
+          apply: {changed: true, failed: false}
+
+    - name: Wait for the prerequisite associations to be deployed
+      ansible.builtin.include_tasks: confirm_deployment.yaml
+      vars:
+        ss_ha_confirm_pairs: ["{{ ss_ha_vpc_pair }}"]
+        ss_ha_confirm_ids: "{{ ss_ha_vpc_ids }}"
+
+    - name: Reserve the standalone peers for cleanup
+      ansible.builtin.set_fact:
+        ss_ha_cleanup_pending_ids: "{{ ss_ha_standalone_ids }}"
+
+    - name: Add standalone HA while preserving the vPC association
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: replaced
+        config: ["{{ ss_ha_standalone_pair }}"]
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_switch_deploy_args }}"
+        check_mode_queries: "{{ ss_ha_check_mode_queries }}"
+        idempotency: false
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+      register: ss_ha_replaced
+
+    - name: Verify the exact predicted operations and configuration actions
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ ss_ha_replaced.check_mode_result }}"
+        ss_ha_result_status: planned
+        ss_ha_expected_before: ["{{ ss_ha_vpc_pair }}"]
+        ss_ha_expected_after: "{{ ss_ha_fixture_pairs }}"
+        ss_ha_expected_config_steps: [save, deploy]
+
+    - name: Check the accepted HA operations and save and deploy steps
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ ss_ha_replaced.first_run_result }}"
+        ss_ha_result_status: confirmed
+        ss_ha_expected_before: ["{{ ss_ha_vpc_pair }}"]
+        ss_ha_expected_after: "{{ ss_ha_fixture_pairs }}"
+        ss_ha_expected_config_steps: [save, deploy]
+
+    - name: Verify one deployment result per affected switch
+      ansible.builtin.include_tasks: assert_switch_deployment.yaml
+      vars:
+        ss_ha_deployment_ids: "{{ ss_ha_standalone_ids }}"
+        ss_ha_deployment_rows: "{{ ss_ha_replaced.first_run_result.config_actions_result.actions[-1].response.switchIds }}"
+
+    - name: Wait for the intended associations and switch synchronization
+      ansible.builtin.include_tasks: confirm_deployment.yaml
+      vars:
+        ss_ha_confirm_pairs: "{{ ss_ha_fixture_pairs }}"
+        ss_ha_confirm_ids: "{{ ss_ha_standalone_ids }}"
+
+    - name: Repeat replacement with the peers reversed
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: replaced
+        config: [{"switch_id": "{{ ss_ha_standalone_pair.peer_switch_id }}", "peer_switch_id": "{{ ss_ha_standalone_pair.switch_id }}"}]
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_switch_deploy_args }}"
+        check_mode: false
+        idempotency: false
+        expected:
+          apply: {changed: false, failed: false}
+      register: ss_ha_repeated
+
+    - name: Check the repeat preserved intent and triggered no actions
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ ss_ha_repeated.first_run_result }}"
+        ss_ha_result_status: confirmed
+        ss_ha_expected_before: "{{ ss_ha_fixture_pairs }}"
+        ss_ha_expected_after: "{{ ss_ha_fixture_pairs }}"
+
+    - name: Gather both associations with an explicitly empty config
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: gathered
+        config: []
+        common_args: "{{ ss_ha_common_args }}"
+        check_mode_queries: "{{ ss_ha_check_mode_queries }}"
+        idempotency: false
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+      register: ss_ha_populated_gather
+
+    - name: Verify each exact pair is gathered in canonical order
+      ansible.builtin.assert:
+        that:
+          - item.gathered == ss_ha_fixture_pairs
+          - item.config_actions_result is not defined
+          - item.api_verbs | default([]) | map('upper') | reject('equalto', 'GET') | list == []
+      loop: "{{ [ss_ha_populated_gather.check_mode_result, ss_ha_populated_gather.first_run_result] }}"
+      loop_control:
+        label: "{{ item.gathered }}"
+
+    - name: Leave both associations untouched when replacing with an empty list
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: replaced
+        config: []
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_switch_deploy_args }}"
+        check_mode_queries: "{{ ss_ha_check_mode_queries }}"
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+          idempotency: {changed: false, failed: false}
+        nd_queries:
+          - name: Verify the independent HA read is available
+            path: "{{ ss_ha_inventory_path }}"
+            expected_status: 200
+      register: ss_ha_empty_replace
+
+    - name: Verify empty replacement leaves both exact pairs and skips config actions
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ item.result }}"
+        ss_ha_result_status: "{{ item.status }}"
+        ss_ha_expected_before: "{{ ss_ha_fixture_pairs }}"
+        ss_ha_expected_after: "{{ ss_ha_fixture_pairs }}"
+      loop:
+        - {status: planned, result: "{{ ss_ha_empty_replace.check_mode_result }}"}
+        - {status: confirmed, result: "{{ ss_ha_empty_replace.first_run_result }}"}
+        - {status: confirmed, result: "{{ ss_ha_empty_replace.second_run_result }}"}
+      loop_control:
+        label: "{{ item.status }}"
+
+    - name: Verify the controller still holds both associations
+      ansible.builtin.include_tasks: wait_for_intent.yaml
+      vars:
+        ss_ha_intent_pairs: "{{ ss_ha_fixture_pairs }}"
+  always:
+    - name: Restore the owned fixture
+      ansible.builtin.include_tasks: cleanup.yaml
