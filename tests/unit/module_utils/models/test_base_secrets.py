@@ -46,6 +46,22 @@ class _ContainerModel(NDBaseModel):
     template: dict[str, str] | None = Field(default=None, json_schema_extra={"sensitive_container": True}, alias="templateConfig")
 
 
+class _DemoChildModel(_DemoModel):
+    token: str | None = Field(default=None, json_schema_extra={"secret": True}, alias="tok")
+
+
+class _PlainChild(NDBaseModel):
+    identifiers: ClassVar[list[str] | None] = []
+    note: str | None = None
+
+
+class _PlainParent(NDBaseModel):
+    identifiers: ClassVar[list[str] | None] = ["name"]
+    identifier_strategy: ClassVar[str] = "single"
+    name: str | None = None
+    child: _PlainChild | None = None
+
+
 class TestBaseSecretHandling:
     def test_secret_field_keys(self):
         assert _DemoModel.secret_field_keys(by_alias=False) == {"password"}
@@ -113,3 +129,51 @@ class TestBaseSecretHandling:
         other = _ContainerModel.from_config({"name": "c1", "cli": "hostname changed"})
         assert not model.get_diff(other, exclude_unset=True)
         assert model.collect_model_secret_values() == {cli, "POC-TMPL-CANARY-359"}
+
+    def test_sensitive_schema_is_cached_per_class(self):
+        first = _DemoModel._sensitive_schema()
+        second = _DemoModel._sensitive_schema()
+        assert first is second
+        assert _DemoModel._has_sensitive_fields() is True
+        assert _ParentSecretModel._has_sensitive_fields() is True
+
+    def test_subclass_schema_is_not_the_parent_cache(self):
+        parent = _DemoModel._sensitive_schema()
+        child = _DemoChildModel._sensitive_schema()
+        assert parent is not child
+        assert _DemoModel.secret_field_keys(by_alias=False) == {"password"}
+        assert _DemoChildModel.secret_field_keys(by_alias=False) == {"password", "token"}
+        assert _DemoChildModel.collect_secret_values({"name": "u1", "password": "p@ss", "token": "nested"}) == {"p@ss", "nested"}
+
+    def test_models_without_sensitive_fields_skip_nested_walks(self, monkeypatch):
+        assert _PlainParent._has_sensitive_fields() is False
+        assert _PlainParent.collect_secret_values({"name": "x", "child": {"note": "n"}}) == set()
+
+        def fail_walk(cls):
+            raise AssertionError(f"nested walk for {cls.__name__}")
+
+        monkeypatch.setattr(_PlainParent, "_nested_model_fields", classmethod(fail_walk))
+        monkeypatch.setattr(_PlainChild, "_nested_model_fields", classmethod(fail_walk))
+        model = _PlainParent.from_config({"name": "x", "child": {"note": "n"}})
+        assert model.collect_model_secret_values() == set()
+        assert model.to_config() == model.to_internal_config()
+        assert model.to_config()["child"]["note"] == "n"
+        assert _PlainParent.collect_secret_values({"name": "x", "child": {"note": "n"}}) == set()
+
+    def test_freeform_override_still_collects_when_class_has_no_tags(self):
+        class _FreeFormSecret(NDBaseModel):
+            identifiers: ClassVar[list[str] | None] = ["name"]
+            identifier_strategy: ClassVar[str] = "single"
+            name: str | None = None
+            blob: dict | None = None
+
+            @classmethod
+            def collect_secret_values(cls, config_item):
+                values = super().collect_secret_values(config_item)
+                extra = (config_item or {}).get("blob") or {}
+                if isinstance(extra, dict) and extra.get("password"):
+                    values.add(extra["password"])
+                return values
+
+        assert _FreeFormSecret._has_sensitive_fields() is False
+        assert _FreeFormSecret.collect_secret_values({"name": "x", "blob": {"password": "hidden"}}) == {"hidden"}
