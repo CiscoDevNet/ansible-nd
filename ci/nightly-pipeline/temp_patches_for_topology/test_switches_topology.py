@@ -75,14 +75,24 @@ def test_reviewed_patch_artifact_matches_the_current_generator(checkout):
 
 @pytest.mark.parametrize('actual,valid', [
     ([1, 2, 3], True), ([1, 2, 3, 4, 5, 6], True),
+    ([6, 3, 5, 1, 2], True),
     ([1, 2], False), ([1, 2, 3, 4, 5], False),
+    ([1, 2, 4, 5, 6], False), ([1, 2, 3, 5, 7], False),
+    ([1, 2, 3, 5, 5], False),
     ([1, 2, 3, 4, 5, 6, 7], False), ([1, 2, 3, 4, 5, 5], False),
     ([1, 2, 4, 5, 6, 7], False),
 ])
 @pytest.mark.parametrize('relative', POLICY.FILES)
-def test_exact_fixture_or_full_declared_roster_only(checkout, relative, actual, valid):
-    root, _, _, _ = checkout
-    changed = yaml.safe_load(POLICY.patched_bytes(relative, (root / relative).read_bytes()))
+def test_exact_fixture_full_roster_or_fixture_with_both_retained_leaves(relative, actual, valid):
+    original = (
+        '- name: Validate Gathered Count\n'
+        '  ansible.builtin.assert:\n'
+        '    that:\n'
+        f'      - {POLICY.FILES[relative]}.gathered | length == nd_switches_base_conf | length\n'
+        '    fail_msg: >-\n'
+        '      expected {{ nd_switches_base_conf | length }}\n'
+    ).encode()
+    changed = yaml.safe_load(POLICY.patched_bytes(relative, original))
     task = next(item for item in changed if 'Validate Gathered Count' in item.get('name', ''))
     result_name = POLICY.FILES[relative]
     switches = lambda values: [{'seed_ip': '192.0.2.' + str(value)} for value in values]
@@ -90,7 +100,11 @@ def test_exact_fixture_or_full_declared_roster_only(checkout, relative, actual, 
     environment.filters.update(FilterModule().filters())
     variables = {result_name: {'gathered': switches(actual)},
                  'nd_switches_base_conf': switches([1, 2, 3]),
-                 'nd_pipeline_switches_topology': switches([1, 2, 3, 4, 5, 6])}
+                 'nd_pipeline_switches_topology': [
+                     dict(row, name=name) for name, row in zip(
+                         ['vxlan_leaf_1', 'vxlan_spine_1', 'vxlan_border_1',
+                          'vxlan_leaf_2', 'vxlan_leaf_3', 'vxlan_leaf_4'],
+                         switches([1, 2, 3, 4, 5, 6]))]}
     assert all(environment.from_string('{{ ' + condition + ' }}').render(**variables)
                for condition in task['ansible.builtin.assert']['that']) is valid
 

@@ -36,6 +36,54 @@ def test_only_positive_unused_evidence_allows_shutdown(baseline):
     assert evidence == before
 
 
+def test_lifecycle_baseline_enablement_and_sync_default_true_without_environment():
+    import yaml
+
+    root = PLUGIN.parents[2]
+    guard = yaml.safe_load((root / "playbooks/nd_ensure_switches.yaml").read_text())[0]
+    reset = yaml.safe_load((root / "consul/reset_fabric.yaml").read_text())[0]
+    helper = yaml.safe_load((root / "playbooks/nd_prerequisite/interface_baseline.yaml").read_text())
+    recovery = next(task for task in helper if "nd_interface_baseline" in task)["nd_interface_baseline"]["recover_config_sync"]
+
+    assert "default(true, true)" in guard["vars"]["nd_interface_baseline_enabled"]
+    assert "default(true, true)" in reset["tasks"][-1]["when"][0]
+    assert "default(true, true)" in recovery
+
+
+@pytest.mark.parametrize('result,reason,status', [
+    ({'reason': 'API_REQUEST_REJECTED', 'required_candidates': 8, 'required_verified': 2,
+      'api_failure': {'method': 'get', 'operation': '/api/v1/manage/fabrics/{id}/switches', 'http_status': 503}},
+     'API_REQUEST_REJECTED', '503'),
+    ({'reason': 'CONNECTIVITY_INTERFACE_STATUS_ACTIVE', 'remaining_connectivity_alerts': 4},
+     'CONNECTIVITY_INTERFACE_STATUS_ACTIVE', 'None'),
+    ({}, 'UNVERIFIED', 'None'),
+])
+def test_shared_failure_message_identifies_the_cause_without_raw_payloads(result, reason, status):
+    import yaml
+    from jinja2 import StrictUndefined
+    from jinja2.nativetypes import NativeEnvironment
+
+    helper = yaml.safe_load((PLUGIN.parent.parent / 'nd_prerequisite/interface_baseline.yaml').read_text())
+    task = next(row for row in helper if row['name'].startswith('Require accepted operations'))
+    environment = NativeEnvironment(undefined=StrictUndefined)
+    values = {
+        '_nd_interface_baseline_result': dict(result, response='PRIVATE_CANARY'),
+        '_nd_interface_baseline_checkpoint': {'path': '/protected/checkpoint'},
+    }
+    values['_nd_baseline_api_failure'] = environment.from_string(
+        task['vars']['_nd_baseline_api_failure']).render(values)
+    message = environment.from_string(task['ansible.builtin.assert']['fail_msg']).render(values)
+    assert f'reason={reason};' in message
+    assert f'http_status={status}.' in message
+    assert '/protected/checkpoint/mutations.jsonl' in message
+    assert 'No membership transfer is permitted' in message
+    assert 'PRIVATE_CANARY' not in message
+    if 'required_candidates' in result:
+        assert 'required_admin_up=2/8;' in message
+    if 'remaining_connectivity_alerts' in result:
+        assert 'remaining_connectivity_alerts=4;' in message
+
+
 def batch_controller_fixture(problem=None, journal=None, count=3):
     registry, original_request, state = controller_fixture()
     details = {}
@@ -366,7 +414,8 @@ def test_empty_owned_scope_is_not_permission_to_shutdown_ports(baseline):
     result = baseline.InterfaceBaseline(registry, ["fixture"], request, apply=True).run()
     assert state["writes"] == []
     assert result["candidates"] == 0
-    assert all(row["decision"] == "NO_OWNED_INTERFACE_SCOPE" for row in result["decisions"])
+    assert {row["decision"] for row in result["decisions"] if "interface" in row} == {"NO_OWNED_INTERFACE_SCOPE"}
+    assert result["reason"] == "CONNECTIVITY_INTERFACE_STATUS_ACTIVE"
 
 
 @pytest.mark.parametrize("apply", [False, True])
@@ -519,18 +568,22 @@ def test_initial_sync_retry_does_not_extend_the_shared_deadline(baseline):
 
 
 def sync_recovery_fixture(baseline, tmp_path, initial=('outOfSync',), after_deploy=('inProgress', 'inSync'),
-                          problem=None, transient_saves=0):
+                          problem=None, transient_saves=0, unconfirmed=None, poll_errors=()):
     registry, original, state = controller_fixture()
     registry['lab']['fabrics'] = {'advanced': {'name': 'fixture', 'type': 'vxlanIbgp', 'lifecycle': 'retained'}}
-    state.update(now=0.0, sync=list(initial), saves=0, deploys=[])
+    state.update(now=0.0, sync=list(initial), saves=0, deploys=[], sync_limits=[], poll_errors=list(poll_errors))
 
     def request(method, path, content, timeout):
         state['now'] += 0.01
         if path.endswith('/actions/configSave') or path.endswith('/switchActions/deploy'):
             state['calls'].append((method, path))
             state['writes'].append((method, path, copy.deepcopy(content)))
+            state['sync_limits'].append(timeout)
         if path.endswith('/actions/configSave'):
             state['saves'] += 1
+            if unconfirmed == 'save' and state['saves'] == 1:
+                state['now'] += timeout
+                raise baseline.RequestUnconfirmed('API_CALL_TIMEOUT')
             if state['saves'] <= transient_saves:
                 return {'status': 503, 'failed': True, 'current': {}}
             if problem == 'rejected_save':
@@ -542,10 +595,17 @@ def sync_recovery_fixture(baseline, tmp_path, initial=('outOfSync',), after_depl
             if problem == 'foreign_item':
                 return {'status': 207, 'current': {'items': [{'switchId': 'FOREIGN', 'status': 'Success'}]}}
             state['sync'] = ['inProgress', 'outOfSync'] if problem == 'never_converges' else list(after_deploy)
+            if unconfirmed == 'deploy' and len(state['deploys']) == 1:
+                # ND accepted the deploy; only its reply was lost.
+                state['now'] += timeout
+                raise baseline.RequestUnconfirmed('API_CALL_TIMEOUT')
             return {'status': 207, 'current': {'items': [{'switchId': serial, 'status': 'Success'}
                                                          for serial in content['switchIds']]}}
         if path.endswith('deploymentFreeze') and problem == 'freeze_after_save' and state.get('after_save'):
             return {'status': 200, 'current': {'deploymentFreeze': True}}
+        if path.endswith('/switches') and state['deploys'] and state['poll_errors']:
+            state['calls'].append((method, path))
+            return {'status': state['poll_errors'].pop(0), 'current': {'message': 'PRIVATE_CANARY'}}
         reply = original(method, path, content, timeout)
         if path.endswith('/switches'):
             if problem == 'vanish_after_save' and state.get('after_save'):
@@ -560,9 +620,9 @@ def sync_recovery_fixture(baseline, tmp_path, initial=('outOfSync',), after_depl
     def sleep(seconds):
         state['now'] += seconds
 
-    def run(apply=False, earlier_gap=False):
+    def run(apply=False, earlier_gap=False, timeout_seconds=900):
         gate = baseline.InterfaceBaseline(registry, ['fixture'], request, apply=apply, poll_seconds=5,
-            clock=lambda: state['now'], sleep=sleep, switch_refs=['leaf'],
+            clock=lambda: state['now'], sleep=sleep, switch_refs=['leaf'], timeout_seconds=timeout_seconds,
             journal_path=str(tmp_path / 'journal.jsonl'), recover_config_sync=True)
         # Simulates an audit-only readiness gap left by an earlier fabric.
         gate.readiness_incomplete = earlier_gap
@@ -621,6 +681,58 @@ def test_lifecycle_recovery_retries_transient_rejection_after_settling(baseline,
     assert state['saves'] == 2 and len(state['deploys']) == 1
     assert [row['decision'] for row in result['decisions'] if 'fabric' in row] == [
         'SYNC_RECOVERY_TRANSIENT_REJECTION', 'SYNC_RECOVERY_DEPLOY_REQUESTED', 'SYNC_RECOVERY_CONFIRMED']
+
+
+@pytest.mark.parametrize('errors,reason,retries', [
+    ((503, 503), 'AUDIT_COMPLETE', 2),
+    ((503, 503, 503), 'API_REQUEST_REJECTED', 2),
+    ((401,), 'API_REQUEST_REJECTED', 0),
+])
+def test_sync_poll_errors_never_repeat_an_accepted_deploy(baseline, tmp_path, errors, reason, retries):
+    state, run = sync_recovery_fixture(baseline, tmp_path, poll_errors=errors)
+    result = run()
+    assert result['reason'] == reason
+    assert result['baseline_failed'] is (reason != 'AUDIT_COMPLETE')
+    assert state['saves'] == 1 and len(state['deploys']) == 1
+    assert sum(row['decision'] == 'SYNC_POLL_TRANSIENT_REJECTION' for row in result['decisions']) == retries
+    if result['baseline_failed']:
+        assert result['api_failure'] == {
+            'method': 'get', 'operation': '/api/v1/manage/fabrics/{id}/switches', 'http_status': errors[-1]}
+    else:
+        assert result['api_failure'] is None
+    assert 'PRIVATE_CANARY' not in json.dumps(result)
+
+
+@pytest.mark.parametrize('unconfirmed,saves,decisions', [
+    ('save', 2, ['SYNC_RECOVERY_TRANSIENT_REJECTION', 'SYNC_RECOVERY_DEPLOY_REQUESTED', 'SYNC_RECOVERY_CONFIRMED']),
+    ('deploy', 1, ['SYNC_RECOVERY_TRANSIENT_REJECTION', 'SYNC_RECOVERY_CONFIRMED']),
+])
+def test_lifecycle_recovery_gives_sync_actions_time_and_never_redeploys_an_unconfirmed_deploy(
+        baseline, tmp_path, unconfirmed, saves, decisions):
+    state, run = sync_recovery_fixture(baseline, tmp_path, unconfirmed=unconfirmed)
+    result = run()
+    assert result['baseline_failed'] is False, result['reason']
+    assert state['saves'] == saves and len(state['deploys']) == 1
+    assert state['sync_limits'] and set(state['sync_limits']) == {180}
+    rows = [row for row in result['decisions'] if 'fabric' in row]
+    assert [row['decision'] for row in rows] == decisions and rows[0]['reason'] == 'API_CALL_TIMEOUT'
+    journal = [json.loads(line) for line in (tmp_path / 'journal.jsonl').read_text().splitlines()]
+    assert [row['phase'] for row in journal].count('response_unconfirmed') == 1
+
+
+def test_lifecycle_recovery_reports_deadline_when_an_unconfirmed_call_used_the_remaining_time(baseline, tmp_path):
+    state, run = sync_recovery_fixture(baseline, tmp_path, unconfirmed='save')
+    result = run(timeout_seconds=120)
+    assert result['reason'] == 'DEADLINE_EXCEEDED'
+    assert state['saves'] == 1 and state['deploys'] == [] and state['sync_limits'][0] < 120
+
+
+@pytest.mark.parametrize('value', [0, -1, float('inf'), float('nan'), 601])
+def test_sync_action_timeout_must_be_finite_and_bounded(baseline, tmp_path, value):
+    registry, request, state = controller_fixture()
+    with pytest.raises(ValueError, match='sync recovery window'):
+        baseline.InterfaceBaseline(registry, ['fixture'], request, sync_call_timeout_seconds=value)
+    assert state['calls'] == []
 
 
 def test_lifecycle_recovery_is_bounded_and_skips_interface_cleanup_when_drift_persists(baseline, tmp_path):
@@ -832,7 +944,38 @@ def test_a_remaining_alert_on_another_port_prevents_a_clean_fabric_claim(baselin
     assert result["baseline_failed"] is True
     assert result["reason"] == "CONNECTIVITY_INTERFACE_STATUS_ACTIVE"
     assert result["verified"] == 1 and result["remaining_connectivity_alerts"] == 1
+    assert result["connectivity_alerts"] == [{
+        "fabric": "fixture", "switch": "leaf", "interface": "Ethernet1/58",
+        "baseline_decision": "OUT_OF_SCOPE",
+    }]
     assert len(state["writes"]) == 2
+    assert result["decisions"][-1] == {
+        "fabric": "fixture", "decision": "CONNECTIVITY_INTERFACE_STATUS_ACTIVE", "remaining_alerts": 1}
+
+
+def test_unmapped_connectivity_alert_identity_is_sanitized(baseline):
+    registry, request, state = controller_fixture()
+
+    def unknown_switch_warning(method, path, content, timeout):
+        reply = request(method, path, content, timeout)
+        if "anomalies/details" in path:
+            row = reply["current"]["anomalies"][0]
+            row.update(
+                cleared=False,
+                switchId="PRIVATE_SERIAL",
+                entityName="eth1/58",
+                anomalyString="Interface ethernet1/58 in undesired state up:down:Link not connected",
+            )
+        return reply
+
+    result = baseline.InterfaceBaseline(registry, ["fixture"], unknown_switch_warning,
+        apply=True, switch_refs=["leaf"], interfaces=["Ethernet1/63"], poll_seconds=0).run()
+    assert result["reason"] == "CONNECTIVITY_INTERFACE_STATUS_ACTIVE"
+    assert result["connectivity_alerts"] == [{
+        "fabric": "fixture", "switch": "unmapped", "interface": "Ethernet1/58",
+        "baseline_decision": "OUT_OF_SCOPE",
+    }]
+    assert "PRIVATE_SERIAL" not in json.dumps(result)
 
 
 @pytest.mark.parametrize("counts", [
@@ -927,6 +1070,74 @@ def test_check_mode_adapter_never_recalculates_or_deploys_drifted_switches(basel
     assert result['reason'] == 'SWITCH_READINESS_OR_IDENTITY_UNVERIFIED' and state['writes'] == []
 
 
+@pytest.mark.parametrize('failure, reason', [
+    ('command timeout triggered, timeout value is 179 secs.', 'API_CALL_TIMEOUT'),
+    ('Connection reset by peer', 'API_TRANSPORT_UNVERIFIED'),
+    ('client_alarm', 'API_CALL_TIMEOUT'),
+], ids=['daemon_timeout', 'transport', 'client_alarm'])
+def test_adapter_retries_an_unconfirmed_sync_action_with_its_own_time_budget(
+        baseline, monkeypatch, tmp_path, failure, reason):
+    # Build 198: a slow configSave left no HTTP status and blocked the baseline.
+    import time
+    from types import SimpleNamespace
+    from ansible.module_utils.connection import ConnectionError as DaemonError
+
+    registry, request, state = controller_fixture()
+    registry['lab']['fabrics'] = {'advanced': {'name': 'fixture', 'type': 'vxlanIbgp', 'lifecycle': 'retained'}}
+    state.update(sync='outOfSync', sends=[])
+    limit = 1 if failure == 'client_alarm' else 180
+
+    def get(module_name, module_args, task_vars):
+        assert module_args['method'] == 'get'
+        reply = request('get', module_args['path'], None, 30)
+        if module_args['path'].endswith('/switches'):
+            reply['current']['switches'][0]['additionalData']['configSyncStatus'] = state['sync']
+        return reply
+
+    class RPC:
+        def __init__(self, *args):
+            self.timeout = 30
+
+        def get_option(self, name):
+            return self.timeout
+
+        def set_option(self, name, value):
+            self.timeout = value
+
+        def send_request(self, method, path, data):
+            assert action._task.no_log is True
+            name = path.rsplit('/', 1)[-1]
+            state['sends'].append((name, self.timeout))
+            if name == 'configSave' and len(state['sends']) == 1:
+                if failure == 'client_alarm':
+                    time.sleep(5)
+                raise DaemonError(failure)
+            if name == 'deploy':
+                state['sync'] = 'inSync'
+                return {'status': 207, 'body': {'items': [{'switchId': serial, 'status': 'Success'}
+                                                          for serial in json.loads(data)['switchIds']]}}
+            return {'status': 200, 'body': {'status': 'Config save is completed'}}
+
+    monkeypatch.setattr(baseline.ActionBase, 'run', lambda *args, **kwargs: {})
+    monkeypatch.setattr(baseline, 'Connection', RPC)
+    action = baseline.ActionModule.__new__(baseline.ActionModule)
+    action._task = SimpleNamespace(args={'registry': registry, 'fabrics': ['fixture'], 'switch_refs': ['leaf'],
+        'journal_path': str(tmp_path / 'journal.jsonl'), 'recover_config_sync': True, 'poll_seconds': 0,
+        'sync_settle_seconds': 0, 'sync_call_timeout_seconds': limit}, no_log=False, check_mode=False)
+    action._templar = SimpleNamespace(template=lambda value: value)
+    action._connection = RPC()
+    action._connection._socket_path = 'fixture-socket'
+    action._execute_module = get
+    result = action.run(task_vars={})
+    assert result['failed'] is False, result['reason']
+    assert [name for name, _ in state['sends']] == ['configSave', 'configSave', 'deploy']
+    assert all(limit - 1 <= timeout <= limit for _, timeout in state['sends'])
+    rows = [row for row in result['decisions'] if 'fabric' in row]
+    assert rows[0]['decision'] == 'SYNC_RECOVERY_TRANSIENT_REJECTION' and rows[0]['reason'] == reason
+    assert rows[-1]['decision'] == 'SYNC_RECOVERY_CONFIRMED'
+    assert action._task.no_log is False
+
+
 FAKE_REST = r'''
 import json, os
 from pathlib import Path
@@ -1006,12 +1217,11 @@ def test_real_ansible_shared_task_runs_audit_apply_and_check_mode_without_networ
     if check_mode:
         command.append("--check")
     completed = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=60)
-    # A blocked baseline is reported and the run continues (never-stop policy).
-    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert (completed.returncode == 0) is (not frozen), completed.stdout + completed.stderr
     captured = json.loads(ledger.read_text())
     assert len([row for row in captured["calls"] if row[0] != "get"]) == (0 if frozen else writes)
     assert "NDP_INTERFACE_BASELINE" in completed.stdout
-    assert ("NDP_RESERVED_MEMBERS_FREE switch=leaf" in completed.stdout) is membership_apply
+    assert ("NDP_RESERVED_MEMBERS_FREE switch=leaf" in completed.stdout) is (membership_apply and apply and not check_mode)
     assert ("NDP_INTERFACE_BASELINE_BLOCKED_CONTINUING" in completed.stdout) is frozen
     assert "192.0.2.10" not in completed.stdout and "SERIAL00001" not in completed.stdout
 
@@ -1052,12 +1262,11 @@ def test_post_recovery_audit_sync_gap_is_advisory_only(tmp_path, problem, apply,
     command = [str(Path(sys.executable).with_name("ansible-playbook")), "-i", "localhost,", str(playbook)]
     completed = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=60)
     output = completed.stdout + completed.stderr
-    # The hook never stops the run; only the advisory/blocked classification differs.
-    assert completed.returncode == 0, output
+    assert (completed.returncode == 0) is passes, output
     assert "reason=SWITCH_READINESS_OR_IDENTITY_UNVERIFIED" in output
     assert ("NDP_INTERFACE_BASELINE_ADVISORY" in output) is passes
     assert ("NDP_INTERFACE_BASELINE_BLOCKED" in output) is (not passes)
-    assert ("NDP_INTERFACE_BASELINE_BLOCKED_CONTINUING" in output) is (not passes)
+    assert "NDP_INTERFACE_BASELINE_BLOCKED_CONTINUING" not in output
     assert [row for row in json.loads(ledger.read_text())["calls"] if row[0] != "get"] == []
 
 @pytest.mark.parametrize("switch_apply,knob,recovered", [(True, None, True), (True, "false", False), (False, None, False)])
@@ -1078,6 +1287,7 @@ def test_lifecycle_helper_recovers_config_sync_unless_disabled(tmp_path, switch_
     playbook.write_text(json.dumps([{"hosts": "localhost", "connection": "local", "gather_facts": False,
         "vars": {"ansible_python_interpreter": sys.executable, "nd_interface_baseline_registry_file": str(registry_path),
                  "nd_test_fabric_switches": {"fixture": []}, "nd_switch_apply": switch_apply,
+                 "nd_interface_baseline_apply": False,
                  "nd_interface_baseline_poll_seconds": 0},
         "tasks": [{"ansible.builtin.include_tasks": str(helper)}]}]))
     config = tmp_path / "ansible.cfg"
@@ -1099,8 +1309,7 @@ def test_lifecycle_helper_recovers_config_sync_unless_disabled(tmp_path, switch_
     assert writes == (["actions/configSave", "switchActions/deploy"] if recovered else []), output
     assert ("reason=AUDIT_COMPLETE" in output) is recovered
     assert ("reason=SWITCH_READINESS_OR_IDENTITY_UNVERIFIED" in output) is (not recovered)
-    # Never-stop policy: an unrecovered gap is reported and the run continues.
-    assert completed.returncode == 0, output
+    assert (completed.returncode == 0) is recovered, output
     assert "192.0.2.10" not in completed.stdout and "SERIAL00001" not in completed.stdout
 
 
@@ -1327,15 +1536,18 @@ def test_real_registry_and_all_lifecycle_delivery_hooks_are_complete(baseline):
     # Lifecycle hooks normally audit interfaces; sync recovery must not depend on interface apply.
     assert "nd_switch_apply" in recovery and "nd_prerequisite_only" in recovery
     assert "ND_INTERFACE_BASELINE_RECOVER_SYNC" in recovery and "nd_interface_baseline_recover_config_sync" in recovery
+    assert "default(true, true)" in recovery
     assert "INTERFACE_BASELINE_APPLY" not in recovery and "nd_interface_baseline_apply" not in recovery
+    assert "default(true, true)" in guard["vars"]["nd_interface_baseline_enabled"]
+    assert "default(true, true)" in reset["tasks"][-1]["when"][0]
     for variant in ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches", "Jenkinsfile_nd_jenkins_script_comm_list"):
         source = (root / variant).read_text()
         assert "'nd_prerequisite/interface_baseline.yaml'" in source
         assert "'action_plugins/nd_interface_baseline.py'" in source
-        expected_default = "false" if variant == "Jenkinsfile_nd_jenkins_script_temp_switches" else "true"
-        assert "name: 'ND_INTERFACE_BASELINE_ENABLED', defaultValue: " + expected_default in source
-        assert "name: 'ND_INTERFACE_BASELINE_APPLY', defaultValue: false" in source
-        assert "name: 'ND_INTERFACE_BASELINE_RECOVER_SYNC', defaultValue: true" in source
+        assert "booleanParam(name: 'ND_INTERFACE_BASELINE_ENABLED'" not in source
+        assert "booleanParam(name: 'ND_INTERFACE_BASELINE_RECOVER_SYNC'" not in source
+        assert '${ND_INTERFACE_BASELINE_ENABLED:-true}' in source
+        assert "name: 'ND_INTERFACE_BASELINE_APPLY', defaultValue: true" in source
         assert "NDP_INTERFACE_BASELINE_RUNTIME_MISSING" in source
         home = source.split('def restoreHomeFabric(', 1)[1].split('\ndef recordUnstartedRound(', 1)[0]
         assert "withEnv(['ND_RESET_DEFER_INTERFACE_BASELINE=true'])" in home
@@ -1442,6 +1654,310 @@ def test_default_enforcement_cannot_touch_an_unowned_fabric(baseline):
         baseline.InterfaceBaseline(registry,['nac-msd-fabric1'],request,apply=True,
             ensure_host_admin_down_default=True)
     assert state['calls']==[]
+
+
+def required_controller_fixture(source="profile", problem=None, readback=None, deploy_body=None):
+    registry, original_request, state, sleep = batch_controller_fixture()
+    registry["lab"]["interface_allowlist"]["leaf"] = ["Ethernet1/62"]
+    if source == "profile":
+        registry["lab"]["interface_allowlist"]["leaf"].append("Ethernet1/61")
+        registry["profiles"]["test"] = {"links": [
+            {"switch_ref": "leaf", "interfaces": ["Ethernet1/61", "Ethernet1/62"], "admin_state": True}]}
+    required = state["details"]["Ethernet1/61"]
+    required["configData"]["networkOS"]["policy"].update(adminState=False, description="preserve required link intent")
+    required["operData"].update(adminStatus="down", operationalStatus="down")
+    state["details"]["Ethernet1/62"]["configData"] = {"mode": "unknown", "networkOS": {"networkOSType": "nx-os"}}
+    state["details"]["Ethernet1/62"]["operData"]["adminStatus"] = "down"
+    state["mutations"] = []
+    state["required_reads"] = 0
+
+    def request(method, path, content, timeout):
+        if method == "get" and "links?" in path and source == "live":
+            return {"status": 200, "current": {"links": [
+                {"srcSwitchId": "SERIAL00001", "srcInterfaceName": "Ethernet1/61",
+                 "dstSwitchId": "PEER", "dstInterfaceName": "Ethernet1/1"}]}}
+        if method == "get" and "/interfaces/" in path:
+            name = path.rsplit("/", 1)[1].replace("%2F", "/")
+            if name == "Ethernet1/61":
+                state["required_reads"] += 1
+                if problem == "race" and state["required_reads"] == 2:
+                    required["configData"]["networkOS"]["policy"]["description"] = "new intent"
+            return {"status": 200, "current": copy.deepcopy(state["details"][name])}
+        if method == "get" and "anomalies/details" in path:
+            warnings = [{"cleared": state["details"]["Ethernet1/63"]["operData"]["adminStatus"] == "down",
+                         "switchId": "SERIAL00001",
+                         "anomalyString": "Interface ethernet1/63 in undesired state up:down:Link not connected"}]
+            if problem == "physical":
+                warnings.append({"cleared": False, "switchId": "SERIAL00001",
+                                 "anomalyString": "Interface ethernet1/61 in undesired state up:down:Link not connected"})
+            return {"status": 200, "current": {"anomalies": warnings}}
+        if method != "get":
+            state["mutations"].append((method, path, copy.deepcopy(content)))
+            names = [content["interfaceName"]] if method == "put" else [
+                row["interfaceName"] for row in content["interfaces"]]
+            if method == "put":
+                state["details"][names[0]]["configData"] = copy.deepcopy(content["configData"])
+                if readback is not None:
+                    # How ND stores and returns the PUT policy.
+                    readback(state["details"][names[0]]["configData"]["networkOS"]["policy"])
+            if path.endswith("/interfaceActions/deploy"):
+                for name in names:
+                    enabled = state["details"][name]["configData"]["networkOS"]["policy"]["adminState"]
+                    state["details"][name]["operData"]["adminStatus"] = "up" if enabled else "down"
+                    if enabled and problem != "physical":
+                        state["details"][name]["operData"]["operationalStatus"] = "up"
+                if problem == "readback" and names == ["Ethernet1/61"]:
+                    required["configData"]["networkOS"]["policy"]["description"] = "unexpected change"
+                if deploy_body is not None:
+                    return {"status": 207, "current": deploy_body(names)}
+            return {"status": 207, "current": {"results": [
+                {"switchId": "SERIAL00001", "interfaceName": name, "status": "success"} for name in names]}}
+        return original_request(method, path, content, timeout)
+
+    return registry, request, state, sleep
+
+
+@pytest.mark.parametrize("source", ["profile", "live"])
+@pytest.mark.parametrize("apply", [False, True])
+def test_required_managed_links_up_unused_ports_down_and_free_reservations_untouched(baseline, tmp_path, source, apply):
+    registry, request, state, sleep = required_controller_fixture(source)
+    before = copy.deepcopy(state["details"])
+    journal = tmp_path / "journal.jsonl"
+    result = baseline.InterfaceBaseline(
+        registry, ["fixture"], request, apply=apply, switch_refs=["leaf"],
+        ensure_required_admin_up=True, journal_path=str(journal),
+        clock=lambda: state["now"], sleep=sleep, poll_seconds=1, timeout_seconds=90).run()
+    assert not result["failed"]
+    assert result["candidates"] == result["required_candidates"] == 1
+    assert result["verified"] == result["required_verified"] == int(apply)
+    assert len(state["mutations"]) == (4 if apply else 0)
+    if apply:
+        before["Ethernet1/61"]["configData"]["networkOS"]["policy"]["adminState"] = True
+        before["Ethernet1/63"]["configData"]["networkOS"]["policy"]["adminState"] = False
+        assert result["remaining_connectivity_alerts"] == 0
+        checkpoints = [json.loads(line) for line in journal.read_text().splitlines()]
+        assert {row["interfaceName"] for row in checkpoints if row["phase"] == "before_change"} == {
+            "Ethernet1/61", "Ethernet1/63"}
+    for name, detail in state["details"].items():
+        assert detail["configData"] == before[name]["configData"]
+    assert not any("clear" in path.lower() or "acknowledge" in path.lower()
+                   for _, path, _ in state["mutations"])
+
+
+@pytest.mark.parametrize("problem, reason", [
+    ("race", "INTERFACE_CHANGED_BEFORE_APPLY"),
+    ("readback", "REQUIRED_INTERFACE_CONFIG_CHANGED"),
+    ("physical", "CONNECTIVITY_INTERFACE_STATUS_ACTIVE"),
+])
+def test_required_link_failures_are_explicit_and_do_not_relax_safety(baseline, tmp_path, problem, reason):
+    registry, request, state, sleep = required_controller_fixture(problem=problem)
+    result = baseline.InterfaceBaseline(
+        registry, ["fixture"], request, apply=True, switch_refs=["leaf"], ensure_required_admin_up=True,
+        journal_path=str(tmp_path / "journal.jsonl"), clock=lambda: state["now"],
+        sleep=sleep, poll_seconds=1, timeout_seconds=90).run()
+    assert result["failed"] and result["reason"] == reason
+    assert len(state["mutations"]) == {"race": 0, "readback": 2, "physical": 4}[problem]
+
+
+@pytest.mark.parametrize('phase,problem,expected_writes', [
+    ('after_plan', None, 4),
+    ('after_deploy', None, 4),
+    ('after_deploy', 'persistent', 2),
+    ('after_plan', 'identity', 0),
+    ('after_plan', 'configuration', 0),
+])
+def test_required_port_sync_settles_before_fresh_checks_and_further_writes(
+        baseline, tmp_path, phase, problem, expected_writes):
+    registry, original, state, sleep = required_controller_fixture()
+    state['settle_reads'] = 0
+
+    def request(method, path, content, timeout):
+        reply = original(method, path, content, timeout)
+        started = (state['required_reads'] > 0 if phase == 'after_plan'
+                   else len(state['mutations']) >= 2)
+        if path.endswith('/switches') and started:
+            state['settle_reads'] += 1
+            if state['settle_reads'] <= 4 or problem == 'persistent':
+                node = reply['current']['switches'][0]
+                node['additionalData']['configSyncStatus'] = 'pending'
+                assert len(state['mutations']) == (0 if phase == 'after_plan' else 2)
+                if problem == 'identity' and state['settle_reads'] == 2:
+                    node['fabricManagementIp'] = '192.0.2.99'
+                if problem == 'configuration' and state['settle_reads'] == 2:
+                    state['details']['Ethernet1/61']['configData']['networkOS']['policy']['description'] = 'new intent'
+        return reply
+
+    result = baseline.InterfaceBaseline(
+        registry, ['fixture'], request, apply=True, switch_refs=['leaf'], ensure_required_admin_up=True,
+        journal_path=str(tmp_path / 'journal.jsonl'), clock=lambda: state['now'], sleep=sleep,
+        poll_seconds=1, timeout_seconds=30, sync_attempt_seconds=20, sync_settle_seconds=5).run()
+    assert result['baseline_failed'] is (problem is not None), result
+    assert len(state['mutations']) == expected_writes
+    assert state['now'] < 30
+    if problem is None:
+        assert result['required_verified'] == result['verified'] == 1
+        assert state['settle_reads'] >= 5
+    else:
+        assert result['reason'] == ('INTERFACE_CHANGED_BEFORE_APPLY' if problem == 'configuration'
+                                    else 'SWITCH_READINESS_OR_IDENTITY_UNVERIFIED')
+        assert result['required_verified'] == result['verified'] == 0
+        if problem == 'identity':
+            assert state['settle_reads'] == 2
+    assert '192.0.2.99' not in json.dumps(result)
+
+
+@pytest.mark.parametrize("deploy_body", [
+    lambda names: {},
+    lambda names: {"results": []},
+    lambda names: {"results": [{"switchId": "SERIAL00001", "interfaceName": name.lower(), "status": "success"} for name in names]},
+], ids=["no_results", "empty_results", "lowercase_names"])
+def test_interface_deploy_207_without_exact_rows_is_proven_by_readback(baseline, tmp_path, deploy_body):
+    # Build 196: the deploy applied (port came up) but the 207 rows did not match exactly.
+    registry, request, state, sleep = required_controller_fixture(deploy_body=deploy_body)
+    result = baseline.InterfaceBaseline(
+        registry, ["fixture"], request, apply=True, switch_refs=["leaf"], ensure_required_admin_up=True,
+        journal_path=str(tmp_path / "journal.jsonl"), clock=lambda: state["now"],
+        sleep=sleep, poll_seconds=1, timeout_seconds=90).run()
+    assert not result["failed"], result["reason"]
+    assert result["required_verified"] == result["verified"] == 1
+
+
+@pytest.mark.parametrize("deploy_body", [
+    lambda names: {"results": [{"switchId": "SERIAL00001", "interfaceName": names[0], "status": "unknown"}]},
+    lambda names: {"results": [{"switchId": "FOREIGN", "interfaceName": names[0], "status": "success"}]},
+    lambda names: {"results": [{"switchId": "SERIAL00001", "interfaceName": names[0], "status": "success"}] * 2},
+    lambda names: {"results": [{"status": "success"}]},
+    lambda names: {"results": "success"},
+], ids=["unknown_status", "foreign_identity", "duplicate", "anonymous", "not_a_list"])
+def test_interface_deploy_207_with_contradictory_rows_still_blocks(baseline, tmp_path, deploy_body):
+    registry, request, state, sleep = required_controller_fixture(deploy_body=deploy_body)
+    result = baseline.InterfaceBaseline(
+        registry, ["fixture"], request, apply=True, switch_refs=["leaf"], ensure_required_admin_up=True,
+        journal_path=str(tmp_path / "journal.jsonl"), clock=lambda: state["now"],
+        sleep=sleep, poll_seconds=1, timeout_seconds=90).run()
+    assert result["failed"] and result["reason"] == "OPERATION_IDENTITY_UNVERIFIED"
+    assert [method for method, _, _ in state["mutations"]] == ["put", "post"]
+
+
+ND_TEMPLATE_READBACK = {
+    "bpduFilter": "default", "cdp": True, "duplexMode": "auto", "errorDetectionAcl": True, "fec": "auto",
+    "linkType": "auto", "monitor": False, "negotiateAuto": True, "orphanPort": False, "pfc": False,
+    "ptp": "false", "qos": False, "stormControl": False, "stormControlAction": "default", "vlanMapping": False}
+ND_STORM_LEVELS = {"stormControl%sLevel%s" % (kind, unit): 0
+                   for kind in ("Broadcast", "Multicast", "Unicast") for unit in ("", "Pps")}
+
+
+@pytest.mark.parametrize("extra", [
+    ND_TEMPLATE_READBACK,
+    dict(ND_TEMPLATE_READBACK, debounceTimer=100),
+    dict(ND_TEMPLATE_READBACK, accessVlan="1", nativeVlan=1, debounceTimer=100, **ND_STORM_LEVELS),
+], ids=["template", "debounce", "full"])
+def test_put_readback_with_nd_template_defaults_verifies_required_and_single_ports(baseline, tmp_path, extra):
+    # Build 198 shapes: 8 policy keys sent, 23, 24 or 32 returned.
+    registry, request, state, sleep = required_controller_fixture(readback=lambda policy: policy.update(extra))
+    result = baseline.InterfaceBaseline(
+        registry, ["fixture"], request, apply=True, switch_refs=["leaf"], ensure_required_admin_up=True,
+        journal_path=str(tmp_path / "journal.jsonl"), clock=lambda: state["now"],
+        sleep=sleep, poll_seconds=1, timeout_seconds=90).run()
+    assert not result["failed"], result["reason"]
+    assert result["required_verified"] == result["verified"] == 1
+    assert [method for method, _, _ in state["mutations"]] == ["put", "post", "put", "post"]
+
+
+@pytest.mark.parametrize("change, drift", [
+    (lambda policy: policy.update(ND_TEMPLATE_READBACK, cdp=False), {"added_keys": ["cdp"]}),
+    (lambda policy: policy.update(inheritTtag="PRIVATE_CANARY", ip="PRIVATE_CANARY"), {"added_keys": ["inheritTtag", "ip"]}),
+    (lambda policy: policy.update(debounceTimer="100", qos=0), {"added_keys": ["debounceTimer", "qos"]}),
+    (lambda policy: policy.update(ND_TEMPLATE_READBACK, description="PRIVATE_CANARY"), {"changed_keys": ["description"]}),
+    (lambda policy: policy.pop("description"), {"missing_keys": ["description"]}),
+], ids=["non_default", "unknown_key", "wrong_type", "changed_request", "missing_request"])
+def test_put_readback_still_rejects_real_drift_and_reports_only_key_names(baseline, tmp_path, change, drift):
+    registry, request, state, sleep = required_controller_fixture(readback=change)
+    result = baseline.InterfaceBaseline(
+        registry, ["fixture"], request, apply=True, switch_refs=["leaf"], ensure_required_admin_up=True,
+        journal_path=str(tmp_path / "journal.jsonl"), clock=lambda: state["now"],
+        sleep=sleep, poll_seconds=1, timeout_seconds=90).run()
+    assert result["failed"] and result["reason"] == "REQUIRED_INTERFACE_CONFIG_CHANGED"
+    assert len(state["mutations"]) == 2
+    assert result["decisions"][-1] == {
+        "switch": "leaf", "interface": "Ethernet1/61", "decision": "REQUIRED_INTERFACE_CONFIG_CHANGED",
+        "added_keys": [], "missing_keys": [], "changed_keys": [], "outside_policy_changed": False, **drift}
+    assert "PRIVATE_CANARY" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_required_port_action_respects_check_mode(baseline, monkeypatch, tmp_path, check_mode):
+    from types import SimpleNamespace
+
+    registry, request, state, _ = required_controller_fixture()
+    monkeypatch.setattr(baseline.ActionBase, "run", lambda *args, **kwargs: {})
+    action = baseline.ActionModule.__new__(baseline.ActionModule)
+    action._task = SimpleNamespace(args={
+        "registry": registry, "fabrics": ["fixture"], "apply": True, "switch_refs": ["leaf"],
+        "ensure_required_admin_up": True, "journal_path": str(tmp_path / "journal.jsonl"),
+        "poll_seconds": 0}, no_log=False, check_mode=check_mode)
+    action._templar = SimpleNamespace(template=lambda value: value)
+    action._connection = SimpleNamespace(_socket_path=None)
+
+    def execute(module_name, module_args, task_vars):
+        assert action._task.no_log is True
+        return request(module_args["method"], module_args["path"], module_args.get("content"), 30)
+
+    action._execute_module = execute
+    result = action.run(task_vars={})
+    assert not result["failed"]
+    assert result["required_verified"] == result["verified"] == int(not check_mode)
+    assert len(state["mutations"]) == (0 if check_mode else 4)
+    assert action._task.no_log is False
+
+
+def test_required_port_missing_inventory_blocks_before_any_mutation(baseline, tmp_path):
+    registry, request, state, sleep = required_controller_fixture()
+    del state["details"]["Ethernet1/61"]
+    result = baseline.InterfaceBaseline(
+        registry, ["fixture"], request, apply=True, switch_refs=["leaf"], ensure_required_admin_up=True,
+        journal_path=str(tmp_path / "journal.jsonl"), clock=lambda: state["now"],
+        sleep=sleep, poll_seconds=1, timeout_seconds=90).run()
+    assert result["failed"] and result["reason"] == "REQUIRED_INTERFACE_SCOPE_INCOMPLETE"
+    assert not state["mutations"]
+
+
+def test_breakout_reservation_does_not_enable_sibling_channels(baseline, tmp_path):
+    registry, request, state, sleep = required_controller_fixture()
+    for name in ["Ethernet1/61/1", "Ethernet1/61/2"]:
+        state["details"][name] = copy.deepcopy(state["details"]["Ethernet1/61"])
+        state["details"][name]["interfaceName"] = name
+    del state["details"]["Ethernet1/61"]
+    registry["profiles"]["test"]["links"][0]["interfaces"] = ["Ethernet1/61/1", "Ethernet1/62"]
+    result = baseline.InterfaceBaseline(
+        registry, ["fixture"], request, apply=True, switch_refs=["leaf"], ensure_required_admin_up=True,
+        journal_path=str(tmp_path / "journal.jsonl"), clock=lambda: state["now"],
+        sleep=sleep, poll_seconds=1, timeout_seconds=90).run()
+    assert not result["failed"] and result["required_verified"] == 1
+    assert state["details"]["Ethernet1/61/1"]["configData"]["networkOS"]["policy"]["adminState"] is True
+    assert state["details"]["Ethernet1/61/2"]["configData"]["networkOS"]["policy"]["adminState"] is False
+
+
+def test_lifecycle_enforces_reservations_and_blocks_unverified_switch_deletion():
+    import yaml
+
+    root = PLUGIN.parents[2]
+    helper = yaml.safe_load((root / "playbooks/nd_prerequisite/interface_baseline.yaml").read_text())
+    action = next(task["nd_interface_baseline"] for task in helper if "nd_interface_baseline" in task)
+    assert action["idle_reserved_ports"] is False
+    assert action["ensure_required_admin_up"] is True
+    assert "default(true, true)" in action["apply"]
+    convergence = next(task for task in helper if task.get("ansible.builtin.include_tasks") == "converge_port_channel_member_drift.yaml")
+    assert "not ansible_check_mode" in convergence["when"]
+    assert any("ND_INTERFACE_BASELINE_APPLY" in condition for condition in convergence["when"])
+    gate = next(task for task in helper if "Require accepted operations" in task.get("name", ""))
+    assert not gate.get("ignore_errors", False)
+    runner = yaml.safe_load((root / "tests/run_integration_module.yaml").read_text())[0]
+    deletion = next(task for task in runner["tasks"] if "require safe fabric-wide switch deletion" in task.get("name", ""))
+    assert "BASELINE_HOOK before switch-delete admission" in deletion["block"][1]["name"]
+    guard = yaml.safe_load((root / "playbooks/nd_ensure_switches.yaml").read_text())[0]
+    assert any("BASELINE_HOOK after membership and readiness recovery" in task.get("name", "")
+               for task in guard["tasks"])
 
 
 @pytest.mark.parametrize('problem', [None, 'identity_changed', 'out_of_sync', 'never_finishes', 'warning_after_sync'])

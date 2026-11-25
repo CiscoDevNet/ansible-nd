@@ -10,7 +10,7 @@ import pytest
 from test_build124_switch_preflight import groovy_runner
 
 ROOT = Path(__file__).resolve().parents[1]
-VARIANTS = ("Jenkinsfile_nd_jenkins_script",)
+VARIANTS = ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches")
 
 
 def git(repo, *args, env=None):

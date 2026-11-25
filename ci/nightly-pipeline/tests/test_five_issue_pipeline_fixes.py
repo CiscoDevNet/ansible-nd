@@ -12,7 +12,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VARIANTS = ("Jenkinsfile_nd_jenkins_script",)
+VARIANTS = ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches")
 
 PRELUDE = r'''
 def loader = new GroovyClassLoader()

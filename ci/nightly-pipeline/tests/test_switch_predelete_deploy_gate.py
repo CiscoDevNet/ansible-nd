@@ -6,9 +6,6 @@ import pytest
 
 from test_switch_rehome_preflight import execute, expression_environment, guard, named, move_tasks
 
-ACTIVE_WARNING = {'fabricName': 'fixture', 'cleared': False,
-                  'anomalyString': '[FIXTURE0001] periodic Copy Run Start was skipped'}
-
 
 @pytest.mark.parametrize('filename', [
     'Jenkinsfile_nd_jenkins_script', 'Jenkinsfile_nd_jenkins_script_temp_switches',
@@ -16,7 +13,21 @@ ACTIVE_WARNING = {'fabricName': 'fixture', 'cleared': False,
 ])
 def test_active_pipelines_select_fabric_deployment_release(filename):
     source = (Path(__file__).resolve().parents[1] / filename).read_text()
-    assert "def SWITCH_LIFECYCLE_CONSUL_PREFIX = 'releases/predelete-diagnostics-20261106'" in source
+    assert "def SWITCH_LIFECYCLE_CONSUL_PREFIX = 'releases/interface-baseline-startup-save-20261104'" in source
+
+
+@pytest.mark.parametrize("scenario,operation,proceeds", [
+    ("predelete_save_transient", "configSave", True),
+    ("predelete_deploy_unavailable", "deploy", False),
+])
+def test_predelete_transient_request_retries_at_most_three_times(tmp_path, scenario, operation, proceeds):
+    completed, state = execute(tmp_path, scenario)
+    assert sum(path.endswith("/actions/" + operation) for path in state["rest_writes"]) == 3
+    assert bool(state["selected_calls"]) is proceeds
+    assert (completed.returncode == 0) is proceeds
+    if not proceeds:
+        assert "NDP_SWITCH_TRANSFER_NOT_RUN" in completed.stdout
+        assert "DESTINATION_ADD_REACHED" not in completed.stdout
 
 
 @pytest.mark.parametrize('scenario', [
@@ -118,7 +129,6 @@ def test_request_failure_kind_never_contains_payloads(reply, expected):
     value = expression_environment().from_string(task['vars']['_nd_predelete_failure_kind']).render(
         _predelete_reply=reply)
     assert value == expected
-
 
 
 def response_report(response):
@@ -269,6 +279,10 @@ def test_startup_warning_diagnostic_distinguishes_active_warning_from_poll_failu
     assert report['matching_records'] == 1
     assert 'PRIVATE_CANARY' not in json.dumps(report)
     assert 'FIXTURE0001' not in json.dumps(report)
+
+
+ACTIVE_WARNING = {'fabricName': 'fixture', 'cleared': False,
+                  'anomalyString': '[FIXTURE0001] periodic Copy Run Start was skipped'}
 
 
 @pytest.mark.parametrize('reply,expected', [

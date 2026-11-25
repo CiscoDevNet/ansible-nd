@@ -39,8 +39,11 @@
 # type is checked BEFORE anything is removed (NDP_SWITCH_REHOME_BLOCKED), so a fabric the
 # module cannot onboard into never strands the switches outside every fabric. AUDIT mode
 # only reports the plan (NDP_SWITCH_REHOME_PLAN). Without the variable nothing is moved.
-# A refused deletion is terminal. The legacy force flag is rejected before any
-# switch operation; no force request bypasses a controller refusal.
+# A refused deletion is terminal, and the legacy force flag is rejected before any
+# switch operation, with one exception: nd_switch_ibgp_to_ebgp_leaf_tor_force_delete
+# (Jenkins enables it by default) allows a single force=true retry in the verified
+# iBGP-to-eBGP pre-flight, only for switches whose normal removal ND refused and
+# that carry a matching uncleared Leaf-ToR unpairing anomaly. Home recovery never forces.
 #
 #   ansible-playbook -i inventory.yaml playbooks/nd_ensure_switches.yaml \
 #     -e nd_switch_apply=true -e switch_username=admin -e switch_password=***
@@ -76,8 +79,8 @@
     nd_switch_preserve_config: false
     # Jenkins passes the enclosing shell budget; direct callers use one hour.
     nd_switch_guard_timeout_seconds: 3600
-    nd_interface_baseline_enabled: "{{ lookup('env', 'ND_INTERFACE_BASELINE_ENABLED') | default(false, true) | bool }}"
-    nd_interface_baseline_apply: "{{ lookup('env', 'ND_INTERFACE_BASELINE_APPLY') | default(false, true) | bool }}"
+    nd_interface_baseline_enabled: "{{ lookup('env', 'ND_INTERFACE_BASELINE_ENABLED') | default(true, true) | bool }}"
+    nd_interface_baseline_apply: "{{ lookup('env', 'ND_INTERFACE_BASELINE_APPLY') | default(true, true) | bool }}"
     _nd_switch_clock: >-
       {{ lookup('ansible.builtin.pipe', (ansible_playbook_python | quote) ~ ' -c "import time; print(time.monotonic())"') | float }}
     # expected_serial_number exists only on cisco.nd branches that implement it (GitHub develop does not
@@ -1319,6 +1322,9 @@
                     label: "{{ _rf }}"
                   register: nd_predelete_save
                   failed_when: nd_predelete_save.failed | default(false)
+                  until: nd_predelete_save.status | default(0) | int not in [429, 503] or _nd_predelete_remaining | float <= 0
+                  retries: 2
+                  delay: "{{ nd_switch_predelete_poll_seconds | int }}"
                   timeout: "{{ _nd_predelete_call_limit }}"
                   vars:
                     ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
@@ -1401,6 +1407,9 @@
                     label: "{{ _rf }}"
                   register: nd_predelete_deploy
                   failed_when: nd_predelete_deploy.failed | default(false)
+                  until: nd_predelete_deploy.status | default(0) | int not in [429, 503] or _nd_predelete_remaining | float <= 0
+                  retries: 2
+                  delay: "{{ nd_switch_predelete_poll_seconds | int }}"
                   timeout: "{{ _nd_predelete_call_limit }}"
                   vars:
                     ansible_command_timeout: "{{ _nd_predelete_call_limit }}"
@@ -1586,6 +1595,11 @@
               ansible.builtin.set_fact:
                 _nd_phase_deploy_settle_status: success
           rescue:
+            - name: Highlight that no destructive step followed the failed sync gate
+              ansible.builtin.debug:
+                msg: >-
+                  NDP_SWITCH_TRANSFER_NOT_RUN: pre-delete verification stopped at {{ ansible_failed_task.name }};
+                  no further source removal or destination onboarding was attempted after this gate failed.
             - name: Stop the transfer when Recalculate Deploy or fresh convergence is unconfirmed
               ansible.builtin.fail:
                 msg: >-
@@ -1765,10 +1779,43 @@
 
             - *nd_read_remove_anomalies
 
+            - name: Report anomaly categories after an explicit removal refusal
+              ansible.builtin.debug:
+                msg: >-
+                  NDP_SWITCH_REMOVE_ANOMALIES status={{ _remove_anomaly_counts.status }}
+                  {{ ('leaf_tor=' ~ _remove_anomaly_counts.leaf_tor
+                      ~ ' interface_related=' ~ _remove_anomaly_counts.interface_related
+                      ~ ' other=' ~ _remove_anomaly_counts.other)
+                     if _remove_anomaly_counts.status == 'complete' else '' }}
+              vars:
+                _remove_anomaly_counts: >-
+                  {%- set ns = namespace(valid=true, leaf_tor=0, interface=0, other=0) -%}
+                  {%- set rows = _anomaly_read.current.anomalies -%}
+                  {%- if rows | length >= 200 -%}{%- set ns.valid = false -%}{%- endif -%}
+                  {%- for row in rows[:200] -%}
+                    {%- if row is not mapping or row.get('fabricName') is not string
+                        or row.get('cleared') is not boolean or row.get('anomalyString') is not string -%}
+                      {%- set ns.valid = false -%}
+                    {%- elif row.fabricName == _anomaly_read._rf and not row.cleared -%}
+                      {%- set text = row.anomalyString | lower -%}
+                      {%- if 'leaf-tor unpairing' in text -%}{%- set ns.leaf_tor = ns.leaf_tor + 1 -%}
+                      {%- elif text is search('\\binterface\\b') -%}{%- set ns.interface = ns.interface + 1 -%}
+                      {%- else -%}{%- set ns.other = ns.other + 1 -%}
+                      {%- endif -%}
+                    {%- endif -%}
+                  {%- endfor -%}
+                  {{- {'status': 'complete', 'leaf_tor': ns.leaf_tor, 'interface_related': ns.interface, 'other': ns.other}
+                      if ns.valid else {'status': 'unavailable'} -}}
+              loop: "{{ nd_remove_anomalies.results }}"
+              loop_control:
+                loop_var: _anomaly_read
+                label: source fabric anomaly categories
+
             - name: Initialize the bounded anomaly remediation scope
               ansible.builtin.set_fact:
                 _nd_remove_retry_moves: []
                 _nd_remove_original_reports: "{{ nd_rehome_delete_reports }}"
+                _nd_remove_original_moves: "{{ nd_rehome_moves }}"
 
             - name: Identify only refused switches with matching Leaf-ToR unpairing anomalies
               ansible.builtin.set_fact:
@@ -1852,11 +1899,14 @@
 
             - name: Reconcile Leaf-ToR unpairing and retry only the refused switches once
               vars:
-                nd_rehome_moves: "{{ _nd_remove_retry_moves }}"
                 _nd_remove_leaf_tor_force_retry: >-
                   {{ (_nd_leaf_tor_force_forward_scope | bool)
                      and (_nd_predelete_leaf_tor_force_required | default(false) | bool) }}
               block:
+                # The original move plan is a host fact, which overrides block vars.
+                - name: Restrict the active move fact to verified refused switches
+                  ansible.builtin.set_fact:
+                    nd_rehome_moves: "{{ _nd_remove_retry_moves }}"
                 - *nd_predelete_gate
                 - *nd_force_direction_probe
                 - *nd_force_direction_require
@@ -1870,6 +1920,10 @@
                 - *nd_normal_remove_request
                 - *nd_normal_remove_classifier
                 - *nd_normal_remove_acceptance
+              always:
+                - name: Restore the complete move fact for source-absence verification
+                  ansible.builtin.set_fact:
+                    nd_rehome_moves: "{{ _nd_remove_original_moves }}"
 
             - name: Complete delete timing after verified anomaly remediation
               ansible.builtin.set_fact:

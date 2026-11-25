@@ -79,6 +79,70 @@ def test_only_visible_skip_messages_are_rendered(callback):
     assert "msg" not in hidden._result
 
 
+def test_switch_removal_diagnostics_preserve_status_without_raw_payload(callback, monkeypatch):
+    lines = []
+    monkeypatch.setattr(callback._display, "display", lines.append)
+    evidence = {
+        "http_status": 207, "coverage": "partial", "requested": 2, "remaining": 1,
+        "switches": [{"request_position": 2, "status": "failed", "reason": "leaf-tor-unpairing", "present": True}],
+    }
+    result = ReadOnlyResult({
+        "switch_delete_diagnostics": evidence,
+        "api_response": ["PRIVATE-TEXT"],
+    })
+    result._task.action = "cisco.nd.nd_manage_switches"
+    callback._report_switch_remove(result)
+    assert "PRIVATE" not in lines[0]
+    assert json.loads(lines[0].split(" ", 1)[1]) == evidence
+    result._task.no_log = True
+    callback._report_switch_remove(result)
+    assert len(lines) == 1
+
+
+def test_switch_removal_diagnostics_report_missing_module_output(callback, monkeypatch):
+    lines = []
+    monkeypatch.setattr(callback._display, "display", lines.append)
+    result = ReadOnlyResult({})
+    result._task.action = "cisco.nd.nd_manage_switches"
+    result._task.get_name = lambda: "nd_manage_switches : Base - Clean Up Existing Devices in Fabric"
+    callback._report_switch_remove(result)
+    assert len(lines) == 1 and "unavailable" in lines[0]
+
+
+@pytest.mark.parametrize("suffix,retained", [("active_leaf_tor=2", True), ("active_leaf_tor=2 secret", False)])
+def test_controller_snapshot_is_preserved_only_in_sanitized_form(callback, suffix, retained):
+    result = ReadOnlyResult({"msg": "NDP_SWITCH_DELETE_CONTROLLER_SNAPSHOT " + suffix})
+    assert ("msg" in callback._compact(result)._result) is retained
+
+
+def test_baseline_summary_survives_compaction_without_private_decisions(callback):
+    summary = [
+        "NDP_INTERFACE_BASELINE reason=REQUIRED_INTERFACE_CONFIG_CHANGED apply=True inspected=512 candidates=38 verified=0",
+        "required_admin_up_candidates=2 required_admin_up_verified=0",
+    ]
+    result = ReadOnlyResult({"msg": summary + [[{"switch": "PRIVATE", "interface": "PRIVATE"}]]})
+    result._task.get_name = lambda: "Report interface baseline decisions without raw controller payloads"
+    callback._compact(result)
+    assert result._result["msg"] == summary
+    assert "PRIVATE" not in json.dumps(result._result)
+
+
+@pytest.mark.parametrize("task_hidden, payload_hidden, malformed, wrong_task", [
+    (True, False, False, False), (False, True, False, False),
+    (False, False, True, False), (False, False, False, True),
+])
+def test_baseline_summary_never_exposes_hidden_or_unvalidated_data(
+        callback, task_hidden, payload_hidden, malformed, wrong_task):
+    first = "NDP_INTERFACE_BASELINE reason=REQUIRED_INTERFACE_CONFIG_CHANGED apply=True inspected=512 candidates=38 verified=0"
+    if malformed:
+        first += " PRIVATE"
+    result = ReadOnlyResult({"msg": [first, "required_admin_up_candidates=2 required_admin_up_verified=0"],
+                             "_ansible_no_log": payload_hidden}, no_log=task_hidden)
+    result._task.get_name = lambda: "unrelated" if wrong_task else "Report interface baseline decisions without raw controller payloads"
+    callback._compact(result)
+    assert "msg" not in result._result
+
+
 def captured_skip(callback, payload, *, task_no_log=False, item=False, outcome="skipped"):
     callback._event_stream = io.BytesIO()
     result = ReadOnlyResult(payload, no_log=task_no_log)

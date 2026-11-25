@@ -11,8 +11,10 @@ import pytest
 from test_five_issue_pipeline_fixes import PRELUDE
 
 ROOT = Path(__file__).resolve().parents[1]
-VARIANTS = ("Jenkinsfile_nd_jenkins_script",)
-EXPECTED_SELECTION = {"Jenkinsfile_nd_jenkins_script": "PUBLIC"}
+VARIANTS = ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches",
+            "Jenkinsfile_nd_jenkins_script_comm_list")
+EXPECTED_SELECTION = dict(zip(VARIANTS, ("PUBLIC", "PRIVATE", "PRIVATE")))
+EXPECTED_DESTINATION = dict(zip(VARIANTS, ("PUBLIC", "PRIVATE", "PRIVATE")))
 
 
 def rooms(source):
@@ -25,11 +27,11 @@ def test_declared_room_selector_preserves_the_intended_destination(variant):
     canonical = rooms((ROOT / VARIANTS[0]).read_text())
     source = (ROOT / variant).read_text()
     definitions = rooms(source)
-    assert definitions == canonical
+    assert set(definitions.values()) == set(canonical.values())
     selected = re.search(r'^\s*WEBEX_ROOM_ID\s*=\s*"\$\{([^}]+)\}"', source, re.M).group(1)
     assert selected in definitions
     assert selected == "WEBEX_ROOM_ID_" + EXPECTED_SELECTION[variant]
-    assert definitions[selected] == canonical[selected]
+    assert definitions[selected] == canonical["WEBEX_ROOM_ID_" + EXPECTED_DESTINATION[variant]]
     assert canonical["WEBEX_ROOM_ID_PUBLIC"] != canonical["WEBEX_ROOM_ID_PRIVATE"]
 
 
@@ -72,6 +74,7 @@ script.metaClass.httpRequest = { Map options ->
     requests.add(options)
     assert options.customHeaders[0].maskValue == true
     assert options.customHeaders[0].value == 'Bearer fixture-token-sensitive'
+    assert options.timeout == 180
     [status: responseStatus, content: 'fixture-sensitive-response-body']
 }
 '''
@@ -190,6 +193,7 @@ script.run()
 assert credentialBindings == 0
 assert requests.isEmpty()
 assert logs.any { it.startsWith('NDP_WEBEX_REPORT_SIZE:') }
-assert logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_FAILED:') }
+assert logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_RETRY:') }
+assert logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_RETRY_FAILED:') }
 assert logs.any { it.startsWith('NDP_WEBEX_NOTIFICATION_FAILED:') }
 ''')

@@ -391,7 +391,7 @@ assert logs.any { it.startsWith('NDP_WEBEX_REPORT_SIZE: characters=') && it.ends
 assert logs.any { it.startsWith('📨 Webex notification before delivery (') && it.contains('unique_post_module_219') }
 assert !delivered.contains('Detailed reporting was unavailable')
 assert !logs.any { it.contains('REVISION') }
-assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_FAILED:') }
+assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_RETRY') }
 assert writes.isEmpty() && shells.isEmpty()
 """)
 

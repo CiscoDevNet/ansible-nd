@@ -38,9 +38,9 @@ def groovy(request, tmp_path_factory):
 
 
 @pytest.mark.parametrize("scenario", ["healthy", "ibgp-test-failed", "both-tests-failed", "batch-setup-failed",
-                                     "preflight-failed", "missing-receipt", "malformed-receipt", "restore-failed",
-                                     "apply-failed", "reset-failed", "post-restore-exception",
-                                     "flow-aborted", "java-interrupted"])
+                                     "preflight-failed", "migration-unconfirmed", "missing-receipt",
+                                     "malformed-receipt", "restore-failed", "apply-failed", "reset-failed",
+                                     "post-restore-exception", "flow-aborted", "java-interrupted"])
 def test_real_full_flow_continues_failures_and_only_interrupts_stop_later_rounds(groovy, scenario):
     groovy("def scenario = " + json.dumps(scenario) + "\n" + r'''
 script.binding.currentBuild.currentResult = 'SUCCESS'
@@ -87,7 +87,7 @@ script.metaClass.generateDynamicInventory = { Object round ->
 }
 script.metaClass.runSwitchPreflight = { Object round ->
     calls.add('pre:' + round.round_label)
-    if (scenario == 'preflight-failed') { throw new IllegalStateException('preflight failed') }
+    if (scenario in ['preflight-failed', 'migration-unconfirmed']) { throw new IllegalStateException('preflight failed') }
 }
 script.metaClass.runSwitchPostRestore = { Object round ->
     calls.add('post:' + round.round_label)
@@ -108,6 +108,10 @@ script.metaClass.catchError = { Map options, Closure work ->
 }
 script.metaClass.sh = { Object options ->
     def text = (options instanceof Map ? options.script : options).toString()
+    if (text.contains('nd_switch_fail_on_missing=true')) {
+        calls.add('migration-check:' + context.MIGRATION_ROSTER)
+        return scenario == 'migration-unconfirmed' ? 2 : 0
+    }
     if (text.contains('NDP_MODULE_BATCH_CLOSED:')) {
         def round = context.VERSION_ID.endsWith('_EBGP') ? 'eBGP' : 'iBGP'
         calls.add('batch:' + round)
@@ -133,8 +137,23 @@ assert swallowed.empty
 if (!(scenario in ['flow-aborted', 'java-interrupted'])) {
     assert caught == null
     assert calls.contains('batch:iBGP') && calls.contains('post:iBGP')
-    assert calls.contains('batch:eBGP') && calls.contains('post:eBGP')
     assert calls.contains('reset') && calls.contains('finish:success')
+    // The eBGP round needs confirmed migration: a successful pre-flight, or a
+    // read-only audit after a failed one. Unconfirmed rounds skip modules and
+    // post-restore, record NOT_RUN rows and still return home.
+    def migrationChecks = calls.findAll { it.startsWith('migration-check:') }
+    assert migrationChecks == (scenario in ['preflight-failed', 'migration-unconfirmed'] ?
+        ['migration-check:/fixture/collection/integration_config.yml'] : []) : calls
+    if (scenario in ['apply-failed', 'migration-unconfirmed']) {
+        assert !calls.contains('batch:eBGP') && !calls.contains('post:eBGP') : calls
+        assert calls.indexOf('record:eBGP') < calls.findIndexOf { it.startsWith('home:') }
+        assert logs.any { it.startsWith('NDP_FABRIC_ROUND_MIGRATION_BLOCKED: eBGP modules not started') } : logs
+        assert logs.any { it.startsWith('NDP_FABRIC_ROUND_FAILED_CONTINUING: eBGP') } : logs
+        assert context.PIPELINE_FAILED == 'true'
+    } else {
+        assert calls.contains('batch:eBGP') && calls.contains('post:eBGP')
+        assert !logs.any { it.startsWith('NDP_FABRIC_ROUND_MIGRATION_BLOCKED') } : logs
+    }
     if (scenario == 'healthy') { assert context.PIPELINE_FAILED != 'true' : [calls: calls, logs: logs] }
     def warning = [
         'ibgp-test-failed': 'NDP_MODULE_BATCH_ISSUES:',
@@ -142,7 +161,8 @@ if (!(scenario in ['flow-aborted', 'java-interrupted'])) {
         'batch-setup-failed': 'NDP_FABRIC_ROUND_FAILED_CONTINUING:',
         'missing-receipt': 'NDP_FABRIC_ROUND_FAILED_CONTINUING:',
         'malformed-receipt': 'NDP_MODULE_BATCH_STATUS_INVALID:',
-        'preflight-failed': 'NDP_SWITCH_PREFLIGHT_FAILED_CONTINUING:',
+        'preflight-failed': 'NDP_FABRIC_ROUND_MIGRATION_CHECK fabric=VXLAN_EVPN_Fabric_eBGP exit_code=0 migrated=true',
+        'migration-unconfirmed': 'NDP_FABRIC_ROUND_MIGRATION_CHECK fabric=VXLAN_EVPN_Fabric_eBGP exit_code=2 migrated=false',
         'restore-failed': 'NDP_SWITCH_RESTORE_INCOMPLETE_CONTINUING:',
         'apply-failed': 'NDP_FABRIC_ROUND_APPLY_FAILED_CONTINUING:',
         'reset-failed': 'NDP_FABRIC_RESET_FAILED_CONTINUING:',

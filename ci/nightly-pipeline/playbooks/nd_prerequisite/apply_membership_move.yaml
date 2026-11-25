@@ -3,6 +3,11 @@
 # ever planned). Remove from the source fabric, then re-onboard into the
 # destination with the confirmed role. Switch credentials come from the runner
 # environment; they are never stored in the registry or serialized.
+#
+# WORKAROUND: Before removing switch from source fabric, explicitly shut down
+# problematic interfaces (eth1/45, eth1/46, eth1/47) to avoid up:down:inactive
+# anomaly during membership transfer. This prevents partial shutdown state from
+# blocking the fabric transition.
 - name: Require credentials before removing a prerequisite switch
   ansible.builtin.assert:
     that:
@@ -10,6 +15,38 @@
       - nd_switch_password | default(switch_password | default(''), true) | length > 0
     fail_msg: "NDP_SWITCH_CREDENTIALS_MISSING: no prerequisite switch was removed."
   run_once: true
+
+# NEW STEP: Pre-migration interface shutdown (workaround for up:down:inactive anomaly)
+# This must run BEFORE the switch deletion to ensure interfaces are properly shut
+- name: "Pre-migration shutdown: prepare {{ _ndp_operation.switch_ref }} for fabric transfer"
+  block:
+    - name: Set premigration context variables
+      ansible.builtin.set_fact:
+        _ndp_premigration_switch_hostname: "{{ _ndp_operation.switch_ref }}"
+        _ndp_premigration_switch_serial: "{{ _ndp_switch_serial_by_ref[_ndp_operation.switch_ref] | default('') }}"
+        _ndp_premigration_fabric_name: "{{ _ndp_fabric_name_by_ref[_ndp_operation.source_fabric_ref] }}"
+        _ndp_premigration_source_fabric: "{{ _ndp_operation.source_fabric_ref }}"
+        _ndp_premigration_destination_fabric: "{{ _ndp_operation.destination_fabric_ref }}"
+      run_once: true
+
+    - name: "Include: apply premigration interface shutdown"
+      ansible.builtin.include_tasks: apply_premigration_interface_shutdown.yaml
+      vars:
+        _ndp_switch_hostname: "{{ _ndp_premigration_switch_hostname }}"
+        _ndp_switch_serial: "{{ _ndp_premigration_switch_serial }}"
+        _ndp_premigration_interfaces: "{{ nd_premigration_shutdown_interfaces | default(['Ethernet1/45', 'Ethernet1/46', 'Ethernet1/47'], true) }}"
+      when:
+        - _ndp_premigration_switch_serial | length > 0
+        - nd_enable_premigration_shutdown | default(true) | bool
+      run_once: false
+
+  rescue:
+    - name: "Warn: premigration shutdown incomplete, continuing with membership move"
+      ansible.builtin.debug:
+        msg: >-
+          NDP_PREMIGRATION_SHUTDOWN_WARNING: Shutdown incomplete for {{ _ndp_operation.switch_ref }}
+          Proceeding with membership move anyway (may see interface anomalies)
+      run_once: true
 
 - name: Read the destination before prerequisite switch onboarding
   cisco.nd.nd_rest:

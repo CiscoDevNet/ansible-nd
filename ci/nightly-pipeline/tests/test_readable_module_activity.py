@@ -6,7 +6,8 @@ import subprocess
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-VARIANTS = ("Jenkinsfile_nd_jenkins_script",)
+VARIANTS = ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches",
+            "Jenkinsfile_nd_jenkins_script_comm_list")
 
 
 def method(source, name):

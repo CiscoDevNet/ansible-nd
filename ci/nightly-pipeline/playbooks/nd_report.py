@@ -362,12 +362,38 @@ class CallbackModule(DefaultCallback):
             compact_payload["msg"] = "NDP_MODULE_SKIPPED: declared lab substrate unavailable"
         elif prerequisite_failed:
             compact_payload["msg"] = self.prerequisite_failures[-1] if self.prerequisite_failures else "NDP_PREREQUISITE_STATUS: FAILED"
+        elif not no_log and isinstance(message, str) and re.fullmatch(
+            r"NDP_SWITCH_DELETE_CONTROLLER_SNAPSHOT (?:active_leaf_tor=[0-9]{1,3}|"
+            r"unavailable: (?:incomplete or failed anomaly read|diagnostic task failed))", message
+        ):
+            compact_payload["msg"] = message
+        elif (not no_log and isinstance(message, list) and len(message) >= 2
+              and result._task.get_name() == "Report interface baseline decisions without raw controller payloads"
+              and isinstance(message[0], str) and re.fullmatch(
+                  r"NDP_INTERFACE_BASELINE reason=[A-Z_]{1,80} apply=(?:True|False) "
+                  r"inspected=[0-9]{1,6} candidates=[0-9]{1,6} verified=[0-9]{1,6}", message[0])
+              and isinstance(message[1], str) and re.fullmatch(
+                  r"required_admin_up_candidates=[0-9]{1,6} required_admin_up_verified=[0-9]{1,6}",
+                  message[1])):
+            compact_payload["msg"] = message[:2]
         # Ansible 2.19+ supplies a callback-local mutable mapping through a
         # getter-only _result property. Update that mapping; assigning _result
         # raises AttributeError and suppresses successful-result output.
         payload.clear()
         payload.update(compact_payload)
         return result
+
+    def _report_switch_remove(self, result):
+        if getattr(result._task, "action", "") not in ("cisco.nd.nd_manage_switches", "nd_manage_switches"):
+            return
+        payload = result._result
+        if payload.get("_ansible_no_log") or getattr(result._task, "no_log", False):
+            return
+        report = payload.get("switch_delete_diagnostics")
+        if isinstance(report, dict):
+            self._display.display("NDP_AUTHORED_SWITCH_REMOVE " + json.dumps(report, separators=(",", ":")))
+        elif result._task.get_name().endswith("Base - Clean Up Existing Devices in Fabric"):
+            self._display.display("NDP_AUTHORED_SWITCH_REMOVE unavailable: module did not expose a matching API response record")
 
     def v2_runner_on_ok(self, result):
         for phase in self.phase_seconds:
@@ -377,14 +403,17 @@ class CallbackModule(DefaultCallback):
                 self._save()
                 break
         self._capture_result(result, "ok")
+        self._report_switch_remove(result)
         super().v2_runner_on_ok(self._compact(result))
 
     def v2_runner_item_on_ok(self, result):
         self._capture_result(result, "ok", item=True)
+        self._report_switch_remove(result)
         super().v2_runner_item_on_ok(self._compact(result))
 
     def v2_runner_on_failed(self, result, ignore_errors=False):
         self._capture_result(result, "failed", ignored=ignore_errors)
+        self._report_switch_remove(result)
         super().v2_runner_on_failed(result, ignore_errors=ignore_errors)
 
     def v2_runner_on_unreachable(self, result):
@@ -397,6 +426,7 @@ class CallbackModule(DefaultCallback):
 
     def v2_runner_item_on_failed(self, result):
         self._capture_result(result, "failed", ignored=bool(getattr(result._task, "ignore_errors", False)), item=True)
+        self._report_switch_remove(result)
         super().v2_runner_item_on_failed(result)
 
     def v2_runner_item_on_skipped(self, result):

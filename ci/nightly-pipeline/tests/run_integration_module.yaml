@@ -38,8 +38,8 @@
       profile: "integration.{{ test_module }}"
     nd_prerequisite_assets_dir: "{{ playbook_dir }}"
     nd_prerequisite_wrapper_path: "{{ playbook_dir }}/nd_prerequisite/nd_prerequisite_wrapper.yaml"
-    # A failed prerequisite or pipeline fixture is recorded and the authored target still runs;
-    # post_tasks then fail the module so the prerequisite failure stays visible in the report.
+    # Best-effort prerequisite failures are reported separately. The L3Out fixture
+    # has its own admission check inside the run block so cleanup still executes.
     nd_prerequisite_continue_on_failure: true
     testcase: "*"                      # every test-case file in the target
     # Select compatible upstream test directories for network/VRF roles.
@@ -262,8 +262,8 @@
     # Routed targets own PC520-523 and use scoped baseline repair instead.
     - name: "[{{ test_module }}] release reserved port-channel members before the gate"
       vars:
-        _ndp_pc_switch_ip: "{{ _ndp_selected_profile.runtime_vars.nd_test_switch_ip }}"
-        _ndp_pc_fabric_name: "{{ _ndp_selected_profile.runtime_vars.nd_test_fabric_name }}"
+        _ndp_pc_switch_ip: "{{ _ndp_selected_profile.runtime_vars.nd_test_switch_ip | default('') }}"
+        _ndp_pc_fabric_name: "{{ _ndp_selected_profile.runtime_vars.nd_test_fabric_name | default('') }}"
         _ndp_pc_delete_config:
           - {switch_ip: "{{ _ndp_pc_switch_ip }}", interface_name: port-channel501}
           - {switch_ip: "{{ _ndp_pc_switch_ip }}", interface_name: port-channel502}
@@ -309,6 +309,86 @@
               freed={{ _ndp_pc_unbundle_delete is changed }}
               configSave={{ _ndp_pc_unbundle_configsave.status | default('skipped') }}
               deploy={{ _ndp_pc_unbundle_deploy.status | default('skipped') }}
+
+    # A runner killed before its restore handler (build 184 nd_manage_policy) leaves the shared
+    # baseline repair lock behind, and every later module then skips baseline repair. Reclaim it
+    # only when owner.json names a pipeline run id that no live process carries as an exact
+    # nd_prerequisite_run_id=<id> argument. Missing/unreadable owners, local-* owners, live owners
+    # and hosts without a process table keep the lock for operator review. Never fails the module.
+    - name: "[{{ test_module }}] reclaim a baseline repair lock whose owning run has exited"
+      ansible.builtin.command:
+        argv:
+          - "{{ nd_prerequisite_python | default(ansible_playbook_python) }}"
+          - "-c"
+          - |
+            import fcntl, json, os, re, shutil, stat, sys, time
+            lock = os.environ["NDP_LOCK_DIR"]
+            proc = os.environ.get("NDP_PROC_ROOT") or "/proc"
+            def report(marker, **fields):
+                print(marker + " " + json.dumps(fields, sort_keys=True))
+                sys.exit(0)
+            if not re.fullmatch(r"/.+/nd-prerequisite-baseline[.]lock", lock):
+                report("NDP_PREREQUISITE_LOCK_CHECK_SKIPPED", reason="unsafe lock path", lock=lock)
+            with open(lock + ".reclaim", "a") as guard:
+                fcntl.flock(guard, fcntl.LOCK_EX)
+                try:
+                    info = os.lstat(lock)
+                except FileNotFoundError:
+                    sys.exit(0)
+                if not stat.S_ISDIR(info.st_mode):
+                    report("NDP_PREREQUISITE_LOCK_HELD", reason="lock path is not a directory", lock=lock)
+                try:
+                    with open(os.path.join(lock, "owner.json")) as handle:
+                        owner = json.load(handle)
+                    run_id = str(owner.get("run_id") or "")
+                except (OSError, ValueError, AttributeError):
+                    report("NDP_PREREQUISITE_LOCK_HELD", reason="owner.json missing or unreadable", lock=lock)
+                if not run_id or run_id.startswith("local-"):
+                    report("NDP_PREREQUISITE_LOCK_HELD", reason="owner has no pipeline run id", owner_run_id=run_id)
+                if not os.path.isdir(proc):
+                    report("NDP_PREREQUISITE_LOCK_HELD", reason="process table unavailable", owner_run_id=run_id)
+                token = re.compile(r"nd_prerequisite_run_id=([^\s'\",]+)")
+                alive = []
+                for pid in os.listdir(proc):
+                    if not pid.isdigit() or int(pid) == os.getpid():
+                        continue
+                    try:
+                        with open(os.path.join(proc, pid, "cmdline"), "rb") as handle:
+                            arguments = handle.read().decode("utf-8", "replace").split("\0")
+                    except OSError:
+                        continue
+                    if any(run_id in token.findall(argument) for argument in arguments):
+                        alive.append(int(pid))
+                if alive:
+                    report("NDP_PREREQUISITE_LOCK_HELD", reason="owner run is still active", owner_run_id=run_id, pids=sorted(alive)[:5])
+                tombstone = "%s.stale-%d-%d" % (lock, time.time(), os.getpid())
+                os.rename(lock, tombstone)
+                shutil.rmtree(tombstone, ignore_errors=True)
+                report("NDP_PREREQUISITE_STALE_LOCK_RECLAIMED", owner_run_id=run_id,
+                       owner_execution_id=str(owner.get("execution_id") or ""),
+                       lock_age_seconds=int(time.time() - info.st_mtime),
+                       reclaimed_by=os.environ.get("NDP_RUN_ID", ""))
+      environment:
+        NDP_LOCK_DIR: "{{ nd_prerequisite_repair_lock_dir | default('/tmp/nd-prerequisite-baseline.lock') }}"
+        NDP_RUN_ID: "{{ nd_prerequisite_run_id | default('') }}"
+      register: _ndp_stale_lock_check
+      changed_when: "'NDP_PREREQUISITE_STALE_LOCK_RECLAIMED' in (_ndp_stale_lock_check.stdout | default(''))"
+      failed_when: false
+      delegate_to: localhost
+      run_once: true
+      when:
+        - nd_prerequisite_enable | default(false) | bool
+        - nd_prerequisite_mode | default('fixture') == 'live'
+        - nd_prerequisite_apply | default(false) | bool
+        - not (nd_prerequisite_only | default(false) | bool)
+        - not ansible_check_mode
+
+    - name: "[{{ test_module }}] report the baseline repair lock check"
+      ansible.builtin.debug:
+        msg: "{{ (_ndp_stale_lock_check.stdout | default('', true)) or (_ndp_stale_lock_check.stderr | default('', true) | truncate(400)) }}"
+      when:
+        - _ndp_stale_lock_check is not skipped
+        - ((_ndp_stale_lock_check.stdout | default('', true)) ~ (_ndp_stale_lock_check.stderr | default('', true))) | length > 0
 
     - name: "[{{ test_module }}] prepare and verify declared prerequisites"
       when: nd_prerequisite_enable | default(false) | bool
@@ -432,6 +512,298 @@
         - _ndp_result is defined
         - not (_ndp_prerequisite_failed | default(false) | bool)
 
+    - name: "[{{ test_module }}] clean the known ToR test association before switch deletion"
+      when:
+        - test_module == 'nd_manage_switches'
+        - fabric_name in ['VXLAN_EVPN_Fabric', 'VXLAN_EVPN_Fabric_eBGP']
+        - not (nd_prerequisite_only | default(false) | bool)
+        - not ansible_check_mode
+      block: &ndp_cleanup_test_tor
+        - name: "[{{ test_module }}] resolve the known ToR test pair from the active roster"
+          vars:
+            _tor_members: "{{ nd_pipeline_switches_topology | selectattr('name', 'equalto', 'vxlan_leaf_3') | list }}"
+            _leaf_members: "{{ nd_pipeline_switches_topology | selectattr('name', 'equalto', 'vxlan_leaf_4') | list }}"
+          ansible.builtin.assert:
+            that:
+              - ansible_it_fabric == fabric_name
+              - _tor_members | length == 1
+              - _leaf_members | length == 1
+              - _tor_members[0].serial is string and _tor_members[0].serial | trim | length > 0
+              - _leaf_members[0].serial is string and _leaf_members[0].serial | trim | length > 0
+              - _tor_members[0].serial | lower != _leaf_members[0].serial | lower
+            fail_msg: "NDP_TOR_CLEANUP_BLOCKED: the active fabric or the known test pair could not be verified."
+
+        - name: "[{{ test_module }}] gather active-fabric ToR associations"
+          cisco.nd.nd_manage_tor:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+          register: _ndp_tor_cleanup_before
+          no_log: true
+
+        - name: "[{{ test_module }}] require valid ToR association readback"
+          ansible.builtin.assert:
+            that:
+              - _ndp_tor_cleanup_before.changed is sameas false
+              - _ndp_tor_cleanup_before.before | type_debug == 'list'
+              - _ndp_tor_cleanup_before.before == _ndp_tor_cleanup_before.after
+              - >-
+                _ndp_tor_cleanup_before.after | selectattr('fabric_name', 'defined')
+                | selectattr('fabric_name', 'equalto', fabric_name)
+                | selectattr('access_or_tor_switch_id', 'defined')
+                | selectattr('aggregation_or_leaf_switch_id', 'defined') | list | length
+                == _ndp_tor_cleanup_before.after | length
+            fail_msg: "NDP_TOR_CLEANUP_BLOCKED: the controller did not return verifiable fabric associations."
+
+        - name: "[{{ test_module }}] remove and deploy only the exact standalone ToR test pair"
+          vars:
+            _tor_id: "{{ (nd_pipeline_switches_topology | selectattr('name', 'equalto', 'vxlan_leaf_3') | first).serial }}"
+            _leaf_id: "{{ (nd_pipeline_switches_topology | selectattr('name', 'equalto', 'vxlan_leaf_4') | first).serial }}"
+            _pair_rows: >-
+              {{ _ndp_tor_cleanup_before.after
+                 | selectattr('access_or_tor_switch_id', 'equalto', _tor_id)
+                 | selectattr('aggregation_or_leaf_switch_id', 'equalto', _leaf_id) | list }}
+          when: _pair_rows | length > 0
+          block:
+            - name: "[{{ test_module }}] refuse ambiguous or vPC test-pair matches"
+              ansible.builtin.assert:
+                that:
+                  - _pair_rows | length == 1
+                  - not (_pair_rows[0].access_or_tor_peer_switch_id | default(none, true))
+                  - not (_pair_rows[0].aggregation_or_leaf_peer_switch_id | default(none, true))
+                fail_msg: "NDP_TOR_CLEANUP_BLOCKED: the known pair is duplicated or belongs to a vPC association."
+
+            - name: "[{{ test_module }}] disassociate the test pair, then Recalculate and Deploy"
+              cisco.nd.nd_manage_tor:
+                fabric_name: "{{ fabric_name }}"
+                state: deleted
+                config:
+                  - access_or_tor_switch: "{{ _tor_id }}"
+                    aggregation_or_leaf_switch: "{{ _leaf_id }}"
+                config_actions:
+                  save: true
+                  deploy: true
+                  type: switch
+              register: _ndp_tor_cleanup_delete
+              no_log: true
+
+            - name: "[{{ test_module }}] require a confirmed disassociation before claiming deployment"
+              ansible.builtin.assert:
+                that: _ndp_tor_cleanup_delete.changed is sameas true
+                fail_msg: "NDP_TOR_CLEANUP_BLOCKED: the expected disassociation did not change; Recalculate and Deploy are unconfirmed."
+
+            - name: "[{{ test_module }}] verify the ToR test association is absent"
+              cisco.nd.nd_manage_tor:
+                fabric_name: "{{ fabric_name }}"
+                state: gathered
+              register: _ndp_tor_cleanup_after
+              until: >-
+                _ndp_tor_cleanup_after is succeeded
+                and _ndp_tor_cleanup_after.changed is sameas false
+                and _ndp_tor_cleanup_after.after | type_debug == 'list'
+                and _ndp_tor_cleanup_after.before == _ndp_tor_cleanup_after.after
+                and _ndp_tor_cleanup_after.after
+                  | selectattr('fabric_name', 'defined') | selectattr('fabric_name', 'equalto', fabric_name)
+                  | selectattr('access_or_tor_switch_id', 'defined') | selectattr('aggregation_or_leaf_switch_id', 'defined')
+                  | list | length == _ndp_tor_cleanup_after.after | length
+                and _ndp_tor_cleanup_after.after
+                  | selectattr('access_or_tor_switch_id', 'equalto', _tor_id)
+                  | selectattr('aggregation_or_leaf_switch_id', 'equalto', _leaf_id) | list | length == 0
+              retries: 5
+              delay: 5
+              no_log: true
+
+            - name: "[{{ test_module }}] report verified ToR test-pair cleanup"
+              ansible.builtin.debug:
+                msg: "NDP_TOR_CLEANUP_OK: disassociation and switch-scoped Recalculate/Deploy completed; the test pair is absent."
+      rescue: &ndp_cleanup_test_tor_failure
+        - name: "[{{ test_module }}] report unverified ToR cleanup"
+          ansible.builtin.fail:
+            msg: "NDP_TOR_CLEANUP_FAILED: {{ ansible_failed_task.name }}; cleanup did not complete or could not be verified."
+
+    # This target deletes the entire fabric inventory, not just its three seeds.
+    # Unlike best-effort fixture checks, an unverified delete must not continue.
+    - name: "[{{ test_module }}] require safe fabric-wide switch deletion"
+      when:
+        - test_module == 'nd_manage_switches'
+        - not (nd_prerequisite_only | default(false) | bool)
+        - not ansible_check_mode
+      block:
+        - name: "[{{ test_module }}] require a declared switch-delete fabric and roster"
+          ansible.builtin.assert:
+            that:
+              - ansible_it_fabric == fabric_name
+              - nd_pipeline_switches_topology | length > 0
+              - nd_pipeline_switches_topology | map(attribute='serial') | unique | length == nd_pipeline_switches_topology | length
+            fail_msg: "NDP_SWITCH_DELETE_PREFLIGHT_BLOCKED: target fabric or canonical roster is unverified; no target lifecycle was started."
+
+        - name: "[{{ test_module }}] enforce NDP_INTERFACE_BASELINE_HOOK before switch-delete admission"
+          ansible.builtin.include_tasks: "{{ playbook_dir }}/nd_prerequisite/interface_baseline.yaml"
+          vars:
+            nd_fabric_name: "{{ fabric_name }}"
+            nd_external_fabric_name: "{{ nd_test_fabric2_name }}"
+          when: nd_interface_baseline_enabled | default(lookup('env', 'ND_INTERFACE_BASELINE_ENABLED') | default(true, true)) | bool
+
+        - name: "[{{ test_module }}] read switch-delete inventory"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/fabrics/{{ fabric_name | urlencode }}/switches?max=200"
+          register: _ndp_delete_inventory
+          failed_when: false
+          no_log: true
+
+        - name: "[{{ test_module }}] read switch-delete ToR associations"
+          cisco.nd.nd_manage_tor:
+            fabric_name: "{{ fabric_name }}"
+            state: gathered
+          register: _ndp_delete_tor
+          failed_when: false
+          no_log: true
+
+        - name: "[{{ test_module }}] read switch-delete anomalies"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/analyze/anomalies/details?fabricName={{ fabric_name | urlencode }}&max=200"
+          register: _ndp_delete_anomalies
+          failed_when: false
+          no_log: true
+
+        - name: "[{{ test_module }}] read global inventory for retired Leaf-ToR identities"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/manage/inventory/switches?max=10000"
+          register: _ndp_delete_global_inventory
+          failed_when: false
+          no_log: true
+
+        - name: "[{{ test_module }}] require complete switch-delete safety evidence"
+          ansible.builtin.assert:
+            that:
+              - _ndp_delete_inventory.status | default(0) | int == 200
+              - _ndp_delete_inventory.current is mapping
+              - "'error' not in _ndp_delete_inventory.current and 'errors' not in _ndp_delete_inventory.current and 'code' not in _ndp_delete_inventory.current"
+              - _ndp_delete_inventory.current.switches is defined
+              - _ndp_delete_inventory.current.switches | type_debug == 'list'
+              - _ndp_delete_inventory.current.switches | length < 200
+              - not (_ndp_delete_tor.changed | default(false) | bool)
+              - _ndp_delete_tor.before is defined
+              - _ndp_delete_tor.after is defined
+              - _ndp_delete_tor.before | type_debug == 'list'
+              - _ndp_delete_tor.before == _ndp_delete_tor.after
+              - _ndp_delete_anomalies.status | default(0) | int == 200
+              - _ndp_delete_anomalies.current is mapping
+              - "'error' not in _ndp_delete_anomalies.current and 'errors' not in _ndp_delete_anomalies.current and 'code' not in _ndp_delete_anomalies.current"
+              - _ndp_delete_anomalies.current.anomalies is defined
+              - _ndp_delete_anomalies.current.anomalies | type_debug == 'list'
+              - _ndp_delete_anomalies.current.anomalies | length < 200
+            fail_msg: "NDP_SWITCH_DELETE_PREFLIGHT_UNVERIFIED: incomplete or failed controller readback; no target lifecycle was started."
+
+        - name: "[{{ test_module }}] require only canonical switches in the delete fabric"
+          ansible.builtin.assert:
+            that:
+              - _ndp_delete_inventory.current.switches | map(attribute='switchId') | sort == nd_pipeline_switches_topology | map(attribute='serial') | sort
+              - _ndp_delete_tor.before | length == 0
+            fail_msg: "NDP_SWITCH_DELETE_PREFLIGHT_BLOCKED: fabric membership differs from the roster or ToR associations remain; no target lifecycle was started."
+
+        - name: "[{{ test_module }}] require roster roles before switch deletion"
+          ansible.builtin.assert:
+            that:
+              - item.switchRole | default('') | lower == _ndp_expected_role | lower
+            fail_msg: "NDP_SWITCH_DELETE_PREFLIGHT_BLOCKED: a switch role differs from the roster; no target lifecycle was started."
+          vars:
+            _ndp_expected_role: "{{ (nd_pipeline_switches_topology | selectattr('serial', 'equalto', item.switchId) | first).role }}"
+          loop: "{{ _ndp_delete_inventory.current.switches }}"
+          no_log: true
+
+        # ND keeps the October Leaf-ToR unpairing warnings for the retained test pair
+        # (vxlan_leaf_3/vxlan_leaf_4) uncleared even after Recalculate and Deploy with no
+        # association left; the switches count patch accepts exactly that retained pair.
+        # Historical identities require exact name/serial matching and verified global absence.
+        - name: "[{{ test_module }}] classify uncleared Leaf-ToR deletion warnings"
+          vars:
+            _ndp_retired_leaf_tor_identities:
+              vxlan_leaf_3: 9FHEMB26I85
+              vxlan_leaf_4: 9NM46MBYL0B
+          ansible.builtin.set_fact:
+            _ndp_delete_leaf_tor: >-
+              {%- set pair = nd_pipeline_switches_topology | selectattr('name', 'defined')
+                   | selectattr('name', 'in', ['vxlan_leaf_3', 'vxlan_leaf_4'])
+                   | map(attribute='serial') | map('lower') | list -%}
+              {%- set global_reply = _ndp_delete_global_inventory | default({}) -%}
+              {%- set global_body = global_reply.current | default({}) -%}
+              {%- set global_rows = global_body.switches | default(none) if global_body is mapping else none -%}
+              {%- set counts = global_body.meta.counts | default({}) if global_body is mapping else {} -%}
+              {%- set global_verified = global_reply.status | default(0) | int == 200
+                   and not (global_reply.failed | default(false))
+                   and global_body is mapping and 'error' not in global_body and 'errors' not in global_body and 'code' not in global_body
+                   and global_rows is sequence and global_rows is not string and global_rows is not mapping
+                   and global_rows | length < 10000 and counts is mapping
+                   and counts.remaining | default(none) | type_debug == 'int'
+                   and counts.total | default(none) | type_debug == 'int'
+                   and counts.remaining | default(-1) | int == 0 and counts.total | default(-1) | int == global_rows | length -%}
+              {%- set live_ids = namespace(values=[], valid=global_verified) -%}
+              {%- if global_verified -%}
+                {%- for switch in global_rows -%}
+                  {%- if switch is not mapping or switch.switchId | default(none) is not string or not switch.switchId -%}
+                    {%- set live_ids.valid = false -%}
+                  {%- else -%}{%- set live_ids.values = live_ids.values + [switch.switchId | lower] -%}{%- endif -%}
+                {%- endfor -%}
+              {%- endif -%}
+              {%- set ns = namespace(malformed=0, known=0, retired=0, unknown=0) -%}
+              {%- for row in _ndp_delete_anomalies.current.anomalies -%}
+                {%- if row is not mapping or row.get('fabricName') is not string or row.get('anomalyString') is not string
+                      or row.get('cleared') is not boolean -%}
+                  {%- set ns.malformed = ns.malformed + 1 -%}
+                {%- elif row.fabricName == fabric_name and not row.cleared
+                      and row.anomalyString is search('(?i)leaf-tor unpairing')
+                      and row.anomalyString is search('(?i)recalculate\\s+and\\s+deploy') -%}
+                  {%- set identities = row.anomalyString | lower | regex_findall('\\[([^\\[\\]]+)\\]') -%}
+                  {%- set hit = namespace(pair=0, retired=0, other=0) -%}
+                  {%- for identity in identities -%}
+                    {%- set parts = identity.split('/') -%}
+                    {%- set serial = parts[-1] -%}
+                    {%- if pair | length == 2 and identity is match('^[a-z0-9_.-]+(/[a-z0-9_.-]+)?$') and serial in pair -%}
+                      {%- set hit.pair = hit.pair + 1 -%}
+                    {%- elif pair | length == 2 and parts | length == 2
+                          and parts[0] in _ndp_retired_leaf_tor_identities
+                          and serial == _ndp_retired_leaf_tor_identities[parts[0]] | lower
+                          and live_ids.valid and serial not in live_ids.values -%}
+                      {%- set hit.retired = hit.retired + 1 -%}
+                    {%- else -%}{%- set hit.other = hit.other + 1 -%}{%- endif -%}
+                  {%- endfor -%}
+                  {%- if hit.pair + hit.retired > 0 and hit.other == 0 -%}
+                    {%- if hit.retired > 0 -%}{%- set ns.retired = ns.retired + 1 -%}
+                    {%- else -%}{%- set ns.known = ns.known + 1 -%}{%- endif -%}
+                  {%- else -%}{%- set ns.unknown = ns.unknown + 1 -%}{%- endif -%}
+                {%- endif -%}
+              {%- endfor -%}
+              {{- {'malformed': ns.malformed, 'known': ns.known, 'retired': ns.retired, 'unknown': ns.unknown} -}}
+
+        - name: "[{{ test_module }}] require cleared Leaf-ToR deletion warnings outside the retained test pair"
+          ansible.builtin.assert:
+            that:
+              - _ndp_delete_leaf_tor.malformed | int == 0
+              - _ndp_delete_leaf_tor.unknown | int == 0
+            fail_msg: >-
+              NDP_SWITCH_DELETE_PREFLIGHT_BLOCKED: unverified Leaf-ToR warnings remain
+              (current_pair={{ _ndp_delete_leaf_tor.known }}, retired_pair={{ _ndp_delete_leaf_tor.retired }},
+              unknown={{ _ndp_delete_leaf_tor.unknown }}, malformed={{ _ndp_delete_leaf_tor.malformed }}).
+              Historical identities require complete global inventory and verified absence; no target lifecycle was started.
+
+        - name: "[{{ test_module }}] report verified switch-delete readiness"
+          ansible.builtin.debug:
+            msg: >-
+              NDP_SWITCH_DELETE_PREFLIGHT_OK: canonical roles and membership confirmed, no ToR associations,
+              no active Leaf-ToR deletion warnings outside the retained test pair
+              (retained_pair_warnings={{ _ndp_delete_leaf_tor.known }},
+              retired_pair_warnings={{ _ndp_delete_leaf_tor.retired }}).
+      rescue:
+        - name: "[{{ test_module }}] stop an unsafe switch-delete target"
+          ansible.builtin.fail:
+            msg: >-
+              NDP_SWITCH_DELETE_PREFLIGHT_BLOCKED: {{ ansible_failed_task.name }};
+              no target lifecycle was started. Inspect ToR associations, roster roles and Leaf-ToR anomalies.
+              The safety check does not change roles, force-remove switches or acknowledge anomalies.
+
     - name: "[{{ test_module }}] discover optional setup/cleanup task files (names vary)"
       ansible.builtin.stat:
         path: "{{ playbook_dir }}/tests/integration/targets/{{ test_module }}/tasks/{{ item }}"
@@ -529,8 +901,7 @@
       ignore_errors: true
       when: test_module == 'nd_manage_vrfs' and not (nd_prerequisite_only | default(false) | bool)
 
-    # Pipeline fixtures (L3Out VRFs/route maps, L2 DCI endpoints, vPC pairs, peer-link readiness) are
-    # prerequisites, not authored setup: a failure is recorded and the authored target still runs.
+    # Record pipeline fixture failures separately from authored setup failures.
     - name: "[{{ test_module }}] SETUP - prepare module-specific pipeline fixtures"
       block:
         # -------------------------------------------------------------------------
@@ -699,18 +1070,39 @@
               when: _ndp_l3out_route_maps_created | length > 0
 
         # -------------------------------------------------------------------------
-        # SETUP (nd_manage_l3out SVI case): ND accepts an SVI L3Out only over an ext_l2_dci_link
-        # (policy layer2Dci) between the authored switch pair. Scoped build 3 (2026-11-16) had that link
-        # present with trunk intent on both Eth1/4 endpoints, yet the border endpoint was still routed on the
-        # switch and the SVI create failed with 207 "No appropriate link found". Deploy only the trunk intent ND
-        # already stores for that link's endpoints. Nothing here writes intent or fails the target: the routed
-        # and subInterface cases still run, and an SVI failure stays visible in the target's own result.
+        # SETUP (nd_manage_l3out SVI case): require the discovered physical path,
+        # manage the ext_l2_dci_link on it, then verify both deployed endpoints.
         - name: "[{{ test_module }}] SETUP - deploy the stored L2 DCI endpoint intent the SVI case uses"
           when:
             - test_module == 'nd_manage_l3out'
             - not (nd_prerequisite_only | default(false) | bool)
-            - nd_l3out_deploy_l2dci_endpoints | default(true) | bool
             - (l3out_svi | default({})).connectivity_details.routing_interface_type | default('') == 'svi'
+          vars:
+            _ndp_l2dci_oper: "{{ _ndp_l2dci_current.operData | default({}, true) }}"
+            _ndp_l2dci_vlan_range: "{{ _ndp_l2dci_oper.vlanRange | default('', true) | string | lower | regex_replace('\\s+', '') }}"
+            _ndp_l2dci_vlan_list_reported: >-
+              {{ _ndp_l2dci_vlan_range in ['all', 'none']
+                 or _ndp_l2dci_vlan_range is match('^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$') }}
+            _ndp_l2dci_vlan_allowed: >-
+              {%- set result = namespace(allowed=_ndp_l2dci_vlan_range == 'all') -%}
+              {%- if _ndp_l2dci_vlan_list_reported | bool and _ndp_l2dci_vlan_range not in ['all', 'none'] -%}
+                {%- for token in _ndp_l2dci_vlan_range.split(',') -%}
+                  {%- set bounds = token.split('-') | map('int') | list -%}
+                  {%- if bounds[0] <= (_ndp_l2dci_vlan | int) <= bounds[-1] -%}
+                    {%- set result.allowed = true -%}
+                  {%- endif -%}
+                {%- endfor -%}
+              {%- endif -%}
+              {{ result.allowed }}
+            _ndp_l2dci_port_trunk: >-
+              {{ (_ndp_l2dci_current.switchId | default('')) == _ndp_l2dci_endpoint.serial
+                 and (_ndp_l2dci_current.interfaceName | default('')) == _ndp_l2dci_endpoint.interface
+                 and (_ndp_l2dci_oper.mode | default('')) == 'trunk'
+                 and (_ndp_l2dci_oper.adminStatus | default('')) == 'up' }}
+            _ndp_l2dci_port_ready: >-
+              {{ (_ndp_l2dci_port_trunk | bool)
+                 and (_ndp_l2dci_oper.operationalStatus | default('')) == 'up'
+                 and (_ndp_l2dci_vlan_allowed | bool) }}
           block:
             - name: "[{{ test_module }}] SETUP - resolve the authored SVI switch pair"
               ansible.builtin.set_fact:
@@ -718,62 +1110,177 @@
                 _ndp_l2dci_fabric_by_switch: >-
                   {{ {(_ndp_l2dci_case_link.switch1_details.switch_id | default('') | string): (l3out_svi.fabric1_name | default('') | string),
                       (_ndp_l2dci_case_link.switch2_details.switch_id | default('') | string): (l3out_svi.fabric2_name | default('') | string)} }}
+                _ndp_l2dci_switch1: "{{ _ndp_l2dci_case_link.switch1_details.switch_id | default('') | string }}"
+                _ndp_l2dci_switch2: "{{ _ndp_l2dci_case_link.switch2_details.switch_id | default('') | string }}"
+                _ndp_l2dci_vlan: "{{ _ndp_l2dci_case_link.vlan_id | default(0) | int }}"
+                _ndp_l2dci_interface1: "{{ nd_l3out_l2dci_switch1_interface | default('Ethernet1/4') }}"
+                _ndp_l2dci_interface2: "{{ nd_l3out_l2dci_switch2_interface | default('Ethernet1/4') }}"
+                _ndp_l2dci_physical_matches: []
                 _ndp_l2dci_matches: []
                 _ndp_l2dci_endpoints: []
                 _ndp_l2dci_state: []
                 _ndp_l2dci_pending: []
-                _ndp_l2dci_unconverged: []
+                _ndp_l2dci_port_status: []
+                _ndp_l2dci_physical_readable: false
               vars:
                 _ndp_l2dci_case_link: "{{ l3out_svi.connectivity_details.links | default([], true) | first | default({}, true) }}"
 
-            - name: "[{{ test_module }}] SETUP - require two distinct authored SVI switches with fabrics"
-              ansible.builtin.set_fact:
-                _ndp_l2dci_pair_ok: >-
-                  {{ _ndp_l2dci_fabric_by_switch | length == 2
-                     and '' not in (_ndp_l2dci_fabric_by_switch.keys() | list)
-                     and '' not in (_ndp_l2dci_fabric_by_switch.values() | list) }}
+            - name: "[{{ test_module }}] SETUP - require the authored SVI endpoints and VLAN"
+              ansible.builtin.assert:
+                that:
+                  - _ndp_l2dci_fabric_by_switch | length == 2
+                  - "'' not in _ndp_l2dci_fabric_by_switch"
+                  - "'' not in (_ndp_l2dci_fabric_by_switch.values() | list)"
+                  - 1 <= (_ndp_l2dci_vlan | int) <= 4094
+                fail_msg: "NDP_L3OUT_L2DCI_PREREQUISITE_FAILED: the authored SVI requires two switches, two fabric endpoints, and a valid VLAN."
 
-            - name: "[{{ test_module }}] SETUP - read the links ND manages for {{ _ndp_l2dci_fabric1 }}"
+            - name: "[{{ test_module }}] SETUP - read discovered physical links for the SVI fabric"
+              cisco.nd.nd_rest:
+                method: get
+                path: "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/links?fabric={{ _ndp_l2dci_fabric1 }}"
+              register: _ndp_l2dci_links
+              no_log: true
+
+            - name: "[{{ test_module }}] SETUP - select the exact discovered physical SVI cable"
+              ansible.builtin.set_fact:
+                _ndp_l2dci_physical_readable: "{{ _ndp_l2dci_rows is not string and _ndp_l2dci_rows is iterable and _ndp_l2dci_rows is not mapping }}"
+                _ndp_l2dci_physical_matches: >-
+                  {{ ([] if (_ndp_l2dci_rows is string or _ndp_l2dci_rows is not iterable or _ndp_l2dci_rows is mapping) else _ndp_l2dci_rows)
+                     | select('mapping')
+                     | selectattr('link-type', 'defined') | selectattr('link-type', 'equalto', 'ethisl')
+                     | selectattr('sw1-info.sw-serial-number', 'defined')
+                     | selectattr('sw2-info.sw-serial-number', 'defined')
+                     | selectattr('sw1-info.if-name', 'defined')
+                     | selectattr('sw2-info.if-name', 'defined')
+                     | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_l2dci_switch1)
+                     | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_l2dci_switch2)
+                     | selectattr('sw1-info.if-name', 'equalto', _ndp_l2dci_interface1)
+                     | selectattr('sw2-info.if-name', 'equalto', _ndp_l2dci_interface2)
+                     | list
+                     +
+                     (([] if (_ndp_l2dci_rows is string or _ndp_l2dci_rows is not iterable or _ndp_l2dci_rows is mapping) else _ndp_l2dci_rows)
+                      | select('mapping')
+                      | selectattr('link-type', 'defined') | selectattr('link-type', 'equalto', 'ethisl')
+                      | selectattr('sw1-info.sw-serial-number', 'defined')
+                      | selectattr('sw2-info.sw-serial-number', 'defined')
+                      | selectattr('sw1-info.if-name', 'defined')
+                      | selectattr('sw2-info.if-name', 'defined')
+                      | selectattr('sw1-info.sw-serial-number', 'equalto', _ndp_l2dci_switch2)
+                      | selectattr('sw2-info.sw-serial-number', 'equalto', _ndp_l2dci_switch1)
+                      | selectattr('sw1-info.if-name', 'equalto', _ndp_l2dci_interface2)
+                      | selectattr('sw2-info.if-name', 'equalto', _ndp_l2dci_interface1)
+                      | list) }}
+              vars:
+                _ndp_l2dci_rows: >-
+                  {{ _ndp_l2dci_links.current.DATA
+                     if ((_ndp_l2dci_links.current | default('')) is mapping and _ndp_l2dci_links.current.DATA is defined)
+                     else (_ndp_l2dci_links.current.links
+                           if ((_ndp_l2dci_links.current | default('')) is mapping and _ndp_l2dci_links.current.links is defined)
+                           else _ndp_l2dci_links.current | default('')) }}
+
+            - name: "[{{ test_module }}] SETUP - require one discovered physical path for the L2 DCI link"
+              ansible.builtin.assert:
+                that:
+                  - _ndp_l2dci_physical_readable | bool
+                  - _ndp_l2dci_physical_matches | length == 1
+                fail_msg: >-
+                  NDP_L3OUT_L2DCI_PREREQUISITE_FAILED: expected exactly one discovered physical
+                  ethisl adjacency between {{ _ndp_l2dci_switch1 }}/{{ _ndp_l2dci_interface1 }} and
+                  {{ _ndp_l2dci_switch2 }}/{{ _ndp_l2dci_interface2 }}; found
+                  {{ _ndp_l2dci_physical_matches | length }}. No logical link or interface intent was changed.
+
+            - name: "[{{ test_module }}] SETUP - ensure the SVI ext_l2_dci_link on the discovered cable"
+              cisco.nd.nd_manage_links:
+                fabric_name: "{{ _ndp_l2dci_fabric1 }}"
+                link_scope: manage
+                config:
+                  - src_fabric_name: "{{ l3out_svi.fabric1_name }}"
+                    dst_fabric_name: "{{ l3out_svi.fabric2_name }}"
+                    src_switch_id: "{{ _ndp_l2dci_switch1 }}"
+                    dst_switch_id: "{{ _ndp_l2dci_switch2 }}"
+                    src_interface_name: "{{ _ndp_l2dci_interface1 }}"
+                    dst_interface_name: "{{ _ndp_l2dci_interface2 }}"
+                    config_data:
+                      policy_type: layer2Dci
+                      template_inputs:
+                        trunk_allowed_vlans: "{{ ([100, 200, 300, _ndp_l2dci_vlan | int] | unique | sort) | join(',') }}"
+                        native_vlan: 1
+                        port_type_fast: true
+                        mtu_type: jumbo
+                        speed: auto
+                        bpdu_guard: default
+                state: merged
+              when: nd_l3out_deploy_l2dci_endpoints | default(true) | bool
+
+            - &ndp_read_l2dci_link
+              name: "[{{ test_module }}] SETUP - read the managed SVI L2 DCI link"
               cisco.nd.nd_rest:
                 method: get
                 path: "/api/v1/manage/links?fabricName={{ _ndp_l2dci_fabric1 }}"
-              register: _ndp_l2dci_links
+              register: _ndp_l2dci_managed_links
               failed_when: false
               no_log: true
-              when: _ndp_l2dci_pair_ok | bool
 
-            - name: "[{{ test_module }}] SETUP - select the layer2Dci link between the authored SVI switches"
+            - &ndp_select_l2dci_link
+              name: "[{{ test_module }}] SETUP - select the managed layer2Dci link for the exact cable"
               ansible.builtin.set_fact:
-                _ndp_l2dci_links_readable: "{{ _ndp_l2dci_rows is not string and _ndp_l2dci_rows is iterable and _ndp_l2dci_rows is not mapping }}"
                 _ndp_l2dci_matches: >-
                   {{ ([] if (_ndp_l2dci_rows is string or _ndp_l2dci_rows is not iterable or _ndp_l2dci_rows is mapping) else _ndp_l2dci_rows)
                      | select('mapping')
                      | selectattr('configData', 'defined') | selectattr('configData', 'mapping')
                      | selectattr('configData.policyType', 'defined')
                      | selectattr('configData.policyType', 'equalto', 'layer2Dci')
+                     | selectattr('srcFabricName', 'defined') | selectattr('dstFabricName', 'defined')
+                     | selectattr('srcFabricName', 'equalto', l3out_svi.fabric1_name)
+                     | selectattr('dstFabricName', 'equalto', l3out_svi.fabric2_name)
                      | selectattr('srcSwitchId', 'defined') | selectattr('dstSwitchId', 'defined')
                      | selectattr('srcInterfaceName', 'defined') | selectattr('dstInterfaceName', 'defined')
-                     | selectattr('srcSwitchId', 'in', _ndp_l2dci_fabric_by_switch.keys() | list)
-                     | selectattr('dstSwitchId', 'in', _ndp_l2dci_fabric_by_switch.keys() | list)
-                     | list }}
+                     | selectattr('srcSwitchId', 'equalto', _ndp_l2dci_switch1)
+                     | selectattr('dstSwitchId', 'equalto', _ndp_l2dci_switch2)
+                     | selectattr('srcInterfaceName', 'equalto', _ndp_l2dci_interface1)
+                     | selectattr('dstInterfaceName', 'equalto', _ndp_l2dci_interface2)
+                     | list
+                     +
+                     (([] if (_ndp_l2dci_rows is string or _ndp_l2dci_rows is not iterable or _ndp_l2dci_rows is mapping) else _ndp_l2dci_rows)
+                      | select('mapping')
+                      | selectattr('configData', 'defined') | selectattr('configData', 'mapping')
+                      | selectattr('configData.policyType', 'defined')
+                      | selectattr('configData.policyType', 'equalto', 'layer2Dci')
+                      | selectattr('srcFabricName', 'defined') | selectattr('dstFabricName', 'defined')
+                      | selectattr('srcFabricName', 'equalto', l3out_svi.fabric2_name)
+                      | selectattr('dstFabricName', 'equalto', l3out_svi.fabric1_name)
+                      | selectattr('srcSwitchId', 'defined') | selectattr('dstSwitchId', 'defined')
+                      | selectattr('srcInterfaceName', 'defined') | selectattr('dstInterfaceName', 'defined')
+                      | selectattr('srcSwitchId', 'equalto', _ndp_l2dci_switch2)
+                      | selectattr('dstSwitchId', 'equalto', _ndp_l2dci_switch1)
+                      | selectattr('srcInterfaceName', 'equalto', _ndp_l2dci_interface2)
+                      | selectattr('dstInterfaceName', 'equalto', _ndp_l2dci_interface1)
+                      | list) }}
               vars:
                 _ndp_l2dci_rows: >-
-                  {{ _ndp_l2dci_links.current.links
-                     if ((_ndp_l2dci_links.current | default('')) is mapping and _ndp_l2dci_links.current.links is defined)
+                  {{ _ndp_l2dci_managed_links.current.links
+                     if ((_ndp_l2dci_managed_links.current | default('')) is mapping and _ndp_l2dci_managed_links.current.links is defined)
                      else '' }}
-              when: _ndp_l2dci_pair_ok | bool
+
+            - name: "[{{ test_module }}] SETUP - verify the managed link before deploying either endpoint"
+              ansible.builtin.assert:
+                that:
+                  - _ndp_l2dci_matches | length == 1
+                fail_msg: >-
+                  NDP_L3OUT_L2DCI_PREREQUISITE_FAILED: expected one managed layer2Dci link for the
+                  declared fabrics and cable; found {{ _ndp_l2dci_matches | length }}.
 
             - name: "[{{ test_module }}] SETUP - name both endpoints of the single matching link"
               ansible.builtin.set_fact:
                 _ndp_l2dci_endpoints:
-                  - name: "{{ _ndp_l2dci_link.srcSwitchName | default('switch1') }}"
-                    fabric: "{{ _ndp_l2dci_fabric_by_switch[_ndp_l2dci_link.srcSwitchId] }}"
-                    serial: "{{ _ndp_l2dci_link.srcSwitchId }}"
-                    interface: "{{ _ndp_l2dci_link.srcInterfaceName }}"
-                  - name: "{{ _ndp_l2dci_link.dstSwitchName | default('switch2') }}"
-                    fabric: "{{ _ndp_l2dci_fabric_by_switch[_ndp_l2dci_link.dstSwitchId] }}"
-                    serial: "{{ _ndp_l2dci_link.dstSwitchId }}"
-                    interface: "{{ _ndp_l2dci_link.dstInterfaceName }}"
+                  - name: "{{ _ndp_l2dci_link.srcSwitchName | default('switch1') if _ndp_l2dci_link.srcSwitchId == _ndp_l2dci_switch1 else _ndp_l2dci_link.dstSwitchName | default('switch1') }}"
+                    fabric: "{{ _ndp_l2dci_fabric_by_switch[_ndp_l2dci_switch1] }}"
+                    serial: "{{ _ndp_l2dci_switch1 }}"
+                    interface: "{{ _ndp_l2dci_interface1 }}"
+                  - name: "{{ _ndp_l2dci_link.dstSwitchName | default('switch2') if _ndp_l2dci_link.dstSwitchId == _ndp_l2dci_switch2 else _ndp_l2dci_link.srcSwitchName | default('switch2') }}"
+                    fabric: "{{ _ndp_l2dci_fabric_by_switch[_ndp_l2dci_switch2] }}"
+                    serial: "{{ _ndp_l2dci_switch2 }}"
+                    interface: "{{ _ndp_l2dci_interface2 }}"
               vars:
                 _ndp_l2dci_link: "{{ _ndp_l2dci_matches | first }}"
               when:
@@ -794,32 +1301,36 @@
                 _ndp_l2dci_state: >-
                   {{ _ndp_l2dci_state + [item.item | combine({
                        'intent_trunk': _ndp_l2dci_intent_ok | bool,
-                       'converged': (_ndp_l2dci_intent_ok | bool) and (_ndp_l2dci_oper_ok | bool),
-                       'mode': _ndp_l2dci_cur.operData.mode | default('unknown', true) | string,
-                       'admin': _ndp_l2dci_cur.operData.adminStatus | default('unknown', true) | string})] }}
+                       'needs_deploy': not (_ndp_l2dci_port_trunk | bool)
+                           or ((_ndp_l2dci_oper.operationalStatus | default('')) == 'up'
+                               and (_ndp_l2dci_vlan_list_reported | bool)
+                               and not (_ndp_l2dci_vlan_allowed | bool))})] }}
               loop: "{{ _ndp_l2dci_before.results | default([]) }}"
               vars:
-                _ndp_l2dci_cur: "{{ item.current if (item.current | default('')) is mapping else {} }}"
+                _ndp_l2dci_endpoint: "{{ item.item }}"
+                _ndp_l2dci_current: "{{ item.current if (item.current | default('')) is mapping else {} }}"
                 _ndp_l2dci_intent_ok: >-
-                  {{ (_ndp_l2dci_cur.switchId | default('')) == item.item.serial
-                     and (_ndp_l2dci_cur.interfaceName | default('')) == item.item.interface
-                     and (_ndp_l2dci_cur.configData.mode | default('')) == 'trunk'
-                     and (_ndp_l2dci_cur.configData.networkOS.policy.policyType | default('')) == 'l2DciLinkMember'
-                     and (_ndp_l2dci_cur.configData.networkOS.policy.adminState | default(false) | bool) }}
-                _ndp_l2dci_oper_ok: >-
-                  {{ (_ndp_l2dci_cur.operData.mode | default('')) == 'trunk'
-                     and (_ndp_l2dci_cur.operData.adminStatus | default('')) == 'up' }}
+                  {{ (_ndp_l2dci_current.switchId | default('')) == item.item.serial
+                     and (_ndp_l2dci_current.interfaceName | default('')) == item.item.interface
+                     and (_ndp_l2dci_current.configData.mode | default('')) == 'trunk'
+                     and (_ndp_l2dci_current.configData.networkOS.policy.policyType | default('')) == 'l2DciLinkMember'
+                     and (_ndp_l2dci_current.configData.networkOS.policy.adminState | default(false) | bool) }}
               no_log: true
+
+            - name: "[{{ test_module }}] SETUP - require enabled L2 DCI trunk intent on both endpoints"
+              ansible.builtin.assert:
+                that:
+                  - _ndp_l2dci_state | length == 2
+                  - _ndp_l2dci_state | rejectattr('intent_trunk') | list | length == 0
+                fail_msg: "NDP_L3OUT_L2DCI_PREREQUISITE_FAILED: stored intent is not an enabled l2DciLinkMember trunk on both endpoints."
 
             - name: "[{{ test_module }}] SETUP - select endpoints whose stored trunk intent is not on the switch"
               ansible.builtin.set_fact:
-                _ndp_l2dci_pending: >-
-                  {{ (_ndp_l2dci_state | rejectattr('converged') | list)
-                     if (_ndp_l2dci_state | length == 2 and _ndp_l2dci_state | rejectattr('intent_trunk') | list | length == 0)
-                     else [] }}
+                _ndp_l2dci_pending: "{{ _ndp_l2dci_state | selectattr('needs_deploy') | list }}"
+              when: nd_l3out_deploy_l2dci_endpoints | default(true) | bool
 
-            # ND answers interfaceActions/deploy with HTTP 207 and nd_rest raises after ND accepted it, so this
-            # result proves nothing; the switch-reported mode read below is the evidence.
+            # interfaceActions/deploy can return HTTP 207 after accepting the request.
+            # Verify the outcome using both ports' operational readback.
             - name: "[{{ test_module }}] SETUP - deploy the stored trunk intent of unconverged L2 DCI endpoints"
               cisco.nd.nd_rest:
                 method: post
@@ -829,67 +1340,70 @@
                     - interfaceName: "{{ item.interface }}"
                       switchId: "{{ item.serial }}"
               loop: "{{ _ndp_l2dci_pending }}"
-              register: _ndp_l2dci_deploy
               failed_when: false
               no_log: true
 
-            # The attempts clause ends polling on the last retry without Ansible's exhaustion failure;
-            # convergence is judged by the next task, which never fails the target.
+            # Read both ports again, including ports that needed no deployment.
+            # Keep exhausted results so the assertion can report each endpoint.
             - name: "[{{ test_module }}] SETUP - wait for the switch to report the deployed trunk endpoints"
               cisco.nd.nd_rest:
                 method: get
                 path: "/api/v1/manage/fabrics/{{ item.fabric }}/switches/{{ item.serial }}/interfaces/{{ item.interface | replace('/', '%2F') }}"
-              loop: "{{ _ndp_l2dci_pending }}"
+              loop: "{{ _ndp_l2dci_endpoints }}"
               register: _ndp_l2dci_after
               retries: "{{ nd_l3out_l2dci_retries | default(12) | int }}"
               delay: "{{ nd_l3out_l2dci_delay | default(10) | int }}"
+              vars:
+                _ndp_l2dci_endpoint: "{{ item }}"
+                _ndp_l2dci_current: "{{ _ndp_l2dci_after.current if (_ndp_l2dci_after.current | default('')) is mapping else {} }}"
               until: >-
-                ((_ndp_l2dci_after.current | default({})).switchId | default('')) == item.serial
-                and ((_ndp_l2dci_after.current | default({})).interfaceName | default('')) == item.interface
-                and ((_ndp_l2dci_after.current | default({})).operData.mode | default('')) == 'trunk'
-                and ((_ndp_l2dci_after.current | default({})).operData.adminStatus | default('')) == 'up'
+                (_ndp_l2dci_port_ready | bool)
                 or (_ndp_l2dci_after.attempts | default(0) | int) >= (nd_l3out_l2dci_retries | default(12) | int)
               failed_when: false
               no_log: true
 
-            - name: "[{{ test_module }}] SETUP - judge the deployed L2 DCI endpoints from the switch-reported mode"
+            - name: "[{{ test_module }}] SETUP - summarize the operational trunk and VLAN readback"
               ansible.builtin.set_fact:
-                _ndp_l2dci_unconverged: >-
-                  {{ _ndp_l2dci_unconverged + ([] if (
-                       (_ndp_l2dci_cur.switchId | default('')) == item.item.serial
-                       and (_ndp_l2dci_cur.interfaceName | default('')) == item.item.interface
-                       and (_ndp_l2dci_cur.operData.mode | default('')) == 'trunk'
-                       and (_ndp_l2dci_cur.operData.adminStatus | default('')) == 'up')
-                     else [item.item.name ~ ' ' ~ item.item.interface ~ ' mode=' ~ (_ndp_l2dci_cur.operData.mode | default('unknown', true))
-                           ~ ' admin=' ~ (_ndp_l2dci_cur.operData.adminStatus | default('unknown', true))]) }}
+                _ndp_l2dci_port_status: >-
+                  {{ _ndp_l2dci_port_status + [{
+                       'port': item.item.name ~ ' ' ~ item.item.interface,
+                       'mode': _ndp_l2dci_oper.mode | default('unknown', true),
+                       'admin': _ndp_l2dci_oper.adminStatus | default('unknown', true),
+                       'oper': _ndp_l2dci_oper.operationalStatus | default('unknown', true),
+                       'vlans': _ndp_l2dci_vlan_range if (_ndp_l2dci_vlan_list_reported | bool) else 'unreported',
+                       'ready': _ndp_l2dci_port_ready | bool}] }}
               loop: "{{ _ndp_l2dci_after.results | default([]) }}"
               vars:
-                _ndp_l2dci_cur: "{{ item.current if (item.current | default('')) is mapping else {} }}"
+                _ndp_l2dci_endpoint: "{{ item.item }}"
+                _ndp_l2dci_current: "{{ item.current if (item.current | default('')) is mapping else {} }}"
               no_log: true
 
-            - name: "[{{ test_module }}] SETUP - report the L2 DCI endpoint state the SVI case depends on"
-              ansible.builtin.debug:
-                msg: >-
-                  {{ 'NDP_L3OUT_L2DCI_ENDPOINTS_OK' if _ndp_l2dci_reason == '' else 'NDP_L3OUT_L2DCI_ENDPOINTS_UNVERIFIED' }}:
-                  {{ _ndp_l2dci_pair_text or 'no link selected' }};
-                  deployed={{ _ndp_l2dci_pending | length }};
-                  {{ _ndp_l2dci_reason or 'the switch reports trunk/up on both endpoints' }}.
+            - *ndp_read_l2dci_link
+            - *ndp_select_l2dci_link
+
+            # The compact Jenkins callback keeps task names but drops successful result messages.
+            - name: >-
+                [{{ test_module }}] SETUP - verify L2 DCI readiness
+                {{ _ndp_l2dci_summary if _ndp_l2dci_port_status is defined else '' }}
+              ansible.builtin.assert:
+                that:
+                  - _ndp_l2dci_matches | length == 1
+                  - _ndp_l2dci_link.linkPresent | default(false) == true
+                  - not (_ndp_l2dci_link.linkPlanned | default(false) | bool)
+                  - _ndp_l2dci_link.linkState | default('') not in ['down', 'shutdown']
+                  - _ndp_l2dci_port_status | length == 2
+                  - _ndp_l2dci_port_status | rejectattr('ready') | list | length == 0
+                fail_msg: "NDP_L3OUT_L2DCI_ENDPOINTS_UNVERIFIED: {{ _ndp_l2dci_summary }}"
+                success_msg: "NDP_L3OUT_L2DCI_ENDPOINTS_OK: {{ _ndp_l2dci_summary }}"
               vars:
-                _ndp_l2dci_pair_text: >-
-                  {{ _ndp_l2dci_endpoints | map(attribute='name') | zip(_ndp_l2dci_endpoints | map(attribute='interface'))
-                     | map('join', ' ') | join(' <-> ') }}
-                _ndp_l2dci_reason: >-
-                  {{ 'the authored SVI switch pair or fabrics are incomplete' if not (_ndp_l2dci_pair_ok | bool)
-                     else ('links of ' ~ _ndp_l2dci_fabric1 ~ ' could not be read') if not (_ndp_l2dci_links_readable | default(false) | bool)
-                     else 'no layer2Dci link exists between the authored SVI switches' if _ndp_l2dci_matches | length == 0
-                     else 'more than one layer2Dci link exists between the authored SVI switches' if _ndp_l2dci_matches | length > 1
-                     else 'the matching layer2Dci link has the same switch on both ends' if _ndp_l2dci_endpoints | length != 2
-                     else ('stored intent is not an enabled l2DciLinkMember trunk on '
-                           ~ (_ndp_l2dci_state | rejectattr('intent_trunk') | map(attribute='name') | join(', ')) ~ '; nothing was deployed')
-                       if (_ndp_l2dci_state | length != 2 or _ndp_l2dci_state | rejectattr('intent_trunk') | list | length > 0)
-                     else ('the switch did not report trunk/up after deploy: ' ~ (_ndp_l2dci_unconverged | join(', ')))
-                       if _ndp_l2dci_unconverged | length > 0
-                     else '' }}
+                _ndp_l2dci_link: "{{ _ndp_l2dci_matches | first | default({}) }}"
+                _ndp_l2dci_summary: >-
+                  VLAN {{ _ndp_l2dci_vlan }}; matching links={{ _ndp_l2dci_matches | length }};
+                  present={{ _ndp_l2dci_link.linkPresent | default('unknown') }};
+                  planned={{ _ndp_l2dci_link.linkPlanned | default('unknown') }};
+                  link state={{ _ndp_l2dci_link.linkState | default('unreported', true) }};
+                  deployed={{ _ndp_l2dci_pending | length }};
+                  endpoints={{ _ndp_l2dci_port_status | to_json }}.
 
         # -------------------------------------------------------------------------
         # SETUP (vPC interface targets): prepare the declared physical fixture over the cabled
@@ -952,26 +1466,42 @@
                 seconds: 30
               when: not (_ndp_vpcif_pair_preexisting | bool)
 
-            - name: "[{{ test_module }}] SETUP - gather the vPC pairs once the pair is formed"
-              cisco.nd.nd_manage_vpc_pair:
-                fabric_name: "{{ ansible_it_fabric }}"
-                state: gathered
+            # nd_manage_vpc_pair state=gathered returns an empty vpc_pairs list on develop even while ND lists the pair (build
+            # 196; reproduced offline at 9fde9f7 and 57406c7), so polling it can never prove the pair. Prove it the way the
+            # target's multi-pair precondition does: reciprocal per-switch vpcPair records. The attempts clause ends the poll
+            # without Ansible's retry-exhaustion failure; the assertion below names what is missing. The pre-existence reads
+            # above deliberately stay on the module's stale-filtered view: while it is empty the runner always forms and later
+            # removes the pair, whereas a vpcPair record can briefly outlive an unpair and would wrongly skip the create.
+            - name: "[{{ test_module }}] SETUP - wait for reciprocal vpcPair records of the formed pair"
+              cisco.nd.nd_rest:
+                method: get
+                path: "/api/v1/manage/fabrics/{{ ansible_it_fabric }}/switches/{{ item.0 }}/vpcPair"
+              loop: "{{ [[ansible_sno_1, ansible_sno_2], [ansible_sno_2, ansible_sno_1]] }}"
               register: _ndp_vpcif_pairs_after
+              retries: 8
+              delay: 15
+              until: >-
+                ((_ndp_vpcif_pairs_after.current | default({}, true)).switchId | default('')) == item.0
+                and ((_ndp_vpcif_pairs_after.current | default({}, true)).peerSwitchId | default('')) == item.1
+                or (_ndp_vpcif_pairs_after.attempts | default(0) | int) >= 8
+              failed_when: false
+              no_log: true
 
             - name: "[{{ test_module }}] SETUP - require the leaf pair before the target starts"
               ansible.builtin.assert:
-                that: >-
-                  ((_ndp_vpcif_pairs_after.gathered.vpc_pairs | default([])) + (_ndp_vpcif_pairs_after.vpc_pairs | default([])))
-                  | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
-                  | selectattr('switch_id', 'in', [ansible_sno_1, ansible_sno_2])
-                  | selectattr('peer_switch_id', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0
-                  or ((_ndp_vpcif_pairs_after.gathered.vpc_pairs | default([])) + (_ndp_vpcif_pairs_after.vpc_pairs | default([])))
-                  | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
-                  | selectattr('switchId', 'in', [ansible_sno_1, ansible_sno_2])
-                  | selectattr('peerSwitchId', 'in', [ansible_sno_1, ansible_sno_2]) | list | length > 0
+                that:
+                  - >-
+                    (_ndp_vpcif_pairs_after.results | default([]) | map(attribute='current.switchId', default='') | list)
+                    == [ansible_sno_1, ansible_sno_2]
+                  - >-
+                    (_ndp_vpcif_pairs_after.results | default([]) | map(attribute='current.peerSwitchId', default='') | list)
+                    == [ansible_sno_2, ansible_sno_1]
                 fail_msg: >-
                   The physical vPC pair {{ ansible_sno_1 }}/{{ ansible_sno_2 }} does not exist in {{ ansible_it_fabric }} after the
-                  runner formed it; the vPC interface target needs it as substrate.
+                  runner formed it; the vPC interface target needs it as substrate. vpcPair records:
+                  {% for r in _ndp_vpcif_pairs_after.results | default([]) %}{{ r.item.0 | default('?') }} -> peer={{
+                  (r.current | default({}, true)).peerSwitchId | default('none', true) }} (http {{ r.status | default('n/a') }}){{
+                  '' if loop.last else ', ' }}{% endfor %}.
 
             - name: "[{{ test_module }}] SETUP - map the declared vPC peer management IPs"
               ansible.builtin.set_fact:
@@ -1054,26 +1584,37 @@
                 seconds: 30
               when: not (_ndp_vpcif2_pair_preexisting | bool)
 
-            - name: "[{{ test_module }}] SETUP - gather the vPC pairs once the second pair is formed"
-              cisco.nd.nd_manage_vpc_pair:
-                fabric_name: "{{ ansible_it_fabric }}"
-                state: gathered
+            # Same reciprocal vpcPair proof as the first pair; it is exactly the target's multi-pair precondition.
+            - name: "[{{ test_module }}] SETUP - wait for reciprocal vpcPair records of the second formed pair"
+              cisco.nd.nd_rest:
+                method: get
+                path: "/api/v1/manage/fabrics/{{ ansible_it_fabric }}/switches/{{ item.0 }}/vpcPair"
+              loop: "{{ [[_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2], [_ndp_vpcif2_sno_2, _ndp_vpcif2_sno_1]] }}"
               register: _ndp_vpcif2_pairs_after
+              retries: 8
+              delay: 15
+              until: >-
+                ((_ndp_vpcif2_pairs_after.current | default({}, true)).switchId | default('')) == item.0
+                and ((_ndp_vpcif2_pairs_after.current | default({}, true)).peerSwitchId | default('')) == item.1
+                or (_ndp_vpcif2_pairs_after.attempts | default(0) | int) >= 8
+              failed_when: false
+              no_log: true
 
             - name: "[{{ test_module }}] SETUP - require the second leaf pair before the target starts"
               ansible.builtin.assert:
-                that: >-
-                  ((_ndp_vpcif2_pairs_after.gathered.vpc_pairs | default([])) + (_ndp_vpcif2_pairs_after.vpc_pairs | default([])))
-                  | selectattr('switch_id', 'defined') | selectattr('peer_switch_id', 'defined')
-                  | selectattr('switch_id', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
-                  | selectattr('peer_switch_id', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2]) | list | length > 0
-                  or ((_ndp_vpcif2_pairs_after.gathered.vpc_pairs | default([])) + (_ndp_vpcif2_pairs_after.vpc_pairs | default([])))
-                  | selectattr('switchId', 'defined') | selectattr('peerSwitchId', 'defined')
-                  | selectattr('switchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2])
-                  | selectattr('peerSwitchId', 'in', [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2]) | list | length > 0
+                that:
+                  - >-
+                    (_ndp_vpcif2_pairs_after.results | default([]) | map(attribute='current.switchId', default='') | list)
+                    == [_ndp_vpcif2_sno_1, _ndp_vpcif2_sno_2]
+                  - >-
+                    (_ndp_vpcif2_pairs_after.results | default([]) | map(attribute='current.peerSwitchId', default='') | list)
+                    == [_ndp_vpcif2_sno_2, _ndp_vpcif2_sno_1]
                 fail_msg: >-
                   The physical vPC pair {{ _ndp_vpcif2_sno_1 }}/{{ _ndp_vpcif2_sno_2 }} does not exist in {{ ansible_it_fabric }} after
-                  the runner formed it; the vPC interface target's multi-pair scenario needs it as its second pair.
+                  the runner formed it; the vPC interface target's multi-pair scenario needs it as its second pair. vpcPair records:
+                  {% for r in _ndp_vpcif2_pairs_after.results | default([]) %}{{ r.item.0 | default('?') }} -> peer={{
+                  (r.current | default({}, true)).peerSwitchId | default('none', true) }} (http {{ r.status | default('n/a') }}){{
+                  '' if loop.last else ', ' }}{% endfor %}.
 
             - name: "[{{ test_module }}] SETUP - wait for all four vPC peers to be inSync before interface tests"
               cisco.nd.nd_rest:
@@ -1144,17 +1685,24 @@
                   (pair pre-existing: {{ _ndp_rm_pair_preexisting }}).
               when: not (_ndp_rm_pair_preexisting | bool)
       rescue:
+        - name: "[{{ test_module }}] SETUP - record the L3Out fixture failure for the run gate"
+          ansible.builtin.set_fact:
+            _ndp_l3out_fixture_failure: "{{ ansible_failed_task.name | default('unknown task', true) | truncate(200) }}"
+          when: test_module == 'nd_manage_l3out'
+
         - name: "[{{ test_module }}] SETUP - record the failed pipeline fixture and continue to the authored target"
           ansible.builtin.set_fact:
             _ndp_continued_failures: >-
               {{ _ndp_continued_failures | default([])
                  + ['fixture: ' ~ (ansible_failed_task.name | default('unknown task', true) | string | truncate(200))] }}
+          when: test_module != 'nd_manage_l3out'
 
         - name: "[{{ test_module }}] SETUP - report the failed pipeline fixture and continue to the authored target"
           ansible.builtin.debug:
             msg: >-
               NDP_PREREQUISITE_FAILED_CONTINUING [{{ test_module }}]: pipeline fixture failed at
               '{{ ansible_failed_task.name | default('unknown task', true) }}'; running the authored target anyway.
+          when: test_module != 'nd_manage_l3out'
 
     # -------------------------------------------------------------------------
     # SETUP (nd_local_user only, read-only): the target's overridden step deletes every controller local user that is not in its
@@ -1294,6 +1842,7 @@
     - name: "[{{ test_module }}] SETUP - run target setup/prepare first (names vary)"
       when:
         - not (nd_prerequisite_only | default(false) | bool)
+        - not (_ndp_l3out_fixture_failure | default(''))
         - _ndp_setup_file | default('') | length > 0
         - (_ndp_setup_importers.matched | default(0)) | int == 0
       block:
@@ -1326,6 +1875,15 @@
 
     - name: "[{{ test_module }}] RUN full integration suite (all test cases)"
       block:
+        - name: "[{{ test_module }}] block L3Out when its fixture failed"
+          ansible.builtin.assert:
+            that:
+              - not (_ndp_l3out_fixture_failure | default(''))
+            fail_msg: >-
+              NDP_L3OUT_PREREQUISITE_FAILED: {{ _ndp_l3out_fixture_failure }}.
+              The integration role was blocked.
+          when: test_module == 'nd_manage_l3out'
+
         - name: "[{{ test_module }}] validate selected test groups"
           ansible.builtin.assert:
             that:
@@ -1359,6 +1917,54 @@
             msg: "NDP_PHASE_CLEANUP"
           tags: [nd_phase_cleanup]
 
+        - name: "[{{ test_module }}] snapshot Leaf-ToR warnings before recovery"
+          when:
+            - test_module == 'nd_manage_switches'
+            - not (nd_prerequisite_only | default(false) | bool)
+            - not ansible_check_mode
+          block:
+            - name: "[{{ test_module }}] read post-test fabric anomalies"
+              cisco.nd.nd_rest:
+                method: get
+                path: "/api/v1/analyze/anomalies/details?fabricName={{ fabric_name | urlencode }}&max=200"
+              register: _ndp_post_delete_anomalies
+              failed_when: false
+              timeout: 20
+              vars:
+                ansible_command_timeout: 20
+              no_log: true
+
+            - name: "[{{ test_module }}] report sanitized post-test anomaly counts"
+              vars:
+                _body: "{{ _ndp_post_delete_anomalies.current | default(none) }}"
+                _rows: "{{ _body.get('anomalies') if _body is mapping else none }}"
+              ansible.builtin.debug:
+                msg: >-
+                  {%- if _ndp_post_delete_anomalies.status | default(0) | int == 200 and _body is mapping
+                      and 'error' not in _body and 'errors' not in _body and 'code' not in _body
+                      and _rows | type_debug == 'list' and _rows | length < 200
+                      and _rows | select('mapping') | selectattr('fabricName', 'defined')
+                        | selectattr('cleared', 'boolean') | selectattr('anomalyString', 'string') | list | length == _rows | length -%}
+                    NDP_SWITCH_DELETE_CONTROLLER_SNAPSHOT active_leaf_tor={{
+                      _rows | selectattr('fabricName', 'equalto', fabric_name) | selectattr('cleared', 'sameas', false)
+                      | selectattr('anomalyString', 'search', '(?i)leaf-tor unpairing') | list | length }}
+                  {%- else -%}
+                    NDP_SWITCH_DELETE_CONTROLLER_SNAPSHOT unavailable: incomplete or failed anomaly read
+                  {%- endif -%}
+          rescue:
+            - name: "[{{ test_module }}] report unavailable diagnostics without blocking recovery"
+              ansible.builtin.debug:
+                msg: "NDP_SWITCH_DELETE_CONTROLLER_SNAPSHOT unavailable: diagnostic task failed"
+
+        - name: "[{{ test_module }}] clean the known ToR test association after execution"
+          when:
+            - test_module == 'nd_manage_tor'
+            - fabric_name in ['VXLAN_EVPN_Fabric', 'VXLAN_EVPN_Fabric_eBGP']
+            - not (nd_prerequisite_only | default(false) | bool)
+            - not ansible_check_mode
+          block: *ndp_cleanup_test_tor
+          rescue: *ndp_cleanup_test_tor_failure
+
         - name: "[{{ test_module }}] CLEANUP - post-clean (required)"
           ansible.builtin.include_role:
             name: "{{ test_module }}"
@@ -1366,6 +1972,93 @@
           when:
             - not (nd_prerequisite_only | default(false) | bool)
             - _ndp_cleanup_file | default('') | length > 0
+
+        - name: "[{{ test_module }}] CLEANUP - remove this target's staged overlay fixtures"
+          when:
+            - test_module in ['nd_manage_networks', 'nd_manage_vrfs']
+            - not (nd_prerequisite_only | default(false) | bool)
+            - not ansible_check_mode
+            - staged_create_result is defined
+            - not (staged_create_result.skipped | default(false) | bool)
+          vars:
+            _ndp_staged_identity: "{{ 'network_name' if test_module == 'nd_manage_networks' else 'vrf_name' }}"
+            _ndp_staged_fixtures: >-
+              {{ (nd_network_staged_seed | default([])) + (nd_network_staged_create_config | default([]))
+                 if test_module == 'nd_manage_networks'
+                 else (nd_vrf_staged_seed | default([])) + (nd_vrf_staged_create_config | default([])) }}
+            _ndp_staged_name_pattern: "{{ '^ndnetstg(create|add|remove|detach|omit)$' if test_module == 'nd_manage_networks' else '^ndvrfstg(create|add|remove|detach|omit)$' }}"
+          block:
+            - name: "[{{ test_module }}] CLEANUP - require exact staged fixture identities"
+              ansible.builtin.assert:
+                that:
+                  - target_fabric | default('') == fabric_name
+                  - _ndp_staged_fixtures | length > 0
+                  - _ndp_staged_fixtures | selectattr(_ndp_staged_identity, 'defined') | list | length == _ndp_staged_fixtures | length
+                  - _ndp_staged_fixtures | map(attribute=_ndp_staged_identity) | select('match', _ndp_staged_name_pattern) | list | length == _ndp_staged_fixtures | length
+                fail_msg: "NDP_STAGED_CLEANUP_REFUSED: staged fixture ownership or fabric could not be established."
+
+            - name: "[{{ test_module }}] CLEANUP - initialize explicit staged deletion selectors"
+              ansible.builtin.set_fact:
+                _ndp_staged_cleanup_config: []
+
+            - name: "[{{ test_module }}] CLEANUP - select only authored staged fixture names"
+              ansible.builtin.set_fact:
+                _ndp_staged_cleanup_config: >-
+                  {{ _ndp_staged_cleanup_config +
+                     [dict([(_ndp_staged_identity, _ndp_staged_fixture[_ndp_staged_identity]),
+                            ('deploy', true)]) |
+                      combine({'layer': 'layer2'} if test_module == 'nd_manage_networks' else {})] }}
+              loop: "{{ _ndp_staged_fixtures }}"
+              loop_control:
+                loop_var: _ndp_staged_fixture
+                label: "{{ _ndp_staged_fixture[_ndp_staged_identity] }}"
+
+            - name: "[{{ test_module }}] CLEANUP - detach deploy and delete staged test networks"
+              cisco.nd.nd_manage_networks:
+                fabric_name: "{{ target_fabric }}"
+                state: deleted
+                config: "{{ _ndp_staged_cleanup_config }}"
+              when: test_module == 'nd_manage_networks'
+
+            - name: "[{{ test_module }}] CLEANUP - detach deploy and delete staged test VRFs"
+              cisco.nd.nd_manage_vrfs:
+                fabric_name: "{{ target_fabric }}"
+                state: deleted
+                config: "{{ _ndp_staged_cleanup_config }}"
+              when: test_module == 'nd_manage_vrfs'
+
+            - name: "[{{ test_module }}] CLEANUP - gather the staged test networks after deletion"
+              cisco.nd.nd_manage_networks:
+                fabric_name: "{{ target_fabric }}"
+                state: gathered
+                config: "{{ _ndp_staged_cleanup_config }}"
+              register: _ndp_staged_networks_after
+              when: test_module == 'nd_manage_networks'
+
+            - name: "[{{ test_module }}] CLEANUP - gather the staged test VRFs after deletion"
+              cisco.nd.nd_manage_vrfs:
+                fabric_name: "{{ target_fabric }}"
+                state: gathered
+                config: "{{ _ndp_staged_cleanup_config }}"
+              register: _ndp_staged_vrfs_after
+              when: test_module == 'nd_manage_vrfs'
+
+            - name: "[{{ test_module }}] CLEANUP - verify staged fixture definitions are absent"
+              ansible.builtin.assert:
+                that:
+                  - _ndp_staged_after.gathered is defined
+                  - _ndp_staged_after.gathered is sequence
+                  - _ndp_staged_after.gathered is not string
+                  - _ndp_staged_after.gathered is not mapping
+                  - _ndp_staged_after.gathered | selectattr(_ndp_staged_identity, 'defined') | list | length == _ndp_staged_after.gathered | length
+                  - >-
+                    _ndp_staged_after.gathered |
+                    selectattr(_ndp_staged_identity, 'in', _ndp_staged_cleanup_config | map(attribute=_ndp_staged_identity) | list) |
+                    list | length == 0
+                fail_msg: "NDP_STAGED_CLEANUP_FAILED: staged test definitions remain or readback is incomplete."
+                success_msg: "NDP_STAGED_CLEANUP_OK: staged test definitions removed."
+              vars:
+                _ndp_staged_after: "{{ _ndp_staged_networks_after if test_module == 'nd_manage_networks' else _ndp_staged_vrfs_after }}"
 
         # A failed l3out run can leave its test L3Outs behind; ND refuses to delete the planned links or route
         # maps they reference, so remove them first (best effort, never masks the test result).
@@ -1609,11 +2302,9 @@
           {{ _ndp_continued_failures | join('; ') }}
       when: _ndp_continued_failures | default([]) | length > 0
 
+  # Ansible notifies handler tasks, not block names, and ignores rescue sections in
+  # handler blocks. Keep this a named task; the included file reports failures and
+  # releases this execution's lock in its always section.
   handlers:
     - name: Restore prerequisite interface changes
-      block:
-        - ansible.builtin.include_tasks: "{{ playbook_dir }}/nd_prerequisite/nd_prerequisite_restore.yaml"
-      rescue:
-        - name: Report prerequisite restore failure and continue
-          ansible.builtin.debug:
-            msg: "NDP_PREREQUISITE_RESTORE_FAILED_CONTINUING [{{ test_module }}]: restore handler failed; proceeding to later modules."
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/nd_prerequisite/nd_prerequisite_restore.yaml"

@@ -110,10 +110,11 @@ def test_unsafe_or_document_manifest_entries_fail_closed(runtime, entry):
 def test_canonical_nightly_manifest_includes_all_existing_inputs_and_no_documents(monkeypatch):
     monkeypatch.setattr(SYNC, "ROOT", str(ROOT))
     sources = SYNC.required_runtime_sources()
-    assert len(sources) == 42
+    assert len(sources) == 43
     assert "ansible.cfg" in sources
-    assert {key for key in sources if key.endswith('.patch')} == {'temp_patches_for_topology/nd_manage_switches_counts.patch'}
     assert sources["compat_action_plugins/normal.py"] == str(ROOT / "playbooks/compat_action_plugins/normal.py")
+    assert {key for key in sources if key.endswith('.patch')} == {'temp_patches_for_topology/nd_manage_switches_counts.patch'}
+    assert sources['temp_patches_for_topology/switches_topology.py'] == str(ROOT / 'temp_patches_for_topology/switches_topology.py')
     assert all(Path(local).is_file() and Path(local).stat().st_size for local in sources.values())
     assert not any(key.endswith((".md", ".doc", ".diff")) for key in sources)
     assert sum(key.startswith("releases/") for key in sources) == 2

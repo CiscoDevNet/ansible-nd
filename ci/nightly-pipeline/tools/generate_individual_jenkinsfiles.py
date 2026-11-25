@@ -33,6 +33,7 @@ TARGETS = (
     'nd_manage_switches',
 )
 TRAILING = {
+    'nd_manage_l3out',
     'nd_resource_manager', 'nd_manage_fabric', 'nd_manage_links',
     'nd_manage_switches',
 }

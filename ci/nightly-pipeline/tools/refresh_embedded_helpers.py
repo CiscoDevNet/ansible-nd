@@ -20,6 +20,9 @@ SOURCES = {
     "nd_reporting_pipeline.py": ROOT / "playbooks/nd_reporting_pipeline.py",
     "nd_test_activity.py": ROOT / "playbooks/nd_test_activity.py",
     "nd_prerequisite/interface_baseline.yaml": ROOT / "playbooks/nd_prerequisite/interface_baseline.yaml",
+    "action_plugins/nd_interface_baseline.py": ROOT / "playbooks/action_plugins/nd_interface_baseline.py",
+    "nd_prerequisite_profiles.yaml": ROOT / "tests/nd_prerequisite_profiles.yaml",
+    "nd_prerequisite_orchestrator.py": ROOT / "tests/nd_prerequisite_orchestrator.py",
 }
 ENTRY = re.compile(
     r"(?m)^(?P<prefix>\s*'(?P<key>[^']+)': \[sha256: ')[^']+"

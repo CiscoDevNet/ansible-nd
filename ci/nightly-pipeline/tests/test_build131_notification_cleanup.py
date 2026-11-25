@@ -64,7 +64,7 @@ assert row[6] == 'NOT_RUN'
 ''')
 
 
-def test_minimal_notification_withholds_counts_when_case_report_is_unavailable(groovy_runner):
+def test_minimal_notification_marks_unknown_counts_when_case_report_is_unavailable(groovy_runner):
     groovy_runner(POST + r'''
 reportReadyField.set(script, false)
 script.MODULE_ACTIVITY_RESULTS['executed'] = [module:'fixture_module', test_type:'integration',
@@ -74,6 +74,7 @@ assert !message.contains('Passed (ok): 191')
 assert message.contains('Known passed cases: 0')
 assert message.contains('Unverified authored counts: 1 module run(s)')
 assert !message.contains('AUTHORED INTEG TEST CASE COUNTS')
+assert !message.toLowerCase().contains('withheld')
 ''')
 
 
@@ -227,7 +228,7 @@ assert message.count('/artifact/') == 1
 assert !message.contains('/artifact/module_IBGP.txt')
 assert !message.contains('/artifact/skipped_tests_build_131.txt')
 assert !message.contains('/artifact/activity.txt')
-assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_FAILED:') }
+assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_RETRY') }
 ''')
 
 
@@ -379,6 +380,7 @@ def combined = sent.join('\n')
 assert !combined.contains('AUTHORED INTEG TEST CASE COUNTS')
 assert !combined.contains('Incomplete:')
 assert combined.contains('Total passed cases: 100 | failed: 0 | skipped: 0')
+assert !combined.toLowerCase().contains('withheld')
 100.times { index -> assert combined.contains('- PASS | fixture module ' + index + ' ' + ('x' * 100) + ' | iBGP') }
 ''')
 
@@ -423,6 +425,16 @@ def partial = [test_type:'integration',result:'FAIL',coverage:'PARTIAL',case_tot
     identified_testcase_totals:[passed:2,failed:1,skipped:0,incomplete:1],invocation:[counts:[ok:800,failed:2,skipped:600]]]
 assert script.webexModuleTotals([partial]) == [passed:'2',failed:'1',skipped:'0']
 assert script.webexCaseReportSummary([partial]).uncounted_rows.size() == 1
+partial.putAll([module:'partial_module',nd:'4.3',scope:'iBGP',round_label:'iBGP'])
+script.MODULE_ACTIVITY_RESULTS['partial'] = partial
+def detailed = script.prepareDetailedWebexNotification().join('\n')
+assert detailed.contains('Known passed cases: 2')
+assert detailed.contains('1 module run(s) with unverified counts')
+assert detailed.contains('2 + ?')
+assert !detailed.contains('totals exclude')
+def fallback = script.minimalBuildNotification('FixtureError')
+assert fallback.contains('Known passed cases: 2 | failed: 1 | skipped: 0')
+assert !fallback.contains('excluded from known totals')
 ''')
 
 
@@ -445,6 +457,10 @@ script.MODULE_ACTIVITY_RESULTS.putAll([
     planned: [module:'fixture_module', test_type:'integration', nd:'4.3', scope:'iBGP', round_label:'iBGP',
         result:'UNKNOWN', coverage:'UNKNOWN', case_totals:[:], failure:'result not collected; execution may be interrupted']
 ])
+script.metaClass.foldStructuredResults = { throw new IllegalStateException('aggregate unavailable') }
+script.metaClass.publishStructuredArtifacts = { }
+script.foldStructuredResultsWithRecovery()
+assert logs.any { it.startsWith('NDP_CASE_REPORT_RECOVERY_EXHAUSTED:') }
 script.run()
 assert sent.size() == 1 : logs
 assert sent[0].contains('AUTHORED CASE RESULTS') && sent[0].contains('fixture_module')
@@ -453,6 +469,7 @@ assert sent[0].contains('unverified counts') && sent[0].contains('?')
 assert sent[0].contains('Reporting reconciliation did not complete')
 assert !logs.any { it.startsWith('NDP_CASE_REPORT_INCOMPLETE:') }
 assert !logs.any { it.contains('NOTIFICATION_SUPPRESSED') }
+assert !logs.any { it.contains('totals withheld') }
 assert script.binding.env.PIPELINE_FAILED == 'true'
 ''')
 
@@ -537,6 +554,7 @@ assert sent.size() == 1
 assert sent[0].contains('Known passed cases: 0 | failed: 0 | skipped: 0')
 assert sent[0].contains('Unverified authored counts: 1 module run(s)')
 assert sent[0].contains('- FAIL | fixture module | iBGP')
+assert !sent[0].toLowerCase().contains('withheld')
 assert script.binding.env.PIPELINE_FAILED == 'true'
 assert script.currentBuild.result != 'FAILURE'
 
@@ -553,6 +571,8 @@ script.metaClass.minimalBuildNotification = { Object reason -> throw new Illegal
 sent.clear()
 script.sendMinimalBuildNotification('FixtureError')
 assert sent.size() == 1 && sent[0].contains('the result report could not be rendered')
+assert sent[0].contains('authored totals are unavailable')
+assert !sent[0].toLowerCase().contains('withheld')
 ''')
 
 
@@ -711,6 +731,30 @@ reportReadyField.set(script, false)
 script.MODULE_ACTIVITY_RESULTS.verified.case_totals = [:]
 assert !script.recoverCaseReportFromMemory()
 assert reportReadyField.get(script) == false
+''')
+
+
+def test_memory_recovery_keeps_partial_and_untyped_rows_unready(groovy_runner):
+    groovy_runner(POST + r'''
+script.MODULE_ACTIVITY_RESULTS['good'] = [module:'good_module', test_type:'integration', nd:'4.3',
+    scope:'iBGP', round_label:'iBGP', result:'PASS', coverage:'COMPLETE', validated:true,
+    case_totals:[started:4,passed:4,failed:0,skipped:0,incomplete:0]]
+def uncertainRows = [
+    [module:'partial_module', test_type:'integration', result:'FAIL', coverage:'PARTIAL', validated:true,
+        case_totals:[:], identified_testcase_totals:[passed:2,failed:1,skipped:0]],
+    [module:'untyped_module', result:'PASS', coverage:'COMPLETE', validated:true,
+        case_totals:[started:50,passed:50,failed:0,skipped:0,incomplete:0]]
+]
+uncertainRows.each { row ->
+    reportReadyField.set(script, false)
+    script.MODULE_ACTIVITY_RESULTS['uncertain'] = row
+    assert !script.recoverCaseReportFromMemory()
+    assert reportReadyField.get(script) == false
+    def summary = script.webexCaseReportSummary(script.MODULE_ACTIVITY_RESULTS.values().toList())
+    assert summary.uncounted_rows == [row]
+    assert summary.totals.passed == (row.test_type == 'integration' ? '6' : '4')
+}
+assert !logs.any { it.startsWith('NDP_CASE_REPORT_RECOVERED_FROM_VALIDATED_ROWS:') }
 ''')
 
 

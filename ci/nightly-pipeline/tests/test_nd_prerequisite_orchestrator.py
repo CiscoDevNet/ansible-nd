@@ -1,6 +1,8 @@
 import copy
 import json
+import os
 import pathlib
+import subprocess
 import sys
 
 import pytest
@@ -121,6 +123,71 @@ def test_baseline_repair_replaces_declared_routed_policy_without_mutating_snapsh
 
 
 def test_baseline_inventory_rejects_serial_substitution_and_duplicates(registry):
+    from nd_prerequisite_orchestrator import normalize_repair_inventory
+
+    switch = registry["lab"]["switches"]["vxlan_leaf_1"]
+    inventory = [{"fabric_ref": "advanced", "switches": [{"switchId": "UNEXPECTED",
+                 "fabricManagementIp": switch["seed_ip"], "switchRole": "leaf"}]}]
+    with pytest.raises(OrchestrationError, match="identity mismatch"):
+        normalize_repair_inventory(registry, inventory)
+    inventory[0]["switches"][0]["switchId"] = switch["serial"]
+    with pytest.raises(OrchestrationError, match="ambiguous"):
+        normalize_repair_inventory(registry, inventory * 2)
+
+
+def test_baseline_repair_tolerates_extra_record_on_existing_link_peer(registry, valid_state, tmp_path, capsys):
+    from nd_prerequisite_orchestrator import plan_baseline_repairs
+
+    profile_id = "integration.nd_interface_subinterface_managed"
+    confirmed = confirm(registry, profile_id)
+    resolved = resolve_execution(confirmed, profile_id)
+    state = interface_state_for_profile(confirmed, valid_state, profile_id)
+    edge = confirmed["lab"]["switches"]["external_edge_1"]
+    state["physical_links"].append({
+        "srcSwitchId": edge["serial"], "srcInterfaceName": "Ethernet1/1",
+        "dstSwitchId": "STALESERIAL1", "dstInterfaceName": "Ethernet1/7", "linkType": "ethisl",
+        "linkPlanned": True,
+    })
+
+    # Declared cable still recorded: the extra record is stale, the peer port is still enabled.
+    registry_path, state_path = tmp_path / "registry.yaml", tmp_path / "state.yaml"
+    registry_path.write_text(yaml.safe_dump(confirmed))
+    state_path.write_text(yaml.safe_dump(state))
+    assert main(["plan", "--registry", str(registry_path), "--execution-id", profile_id,
+                 "--state", str(state_path), "--repair-stage", "interfaces"]) == 0
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert ("external_edge_1", "Ethernet1/1", "admin_up") in {
+        (item["switch_ref"], item["interface"], item["action"]) for item in result["operations"]}
+    assert "unregistered serial STALESERIAL1/Ethernet1/7 [physical_links, type=ethisl, planned]" in result["warnings"][0]
+    assert "NDP_BASELINE_REPAIR_WARNING: extra link record on declared peer endpoint external_edge_1/Ethernet1/1" in captured.err
+
+    # Declared cable absent: never enable the ambiguous peer port; readiness reports the missing cable.
+    state["physical_links"] = [link for link in state["physical_links"] if link.get("dstSwitchId") == "STALESERIAL1"]
+    warnings = []
+    operations = plan_baseline_repairs(confirmed, resolved, state, warnings=warnings)
+    assert "external_edge_1" not in {item["switch_ref"] for item in operations}
+    assert "admin_up is skipped" in warnings[0]
+    with pytest.raises(UnavailableError, match="required existing link is absent in ND"):
+        plan_topology_delta(confirmed, resolved, state)
+
+
+def test_baseline_repair_rejects_extra_record_on_owned_existing_link_port(registry, valid_state):
+    from nd_prerequisite_orchestrator import plan_baseline_repairs
+
+    profile_id = "integration.nd_interface_subinterface_managed"
+    confirmed = confirm(registry, profile_id)
+    resolved = resolve_execution(confirmed, profile_id)
+    state = interface_state_for_profile(confirmed, valid_state, profile_id)
+    state["physical_links"].append({
+        "sw1-info": {"sw-serial-number": confirmed["lab"]["switches"]["vxlan_leaf_2"]["serial"], "if-name": "Ethernet1/9"},
+        "sw2-info": {"sw-serial-number": confirmed["lab"]["switches"]["vxlan_leaf_1"]["serial"], "if-name": "Ethernet1/1"},
+        "link-type": "ethisl", "is-present": False, "link-uuid": "LINK-1",
+    })
+    with pytest.raises(OrchestrationError, match=(
+            r"unexpected link neighbor: vxlan_leaf_1/Ethernet1/1 \(declared peer external_edge_1/Ethernet1/1\); "
+            r"captured: vxlan_leaf_2/Ethernet1/9 \[physical_links, type=ethisl, not-present, id=LINK-1\]")):
+        plan_baseline_repairs(confirmed, resolved, state)
     from nd_prerequisite_orchestrator import normalize_repair_inventory
 
     switch = registry["lab"]["switches"]["vxlan_leaf_1"]
@@ -471,8 +538,37 @@ def test_interface_checks_reject_fabric_links_memberships_and_namespace_collisio
         plan_topology_delta(confirmed, resolved, collision)
 
 
-def test_subinterface_parents_are_created_only_from_safe_empty_state(registry, valid_state):
-    profile_id = "integration.nd_interface_subinterface_managed"
+def test_reserved_port_channel_namespace_allows_only_empty_target_owned_cleanup(registry, valid_state):
+    profile_id = "integration.nd_interface_port_channel_routed"
+    confirmed = confirm(registry, profile_id)
+    resolved = resolve_execution(confirmed, profile_id)
+    state = interface_state_for_profile(confirmed, valid_state, profile_id)
+    state["interfaces"]["vxlan_leaf_1"]["Ethernet1/18"].update({
+        "port_channel_member": True, "port_channel_id": 520, "policy_type": "l3PoMember",
+    })
+    state["logical_interfaces"]["vxlan_leaf_1"]["Port-channel520"].update({
+        "exists": True, "policy": "int_l3_port_channel",
+        "nv_pairs": {"MEMBER_INTERFACES": "Ethernet1/18"},
+    })
+    state["logical_interfaces"]["vxlan_leaf_1"]["Port-channel523.5"]["exists"] = True
+
+    operations = plan_topology_delta(confirmed, resolved, state)
+    detach = next(op["port_channel_detachments"][0] for op in operations
+                  if op["operation"] == "verify_free_interfaces")
+    assert detach["interface"] == "Port-channel520"
+    assert detach["members_after"] == []
+
+    occupied = copy.deepcopy(state)
+    occupied["logical_interfaces"]["vxlan_leaf_1"]["Port-channel520"]["nv_pairs"]["MEMBER_INTERFACES"] = "Ethernet1/18,Ethernet1/50"
+    with pytest.raises(OrchestrationError, match="logical interface namespace is in use"):
+        plan_topology_delta(confirmed, resolved, occupied)
+
+
+@pytest.mark.parametrize("profile_id", [
+    "integration.nd_interface_subinterface_managed",
+    "integration.nd_interface_subinterface_unmanaged",
+])
+def test_subinterface_parents_are_created_only_from_safe_empty_state(registry, valid_state, profile_id):
     confirmed = confirm(registry, profile_id)
     resolved = resolve_execution(confirmed, profile_id)
     empty = interface_state_for_profile(confirmed, valid_state, profile_id)
@@ -519,6 +615,62 @@ def test_subinterface_parents_are_created_only_from_safe_empty_state(registry, v
     })
     with pytest.raises(OrchestrationError, match="refusing to replace existing non-routed port-channel"):
         plan_topology_delta(confirmed, resolved, occupied_pc)
+
+
+@pytest.mark.parametrize("target", ["nd_interface_subinterface_managed", "nd_interface_subinterface_unmanaged"])
+def test_subinterface_parent_preparation_after_interrupted_policy_lock(registry, valid_state, tmp_path, target):
+    profile_id = f"integration.{target}"
+    confirmed = confirm(registry, profile_id)
+    resolved = resolve_execution(confirmed, profile_id)
+    state = interface_state_for_profile(confirmed, valid_state, profile_id)
+    owner = "jenkins-build184_nd_manage_policy"
+    current_run = f"jenkins-build184_{target}"
+    lock = tmp_path / "nd-prerequisite-baseline.lock"
+    lock.mkdir()
+    (lock / "owner.json").write_text(json.dumps({"run_id": owner, "execution_id": "integration.nd_manage_policy"}))
+    proc = tmp_path / "proc" / "4242"
+    proc.mkdir(parents=True)
+    (proc / "cmdline").write_bytes(f"ansible-playbook\0-e\0nd_prerequisite_run_id={current_run}\0".encode())
+    runner = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]
+    reclaim = next(task for task in runner["pre_tasks"] if "reclaim a baseline repair lock" in task.get("name", ""))
+    result = subprocess.run(
+        [sys.executable, "-c", reclaim["ansible.builtin.command"]["argv"][2]],
+        env=dict(os.environ, NDP_LOCK_DIR=str(lock), NDP_PROC_ROOT=str(proc.parent), NDP_RUN_ID=current_run),
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("NDP_PREREQUISITE_STALE_LOCK_RECLAIMED")
+    # The next target must actually be able to acquire the lock, not just report recovery.
+    lock.mkdir()
+    operations = plan_topology_delta(confirmed, resolved, state)
+    parents = {operation["operation"]: operation for operation in operations
+               if operation["operation"] in {"ensure_routed_parent", "ensure_routed_port_channel"}}
+    runtime = runtime_vars_for_execution(resolved, current_run, "fixture-phase")
+    assert set(parents) == {"ensure_routed_parent", "ensure_routed_port_channel"}
+    assert parents["ensure_routed_parent"]["interface"] == runtime["nd_test_ethernet_parent"]
+    assert parents["ensure_routed_parent"]["switch_ip"] == runtime["nd_test_switch_ip"]
+    assert parents["ensure_routed_port_channel"]["interface"] == runtime["nd_test_port_channel_parent"]
+    assert parents["ensure_routed_parent"]["desired_policy"] == "routedHost"
+    assert parents["ensure_routed_port_channel"]["desired_policy"] == "int_l3_port_channel"
+
+
+def test_existing_repair_lock_never_authorizes_overwriting_its_owner(tmp_path):
+    wrapper = yaml.safe_load(
+        (ROOT / "playbooks/nd_prerequisite/nd_prerequisite_wrapper.yaml").read_text())
+    tasks = next(task["block"] for task in wrapper if task.get("name", "").startswith(
+        "Hold the exclusive baseline repair lock"))
+    acquire = next(task for task in tasks if task.get("register") == "_ndp_lock_acquire")
+    assert not acquire.get("ignore_errors", False)
+    assert not acquire.get("failed_when", False)
+    lock = tmp_path / "nd-prerequisite-baseline.lock"
+    lock.mkdir()
+    owner = lock / "owner.json"
+    owner.write_text('{"run_id":"active-owner"}')
+    argv = [str(lock) if arg == "{{ _ndp_repair_lock_dir }}" else arg
+            for arg in acquire["ansible.builtin.command"]["argv"]]
+    result = subprocess.run(argv, text=True, capture_output=True)
+    assert result.returncode != 0
+    assert owner.read_text() == '{"run_id":"active-owner"}'
 
 
 ND_DEFAULT_PORT_NV = {
@@ -818,6 +970,121 @@ def test_vpc_interface_targets_need_the_cabled_peer_links_and_free_member_ports_
         plan_topology_delta(confirmed, resolved, missing_pair2_port)
 
 
+def test_standalone_vpc_execution_requires_its_exact_peer_link_and_admin_state(registry, valid_state):
+    execution_id = "integration.nd_vpc_pair.advanced"
+    confirmed = confirm(registry, "integration.nd_vpc_pair")
+    for execution in confirmed["profile_executions"]["integration.nd_vpc_pair"]:
+        execution["confirmation"] = {
+            "status": "confirmed", "owner": "fixture-owner", "evidence": "fixture-link", "reasons": [],
+        }
+    resolved = resolve_execution(confirmed, execution_id)
+    assert plan_topology_delta(confirmed, resolved, valid_state) == []
+
+    missing = copy.deepcopy(valid_state)
+    for source in ("links", "physical_links"):
+        missing[source] = [item for item in missing[source] if not (
+            {item.get("srcSwitchId"), item.get("dstSwitchId")} == {"SERIAL00001", "SERIAL00002"}
+            and "Ethernet1/2" in {item.get("srcInterfaceName"), item.get("dstInterfaceName")}
+        )]
+    with pytest.raises(UnavailableError, match=r"required physical vPC peer-link is missing: vxlan_leaf_1/Ethernet1/2 <-> vxlan_leaf_2/Ethernet1/1"):
+        plan_topology_delta(confirmed, resolved, missing)
+
+    shut = copy.deepcopy(valid_state)
+    shut["interfaces"]["vxlan_leaf_1"]["Ethernet1/2"].update(admin_state=False, operational_state="down")
+    shut["interfaces"]["vxlan_leaf_2"]["Ethernet1/1"].update(admin_state=False, operational_state="down")
+    for item in shut["links"]:
+        if {item.get("srcSwitchId"), item.get("dstSwitchId")} == {"SERIAL00001", "SERIAL00002"}:
+            item["linkPresent"] = False
+    operations = plan_topology_delta(confirmed, resolved, shut)
+    assert [(op["operation"], op["switch_ref"], op["interface"]) for op in operations] == [
+        ("ensure_interface", "vxlan_leaf_1", "Ethernet1/2"),
+        ("ensure_interface", "vxlan_leaf_2", "Ethernet1/1"),
+    ]
+
+
+def test_l3out_requires_cables_for_routed_and_svi_and_plans_subinterface_link(registry, valid_state):
+    confirmed = confirm(registry, "integration.nd_manage_l3out")
+    resolved = resolve_execution(confirmed, "integration.nd_manage_l3out")
+    assert plan_topology_delta(confirmed, resolved, valid_state) == []
+
+    # Right after the switches are re-added ND only holds the discovered cable, with no template on it.
+    cable = {
+        "srcSwitchId": "SERIAL00004", "srcInterfaceName": "Ethernet1/1",
+        "dstSwitchId": "SERIAL00005", "dstInterfaceName": "Ethernet1/3",
+        "templateName": "", "linkType": "ethisl", "policyType": "", "linkPlanned": False, "linkPresent": True,
+    }
+    fresh = copy.deepcopy(valid_state)
+    l2_cable = dict(cable, srcInterfaceName="Ethernet1/4", dstInterfaceName="Ethernet1/4")
+    fresh["links"] = [copy.deepcopy(cable), copy.deepcopy(l2_cable)]
+    fresh["physical_links"] = [copy.deepcopy(cable), copy.deepcopy(l2_cable)]
+    operations = plan_topology_delta(confirmed, resolved, fresh)
+    assert [(op["template"], op["policy_type"], op["provisioning"], op["requires_physical"], op["config_only"]) for op in operations] == [
+        ("ext_l3_dci_link", "layer3DciVrfLite", "nd_manage_links", True, False),
+        ("ext_fabric_setup", "ebgpVrfLite", "nd_manage_links", False, True),
+        ("ext_l2_dci_link", "layer2Dci", "nd_manage_links", True, False),
+    ]
+    assert operations[1]["template_inputs"]["src_ebgp_asn"] == "1234"
+    assert operations[1]["template_inputs"]["link_mtu"] == 9216
+    assert (operations[1]["src"]["interface"], operations[1]["dst"]["interface"]) == ("Ethernet1/2", "Ethernet1/2")
+
+    # Missing required physical paths report the exact endpoint pair before mutation.
+    no_cable = copy.deepcopy(fresh)
+    no_cable["links"] = []
+    no_cable["physical_links"] = []
+    with pytest.raises(UnavailableError, match=r"required physical link is missing: vxlan_border_1/Ethernet1/1 <-> external_edge_1/Ethernet1/3"):
+        plan_topology_delta(confirmed, resolved, no_cable)
+
+    # A planned link is not a cable, even one that already carries the right policy.
+    planned_only = copy.deepcopy(fresh)
+    planned_only["links"] = [dict(cable, linkType="lan_planned_link", linkPlanned=True, linkPresent=False, policyType="layer3DciVrfLite")]
+    planned_only["physical_links"] = []
+    with pytest.raises(UnavailableError, match="required physical link is missing"):
+        plan_topology_delta(confirmed, resolved, planned_only)
+
+    # A config-only L2 DCI object must not satisfy the SVI's physical path requirement.
+    missing_l2_cable = copy.deepcopy(fresh)
+    missing_l2_cable["links"] = [cable, dict(
+        l2_cable, linkType="lan_planned_link", linkPlanned=True, linkPresent=False, policyType="layer2Dci")]
+    missing_l2_cable["physical_links"] = [cable]
+    with pytest.raises(UnavailableError, match=r"required physical link is missing: vxlan_border_1/Ethernet1/4 <-> external_edge_1/Ethernet1/4"):
+        plan_topology_delta(confirmed, resolved, missing_l2_cable)
+
+    # If the sub-interface pair is genuinely cabled, ND updates that link in place and the restore never deletes it.
+    cabled = copy.deepcopy(fresh)
+    cabled["links"].append(dict(cable, srcInterfaceName="Ethernet1/2", dstInterfaceName="Ethernet1/2"))
+    cabled["physical_links"].append(dict(cable, srcInterfaceName="Ethernet1/2", dstInterfaceName="Ethernet1/2"))
+    operations = plan_topology_delta(confirmed, resolved, cabled)
+    assert [(op["template"], op["config_only"]) for op in operations] == [
+        ("ext_l3_dci_link", False), ("ext_fabric_setup", False), ("ext_l2_dci_link", False),
+    ]
+
+    # A discovered but down L2 cable can be admin-upped; the post-reconcile gate
+    # still requires its interface state to converge before the target starts.
+    down = copy.deepcopy(fresh)
+    down_l2 = next(item for item in down["links"] if item["dstInterfaceName"] == "Ethernet1/4")
+    down_l2["linkPresent"] = False
+    down["interfaces"]["vxlan_border_1"]["Ethernet1/4"] = {"admin_state": False, "operational_state": "down"}
+    down["interfaces"]["external_edge_1"]["Ethernet1/4"] = {"admin_state": False, "operational_state": "down"}
+    operations = plan_topology_delta(confirmed, resolved, down)
+    assert [(op["operation"], op["switch_ref"], op["interface"]) for op in operations if op["operation"] == "ensure_interface"] == [
+        ("ensure_interface", "vxlan_border_1", "Ethernet1/4"),
+        ("ensure_interface", "external_edge_1", "Ethernet1/4"),
+    ]
+
+
+def test_l3out_recovers_shut_subinterface_link_endpoints(registry, valid_state):
+    confirmed = confirm(registry, "integration.nd_manage_l3out")
+    resolved = resolve_execution(confirmed, "integration.nd_manage_l3out")
+    state = copy.deepcopy(valid_state)
+    for switch_ref in ("vxlan_border_1", "external_edge_1"):
+        state["interfaces"][switch_ref]["Ethernet1/2"] = {
+            "admin_state": False, "operational_state": "down"}
+    operations = plan_topology_delta(confirmed, resolved, state)
+    assert [(operation["operation"], operation["switch_ref"], operation["interface"])
+            for operation in operations] == [
+        ("ensure_interface", "vxlan_border_1", "Ethernet1/2"),
+        ("ensure_interface", "external_edge_1", "Ethernet1/2"),
+    ]
 
 
 def test_nd_manage_links_provisioning_is_pinned_to_the_template_policy(registry, valid_state):
@@ -1035,144 +1302,3 @@ def test_cli_plan_and_schedule_emit_json(capsys):
         "plan", "--registry", str(registry_path),
         "--execution-id", "integration.nd_vpc_pair.external", "--allow-auto-confirm",
     ]) == 1
-
-
-def test_l3out_requires_cables_for_routed_and_svi_and_plans_subinterface_link(registry, valid_state):
-    confirmed = confirm(registry, "integration.nd_manage_l3out")
-    resolved = resolve_execution(confirmed, "integration.nd_manage_l3out")
-    assert plan_topology_delta(confirmed, resolved, valid_state) == []
-
-    # Right after the switches are re-added ND only holds the discovered cable, with no template on it.
-    cable = {
-        "srcSwitchId": "SERIAL00004", "srcInterfaceName": "Ethernet1/1",
-        "dstSwitchId": "SERIAL00005", "dstInterfaceName": "Ethernet1/3",
-        "templateName": "", "linkType": "ethisl", "policyType": "", "linkPlanned": False, "linkPresent": True,
-    }
-    fresh = copy.deepcopy(valid_state)
-    l2_cable = dict(cable, srcInterfaceName="Ethernet1/4", dstInterfaceName="Ethernet1/4")
-    fresh["links"] = [copy.deepcopy(cable), copy.deepcopy(l2_cable)]
-    fresh["physical_links"] = [copy.deepcopy(cable), copy.deepcopy(l2_cable)]
-    operations = plan_topology_delta(confirmed, resolved, fresh)
-    assert [(op["template"], op["policy_type"], op["provisioning"], op["requires_physical"], op["config_only"]) for op in operations] == [
-        ("ext_l3_dci_link", "layer3DciVrfLite", "nd_manage_links", True, False),
-        ("ext_fabric_setup", "ebgpVrfLite", "nd_manage_links", False, True),
-        ("ext_l2_dci_link", "layer2Dci", "nd_manage_links", True, False),
-    ]
-    assert operations[1]["template_inputs"]["src_ebgp_asn"] == "1234"
-    assert operations[1]["template_inputs"]["link_mtu"] == 9216
-    assert (operations[1]["src"]["interface"], operations[1]["dst"]["interface"]) == ("Ethernet1/2", "Ethernet1/2")
-
-    # Missing required physical paths report the exact endpoint pair before mutation.
-    no_cable = copy.deepcopy(fresh)
-    no_cable["links"] = []
-    no_cable["physical_links"] = []
-    with pytest.raises(UnavailableError, match=r"required physical link is missing: vxlan_border_1/Ethernet1/1 <-> external_edge_1/Ethernet1/3"):
-        plan_topology_delta(confirmed, resolved, no_cable)
-
-    # A planned link is not a cable, even one that already carries the right policy.
-    planned_only = copy.deepcopy(fresh)
-    planned_only["links"] = [dict(cable, linkType="lan_planned_link", linkPlanned=True, linkPresent=False, policyType="layer3DciVrfLite")]
-    planned_only["physical_links"] = []
-    with pytest.raises(UnavailableError, match="required physical link is missing"):
-        plan_topology_delta(confirmed, resolved, planned_only)
-
-    # A config-only L2 DCI object must not satisfy the SVI's physical path requirement.
-    missing_l2_cable = copy.deepcopy(fresh)
-    missing_l2_cable["links"] = [cable, dict(
-        l2_cable, linkType="lan_planned_link", linkPlanned=True, linkPresent=False, policyType="layer2Dci")]
-    missing_l2_cable["physical_links"] = [cable]
-    with pytest.raises(UnavailableError, match=r"required physical link is missing: vxlan_border_1/Ethernet1/4 <-> external_edge_1/Ethernet1/4"):
-        plan_topology_delta(confirmed, resolved, missing_l2_cable)
-
-    # If the sub-interface pair is genuinely cabled, ND updates that link in place and the restore never deletes it.
-    cabled = copy.deepcopy(fresh)
-    cabled["links"].append(dict(cable, srcInterfaceName="Ethernet1/2", dstInterfaceName="Ethernet1/2"))
-    cabled["physical_links"].append(dict(cable, srcInterfaceName="Ethernet1/2", dstInterfaceName="Ethernet1/2"))
-    operations = plan_topology_delta(confirmed, resolved, cabled)
-    assert [(op["template"], op["config_only"]) for op in operations] == [
-        ("ext_l3_dci_link", False), ("ext_fabric_setup", False), ("ext_l2_dci_link", False),
-    ]
-
-    # A discovered but down L2 cable can be admin-upped; the post-reconcile gate
-    # still requires its interface state to converge before the target starts.
-    down = copy.deepcopy(fresh)
-    down_l2 = next(item for item in down["links"] if item["dstInterfaceName"] == "Ethernet1/4")
-    down_l2["linkPresent"] = False
-    down["interfaces"]["vxlan_border_1"]["Ethernet1/4"] = {"admin_state": False, "operational_state": "down"}
-    down["interfaces"]["external_edge_1"]["Ethernet1/4"] = {"admin_state": False, "operational_state": "down"}
-    operations = plan_topology_delta(confirmed, resolved, down)
-    assert [(op["operation"], op["switch_ref"], op["interface"]) for op in operations if op["operation"] == "ensure_interface"] == [
-        ("ensure_interface", "vxlan_border_1", "Ethernet1/4"),
-        ("ensure_interface", "external_edge_1", "Ethernet1/4"),
-    ]
-
-
-def test_l3out_recovers_shut_subinterface_link_endpoints(registry, valid_state):
-    confirmed = confirm(registry, "integration.nd_manage_l3out")
-    resolved = resolve_execution(confirmed, "integration.nd_manage_l3out")
-    state = copy.deepcopy(valid_state)
-    for switch_ref in ("vxlan_border_1", "external_edge_1"):
-        state["interfaces"][switch_ref]["Ethernet1/2"] = {
-            "admin_state": False, "operational_state": "down"}
-    operations = plan_topology_delta(confirmed, resolved, state)
-    assert [(operation["operation"], operation["switch_ref"], operation["interface"])
-            for operation in operations] == [
-        ("ensure_interface", "vxlan_border_1", "Ethernet1/2"),
-        ("ensure_interface", "external_edge_1", "Ethernet1/2"),
-    ]
-
-def test_reserved_port_channel_namespace_allows_only_empty_target_owned_cleanup(registry, valid_state):
-    profile_id = "integration.nd_interface_port_channel_routed"
-    confirmed = confirm(registry, profile_id)
-    resolved = resolve_execution(confirmed, profile_id)
-    state = interface_state_for_profile(confirmed, valid_state, profile_id)
-    state["interfaces"]["vxlan_leaf_1"]["Ethernet1/18"].update({
-        "port_channel_member": True, "port_channel_id": 520, "policy_type": "l3PoMember",
-    })
-    state["logical_interfaces"]["vxlan_leaf_1"]["Port-channel520"].update({
-        "exists": True, "policy": "int_l3_port_channel",
-        "nv_pairs": {"MEMBER_INTERFACES": "Ethernet1/18"},
-    })
-    state["logical_interfaces"]["vxlan_leaf_1"]["Port-channel523.5"]["exists"] = True
-
-    operations = plan_topology_delta(confirmed, resolved, state)
-    detach = next(op["port_channel_detachments"][0] for op in operations
-                  if op["operation"] == "verify_free_interfaces")
-    assert detach["interface"] == "Port-channel520"
-    assert detach["members_after"] == []
-
-    occupied = copy.deepcopy(state)
-    occupied["logical_interfaces"]["vxlan_leaf_1"]["Port-channel520"]["nv_pairs"]["MEMBER_INTERFACES"] = "Ethernet1/18,Ethernet1/50"
-    with pytest.raises(OrchestrationError, match="logical interface namespace is in use"):
-        plan_topology_delta(confirmed, resolved, occupied)
-
-def test_standalone_vpc_execution_requires_its_exact_peer_link_and_admin_state(registry, valid_state):
-    execution_id = "integration.nd_vpc_pair.advanced"
-    confirmed = confirm(registry, "integration.nd_vpc_pair")
-    for execution in confirmed["profile_executions"]["integration.nd_vpc_pair"]:
-        execution["confirmation"] = {
-            "status": "confirmed", "owner": "fixture-owner", "evidence": "fixture-link", "reasons": [],
-        }
-    resolved = resolve_execution(confirmed, execution_id)
-    assert plan_topology_delta(confirmed, resolved, valid_state) == []
-
-    missing = copy.deepcopy(valid_state)
-    for source in ("links", "physical_links"):
-        missing[source] = [item for item in missing[source] if not (
-            {item.get("srcSwitchId"), item.get("dstSwitchId")} == {"SERIAL00001", "SERIAL00002"}
-            and "Ethernet1/2" in {item.get("srcInterfaceName"), item.get("dstInterfaceName")}
-        )]
-    with pytest.raises(UnavailableError, match=r"required physical vPC peer-link is missing: vxlan_leaf_1/Ethernet1/2 <-> vxlan_leaf_2/Ethernet1/1"):
-        plan_topology_delta(confirmed, resolved, missing)
-
-    shut = copy.deepcopy(valid_state)
-    shut["interfaces"]["vxlan_leaf_1"]["Ethernet1/2"].update(admin_state=False, operational_state="down")
-    shut["interfaces"]["vxlan_leaf_2"]["Ethernet1/1"].update(admin_state=False, operational_state="down")
-    for item in shut["links"]:
-        if {item.get("srcSwitchId"), item.get("dstSwitchId")} == {"SERIAL00001", "SERIAL00002"}:
-            item["linkPresent"] = False
-    operations = plan_topology_delta(confirmed, resolved, shut)
-    assert [(op["operation"], op["switch_ref"], op["interface"]) for op in operations] == [
-        ("ensure_interface", "vxlan_leaf_1", "Ethernet1/2"),
-        ("ensure_interface", "vxlan_leaf_2", "Ethernet1/1"),
-    ]

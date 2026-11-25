@@ -28,12 +28,15 @@ def patched_bytes(relative, original):
     seeds = f"({result}.gathered | map(attribute='seed_ip') | list)"
     fixture = "(nd_switches_base_conf | map(attribute='seed_ip') | sort | list)"
     roster = "(nd_pipeline_switches_topology | default(nd_switches_base_conf) | map(attribute='seed_ip') | sort | list)"
+    retained = "(nd_pipeline_switches_topology | default([]) | selectattr('name', 'defined') | selectattr('name', 'in', ['vxlan_leaf_3', 'vxlan_leaf_4']) | list)"
+    fixture_with_retained = f"(({fixture} + ({retained} | map(attribute='seed_ip') | list)) | sort | list)"
     new = ('      - nd_pipeline_switches_topology | default(nd_switches_base_conf) | length > 0\n'
            f'      - {seeds} | unique | list | length == {result}.gathered | length\n'
-           f'      - ({seeds} | sort | list) in [{fixture}, {roster}]\n')
+           f'      - ({seeds} | sort | list) in [{fixture}, {roster}] or ({retained} | length == 2 and ({seeds} | sort | list) == {fixture_with_retained})\n')
     old_message = '      expected {{ nd_switches_base_conf | length }}\n'
     new_message = ('      expected the exact test fixture ({{ nd_switches_base_conf | length }}) or the exact declared fabric roster '
-                   '({{ nd_pipeline_switches_topology | default(nd_switches_base_conf) | length }}); '
+                   '({{ nd_pipeline_switches_topology | default(nd_switches_base_conf) | length }}) '
+                   'or the exact test fixture plus declared vxlan_leaf_3 and vxlan_leaf_4; '
                    'missing, duplicate, or unexpected seeds are not allowed\n')
     if source.count(old) != 1 or source.count(old_message) != 1:
         raise ValueError('Switches count assertion changed upstream; patch review is required')

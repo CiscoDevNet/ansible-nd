@@ -14,6 +14,8 @@ from jinja2.nativetypes import NativeEnvironment
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 
+from test_fabric_rounds import flatten_tasks
+from test_switch_rehome_preflight import expression_environment, named
 from validate_nd_prerequisites import (
     expand_profile_executions,
     jenkins_targets,
@@ -30,13 +32,6 @@ from validate_nd_prerequisites import (
     validate_tree,
     write_checkpoint,
 )
-
-
-def walk_tasks(tasks):
-    for task in tasks or []:
-        yield task
-        for field in ("block", "rescue", "always"):
-            yield from walk_tasks(task.get(field, []))
 
 
 @pytest.mark.parametrize("action,outcome", [
@@ -153,15 +148,12 @@ def test_baseline_repair_lock_and_readonly_modes(tmp_path, mode, occupied, targe
                  "nd_prerequisite_repair_baseline": mode != "disabled", "test_module": "mock",
                  "_ndp_profile": {"switches": {"members": ["leaf"]}}, "_ndp_run_id": "mock-run",
                  "_ndp_execution_id": "mock", "nd_prerequisite_repair_lock_dir": str(lock_dir)}
-    runner = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]
-    arm = next(task for task in runner["tasks"] if task.get("name", "").endswith("arm forced prerequisite restore handler"))
-    tasks = [arm]
-    variables["nd_prerequisite_enable"] = True
+    tasks = [lock] + repair_tasks
     if target_failure:
         tasks.append({"name": "Injected target failure", "ansible.builtin.fail": {"msg": "target failed"}})
     play = [{"hosts": "localhost", "connection": "local", "gather_facts": False, "force_handlers": True,
-             "vars": variables, "pre_tasks": [lock] + repair_tasks, "tasks": tasks,
-             "handlers": [{"name": "Restore prerequisite interface changes", "ansible.builtin.include_tasks": str(release_file)}]}]
+             "vars": variables, "tasks": [{"block": tasks,
+                 "always": [{"name": "Restore prerequisite interface changes", "ansible.builtin.include_tasks": str(release_file)}]}]}]
     playbook = tmp_path / "lock.yaml"
     playbook.write_text(yaml.safe_dump(play, sort_keys=False))
     config = tmp_path / "ansible.cfg"
@@ -227,6 +219,29 @@ def test_validator_rejects_bad_registry_shape(registry):
     bad = dict(registry)
     bad["schema_version"] = 3
     assert "schema_version must equal 2" in validate_registry(bad)
+
+
+def test_profile_merges_do_not_trigger_ansible_duplicate_key_warnings():
+    # ansible-core 2.19+ flattens `<<:` merges before its duplicate-key check, so any
+    # profile key that overrides a merged default warns on every include of the registry.
+    class FlattenedDuplicateLoader(yaml.SafeLoader):
+        pass
+
+    duplicates = []
+
+    def construct_mapping(loader, node, deep=False):
+        mapping = yaml.SafeLoader.construct_mapping(loader, node, deep)
+        keys = set()
+        for key_node, _value_node in node.value:
+            key = loader.construct_object(key_node, deep=deep)
+            if key in keys:
+                duplicates.append(f"{key} (line {key_node.start_mark.line + 1})")
+            keys.add(key)
+        return mapping
+
+    FlattenedDuplicateLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, construct_mapping)
+    yaml.load((ROOT / "tests/nd_prerequisite_profiles.yaml").read_text(), Loader=FlattenedDuplicateLoader)
+    assert duplicates == []
 
 
 REQUIRED_PROFILE_FIELDS = {
@@ -530,17 +545,77 @@ def test_pending_values_are_reasons_not_executable_placeholders(registry):
 
 
 def test_jenkins_target_parser_ignores_commented_entries():
-    source = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
-    expected = jenkins_targets(source)
-    commented = source
-    for name in ("PLAYBOOK_FILES", "INTEGRATION_MODULES", "INTERFACE_INTEGRATION_MODULES"):
-        marker = "def " + name + " = ["
-        assert marker in commented
-        commented = commented.replace(marker, marker + "\n    // 'disabled_line',", 1)
-    assert jenkins_targets(commented) == expected
-    assert "nd_manage_policy" in expected["INTEGRATION_MODULES"]
-    assert expected["STANDALONE_INTEGRATION_MODULES"] == ["nd_vpc_pair"]
-    assert set(expected["INTEGRATION_MODULES"] + expected["INTERFACE_INTEGRATION_MODULES"]) <= set(expected["EFFECTIVE_INTEGRATION_MODULES"])
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    targets = jenkins_targets(jenkins_text)
+    assert targets["PLAYBOOK_FILES"] == []
+    assert "nd_manage_policy" in targets["INTEGRATION_MODULES"]
+    assert {
+        "nd_manage_fabric_group_vxlan",
+        "nd_manage_fabric_group_members",
+        "nd_manage_tor",
+        "nd_local_user",
+        "nd_maintenance_mode",
+        "nd_fabric_update_group",
+        "nd_manage_community_list",
+        "nd_manage_extended_community_list",
+    } <= set(targets["INTEGRATION_MODULES"])
+    assert targets["INTERFACE_INTEGRATION_MODULES"] == [
+        "nd_interface_loopback",
+        "nd_interface_svi",
+        "nd_interface_ethernet_access",
+        "nd_interface_ethernet_trunk_host",
+        "nd_interface_ethernet_routed",
+        "nd_interface_port_channel_access",
+        "nd_interface_port_channel_trunk_host",
+        "nd_interface_port_channel_routed",
+        "nd_interface_subinterface_managed",
+        "nd_interface_subinterface_unmanaged",
+        "nd_interface_vpc_access",
+        "nd_interface_vpc_trunk_host",
+    ]
+    assert {
+        *targets["INTEGRATION_MODULES"],
+        *targets["INTERFACE_INTEGRATION_MODULES"],
+        "nd_resource_manager",
+        "nd_manage_fabric",
+        "nd_manage_links",
+    } == set(targets["EFFECTIVE_INTEGRATION_MODULES"])
+    assert targets["EFFECTIVE_INTEGRATION_MODULES"].count("nd_manage_switches") == 1
+    assert "ND_TOR_ENABLED" not in jenkins_text
+    assert "def plannedResultTargets = orderedIntegrationTargets.collect { [it, 'integration'] }" in jenkins_text
+    assert targets["STANDALONE_INTEGRATION_MODULES"] == ["nd_vpc_pair"]
+
+
+@pytest.mark.parametrize("variant", [
+    "Jenkinsfile_nd_jenkins_script",
+    "Jenkinsfile_nd_jenkins_script_temp_switches",
+    "Jenkinsfile_nd_jenkins_script_comm_list",
+])
+def test_jenkins_runs_port_channels_after_vpc_pairs_before_switches(variant):
+    jenkins_text = (ROOT / variant).read_text()
+    ordering = jenkins_text.split("def orderedIntegrationTargets = []", 1)[1].split("def integrationForShell", 1)[0]
+    assert (
+        ordering.index("orderedIntegrationTargets.addAll(effectiveIntegrationModules.findAll { it != 'nd_manage_switches' && !it.startsWith('nd_interface_port_channel_') })")
+        < ordering.index("orderedIntegrationTargets.addAll(standaloneTargets)")
+        < ordering.index("orderedIntegrationTargets.addAll(effectiveIntegrationModules.findAll { it.startsWith('nd_interface_port_channel_') })")
+        < ordering.index("orderedIntegrationTargets.addAll(effectiveIntegrationModules.findAll { it == 'nd_manage_switches' })")
+    )
+    unstarted = jenkins_text.split("def recordUnstartedRound(", 1)[1].split("\n}\n", 1)[0]
+    assert (
+        unstarted.index("def targets = integrationTargets.findAll { it != 'nd_manage_switches' && !it.startsWith('nd_interface_port_channel_') }")
+        < unstarted.index('targets.addAll(pairRows.collect { "nd_vpc_pair.${it.id}".toString() })')
+        < unstarted.index("targets.addAll(integrationTargets.findAll { it.startsWith('nd_interface_port_channel_') })")
+        < unstarted.index("targets.addAll(integrationTargets.findAll { it == 'nd_manage_switches' })")
+    )
+    assert "if (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true')" in ordering
+    assert "ORDERED_INTEGRATION_LIST=${orderedIntegrationTargets.join(' ')}" in jenkins_text
+    assert 'for m in ${ORDERED_INTEGRATION_LIST}; do' in jenkins_text
+    assert 'run_standalone_integration "${m}"' in jenkins_text
+    assert 'for m in ${STANDALONE_INTEGRATION_LIST}; do' not in jenkins_text
+    assert 'for sm in ${ORDERED_INTEGRATION_LIST} ${PLAYBOOK_LIST}; do' not in jenkins_text
+    assert "begin_reported_module()" in jenkins_text
+    assert "close_reported_module()" in jenkins_text
+    assert "standaloneTargets.each { m -> resultTargets.add([m, 'integration']) }" not in jenkins_text
 
 
 def test_jenkins_exposes_baseline_controls_branch_notification_and_debug_parameters():
@@ -742,12 +817,14 @@ def test_profile_coverage_command_passes_and_fails_closed(capsys):
 
 
 def test_jenkins_runs_profile_coverage_gate_before_the_module_loop():
-    source = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+    stale_output_cleanup = "for target in ${INTEGRATION_LIST} ${STANDALONE_INTEGRATION_LIST} ${PLAYBOOK_LIST}; do"
     coverage_call = 'python "${PROFILE_VALIDATOR}" coverage'
-    module_loop = 'for m in ${ORDERED_INTEGRATION_LIST}; do'
-    assert '"NDP_EFFECTIVE_MODULES=${profileCoverageForShell}"' in source
-    assert source.index(coverage_call) < source.index(module_loop)
-    assert '--modules "${NDP_EFFECTIVE_MODULES}"' in source
+    module_loop = "for m in ${ORDERED_INTEGRATION_LIST}; do"
+    assert '"NDP_EFFECTIVE_MODULES=${profileCoverageForShell}"' in jenkins_text
+    assert coverage_call in jenkins_text
+    assert stale_output_cleanup not in jenkins_text
+    assert jenkins_text.index(coverage_call) < jenkins_text.index(module_loop)
 
 
 def test_live_link_capture_uses_an_ansible_loop_not_a_python_comprehension():
@@ -785,6 +862,95 @@ def test_subinterface_parent_lifecycle_is_owned_by_typed_prerequisites():
         "restore_interface_operation.yaml",
     ):
         assert f"nd_prerequisite/{filename}" in jenkins_text
+
+
+def test_runner_notifications_target_named_handler_tasks():
+    runner = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]
+    # Ansible matches notify against handler tasks; a handler block's own name is never notifiable.
+    handler_names = {handler.get("name") for handler in flatten_tasks(runner["handlers"])
+                     if not any(branch in handler for branch in ("block", "rescue", "always"))}
+    notified = set()
+    for section in ("pre_tasks", "tasks", "post_tasks"):
+        for task in flatten_tasks(runner.get(section, [])):
+            notify = task.get("notify", [])
+            notified.update([notify] if isinstance(notify, str) else notify)
+
+    assert "Restore prerequisite interface changes" in notified
+    assert notified <= handler_names
+
+
+def stale_lock_reclaim_task():
+    pre_tasks = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]["pre_tasks"]
+    index = next(i for i, task in enumerate(pre_tasks) if "reclaim a baseline repair lock" in task.get("name", ""))
+    return pre_tasks, index
+
+
+def test_stale_lock_reclaim_runs_on_the_controller_before_prerequisites_and_never_fails_the_module():
+    pre_tasks, index = stale_lock_reclaim_task()
+    task = pre_tasks[index]
+    assert pre_tasks[index + 2]["name"].endswith("prepare and verify declared prerequisites")
+    assert (task["delegate_to"], task["run_once"], task["failed_when"]) == ("localhost", True, False)
+    assert "nd_prerequisite_run_id=" not in " ".join(task["ansible.builtin.command"]["argv"][:2])
+    assert task["environment"]["NDP_LOCK_DIR"] == (
+        "{{ nd_prerequisite_repair_lock_dir | default('/tmp/nd-prerequisite-baseline.lock') }}")
+    assert {"nd_prerequisite_enable | default(false) | bool", "not ansible_check_mode",
+            "nd_prerequisite_apply | default(false) | bool",
+            "not (nd_prerequisite_only | default(false) | bool)"} <= set(task["when"])
+
+
+DEAD_OWNER = "jenkins-Ansible-ND-Pipeline1-184-ND43-20261118184801671_nd_manage_policy"
+
+
+@pytest.mark.parametrize("scenario,owner,live_args,expected,reclaimed", [
+    # Build 184: the policy owner died; the next module's longer run id must not keep its lock alive.
+    ("dead-owner", DEAD_OWNER, ["ansible-playbook", "-e", f"nd_prerequisite_run_id={DEAD_OWNER}_group"],
+     "NDP_PREREQUISITE_STALE_LOCK_RECLAIMED", True),
+    ("live-owner", DEAD_OWNER, ["ansible-playbook", "-e", f"nd_prerequisite_run_id={DEAD_OWNER}"],
+     "NDP_PREREQUISITE_LOCK_HELD", False),
+    ("local-owner", "local-integration.nd_manage_policy", [], "NDP_PREREQUISITE_LOCK_HELD", False),
+    ("missing-owner", None, [], "NDP_PREREQUISITE_LOCK_HELD", False),
+    ("no-process-table", DEAD_OWNER, None, "NDP_PREREQUISITE_LOCK_HELD", False),
+    ("no-lock", None, [], "", False),
+])
+def test_stale_lock_reclaim_only_releases_locks_of_exited_pipeline_runs(tmp_path, scenario, owner, live_args,
+                                                                         expected, reclaimed):
+    pre_tasks, index = stale_lock_reclaim_task()
+    script = pre_tasks[index]["ansible.builtin.command"]["argv"][2]
+    lock = tmp_path / "nd-prerequisite-baseline.lock"
+    if scenario != "no-lock":
+        lock.mkdir()
+        if owner:
+            (lock / "owner.json").write_text(json.dumps({"run_id": owner, "execution_id": "integration.policy"}))
+    proc = tmp_path / "proc"
+    if live_args is not None:
+        (proc / "4242").mkdir(parents=True)
+        (proc / "4242" / "cmdline").write_bytes("\0".join(live_args).encode() + b"\0")
+        (proc / "self").mkdir()
+    result = subprocess.run([sys.executable, "-c", script], text=True, capture_output=True, timeout=30,
+                            env=dict(os.environ, NDP_LOCK_DIR=str(lock), NDP_PROC_ROOT=str(proc),
+                                     NDP_RUN_ID=f"{DEAD_OWNER}_group"))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith(expected) if expected else result.stdout == ""
+    assert lock.exists() == (scenario != "no-lock" and not reclaimed)
+    assert not list(tmp_path.glob("nd-prerequisite-baseline.lock.stale-*"))
+    if reclaimed:
+        assert DEAD_OWNER in result.stdout
+    elif owner and scenario != "no-lock":
+        assert json.loads((lock / "owner.json").read_text())["run_id"] == owner
+
+
+def test_stale_lock_reclaim_refuses_paths_outside_the_lock_contract(tmp_path):
+    pre_tasks, index = stale_lock_reclaim_task()
+    script = pre_tasks[index]["ansible.builtin.command"]["argv"][2]
+    other = tmp_path / "important"
+    other.mkdir()
+    (other / "owner.json").write_text(json.dumps({"run_id": DEAD_OWNER}))
+    result = subprocess.run([sys.executable, "-c", script], text=True, capture_output=True, timeout=30,
+                            env=dict(os.environ, NDP_LOCK_DIR=str(other), NDP_PROC_ROOT=str(tmp_path)))
+
+    assert result.returncode == 0 and result.stdout.startswith("NDP_PREREQUISITE_LOCK_CHECK_SKIPPED")
+    assert (other / "owner.json").exists()
 
 
 def test_runner_maps_numbered_links_without_replacing_the_develop_tor_suite():
@@ -855,38 +1021,6 @@ def test_runner_rejects_cross_fabric_positional_switch_mapping():
     assert "canonical switch pre-flight is unavailable; refusing to run" not in jenkins_text
 
 
-@pytest.mark.parametrize("variant", [
-    "Jenkinsfile_nd_jenkins_script",
-    "Jenkinsfile_nd_jenkins_script_temp_switches",
-    "Jenkinsfile_nd_jenkins_script_comm_list",
-])
-def test_jenkins_runs_port_channels_after_vpc_pairs_before_switches(variant):
-    jenkins_text = (ROOT / variant).read_text()
-    ordering = jenkins_text.split("def orderedIntegrationTargets = []", 1)[1].split("def integrationForShell", 1)[0]
-    assert (
-        ordering.index("orderedIntegrationTargets.addAll(effectiveIntegrationModules.findAll { it != 'nd_manage_switches' && !it.startsWith('nd_interface_port_channel_') })")
-        < ordering.index("orderedIntegrationTargets.addAll(standaloneTargets)")
-        < ordering.index("orderedIntegrationTargets.addAll(effectiveIntegrationModules.findAll { it.startsWith('nd_interface_port_channel_') })")
-        < ordering.index("orderedIntegrationTargets.addAll(effectiveIntegrationModules.findAll { it == 'nd_manage_switches' })")
-    )
-    unstarted = jenkins_text.split("def recordUnstartedRound(", 1)[1].split("\n}\n", 1)[0]
-    assert (
-        unstarted.index("def targets = integrationTargets.findAll { it != 'nd_manage_switches' && !it.startsWith('nd_interface_port_channel_') }")
-        < unstarted.index('targets.addAll(pairRows.collect { "nd_vpc_pair.${it.id}".toString() })')
-        < unstarted.index("targets.addAll(integrationTargets.findAll { it.startsWith('nd_interface_port_channel_') })")
-        < unstarted.index("targets.addAll(integrationTargets.findAll { it == 'nd_manage_switches' })")
-    )
-    assert "if (env.ND_PREREQUISITE_ONLY_EFFECTIVE != 'true')" in ordering
-    assert "ORDERED_INTEGRATION_LIST=${orderedIntegrationTargets.join(' ')}" in jenkins_text
-    assert 'for m in ${ORDERED_INTEGRATION_LIST}; do' in jenkins_text
-    assert 'run_standalone_integration "${m}"' in jenkins_text
-    assert 'for m in ${STANDALONE_INTEGRATION_LIST}; do' not in jenkins_text
-    assert 'for sm in ${ORDERED_INTEGRATION_LIST} ${PLAYBOOK_LIST}; do' not in jenkins_text
-    assert "begin_reported_module()" in jenkins_text
-    assert "close_reported_module()" in jenkins_text
-    assert "standaloneTargets.each { m -> resultTargets.add([m, 'integration']) }" not in jenkins_text
-
-
 def test_l3out_runner_verifies_required_vrfs_before_running_role():
     runner_text = (ROOT / "tests/run_integration_module.yaml").read_text()
 
@@ -903,16 +1037,24 @@ def test_l3out_runner_verifies_required_vrfs_before_running_role():
     assert "ignore_errors so an already-present VRF" not in runner_text
 
 
-def test_selected_branch_acl_and_ibgp_payloads_are_not_rewritten():
-    source = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
-    assert "item8: nd_manage_acl" not in source
-    assert "item9: nd_manage_fabric" not in source
-    assert "item10: nd_manage_fabric" not in source
-    assert "prepareSwitchIntegrationBaseline" not in source
-    assert 'nd_verify_develop_sources.py' in source
-    runner = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]
-    tasks = list(walk_tasks(runner["pre_tasks"] + runner["tasks"]))
-    assert not any("ansible.builtin.replace" in task for task in tasks)
+def test_authored_acl_and_ibgp_contracts_are_not_rewritten():
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+
+    for marker in ("item8: nd_manage_acl IPv6 wire type ipv4->ipv6",
+                   "item9: nd_manage_fabric iBGP asdot->asplain",
+                   "s/route_reflector_count: 4/route_reflector_count: 2/g"):
+        assert marker not in jenkins_text
+    assert "nd_verify_develop_sources.py" in jenkins_text
+
+
+def test_collection_rest_network_and_vrf_sources_are_not_patched():
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+
+    for marker in ("ND_REST_MODULE=", "NETWORK_VALIDATE=", "VRFS_ORCHESTRATOR=",
+                   "item11 nd_rest empty-body handling", "item12 network omitted-field handling",
+                   "item13 VRF BGP key-type wire enum"):
+        assert marker not in jenkins_text
+    assert "NDP_SELECTED_SOURCE_ORIGIN_MISMATCH" in jenkins_text
 
 
 def test_collection_modules_are_verified_without_runtime_patches():
@@ -924,16 +1066,13 @@ def test_collection_modules_are_verified_without_runtime_patches():
     assert '"${BASE_DIRECTORY}/venv/bin/python" "${COLLECTIONS_DIRECTORY}/nd_verify_develop_sources.py"' in source
 
 
-def test_policy_suites_keep_authored_failure_and_setup_semantics():
-    source = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
-    assert "item14 policy repeat-delete no-op" not in source
-    assert "item15 policy-group baseline no deploy" not in source
-    assert "POLICY_GROUP_SPECIAL_TEST" not in source
-    runner = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]
-    calls = [task for task in walk_tasks(runner["tasks"]) if task.get("ansible.builtin.include_role", {}).get("name") == "{{ test_module }}" and not task["ansible.builtin.include_role"].get("tasks_from")]
-    assert calls
-    assert all(not task.get("ignore_errors") for task in calls)
-    assert any(not task["ansible.builtin.include_role"].get("tasks_from") for task in calls)
+def test_authored_policy_noop_assertions_remain_unchanged():
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+
+    assert "item14 policy repeat-delete no-op" not in jenkins_text
+    assert "item15 policy-group baseline no deploy" not in jenkins_text
+    assert "POLICY_GROUP_SPECIAL_TEST" not in jenkins_text
+    assert "nd_verify_develop_sources.py" in jenkins_text
 
 
 def test_local_runner_l3out_projection_uses_border_and_external_edge():
@@ -949,16 +1088,20 @@ def test_local_runner_l3out_projection_uses_border_and_external_edge():
 
 
 def test_webex_results_table_uses_markdown_and_separate_artifact_links():
-    source = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
-    assert "def headers = ['Status', 'Module', 'Fabric']" in source
-    assert "headers.addAll(['Passed', 'Failed', 'Skipped', 'Duration'])" in source
-    assert "def formatModuleActivityTable(results, buildNumber)" in source
-    assert "'Base', 'Cleanup', 'Skipped', 'Result / failure'" in source
-    assert "**Artifact links:**" in source
-    assert "def formatArtifactLinks(rawArtifacts)" in source
-    assert "def splitWebexMessage" in source
-    assert "sendWebexNotificationMessages(notificationMessages)" in source
-    assert "buildWebexAdaptiveCard" not in source
+    jenkins_text = (ROOT / "Jenkinsfile_nd_jenkins_script").read_text()
+
+    assert "def headers = ['Module']" in jenkins_text
+    assert "def headers = ['Module', 'Fabric']" not in jenkins_text
+    assert "def rounds = ['iBGP', 'eBGP']" in jenkins_text
+    assert "rounds.each { headers.addAll([it, 'P', 'F', 'S', 'Time']) }" in jenkins_text
+    assert '"```\\n${renderRow(headers)}' in jenkins_text
+    assert "**Artifact links:**" in jenkins_text
+    assert "def formatArtifactLinks(rawArtifacts)" in jenkins_text
+    assert "def formatSkippedTestLinks(rawSkipFiles)" in jenkins_text
+    assert "def calculateRunDuration(long startTimeMillis, long endTimeMillis)" in jenkins_text
+    assert "Total module duration:" not in jenkins_text
+    assert "buildWebexAdaptiveCard" not in jenkins_text
+    assert '\"attachments\"' not in jenkins_text
 
 
 def test_switch_credentials_are_separate_and_runtime_bound():
@@ -971,7 +1114,7 @@ def test_switch_credentials_are_separate_and_runtime_bound():
     # both the module runner and membership guard read a separately bound Jenkins
     # username/password credential at execution time.
     assert "def SWITCH_CREDENTIALS_ID = 'SWITCH_CREDENTIALS'" in jenkins_text
-    assert "credentialsId: SWITCH_CREDENTIALS_ID" in jenkins_text
+    assert "usernamePassword(credentialsId: SWITCH_CREDENTIALS_ID" in jenkins_text
     assert "usernameVariable: 'ANSIBLE_NXOS_SWITCH_USERNAME'" in jenkins_text
     assert "passwordVariable: 'ANSIBLE_NXOS_SWITCH_PASSWORD'" in jenkins_text
     assert "lookup('env', 'ANSIBLE_NXOS_SWITCH_USERNAME')" in runner_text
@@ -994,7 +1137,7 @@ def test_pipeline_switch_payloads_explicitly_disable_preservation_for_every_fabr
     assert "nd_fabric_type_probe" not in text
     assert "nd_preserve_override" not in text
     onboard = next(task for task in play["tasks"] if task.get("name", "").startswith("Onboard the missing switches"))
-    adds = [task for task in walk_tasks(onboard["block"]) if "cisco.nd.nd_manage_switches" in task]
+    adds = [task for task in flatten_tasks(onboard["block"]) if "cisco.nd.nd_manage_switches" in task]
     assert len(adds) == 1
     assert adds[0]["loop"] == "{{ nd_add_requests | dict2items }}"
     assert adds[0]["cisco.nd.nd_manage_switches"]["config"] == "{{ _req.value }}"
@@ -1054,24 +1197,21 @@ def test_switch_move_checks_credentials_before_removing_any_switch():
     assert "nd_missing_switches | length > 0" in task["when"]
 
 
-def test_switch_removal_requires_scoped_acceptance_before_source_absence():
+@pytest.mark.parametrize("changed", [False, True])
+def test_switch_removal_reports_the_requested_scope_and_module_verdict(changed):
     play = yaml.safe_load((ROOT / "playbooks/nd_ensure_switches.yaml").read_text())[0]
-    tasks = list(walk_tasks(play["tasks"]))
-    removal = next(task for task in tasks if task.get("name") == "Remove each switch from the fabric it is leaving")
-    classification = next(task for task in tasks if task.get("name", "").startswith("Classify the immediate normal removal response"))
-    assert removal["cisco.nd.nd_rest"]["method"] == "post"
-    assert removal["cisco.nd.nd_rest"]["path"].endswith("/switchActions/remove")
-    assert "map(attribute='serial')" in removal["cisco.nd.nd_rest"]["content"]["switchIds"]
+    move = next(task for task in play["tasks"] if task["name"].startswith("Move the roster switches out"))
+    removal = named(move["block"], "Remove each switch from the fabric it is leaving")
+    classifier = named(move["block"], "Classify the immediate normal removal response")
     assert removal["register"] == "nd_rehome_removed"
-    assert removal["failed_when"] is False and removal["no_log"] is True
-    assert classification["loop"] == "{{ nd_rehome_removed.results }}"
-    assert classification["no_log"] is True
-    report = classification["vars"]["_remove_report"]
-    assert "'classification': 'refused' if ns.refused" in report
-    assert "'accepted' if http in [200, 201, 202, 204, 207]" in report
-    assert "'items': ns.details[:8]" in report
-    # HTTP acceptance is required before the separate source-absence proof.
-    assert any("accepted" in str(task.get("ansible.builtin.assert", {})) for task in tasks)
+    result = {"_rm": {"key": "fixture-source"}, "changed": changed, "status": 200, "jsondata": {}}
+    rendered = expression_environment().from_string(classifier["vars"]["_remove_report"]).render(
+        _removal=result, _requested_ids=["FIXTURE0001", "FIXTURE0002"],
+        nd_rehome_moves=[{"serial": "FIXTURE0001", "name": "first"}, {"serial": "FIXTURE0002", "name": "second"}],
+        _credential_tail=classifier["vars"]["_credential_tail"])
+    assert rendered["classification"] == "accepted"
+    assert "map(attribute='serial')" in removal["cisco.nd.nd_rest"]["content"]["switchIds"]
+    assert removal["cisco.nd.nd_rest"]["path"] == "/api/v1/manage/fabrics/{{ _rm.key }}/switchActions/remove"
 
 
 @pytest.mark.parametrize("name", ["apply_ensure_switch_membership.yaml", "apply_membership_move.yaml"])
@@ -1150,14 +1290,15 @@ def test_runtime_roster_and_defaults_match_confirmed_switch_identities():
         "nd_test_switch2_id": "external_edge_1",
     }.items():
         assert defaults[alias] == LAB_SWITCH_IDENTITIES[name][1], alias
-    registry = load_registry(ROOT / "tests/nd_prerequisite_profiles.yaml")
-    assert {name: (row["seed_ip"], row["serial"]) for name, row in registry["lab"]["switches"].items()} == LAB_SWITCH_IDENTITIES
+    launcher = (ROOT / "run_all_integ.sh").read_text()
     for position, name in ((1, "vxlan_leaf_1"), (2, "vxlan_leaf_2")):
         serial = LAB_SWITCH_IDENTITIES[name][1]
+        assert f'VPC_PAIR_SWITCH{position}_SERIAL="${{VPC_PAIR_SWITCH{position}_SERIAL:-{serial}}}"' in launcher
         assert f"vpc_pair_switch{position}_serial: '{serial}'" in jenkins
     for position, name in ((1, "vxlan_border_1"), (2, "external_edge_1")):
         ip, serial = LAB_SWITCH_IDENTITIES[name]
-        assert f"nd_test_switch{position}_id={serial} -e nd_test_switch{position}_mgmt_ip={ip}" in jenkins
+        for source in (jenkins, launcher):
+            assert f"nd_test_switch{position}_id={serial} -e nd_test_switch{position}_mgmt_ip={ip}" in source
 
 
 def test_every_roster_file_carries_all_eight_lab_switches(registry):
@@ -1317,6 +1458,57 @@ def test_vpc_interface_runner_forms_and_removes_the_second_leaf_pair():
     assert "_ndp_vpcif2_pair_preexisting is defined" in runner
     # The read-only heal removes the second pair as well, so a stuck leaf_3/leaf_4 cannot block a Recalculate & Deploy.
     assert "Unpair the second vPC leaf pair on each fabric with a read-only leaf" in ensure_text
+
+
+def test_vpc_interface_runner_proves_formed_pairs_by_reciprocal_vpcpair_records():
+    # nd_manage_vpc_pair gathered returns an empty vpc_pairs list on develop (build 196), so each formed pair is proven by
+    # the reciprocal per-switch vpcPair records that the target's multi-pair precondition reads.
+    tasks = yaml.safe_load((ROOT / "tests/run_integration_module.yaml").read_text())[0]["tasks"]
+    environment = expression_environment()
+    prefix = "[{{ test_module }}] SETUP - "
+    forward, reverse = ["FIXTURE0001", "FIXTURE0002"], ["FIXTURE0002", "FIXTURE0001"]
+
+    def read(item, current=None, status=200, attempts=1):
+        result = {"item": item, "status": status, "attempts": attempts, "failed": False, "changed": False}
+        return result if current is None else dict(result, current=current)
+
+    def paired(item):
+        return read(item, {"switchId": item[0], "peerSwitchId": item[1]})
+
+    for wait_name, check_name, peers in (
+        ("wait for reciprocal vpcPair records of the formed pair", "require the leaf pair", ("ansible_sno_1", "ansible_sno_2")),
+        ("wait for reciprocal vpcPair records of the second formed pair", "require the second leaf pair",
+         ("_ndp_vpcif2_sno_1", "_ndp_vpcif2_sno_2")),
+    ):
+        wait = named(tasks, prefix + wait_name)
+        check = named(tasks, prefix + check_name + " before the target starts")["ansible.builtin.assert"]
+        assert "gathered" not in json.dumps([wait, check])
+        assert wait["cisco.nd.nd_rest"] == {
+            "method": "get", "path": "/api/v1/manage/fabrics/{{ ansible_it_fabric }}/switches/{{ item.0 }}/vpcPair"}
+        assert wait["failed_when"] is False and "ignore_errors" not in wait
+        facts = {peers[0]: forward[0], peers[1]: forward[1], "ansible_it_fabric": "FABRIC"}
+        assert environment.from_string(wait["loop"]).render(**facts) == [forward, reverse]
+
+        until = environment.compile_expression(wait["until"])
+        assert until(**facts, item=forward, **{wait["register"]: paired(forward)})
+        # A missing record keeps polling, and the attempts clause stops on the last retry instead of exhausting it.
+        assert not until(**facts, item=forward, **{wait["register"]: read(forward, status=404, attempts=wait["retries"] - 1)})
+        assert until(**facts, item=forward, **{wait["register"]: read(forward, status=404, attempts=wait["retries"])})
+
+        conditions = [environment.compile_expression(condition) for condition in check["that"]]
+
+        def verdict(*results):
+            return all(condition(**facts, **{wait["register"]: {"results": list(results)}}) for condition in conditions)
+
+        assert verdict(paired(forward), paired(reverse))
+        assert not verdict(paired(forward), read(reverse, status=404))
+        assert not verdict(read(forward, {"switchId": forward[0], "peerSwitchId": "FIXTURE0009"}), paired(reverse))
+        assert not verdict(read(forward, "ND Error"), paired(reverse))
+        assert not verdict()
+        message = environment.from_string(check["fail_msg"]).render(
+            **facts, **{wait["register"]: {"results": [paired(forward), read(reverse, status=404)]}})
+        assert message.endswith(
+            "vpcPair records: FIXTURE0001 -> peer=FIXTURE0002 (http 200), FIXTURE0002 -> peer=none (http 404).")
 
 
 def test_border_and_external_edge_counts_match_canonical_lab(registry):

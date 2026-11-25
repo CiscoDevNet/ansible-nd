@@ -139,8 +139,15 @@
         argv: [mkdir, '-m', '0700', "{{ _ndp_repair_lock_dir }}"]
       delegate_to: localhost
       run_once: true
-      changed_when: true
+      changed_when: _ndp_lock_acquire.rc == 0
+      register: _ndp_lock_acquire
 
+    - name: Confirm baseline repair lock is acquired
+      ansible.builtin.assert:
+        that:
+          - _ndp_lock_acquire.rc == 0
+        fail_msg: "Failed to acquire baseline repair lock: {{ _ndp_lock_acquire.stderr | default(_ndp_lock_acquire.msg) }}"
+      run_once: true
     - name: Record ownership of the baseline repair lock
       ansible.builtin.set_fact:
         _ndp_baseline_repair_lock_acquired: true

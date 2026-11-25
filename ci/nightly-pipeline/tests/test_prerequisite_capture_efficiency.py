@@ -45,7 +45,6 @@ ledger.write_text(json.dumps(state))
 module.exit_json(changed=False, gathered=state['responses']['vpc'])
 '''
 
-
 FAKE_PORT_CHANNEL_MODULE = r'''
 from ansible.module_utils.basic import AnsibleModule
 module = AnsibleModule(argument_spec={
@@ -53,6 +52,7 @@ module = AnsibleModule(argument_spec={
     'config_actions': {'type': 'dict'}, 'state': {'type': 'str'}, 'output_level': {'type': 'str'}})
 module.exit_json(changed=False, before=[], after=[])
 '''
+
 
 def tasks(filename):
     return yaml.safe_load((PREREQUISITES / filename).read_text())

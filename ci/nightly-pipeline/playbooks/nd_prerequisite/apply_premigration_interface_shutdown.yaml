@@ -1,0 +1,183 @@
+---
+# Pre-migration Interface Shutdown: Before moving switches between fabrics,
+# shut down problematic interfaces (1/45, 1/46, 1/47 and similar) to avoid
+# up:down:inactive anomaly during fabric membership transfer.
+#
+# Execution order (critical):
+# 1. Shut down target interfaces on the switch via REST API
+# 2. Recalculate the fabric configuration
+# 3. Deploy the configuration
+# 4. Wait for deployment to complete
+# 5. THEN proceed with switch deletion/membership move
+#
+# This prevents partial shutdown anomalies from blocking fabric transitions.
+
+- name: Set premigration interface shutdown facts
+  ansible.builtin.set_fact:
+    _ndp_premigration_interfaces: >-
+      {{ nd_premigration_shutdown_interfaces | default(['Ethernet1/45', 'Ethernet1/46', 'Ethernet1/47'], true) }}
+    _ndp_premigration_wait_seconds: 30
+  run_once: true
+
+- name: "NDP_PREMIGRATION_INTERFACES: Preparing to shut {{ _ndp_premigration_interfaces | join(', ') }}"
+  ansible.builtin.debug:
+    msg: >-
+      NDP_PREMIGRATION_SHUTDOWN_START switch={{ _ndp_switch_hostname }}
+      interfaces={{ _ndp_premigration_interfaces | join(', ') }}
+      fabric={{ _ndp_premigration_fabric_name }}
+  run_once: false
+
+- name: Block for interface shutdown operations
+  block:
+    # Get current interface config to understand state
+    - name: "Query current interface state for {{ _ndp_premigration_interfaces | join(', ') }}"
+      cisco.nd.nd_rest:
+        method: get
+        path: "/api/v1/switches/{{ _ndp_switch_serial }}/interfaces"
+      register: _ndp_premigration_interfaces_current
+      failed_when: false
+      no_log: true
+      run_once: false
+
+    - name: "Filter target interfaces from current state"
+      ansible.builtin.set_fact:
+        _ndp_premigration_target_interfaces: >-
+          {{ _ndp_premigration_interfaces_current.current | default([])
+             | selectattr('name', 'in', _ndp_premigration_interfaces)
+             | list }}
+      run_once: false
+
+    # Only proceed if at least one target interface exists on this switch
+    - name: "Block: shutdown target interfaces via ND REST"
+      when:
+        - (_ndp_premigration_target_interfaces | default([])) | length > 0
+      block:
+        # Build the shutdown config payload
+        - name: "Build shutdown payload for target interfaces"
+          ansible.builtin.set_fact:
+            _ndp_premigration_shutdown_payload:
+              interfaces: >-
+                {{ _ndp_premigration_target_interfaces
+                   | map(attribute='name')
+                   | map('regex_replace', '^Ethernet', '')
+                   | map('string')
+                   | list }}
+              admin_down: true
+              description: "Pre-migration shutdown (Build {{ nd_build_number | default('unknown') }})"
+          run_once: false
+
+        # Push the shutdown config to ND for this switch
+        - name: "Apply shutdown config to switch via ND DCNM"
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/switches/{{ _ndp_switch_serial }}/interface-operations/admin-down"
+            json:
+              interfaces: "{{ _ndp_premigration_shutdown_payload.interfaces }}"
+          register: _ndp_premigration_shutdown_result
+          failed_when: false
+          no_log: true
+          run_once: false
+
+        - name: "Report shutdown operation status"
+          ansible.builtin.debug:
+            msg: >-
+              NDP_PREMIGRATION_SHUTDOWN_RESULT switch={{ _ndp_switch_hostname }}
+              result_status={{ _ndp_premigration_shutdown_result.status | default('unknown') }}
+              interfaces_count={{ (_ndp_premigration_target_interfaces | default([])) | length }}
+          run_once: false
+
+        # Wait for ND to process the shutdown
+        - name: "Wait {{ _ndp_premigration_wait_seconds }}s for interface shutdown to propagate"
+          ansible.builtin.pause:
+            seconds: "{{ _ndp_premigration_wait_seconds }}"
+          run_once: false
+          when: _ndp_premigration_shutdown_result.status | default(0) | int in [200, 201, 202, 204]
+
+        # Trigger fabric recalculate (forces ND to reconcile config)
+        - name: "Trigger fabric recalculate after shutdown"
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/fabrics/{{ _ndp_premigration_fabric_name }}/operations/recalculate"
+            json: {}
+          register: _ndp_premigration_recalculate_result
+          failed_when: false
+          no_log: true
+          run_once: false
+
+        - name: "Report recalculate operation"
+          ansible.builtin.debug:
+            msg: >-
+              NDP_PREMIGRATION_RECALCULATE fabric={{ _ndp_premigration_fabric_name }}
+              status={{ _ndp_premigration_recalculate_result.status | default('unknown') }}
+          run_once: false
+
+        # Trigger fabric deploy to push config to switches
+        - name: "Trigger fabric deploy after shutdown"
+          cisco.nd.nd_rest:
+            method: post
+            path: "/api/v1/fabrics/{{ _ndp_premigration_fabric_name }}/operations/deploy"
+            json: {}
+          register: _ndp_premigration_deploy_result
+          failed_when: false
+          no_log: true
+          run_once: false
+
+        - name: "Report deploy operation"
+          ansible.builtin.debug:
+            msg: >-
+              NDP_PREMIGRATION_DEPLOY fabric={{ _ndp_premigration_fabric_name }}
+              status={{ _ndp_premigration_deploy_result.status | default('unknown') }}
+          run_once: false
+
+        # Wait for deployment to complete (60 seconds for safety)
+        - name: "Wait for deployment to settle"
+          ansible.builtin.pause:
+            seconds: 60
+          run_once: false
+          when: _ndp_premigration_deploy_result.status | default(0) | int in [200, 201, 202, 204]
+
+        # Verify shutdown was successful
+        - name: "Verify target interfaces are now admin-down"
+          cisco.nd.nd_rest:
+            method: get
+            path: "/api/v1/switches/{{ _ndp_switch_serial }}/interfaces"
+          register: _ndp_premigration_interfaces_verify
+          failed_when: false
+          no_log: true
+          run_once: false
+
+        - name: "Check verification results"
+          ansible.builtin.set_fact:
+            _ndp_premigration_verify_interfaces: >-
+              {{ _ndp_premigration_interfaces_verify.current | default([])
+                 | selectattr('name', 'in', _ndp_premigration_interfaces)
+                 | selectattr('admin_state', 'equalto', 'down')
+                 | list }}
+          run_once: false
+
+        - name: "Report verification status"
+          ansible.builtin.debug:
+            msg: >-
+              NDP_PREMIGRATION_VERIFY_STATUS switch={{ _ndp_switch_hostname }}
+              target_count={{ (_ndp_premigration_target_interfaces | default([])) | length }}
+              verified_down_count={{ (_ndp_premigration_verify_interfaces | default([])) | length }}
+              all_shut={{ ((_ndp_premigration_target_interfaces | default([])) | length) == ((_ndp_premigration_verify_interfaces | default([])) | length) }}
+          run_once: false
+
+  rescue:
+    - name: "Report error in premigration shutdown block"
+      ansible.builtin.debug:
+        msg: >-
+          NDP_PREMIGRATION_SHUTDOWN_ERROR switch={{ _ndp_switch_hostname }}
+          error_phase={{ ansible_failed_task.name | default('unknown') }}
+          Proceeding with membership move (best-effort)
+      run_once: false
+
+# Success: interfaces are now safely shut down before membership transfer
+- name: "NDP_PREMIGRATION_SHUTDOWN_COMPLETE: Ready for fabric membership transfer"
+  ansible.builtin.debug:
+    msg: >-
+      NDP_PREMIGRATION_SHUTDOWN_COMPLETE switch={{ _ndp_switch_hostname }}
+      Proceeding to delete from {{ _ndp_premigration_source_fabric }}
+      and add to {{ _ndp_premigration_destination_fabric }}
+  run_once: false

@@ -137,12 +137,17 @@ if a['method']:
             finish(changed=True, status=207, current={'results':[{'switchId':identity, 'status':'failed' if refused else 'success', 'description':'password=DO_NOT_PRINT_ME' if refused else 'Deployment completed'} for identity in requested], 'private':'RAW_PAYLOAD'})
         if a['path'].endswith('/actions/configSave') and scenario == 'predelete_save_400':
             fail(status=400, msg='Save refused password=DO_NOT_PRINT_ME', current={'error':'RAW_PAYLOAD'})
+        if a['path'].endswith('/actions/configSave') and scenario == 'predelete_save_transient':
+            if sum(path.endswith('/actions/configSave') for path in s['rest_writes']) < 3:
+                fail(status=429, msg='Too many requests')
         if a['path'].endswith('/actions/configSave') and scenario == 'predelete_save_module_failure':
             fail(status=200, current={}, msg='password=DO_NOT_PRINT_ME')
         if a['path'].endswith('/actions/configSave') and scenario == 'predelete_save_code_200':
             finish(changed=True, status=200, current={'code':400, 'message':'password=DO_NOT_PRINT_ME RAW_PAYLOAD'})
         if a['path'].endswith('/actions/deploy'):
             assert a['content'] == {}
+            if scenario == 'predelete_deploy_unavailable':
+                fail(status=503, msg='Service unavailable')
             if scenario == 'leaf_tor_deploy_fails' and s['selected_calls']:
                 fail(status=403, msg='Remediation deploy denied password=DO_NOT_PRINT_ME')
             deploy_ids = ['FIXTURE'+str(index+1).zfill(4) for index in range(len(s['original']))]
@@ -337,6 +342,8 @@ def test_leaf_tor_refusal_recalculates_deploys_and_retries_only_refused_switches
     if len(state['selected_calls']) == 2:
         assert state['selected_calls'][1] == ['FIXTURE0005', 'FIXTURE0006']
     assert state['anomaly_reads'] >= 2
+    assert 'NDP_SWITCH_REMOVE_ANOMALIES' in completed.stdout
+    assert 'leaf_tor=2' in completed.stdout
     assert [path.rsplit('/', 1)[-1] for path in state['rest_writes'] if not path.endswith('/actions/copyRunStart')] == (
         ['configSave', 'deploy', 'remove', 'configSave', 'deploy']
         + (['remove'] if scenario == 'leaf_tor_then_success' else []))
@@ -440,6 +447,35 @@ def expression_environment():
     environment.tests["match"] = lambda value, pattern: bool(re.match(pattern, value))
     environment.tests["search"] = lambda value, pattern: bool(re.search(pattern, value))
     return environment
+
+
+def test_remediation_updates_host_fact_and_restores_full_absence_scope():
+    tasks = guard()["tasks"]
+    initialize = named(tasks, "Initialize the bounded anomaly remediation scope")
+    retry = named(tasks, "Reconcile Leaf-ToR unpairing")
+    moves = [{"serial": f"FIXTURE{i:04}", "from_fabric": "source"} for i in range(1, 7)]
+    facts = {"nd_rehome_moves": moves, "nd_rehome_delete_reports": []}
+    environment = expression_environment()
+
+    def set_facts(task):
+        rendered = {
+            key: environment.from_string(value).render(**facts) if isinstance(value, str) else value
+            for key, value in task["ansible.builtin.set_fact"].items()
+        }
+        facts.update(rendered)
+
+    set_facts(initialize)
+    facts["_nd_remove_retry_moves"] = moves[-2:]
+    set_facts(retry["block"][0])
+    assert facts["nd_rehome_moves"] == moves[-2:]
+    remove = named(retry["block"], "Remove each switch")["cisco.nd.nd_rest"]
+    assert environment.from_string(remove["content"]["switchIds"]).render(
+        **facts, _rm={"key": "source"},
+    ) == ["FIXTURE0005", "FIXTURE0006"]
+
+    # Cleanup must restore all six even when a nested gate or removal fails.
+    set_facts(retry["always"][0])
+    assert facts["nd_rehome_moves"] == moves
 
 
 def test_routine_maintenance_recovery_uses_controller_action_not_broken_collection_module():
@@ -600,7 +636,7 @@ def execute(tmp_path, scenario, remove_retries=2, force=False, phase='pre', sour
             move['from_fabric'] = 'fixture-accepted'
     values = {"ansible_python_interpreter": sys.executable, "nd_switch_apply": True,
               "_nd_switch_clock": guard()["vars"]["_nd_switch_clock"],
-              "nd_missing_switches": moves, "nd_rehome_moves": moves,
+              "nd_missing_switches": moves,
               "nd_switch_rehome_supported_types": guard()["vars"]["nd_switch_rehome_supported_types"],
               "nd_switch_predelete_deploy": True, "nd_switch_settle_seconds": 0,
               "nd_switch_rehome_force_delete": False, "nd_switch_remove_retries": remove_retries,
@@ -628,7 +664,9 @@ def execute(tmp_path, scenario, remove_retries=2, force=False, phase='pre', sour
                          'state=json.loads(Path(' + repr(str(state)) + ').read_text())\n'
                          'print(time.monotonic() + (901 if state.get("anomaly_reads",0)>=3 else 0))\n')
         values['_nd_switch_clock'] = "{{ lookup('ansible.builtin.pipe', (ansible_playbook_python | quote) ~ ' ' ~ (" + json.dumps(str(clock)) + " | quote)) | float }}"
-    tasks = move_tasks() + [{"name": "Destination add becomes eligible", "ansible.builtin.debug": {"msg": "DESTINATION_ADD_REACHED"}}]
+    tasks = [{"name": "Initialize the production host-fact move plan",
+              "ansible.builtin.set_fact": {"nd_rehome_moves": moves}}]
+    tasks += move_tasks() + [{"name": "Destination add becomes eligible", "ansible.builtin.debug": {"msg": "DESTINATION_ADD_REACHED"}}]
     # Keep production no_log: assertions verify only sanitized diagnostics escape.
     play = tmp_path / "play.yaml"
     play.write_text(yaml.safe_dump([{"hosts": "localhost", "connection": "local", "gather_facts": False,
@@ -763,9 +801,9 @@ def test_force_option_never_bypasses_auth_unrelated_anomalies_identity_or_lock(t
 
 
 @pytest.mark.parametrize('variant', ['Jenkinsfile_nd_jenkins_script', 'Jenkinsfile_nd_jenkins_script_temp_switches', 'Jenkinsfile_nd_jenkins_script_comm_list'])
-def test_jenkins_force_option_is_disabled_and_forward_preflight_only(variant):
+def test_jenkins_force_option_is_enabled_by_default_and_forward_preflight_only(variant):
     source = (ROOT / variant).read_text()
-    assert "name: 'ND_IBGP_TO_EBGP_LEAF_TOR_FORCE_DELETE', defaultValue: false" in source
+    assert "name: 'ND_IBGP_TO_EBGP_LEAF_TOR_FORCE_DELETE', defaultValue: true" in source
     assert "phase == 'pre' && params.ND_IBGP_TO_EBGP_LEAF_TOR_FORCE_DELETE == true" in source
     assert "(ndfcConfig.primary_fabric_type ?: '').toLowerCase() == 'vxlanebgp'" in source
     assert 'nd_switch_transfer_phase=${PREFLIGHT_PHASE}' in source

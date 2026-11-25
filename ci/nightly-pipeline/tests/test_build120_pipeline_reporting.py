@@ -95,27 +95,27 @@ script.metaClass.formatPhaseTimingTable = { Object rows, Object elapsed ->
 }
 script.runPostForTest()
 assert sent.size() == 1
-assert sent[0].contains('DETAILED TEST RESULTS')
+assert sent[0].contains('AUTHORED CASE RESULTS')
 assert sent[0].contains('fixture-branch')
 assert sent[0].indexOf('fixture-branch') < sent[0].indexOf('abcdef0123456789')
 assert logs.any { it.contains('NDP_TIMING_REPORT_UNAVAILABLE') }
 ''')
 
 
-def test_result_table_failure_sends_unknown_count_fallback(groovy_runner):
+def test_result_table_failure_sends_fallback_after_one_retry(groovy_runner):
     groovy_runner(r'''
 script.metaClass.formatResultsTable = { Object summary, Object unit ->
     throw new IllegalStateException('injected result-table rejection')
 }
 script.runPostForTest()
 assert sent.size() == 1
-assert sent[0].contains('Test-case counts are unknown')
-assert !sent[0].contains('Test cases passed: 0')
-assert sent[0].contains('Build result: FAILURE')
+assert sent[0].contains('Detailed reporting error class: java.lang.IllegalStateException')
+assert sent[0].contains('AUTHORED CASE TOTALS UNAVAILABLE')
+assert !sent[0].contains('Build result:')
 assert sent[0].contains('Branch: fixture-branch\nCommit: abcdef0123456789')
 assert sent[0].contains('https://jenkins.example/job/nd/121/console')
 assert sent[0].contains('https://jenkins.example/job/nd/121/artifact/')
-assert logs.any { it.contains('NDP_DETAILED_NOTIFICATION_FAILED') }
+assert logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_RETRY_FAILED:') }
 ''')
 
 
@@ -126,12 +126,12 @@ script.metaClass.formatModuleActivityTable = { Object rows, Object build ->
 }
 script.runPostForTest()
 assert sent.size() == 1
-assert sent[0].contains('DETAILED TEST RESULTS')
+assert sent[0].contains('AUTHORED CASE RESULTS')
 assert logs.any { it.contains('NDP_FINAL_ACTIVITY_TABLE_UNAVAILABLE') }
 ''')
 
 
-def test_delivery_failure_gets_one_minimal_fallback_attempt(groovy_runner):
+def test_delivery_failure_before_http_gets_one_detailed_retry(groovy_runner):
     groovy_runner(r'''
 int attempts = 0
 script.metaClass.sendWebexNotificationMessages = { Object messages ->
@@ -142,7 +142,9 @@ script.metaClass.sendWebexNotificationMessages = { Object messages ->
 script.runPostForTest()
 assert attempts == 2
 assert sent.size() == 1
-assert sent[0].contains('Detailed reporting was unavailable')
+assert sent[0].contains('AUTHORED CASE RESULTS')
+assert logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_RETRY:') }
+assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_RETRY_FAILED:') }
 ''')
 
 
@@ -197,8 +199,8 @@ def test_tables_preserve_fabric_rows_with_long_cells(groovy_runner):
     groovy_runner(r'''
 def name = 'nd_' + ('long_module_name_' * 15)
 def table = script.formatResultsTable(
-    'OK|' + name + '|fixture-fabric|4.3|7|0|2|01m||iBGP\n' +
-    'FAIL|' + name + '|fixture-ebgp|4.3|6|1|3|02m||eBGP', 'module test cases')
+    'OK|' + name + '|fixture-fabric|4.3|7|0|2|0|01m||iBGP|iBGP\n' +
+    'FAIL|' + name + '|fixture-ebgp|4.3|6|1|3|0|02m||eBGP|eBGP', 'module test cases')
 assert table.contains(name)
 def rows = table.readLines().findAll { it.startsWith(name + ' ') }
 assert rows.size() == 1

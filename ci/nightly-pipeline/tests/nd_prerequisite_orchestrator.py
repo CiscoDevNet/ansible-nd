@@ -429,6 +429,41 @@ def _port_link_peers(current_state, serial, interface):
     return peers
 
 
+def _describe_extra_link_records(registry, current_state, serial, interface, wanted, limit=5):
+    """Bounded operator summary of captured links joining a port to anything but `wanted`."""
+    local = (str(serial).lower(), str(interface).lower())
+    refs = {str(switch.get("serial", "")).lower(): ref for ref, switch in registry["lab"]["switches"].items()}
+    details = []
+    for source in ("physical_links", "links"):
+        for link in current_state.get(source, []):
+            if not isinstance(link, dict):
+                continue
+            endpoints = _link_endpoints(link)
+            if local not in {(s.lower(), i.lower()) for s, i in endpoints}:
+                continue
+            peers = list(dict.fromkeys(
+                f"{refs.get(s.lower()) or 'unregistered serial ' + s}/{i}"
+                for s, i in endpoints if (s.lower(), i.lower()) not in {local, wanted}
+            ))
+            if not peers:
+                continue
+            attributes = [source]
+            link_type = link.get("linkType") or link.get("link-type")
+            if link_type:
+                attributes.append(f"type={link_type}")
+            if _link_is_planned(link):
+                attributes.append("planned")
+            if not _link_is_up(link):
+                attributes.append("not-present")
+            link_id = link.get("link-uuid") or link.get("linkUuid") or link.get("linkId")
+            if link_id:
+                attributes.append(f"id={link_id}")
+            details.append(f"{', '.join(peers)} [{', '.join(attributes)}]")
+    if len(details) > limit:
+        details = details[:limit] + [f"... {len(details) - limit} more"]
+    return "; ".join(details) or "no record detail"
+
+
 def _existing_link_health_problem(link):
     if _link_is_planned(link):
         return "planned link does not prove physical adjacency"
@@ -1067,8 +1102,11 @@ def plan_topology_delta(registry, resolved_execution, current_state):
     return operations
 
 
-def plan_baseline_repairs(registry, resolved_execution, current_state, stage="interfaces"):
-    """Plan repairs only for the selected profile's explicitly declared resources."""
+def plan_baseline_repairs(registry, resolved_execution, current_state, stage="interfaces", warnings=None):
+    """Plan repairs only for the selected profile's explicitly declared resources.
+
+    Non-fatal findings are appended to `warnings` when the caller supplies a list.
+    """
     _validated_registry(registry)
     profile = resolved_execution.get("profile", {})
     if resolved_execution.get("profile_id") != profile.get("profile_id"):
@@ -1131,6 +1169,7 @@ def plan_baseline_repairs(registry, resolved_execution, current_state, stage="in
     resources = profile.get("resources", [])
     owned_ports = {}
     endpoint_peers = {}
+    owned_endpoints = set()
     for resource in resources:
         switch_ref = resource.get("switch_ref")
         if resource.get("kind") == "verify_free_interfaces":
@@ -1139,19 +1178,42 @@ def plan_baseline_repairs(registry, resolved_execution, current_state, stage="in
             owned_ports.setdefault(switch_ref, set()).add(resource["interface"])
             if resource.get("existing_link"):
                 peer = resource["existing_link"]
+                owned_endpoints.add((switch_ref, resource["interface"]))
                 endpoint_peers[(switch_ref, resource["interface"])] = (peer["peer_switch_ref"], peer["peer_interface"])
                 endpoint_peers[(peer["peer_switch_ref"], peer["peer_interface"])] = (switch_ref, resource["interface"])
     for spec in profile.get("interfabric_links", []):
         if spec.get("requires_physical", True):
             src, dst = spec["src"], spec["dst"]
+            owned_endpoints.update({(src["switch_ref"], src["interface"]), (dst["switch_ref"], dst["interface"])})
             endpoint_peers[(src["switch_ref"], src["interface"])] = (dst["switch_ref"], dst["interface"])
             endpoint_peers[(dst["switch_ref"], dst["interface"])] = (src["switch_ref"], src["interface"])
 
+    # The far end of a declared existing link is only admin-enabled, never reconfigured. Extra ND
+    # records there must not block the owned port's repair; readiness still proves the cable.
+    unproven_peer_endpoints = set()
     for endpoint, peer in endpoint_peers.items():
         serial = registry["lab"]["switches"][endpoint[0]]["serial"]
-        wanted = (registry["lab"]["switches"][peer[0]]["serial"].lower(), peer[1].lower())
-        if _port_link_peers(current_state, serial, endpoint[1]) - {wanted}:
-            raise OrchestrationError(f"unexpected link neighbor: {endpoint[0]}/{endpoint[1]}")
+        peer_serial = registry["lab"]["switches"][peer[0]]["serial"]
+        wanted = (peer_serial.lower(), peer[1].lower())
+        if not _port_link_peers(current_state, serial, endpoint[1]) - {wanted}:
+            continue
+        detail = _describe_extra_link_records(registry, current_state, serial, endpoint[1], wanted)
+        if endpoint in owned_endpoints:
+            raise OrchestrationError(
+                f"unexpected link neighbor: {endpoint[0]}/{endpoint[1]} (declared peer {peer[0]}/{peer[1]}); "
+                f"captured: {detail}"
+            )
+        if _physical_link_present(current_state, {"serial": serial, "interface": endpoint[1]},
+                                  {"serial": peer_serial, "interface": peer[1]}, allow_down=True):
+            outcome = "ND still records the declared cable, so the extra record is stale; remove it in ND if it persists"
+        else:
+            unproven_peer_endpoints.add(endpoint)
+            outcome = "ND records no declared cable here, so admin_up is skipped and existing-link readiness decides"
+        if warnings is not None:
+            warnings.append(
+                f"extra link record on declared peer endpoint {endpoint[0]}/{endpoint[1]} "
+                f"(declared peer {peer[0]}/{peer[1]}): {detail}; {outcome}"
+            )
 
     for resource in resources:
         if resource.get("kind") != "verify_logical_interface_namespace":
@@ -1211,7 +1273,7 @@ def plan_baseline_repairs(registry, resolved_execution, current_state, stage="in
     for resource in resources:
         if resource.get("kind") == "ensure_routed_parent":
             endpoints.add((resource["switch_ref"], resource["interface"]))
-    for switch_ref, interface in sorted(endpoints):
+    for switch_ref, interface in sorted(endpoints - unproven_peer_endpoints):
         if not any(operation.get("switch_ref") == switch_ref and operation.get("interface") == interface
                    for operation in operations):
             operations.append(interface_operation(switch_ref, interface, "admin_up", "declared link endpoint"))
@@ -1568,11 +1630,16 @@ def main(argv=None):
             if args.switch_inventory:
                 inventory = _load_state(args.switch_inventory)
                 state.setdefault("switches", {}).update(normalize_repair_inventory(registry, inventory["inventory"])["switches"])
+            warnings = []
             output = {
                 "resolved": {key: resolved[key] for key in ("profile_id", "execution_id", "phase", "execution_style")},
-                "operations": (plan_baseline_repairs(registry, resolved, state, args.repair_stage)
+                "operations": (plan_baseline_repairs(registry, resolved, state, args.repair_stage, warnings)
                                if args.repair_stage else plan_topology_delta(registry, resolved, state)),
             }
+            if warnings:
+                output["warnings"] = warnings
+                for warning in warnings:
+                    print(f"NDP_BASELINE_REPAIR_WARNING: {warning}", file=sys.stderr)
             if args.run_id and args.phase_baseline_id:
                 output["runtime_vars"] = runtime_vars_for_execution(resolved, args.run_id, args.phase_baseline_id)
             print(json.dumps(output, indent=2, sort_keys=True))

@@ -1,6 +1,6 @@
 """Offline bootstrap checks for build 121's missing Consul reporting helper.
 
-The canonical Jenkinsfile is compiled without running its Pipeline. Its
+The real temporary Jenkinsfile is compiled without running its Pipeline. Its
 installer shell runs only in an isolated local workspace; all HTTP calls are
 substituted and no ND, Jenkins or Webex service is contacted.
 """
@@ -10,16 +10,31 @@ import gzip
 import hashlib
 import os
 from pathlib import Path
-import subprocess
 import re
+import subprocess
 import sys
 
 import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-JENKINSFILE = ROOT / "Jenkinsfile_nd_jenkins_script"
+JENKINSFILE = ROOT / "Jenkinsfile_nd_jenkins_script_temp_switches"
 HELPERS = ("nd_report.py", "nd_result_summary.py", "nd_test_activity.py", "nd_reporting_pipeline.py")
+
+
+@pytest.mark.parametrize("variant", ["Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches",
+                                     "Jenkinsfile_nd_jenkins_script_comm_list"])
+@pytest.mark.parametrize("helper", ["nd_report.py", "nd_reporting_pipeline.py"])
+def test_scoped_reporting_embedded_bytes_match_source(variant, helper):
+    source = (ROOT / variant).read_text()
+    pattern = r"'" + re.escape(helper) + r"': \[sha256: '([0-9a-f]+)', bytes: (\d+), gzipBase64: '([^']+)'\]"
+    matches = re.findall(pattern, source)
+    assert len(matches) == 1
+    digest, size, encoded = matches[0]
+    decoded = gzip.decompress(base64.b64decode(encoded))
+    assert decoded == (ROOT / "playbooks" / helper).read_bytes()
+    assert hashlib.sha256(decoded).hexdigest() == digest
+    assert len(decoded) == int(size)
 
 
 PRELUDE = r'''
@@ -137,7 +152,7 @@ helpers.each { name ->
 def run = new groovy.json.JsonSlurper().parse(new File(context.ND_REPORTING_ROOT, 'run.json'))
 assert run.build == '121'
 assert run.tool_sha256.keySet() == helpers.toSet()
-assert logs.any { it.contains('NDP_REPORTING_REVISION:') }
+assert !logs.any { it.contains('REVISION') }
 ''')
     for path in workspace.glob("nd_reporting_*/tools/*.py"):
         assert path.stat().st_mode & 0o777 == 0o644
@@ -227,7 +242,7 @@ assert requests.isEmpty()
 ''')
 
 
-@pytest.mark.parametrize("filename", ["Jenkinsfile_nd_jenkins_script"])
+@pytest.mark.parametrize("filename", ["Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches"])
 def test_python_cache_prefix_redirects_reads_away_from_workspace_bytecode(groovy_runner, filename):
     import importlib.util
     import importlib._bootstrap_external
@@ -258,18 +273,3 @@ println('CACHE_PREFIX=' + context.PYTHONPYCACHEPREFIX)
     redirected = subprocess.check_output(command, cwd=workspace, env=dict(environment, PYTHONPYCACHEPREFIX=prefix), text=True).strip()
     assert control == "CACHED"  # Disabling writes alone still permits stale bytecode reads.
     assert redirected == "SOURCE"
-
-
-@pytest.mark.parametrize("variant", ["Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches",
-                                     "Jenkinsfile_nd_jenkins_script_comm_list"])
-@pytest.mark.parametrize("helper", ["nd_report.py", "nd_reporting_pipeline.py"])
-def test_scoped_reporting_embedded_bytes_match_source(variant, helper):
-    source = (ROOT / variant).read_text()
-    pattern = r"'" + re.escape(helper) + r"': \[sha256: '([0-9a-f]+)', bytes: (\d+), gzipBase64: '([^']+)'\]"
-    matches = re.findall(pattern, source)
-    assert len(matches) == 1
-    digest, size, encoded = matches[0]
-    decoded = gzip.decompress(base64.b64decode(encoded))
-    assert decoded == (ROOT / "playbooks" / helper).read_bytes()
-    assert hashlib.sha256(decoded).hexdigest() == digest
-    assert len(decoded) == int(size)

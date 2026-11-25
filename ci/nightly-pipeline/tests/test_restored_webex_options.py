@@ -80,7 +80,7 @@ assert sent[0].contains('[Build artifacts](https://jenkins.example/job/nd/122/ar
 assert sent[0].count('/artifact/') == 1
 assert !sent[0].contains('All logs (zip)') && !sent[0].contains('/artifact/activity.txt')
 assert sent[0].length() <= 7000
-assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_FAILED:') }
+assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_RETRY') }
 ''')
 
 
@@ -107,7 +107,7 @@ assert sent.every { it.contains('ansible-nd branch: fixture-owner:feature/exampl
 assert combined.contains('[Build artifacts](https://jenkins.example/job/nd/122/artifact/)')
 assert combined.count('/artifact/') == 1
 assert !combined.contains('AUTHORED INTEG TEST CASE COUNTS')
-assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_FAILED:') }
+assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_RETRY') }
 ''')
 
 

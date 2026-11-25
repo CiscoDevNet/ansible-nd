@@ -136,8 +136,8 @@ script.metaClass.cleanup = { Closure ignored -> null }
 script.metaClass.sendWebexNotificationMessages = { Object messages -> sent.add(messages.join('\n')) }
 script.run()
 assert sent.size() == 1
-assert sent[0].contains('Test cases passed: 0')
-assert sent[0].contains('Test cases failed: 0')
+assert sent[0].contains('Passed: 0')
+assert sent[0].contains('Failed: 0')
 assert sent[0].contains('Build result: FAILURE')
 assert !sent[0].contains('Execution/reporting notes:')
 assert !sent[0].contains(notes.trim())

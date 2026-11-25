@@ -8,7 +8,8 @@ import re
 import time
 from urllib.parse import quote
 
-from ansible.module_utils.connection import Connection
+from ansible.errors import AnsibleConnectionFailure
+from ansible.module_utils.connection import Connection, ConnectionError as PersistentConnectionError
 from ansible.plugins.action import ActionBase
 
 
@@ -77,6 +78,10 @@ def physical_parent(value):
     return "Ethernet" + match.group(1) if match else None
 
 
+def physical_interface(value):
+    return re.sub(r"(?i)^eth(?:ernet)?", "Ethernet", value.split(".", 1)[0]) if physical_parent(value) else None
+
+
 def shutdown_decision(evidence, protected):
     if not isinstance(evidence, dict) or not isinstance(protected, dict):
         return "EVIDENCE_UNVERIFIED"
@@ -119,6 +124,63 @@ DEFAULT_ROUTED_POLICY = {
     "fec": "auto", "pimDrPriority": 1, "pimSparse": False, "pfc": False,
 }
 REQUIRED_ROUTED_FIELDS = {"adminState", "policyType", "mtu", "netflow", "speed"}
+READBACK_DEFAULTS = {("trunk", "trunkHost"): DEFAULT_POLICY, ("routed", "routedHost"): DEFAULT_ROUTED_POLICY}
+
+
+def default_value_matches(key, value, default):
+    # ND returns the default access VLAN as either integer 1 or string "1".
+    # Do not coerce other values: an address, VRF, custom policy or unknown field is intent.
+    if key == "accessVlan" and value == "1":
+        return True
+    if type(default) is bool:
+        return type(value) is bool and value is default
+    if isinstance(default, str):
+        return isinstance(value, str) and value == default
+    return type(value) in (int, float) and value == default
+
+
+def without_readback_defaults(expected, current):
+    """Drop policy keys ND adds on readback with their exact template default.
+
+    After a configData PUT, ND 4.3 may return the stored policy expanded with
+    template defaults that were not sent. Requested keys, unknown keys and
+    non-default values are kept, so any real change still differs from expected.
+    """
+    try:
+        wanted, observed = expected["networkOS"]["policy"], current["networkOS"]["policy"]
+        defaults = READBACK_DEFAULTS.get((expected["mode"], wanted["policyType"]))
+    except (KeyError, TypeError):
+        return current
+    if defaults is None or not isinstance(observed, dict):
+        return current
+    normalized = copy.deepcopy(current)
+    normalized["networkOS"]["policy"] = {
+        key: value for key, value in observed.items()
+        if key in wanted or key not in defaults or not default_value_matches(key, value, defaults[key])}
+    return normalized
+
+
+def readback_drift(expected, current):
+    # Key names only: values can carry descriptions, addresses or other intent.
+    try:
+        wanted, observed = expected["networkOS"]["policy"], current["networkOS"]["policy"]
+    except (KeyError, TypeError):
+        wanted = observed = None
+    if not isinstance(wanted, dict) or not isinstance(observed, dict):
+        return {"policy_unverified": True}
+    probe = copy.deepcopy(current)
+    probe["networkOS"]["policy"] = wanted
+    return {"added_keys": sorted(set(observed) - set(wanted)), "missing_keys": sorted(set(wanted) - set(observed)),
+            "changed_keys": sorted(key for key in set(wanted) & set(observed) if observed[key] != wanted[key]),
+            "outside_policy_changed": probe != expected}
+
+
+def interface_identity(switch_id, interface_name):
+    # ND may echo interface names in a different case (ethernet1/1 for Ethernet1/1).
+    if not isinstance(switch_id, str) or not switch_id.strip() or not isinstance(interface_name, str) or not interface_name.strip():
+        return None
+    return switch_id.strip(), interface_name.strip().lower()
+
 # configSyncStatus values from the lifecycle pre-delete gate. Busy switches are
 # only polled (never overlapped); drift may be recalculated and deployed.
 # Anything else, including notApplicable, stays a fail-closed readiness failure.
@@ -134,7 +196,11 @@ class BaselineBlocked(Exception):
 
 
 class TransientRejection(BaselineBlocked):
-    """HTTP 408/429/5xx. Keeps the existing reason text; only sync recovery retries it."""
+    """HTTP 408/429/5xx or an unconfirmed reply. Keeps the reason text; only sync recovery retries it."""
+
+
+class RequestUnconfirmed(Exception):
+    """No HTTP status arrived (timeout or lost transport); a write may or may not have applied."""
 
 
 class InterfaceBaseline:
@@ -142,9 +208,15 @@ class InterfaceBaseline:
                  poll_seconds=5, clock=time.monotonic, sleep=time.sleep, switch_refs=None,
                  interfaces=None, journal_path=None, ensure_host_admin_down_default=False,
                  idle_reserved_ports=False, recover_config_sync=False, sync_attempt_seconds=420,
-                 sync_settle_seconds=60):
+                 sync_settle_seconds=60, ensure_required_admin_up=False, sync_call_timeout_seconds=180):
         self.registry = registry
         self.protected = registry_reservations(registry)
+        serial_names = {}
+        for name, switch in registry.get("lab", {}).get("switches", {}).items():
+            serial = switch.get("serial") if isinstance(switch, dict) else None
+            if isinstance(serial, str) and serial:
+                serial_names[serial] = name if serial not in serial_names else None
+        self.serial_names = {serial: name for serial, name in serial_names.items() if name is not None}
         if (type(apply) is not bool or not isinstance(fabrics, list) or not fabrics or len(fabrics) > 16
                 or any(not isinstance(value, str) or not value or len(value) > 200 for value in fabrics)):
             raise ValueError("Invalid interface baseline arguments")
@@ -173,6 +245,30 @@ class InterfaceBaseline:
                     r"(?:ethernet|eth)[1-9][0-9]*/[1-9][0-9]*(?:/[1-9][0-9]*)?", value, re.I) for value in interfaces)):
             raise ValueError("Invalid selected interface scope")
         self.switch_refs = set(switch_refs) if switch_refs is not None else None
+        if (type(ensure_required_admin_up) is not bool
+                or ensure_required_admin_up and (switch_refs is None or journal_path is None or idle_reserved_ports)):
+            raise ValueError("Required-port enforcement needs explicit switches, a checkpoint and retained reservations")
+        self.ensure_required_admin_up = ensure_required_admin_up
+        self.required_ports = set()
+        if ensure_required_admin_up:
+            for profile in registry["profiles"].values():
+                links = profile.get("links", [])
+                if not isinstance(links, list):
+                    raise ValueError("Invalid required interface links")
+                for link in links:
+                    if not isinstance(link, dict) or type(link.get("admin_state")) is not bool:
+                        raise ValueError("Invalid required interface state")
+                    if not link["admin_state"]:
+                        continue
+                    reference, names = link.get("switch_ref"), link.get("interfaces")
+                    if reference not in registry["lab"]["switches"] or not isinstance(names, list) or not names:
+                        raise ValueError("Invalid required interface scope")
+                    serial = registry["lab"]["switches"][reference]["serial"]
+                    for name in names:
+                        parent = physical_parent(name)
+                        if parent is None or parent not in self.protected[serial]:
+                            raise ValueError("Required interface is not reserved")
+                        self.required_ports.add((serial, physical_interface(name)))
         if type(idle_reserved_ports) is not bool or idle_reserved_ports and (switch_refs is None or journal_path is None):
             raise ValueError("Idle reserved-port cleanup requires explicit switches and a durable checkpoint")
         self.idle_reserved_ports = idle_reserved_ports
@@ -193,9 +289,13 @@ class InterfaceBaseline:
         # readiness gap is configSyncStatus. Independent of interface apply.
         if type(recover_config_sync) is not bool:
             raise ValueError("Invalid configuration sync recovery flag")
-        self.sync_attempt_seconds, self.sync_settle_seconds = map(float, (sync_attempt_seconds, sync_settle_seconds))
-        if (not all(math.isfinite(value) for value in (self.sync_attempt_seconds, self.sync_settle_seconds))
-                or not 0 < self.sync_attempt_seconds <= 900 or not 0 <= self.sync_settle_seconds <= self.sync_attempt_seconds):
+        # configSave and switchActions/deploy reply only after ND finishes; a
+        # deploy has taken about 35 s, longer than the 30 s read-call budget.
+        self.sync_attempt_seconds, self.sync_settle_seconds, self.sync_call_timeout = map(
+            float, (sync_attempt_seconds, sync_settle_seconds, sync_call_timeout_seconds))
+        if (not all(math.isfinite(value) for value in (self.sync_attempt_seconds, self.sync_settle_seconds, self.sync_call_timeout))
+                or not 0 < self.sync_attempt_seconds <= 900 or not 0 <= self.sync_settle_seconds <= self.sync_attempt_seconds
+                or not 0 < self.sync_call_timeout <= 600):
             raise ValueError("Invalid configuration sync recovery window")
         if recover_config_sync:
             owned_fabrics = {row.get("name") for row in registry["lab"].get("fabrics", {}).values()
@@ -206,10 +306,14 @@ class InterfaceBaseline:
         self.last_inventory_ids = set()
         self.clock, self.sleep = clock, sleep
         self.changed, self.candidates, self.verified, self.inspected = False, 0, 0, 0
+        self.required_candidates, self.required_verified = 0, 0
         self.decisions = []
         self.readiness_incomplete = False
         self.connectivity_verified_fabrics = []
         self.remaining_connectivity_alerts = None
+        self.connectivity_alerts = []
+        self.connectivity_alerts_truncated = False
+        self.api_failure = None
 
     def checkpoint(self, value):
         if self.journal_path is None:
@@ -240,13 +344,31 @@ class InterfaceBaseline:
         except (OSError, TypeError, ValueError) as error:
             raise BaselineBlocked("CHECKPOINT_UNVERIFIED") from error
 
-    def call(self, method, path, content=None, sync_ids=None):
+    def call(self, method, path, content=None, sync_ids=None, limit=None):
+        self.api_failure = None
+        http = None
+
+        def rejection(reason, error_type=BaselineBlocked):
+            operation = re.sub(r"/(fabrics|switches|interfaces)/[^/?]+", r"/\1/{id}", path.split("?", 1)[0])
+            self.api_failure = {"method": method, "operation": operation,
+                                "http_status": http if type(http) is int else None}
+            return error_type(reason)
+
         remaining = self.deadline - self.clock()
         if remaining <= 0:
             raise BaselineBlocked("DEADLINE_EXCEEDED")
         if method != "get":
             self.checkpoint({"phase": "request", "method": method, "path": path, "content": content})
-        reply = self.request(method, path, content, min(remaining, self.call_timeout))
+        budget = min(remaining, self.call_timeout if limit is None else limit)
+        try:
+            reply = self.request(method, path, content, budget)
+        except RequestUnconfirmed as error:
+            if method != "get":
+                self.checkpoint({"phase": "response_unconfirmed", "method": method, "path": path, "reason": str(error)})
+            # A call bounded by the run deadline is out of time, not transient.
+            if budget >= remaining or self.clock() >= self.deadline:
+                raise BaselineBlocked("DEADLINE_EXCEEDED") from error
+            raise rejection(str(error), TransientRejection) from error
         if method != "get":
             self.checkpoint({"phase": "response", "method": method, "path": path,
                              "reply": {key: reply[key] for key in ("status", "current", "jsondata", "response", "failed") if isinstance(reply, dict) and key in reply}})
@@ -255,51 +377,61 @@ class InterfaceBaseline:
         http = reply.get("status") if isinstance(reply, dict) else None
         blocked = TransientRejection if type(http) is int and (http in {408, 429} or http >= 500) else BaselineBlocked
         if not isinstance(reply, dict) or reply.get("failed") or type(reply.get("status")) is not int:
-            raise blocked("API_RESPONSE_UNVERIFIED")
+            raise rejection("API_RESPONSE_UNVERIFIED", blocked)
         body = reply.get("jsondata", reply.get("current"))
         if reply["status"] not in ([200] if method == "get" else [200, 201, 202, 204, 207]):
-            raise blocked("API_REQUEST_REJECTED")
+            raise rejection("API_REQUEST_REJECTED", blocked)
         if len(json.dumps(body)) > 4 * 1024 * 1024:
-            raise BaselineBlocked("API_RESPONSE_TOO_LARGE")
+            raise rejection("API_RESPONSE_TOO_LARGE")
 
         def validate(value, depth=0):
             if depth > 16:
-                raise BaselineBlocked("API_RESPONSE_UNVERIFIED")
+                raise rejection("API_RESPONSE_UNVERIFIED")
             if isinstance(value, dict):
                 if "code" in value or value.get("error") or value.get("errors") or value.get("errorCode") or value.get("error_code"):
-                    raise BaselineBlocked("API_REQUEST_REJECTED")
+                    raise rejection("API_REQUEST_REJECTED")
                 status = value.get("status")
                 if isinstance(status, str) and re.search(r"fail|error|denied|reject|refus|unsuccess|cancel", status, re.I):
-                    raise BaselineBlocked("API_REQUEST_REJECTED")
+                    raise rejection("API_REQUEST_REJECTED")
                 for child in value.values():
                     validate(child, depth + 1)
             elif isinstance(value, list):
                 if len(value) > 4096:
-                    raise BaselineBlocked("API_RESPONSE_TOO_LARGE")
+                    raise rejection("API_RESPONSE_TOO_LARGE")
                 for child in value:
                     validate(child, depth + 1)
 
         validate(body)
         if sync_ids is not None:
-            self.verify_sync_action(reply["status"], body, sync_ids)
+            try:
+                self.verify_sync_action(reply["status"], body, sync_ids)
+            except BaselineBlocked as error:
+                raise rejection(str(error)) from error
             return body
         admin_update = path.endswith('/interfaceActions/updateAdminState')
+        # ND 4.3.1 may answer an interface deploy with HTTP 207 and no rows or
+        # only a successful subset. That is insufficient, not contradictory,
+        # evidence: every deploy caller proves the result by fresh readback.
+        deploy = method == "post" and path.endswith("/interfaceActions/deploy") and reply["status"] == 207
         if method != "get" and (reply["status"] == 207 or admin_update):
             results = body.get("results", body.get("items")) if isinstance(body, dict) else None
+            if deploy and (results is None or results == []):
+                return body
             requested = content.get("interfaces", [content])
-            expected = {(row.get("switchId"), row.get("interfaceName")) for row in requested}
-            if not isinstance(results, list) or not results or len(results) != len(expected):
-                raise BaselineBlocked("OPERATION_IDENTITY_UNVERIFIED")
+            expected = {interface_identity(row.get("switchId"), row.get("interfaceName")) for row in requested}
+            if (not isinstance(results, list) or not results or None in expected
+                    or (len(results) > len(expected) if deploy else len(results) != len(expected))):
+                raise rejection("OPERATION_IDENTITY_UNVERIFIED")
             observed = set()
             for row in results:
                 if (not isinstance(row, dict) or not isinstance(row.get("status"), str)
                         or row["status"].lower() not in {"success", "accepted", "pending", "inprogress", "queued"}):
-                    raise BaselineBlocked("OPERATION_IDENTITY_UNVERIFIED")
-                identity = (row.get("switchId"), row.get("interfaceName"))
-                if identity not in expected or identity in observed:
-                    raise BaselineBlocked("OPERATION_IDENTITY_UNVERIFIED")
+                    raise rejection("OPERATION_IDENTITY_UNVERIFIED")
+                identity = interface_identity(row.get("switchId"), row.get("interfaceName"))
+                if identity is None or identity not in expected or identity in observed:
+                    raise rejection("OPERATION_IDENTITY_UNVERIFIED")
                 if admin_update and row.get('adminStatus') != 'down':
-                    raise BaselineBlocked('ADMIN_STATE_RESPONSE_UNVERIFIED')
+                    raise rejection('ADMIN_STATE_RESPONSE_UNVERIFIED')
                 observed.add(identity)
         return body
 
@@ -422,13 +554,39 @@ class InterfaceBaseline:
         # stays recorded for the final verdict but must not skip this recovery.
         statuses, earlier_gap = {}, self.readiness_incomplete
         self.readiness_incomplete = False
-        prefix, ready = self.ready_switches(fabric, sync_statuses=statuses)
+        for attempt in range(3):
+            try:
+                prefix, ready = self.ready_switches(fabric, sync_statuses=statuses)
+                break
+            except TransientRejection as error:
+                interval = max(self.poll, 1.0)
+                if attempt == 2 or self.deadline - self.clock() <= interval:
+                    raise
+                self.decisions.append({"fabric": fabric, "decision": "SYNC_POLL_TRANSIENT_REJECTION",
+                                       "attempt": attempt + 1, "reason": str(error),
+                                       "api_failure": self.api_failure})
+                statuses.clear()
+                self.sleep(interval)
         if self.readiness_incomplete:
             raise BaselineBlocked("SWITCH_READINESS_OR_IDENTITY_UNVERIFIED")
         self.readiness_incomplete = earlier_gap
         if roster is not None and set(statuses) != roster:
             raise BaselineBlocked("FABRIC_SYNC_ROSTER_CHANGED")
         return prefix, ready, statuses
+
+    def wait_for_stable_switches(self, fabric):
+        # Poll only: never recalculate or redeploy to make an interface write eligible.
+        snapshot = self.sync_snapshot(fabric)
+        snapshot = self.await_sync(fabric, set(snapshot[2]), snapshot, self.sync_attempt_seconds)
+        pending = {serial for serial, status in snapshot[2].items() if status != "inSync"}
+        if pending:
+            self.readiness_incomplete = True
+            for name, target in self.registry["lab"]["switches"].items():
+                if target["serial"] in pending:
+                    self.decisions.append({"switch": name, "decision": "SWITCH_READINESS_OR_IDENTITY_UNVERIFIED",
+                                           "failed_checks": ["configSyncStatus"]})
+            raise BaselineBlocked("SWITCH_READINESS_OR_IDENTITY_UNVERIFIED")
+        return snapshot[:2]
 
     def await_sync(self, fabric, roster, snapshot, settle_seconds):
         # Busy switches are never redeployed. Drift must persist with nothing
@@ -473,12 +631,13 @@ class InterfaceBaseline:
             try:
                 inventory = set(self.last_inventory_ids)
                 self.changed = True
-                self.call("post", prefix + "/actions/configSave", {}, sync_ids=inventory)
+                self.call("post", prefix + "/actions/configSave", {}, sync_ids=inventory, limit=self.sync_call_timeout)
                 # Recheck freeze, upgrade, identity, mode and roster before deploying.
                 prefix, _, statuses = self.sync_snapshot(fabric, roster)
                 targets = sorted(serial for serial, status in statuses.items() if status in SYNC_DRIFT_STATUSES)
                 if targets and not any(status in SYNC_BUSY_STATUSES for status in statuses.values()):
-                    self.call("post", prefix + "/switchActions/deploy", {"switchIds": targets}, sync_ids=set(targets))
+                    self.call("post", prefix + "/switchActions/deploy", {"switchIds": targets}, sync_ids=set(targets),
+                              limit=self.sync_call_timeout)
                     self.decisions.append({"fabric": fabric, "decision": "SYNC_RECOVERY_DEPLOY_REQUESTED",
                                            "attempt": attempt, "switches": [names[serial] for serial in targets]})
                 else:
@@ -490,7 +649,7 @@ class InterfaceBaseline:
                     raise
             snapshot = self.await_sync(fabric, roster, self.sync_snapshot(fabric, roster), self.sync_settle_seconds)
 
-    def linked_ports(self, fabric):
+    def linked_ports(self, fabric, parents=True):
         managed = self.rows(self.call("get", "/api/v1/manage/links?fabricName=" + quote(fabric, safe="")), "links")
         body = self.call("get", "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/links?fabric=" + quote(fabric, safe=""))
         physical = self.rows(body, "DATA" if isinstance(body, dict) and "DATA" in body else "links")
@@ -505,7 +664,7 @@ class InterfaceBaseline:
                 name = endpoint.get("if-name") if legacy else row.get(short + "InterfaceName", row.get(long_name + "InterfaceName"))
                 if not isinstance(serial, str) or not serial or not isinstance(name, str) or not name:
                     raise BaselineBlocked("LINK_ENDPOINT_UNVERIFIED")
-                parent = physical_parent(name)
+                parent = physical_parent(name) if parents else physical_interface(name)
                 if parent:
                     linked.add((serial, parent))
         return linked
@@ -520,19 +679,8 @@ class InterfaceBaseline:
         policy = network["policy"]
         defaults, required = ((DEFAULT_POLICY, REQUIRED_POLICY_FIELDS) if config["mode"] == "trunk"
                               else (DEFAULT_ROUTED_POLICY, REQUIRED_ROUTED_FIELDS))
-
-        def matches(value, expected):
-            if type(expected) is bool:
-                return type(value) is bool and value is expected
-            if isinstance(expected, str):
-                return isinstance(value, str) and value == expected
-            return type(value) in (int, float) and value == expected
-
-        # ND returns the default access VLAN as either integer 1 or string "1".
-        # Do not coerce other values: an address, VRF, custom policy or unknown field is intent.
         return (isinstance(policy, dict) and required <= set(policy) <= set(defaults)
-                and all((key == "accessVlan" and value == "1") or matches(value, defaults[key])
-                        for key, value in policy.items()))
+                and all(default_value_matches(key, value, defaults[key]) for key, value in policy.items()))
 
     def observe(self, prefix, target, name, interfaces, linked, detail=None):
         path = prefix + "/switches/" + quote(target["serial"], safe="") + "/interfaces/" + quote(name, safe="")
@@ -619,6 +767,64 @@ class InterfaceBaseline:
                 or row.get("resourceType") == "INTERFACE_STATUS" and str(row.get("category", "")).lower() == "connectivity"
                 or re.search(r"(?i)interface\s+(?:ethernet|eth)[0-9/]+\s+in undesired state", row["anomalyString"]) is not None)
 
+    @staticmethod
+    def normalized_alert_interface(value):
+        if not isinstance(value, str):
+            return None
+        match = re.fullmatch(r"(?:ethernet|eth)([1-9][0-9]*/[1-9][0-9]*(?:/[1-9][0-9]*)?)", value, re.I)
+        return "Ethernet" + match.group(1) if match else None
+
+    def connectivity_alert_detail(self, fabric, row):
+        text = row["anomalyString"]
+        known_serials = [serial for serial in self.serial_names
+                         if re.search(r"(?<![A-Za-z0-9])" + re.escape(serial) + r"(?![A-Za-z0-9])", text, re.I)]
+        serial = row.get("switchId")
+        switch = self.serial_names.get(serial) if isinstance(serial, str) else None
+        if switch and any(value != serial for value in known_serials):
+            switch = None
+        elif switch is None and len(known_serials) == 1 and (serial is None or serial == known_serials[0]):
+            switch = self.serial_names[known_serials[0]]
+
+        text_interfaces = {
+            "Ethernet" + value for value in re.findall(
+                r"(?i)(?:ethernet|eth)\s*([1-9][0-9]*/[1-9][0-9]*(?:/[1-9][0-9]*)?)(?![0-9/.])", text)
+        }
+        entity_interface = self.normalized_alert_interface(row.get("entityName"))
+        if entity_interface and text_interfaces and text_interfaces != {entity_interface}:
+            interface = None
+        elif entity_interface:
+            interface = entity_interface
+        else:
+            interface = next(iter(text_interfaces)) if len(text_interfaces) == 1 else None
+
+        matching = [item for item in reversed(self.decisions)
+                    if switch is not None and interface is not None
+                    and item.get("switch") == switch and item.get("interface") == interface]
+        return {
+            "fabric": fabric,
+            "switch": switch or "unmapped",
+            "interface": interface or "unknown",
+            "baseline_decision": matching[0].get("decision") if matching else "OUT_OF_SCOPE",
+        }
+
+    def require_connectivity_clearance(self):
+        counts = {}
+        details = []
+        for fabric in self.fabrics:
+            active = [row for row in self.anomaly_rows(fabric)
+                      if not row["cleared"] and self.connectivity_warning(row)]
+            counts[fabric] = len(active)
+            for row in active[:max(0, 12 - len(details))]:
+                details.append(self.connectivity_alert_detail(fabric, row))
+        self.connectivity_verified_fabrics = list(counts)
+        self.remaining_connectivity_alerts = sum(counts.values())
+        self.connectivity_alerts = details
+        self.connectivity_alerts_truncated = self.remaining_connectivity_alerts > len(details)
+        if self.remaining_connectivity_alerts:
+            self.decisions.extend({"fabric": fabric, "decision": "CONNECTIVITY_INTERFACE_STATUS_ACTIVE",
+                                   "remaining_alerts": count} for fabric, count in counts.items() if count)
+            raise BaselineBlocked("CONNECTIVITY_INTERFACE_STATUS_ACTIVE")
+
     def warning_matches(self, warning, serial, name):
         text = warning["anomalyString"]
         switch_id = warning.get("switchId")
@@ -649,13 +855,66 @@ class InterfaceBaseline:
             clear = not any(self.warning_matches(warning, target["serial"], name)
                             for warning in warnings if not warning["cleared"] and self.connectivity_warning(warning))
             if (isinstance(detail, dict) and detail.get("switchId") == target["serial"] and detail.get("interfaceName") == name
-                    and detail.get("configData") == expected and isinstance(detail.get("operData"), dict)
+                    and without_readback_defaults(expected, detail.get("configData")) == expected
+                    and isinstance(detail.get("operData"), dict)
                     and detail["operData"].get("adminStatus") == "down" and detail["operData"].get("operationalStatus") == "down" and clear):
                 _, ready = self.ready_switches(fabric)
                 if any(row["serial"] == target["serial"] for row in ready):
                     return
             self.sleep(min(self.poll, max(0, self.deadline - self.clock())))
         raise BaselineBlocked("VERIFICATION_DEADLINE")
+
+    def required_detail(self, prefix, target, name):
+        path = prefix + "/switches/" + quote(target["serial"], safe="") + "/interfaces/" + quote(name, safe="")
+        detail = self.call("get", path)
+        if (not isinstance(detail, dict) or detail.get("switchId") != target["serial"]
+                or detail.get("interfaceName") != name or detail.get("interfaceType") != "ethernet"
+                or not isinstance(detail.get("configData"), dict) or not isinstance(detail.get("operData"), dict)):
+            raise BaselineBlocked("REQUIRED_INTERFACE_IDENTITY_UNVERIFIED")
+        network = detail["configData"].get("networkOS")
+        policy = network.get("policy") if isinstance(network, dict) else None
+        if detail["configData"].get("mode") == "unknown" and not policy:
+            return "REQUIRED_FREE_INTERFACE", detail, path
+        if (not isinstance(policy, dict) or type(policy.get("adminState")) is not bool
+                or not isinstance(network.get("networkOSType"), str)):
+            raise BaselineBlocked("REQUIRED_INTERFACE_POLICY_UNVERIFIED")
+        if policy["adminState"] and detail["operData"].get("adminStatus") == "up":
+            return "REQUIRED_ADMIN_UP", detail, path
+        return "REQUIRED_ADMIN_UP_PENDING", detail, path
+
+    def apply_required_ports(self, plan):
+        for fabric, target, name, original in plan:
+            prefix, targets = self.wait_for_stable_switches(fabric)
+            if not any(row["serial"] == target["serial"] for row in targets):
+                raise BaselineBlocked("SWITCH_CHANGED_BEFORE_APPLY")
+            _, detail, path = self.required_detail(prefix, target, name)
+            if detail["configData"] != original:
+                raise BaselineBlocked("INTERFACE_CHANGED_BEFORE_APPLY")
+            expected = copy.deepcopy(original)
+            expected["networkOS"]["policy"]["adminState"] = True
+            self.checkpoint({"phase": "before_change", "fabric": fabric, "switchId": target["serial"],
+                             "interfaceName": name, "before": detail})
+            self.changed = True
+            self.call("put", path, {"switchId": target["serial"], "interfaceName": name,
+                                   "interfaceType": "ethernet", "configData": expected})
+            self.call("post", prefix + "/interfaceActions/deploy",
+                      {"interfaces": [{"switchId": target["serial"], "interfaceName": name}]})
+            self.wait_for_stable_switches(fabric)
+            while self.clock() < self.deadline:
+                decision, current, _ = self.required_detail(prefix, target, name)
+                readback = without_readback_defaults(expected, current["configData"])
+                if readback != expected:
+                    self.decisions.append({"switch": target["name"], "interface": name,
+                                           "decision": "REQUIRED_INTERFACE_CONFIG_CHANGED", **readback_drift(expected, readback)})
+                    raise BaselineBlocked("REQUIRED_INTERFACE_CONFIG_CHANGED")
+                if decision == "REQUIRED_ADMIN_UP":
+                    _, targets = self.ready_switches(fabric)
+                    if any(row["serial"] == target["serial"] for row in targets):
+                        self.required_verified += 1
+                        break
+                self.sleep(min(self.poll, max(0, self.deadline - self.clock())))
+            else:
+                raise BaselineBlocked("REQUIRED_INTERFACE_VERIFICATION_DEADLINE")
 
     def _current_batch_details(self, entries):
         snapshots = {}
@@ -728,7 +987,7 @@ class InterfaceBaseline:
             # bounded HTTP timeout on large requests. Keep each deploy small.
             batches = [selected[:1]] + [selected[i:i + 8] for i in range(1, len(selected), 8)]
             for batch in batches:
-                prefix, ready = self.ready_switches(fabric)
+                prefix, ready = self.wait_for_stable_switches(fabric)
                 serials = {target['serial'] for target in ready}
                 snapshots = {}
                 for _, target, _, _ in batch:
@@ -772,6 +1031,7 @@ class InterfaceBaseline:
                 self.call('post', prefix + '/interfaceActions/deploy', {
                     'interfaces': [{'switchId': row['switchId'], 'interfaceName': row['interfaceName']}
                                    for row in content['interfaces']]})
+                self.wait_for_stable_switches(fabric)
                 self._verify_batch_configuration(expected_entries)
                 applied.extend(expected_entries)
         self._verify_batch_clearance(applied)
@@ -790,7 +1050,7 @@ class InterfaceBaseline:
         if type(management.get("hostInterfaceAdminState")) is not bool:
             raise BaselineBlocked("FABRIC_DEFAULT_UNVERIFIED")
         if management["hostInterfaceAdminState"] and self.apply:
-            _, before_targets = self.ready_switches(fabric)
+            _, before_targets = self.wait_for_stable_switches(fabric)
             fresh = self.call("get", path)
             if fresh != current:
                 raise BaselineBlocked("FABRIC_CHANGED_BEFORE_APPLY")
@@ -815,6 +1075,7 @@ class InterfaceBaseline:
         reason = "AUDIT_COMPLETE" if not self.apply else "BASELINE_VERIFIED"
         failed = False
         plan = []
+        required_plan = []
         try:
             seen = set()
             for fabric in self.fabrics:
@@ -840,11 +1101,18 @@ class InterfaceBaseline:
                     self.readiness_incomplete = previous_incomplete
                     self.sleep(self.poll)
                 linked = self.linked_ports(fabric) if targets else set()
+                required = (self.required_ports | self.linked_ports(fabric, parents=False)
+                            if self.ensure_required_admin_up else set())
                 for target in targets:
                     if target["serial"] in seen:
                         raise BaselineBlocked("DUPLICATE_SWITCH_MEMBERSHIP")
                     seen.add(target["serial"])
                     rows = self.interface_rows(prefix, target["serial"])
+                    if self.ensure_required_admin_up:
+                        present = {physical_interface(row["interfaceName"]) for row in rows
+                                   if "." not in row["interfaceName"]}
+                        if not {name for serial, name in required if serial == target["serial"]} <= present:
+                            raise BaselineBlocked("REQUIRED_INTERFACE_SCOPE_INCOMPLETE")
                     if self.interfaces is not None:
                         present = {re.sub(r"(?i)^eth(?:ernet)?", "Ethernet", row["interfaceName"]).lower() for row in rows}
                         if not self.interfaces <= present:
@@ -861,6 +1129,10 @@ class InterfaceBaseline:
                             raise BaselineBlocked("INTERFACE_SCOPE_EXCEEDED")
                         if not owned and self.switch_refs is None:
                             decision = "NO_OWNED_INTERFACE_SCOPE"
+                        elif (target["serial"], physical_interface(name)) in required:
+                            decision, detail, _ = self.required_detail(prefix, target, name)
+                            if decision == "REQUIRED_ADMIN_UP_PENDING":
+                                required_plan.append((fabric, target, name, copy.deepcopy(detail["configData"])))
                         elif physical_parent(name) in self.protected[target["serial"]]:
                             decision = "PROTECTED_INTERFACE"
                         else:
@@ -882,11 +1154,14 @@ class InterfaceBaseline:
             if self.apply and not self.inspected:
                 raise BaselineBlocked("INTERFACE_SCOPE_UNVERIFIED")
             self.candidates = len(plan)
+            self.required_candidates = len(required_plan)
+            if self.apply:
+                self.apply_required_ports(required_plan)
             batch_mode = self.apply and len(plan) > 1
             if batch_mode:
                 self.apply_batches(plan)
             for fabric, target, name, original in plan if self.apply and not batch_mode else []:
-                prefix, fresh_targets = self.ready_switches(fabric)
+                prefix, fresh_targets = self.wait_for_stable_switches(fabric)
                 if not any(row["serial"] == target["serial"] for row in fresh_targets):
                     raise BaselineBlocked("SWITCH_CHANGED_BEFORE_APPLY")
                 rows = self.interface_rows(prefix, target["serial"])
@@ -900,38 +1175,34 @@ class InterfaceBaseline:
                 self.changed = True
                 self.call("put", path, {"switchId": target["serial"], "interfaceName": name, "interfaceType": "ethernet", "configData": expected})
                 self.call("post", prefix + "/interfaceActions/deploy", {"interfaces": [{"switchId": target["serial"], "interfaceName": name}]})
+                self.wait_for_stable_switches(fabric)
                 self.verify(path, expected, fabric, target, name)
                 self.verified += 1
             if self.apply:
-                remaining = 0
-                for fabric in self.fabrics:
-                    remaining += sum(not row["cleared"] and self.connectivity_warning(row)
-                                     for row in self.anomaly_rows(fabric))
-                    self.connectivity_verified_fabrics.append(fabric)
-                self.remaining_connectivity_alerts = remaining
-                if remaining:
-                    raise BaselineBlocked("CONNECTIVITY_INTERFACE_STATUS_ACTIVE")
+                self.require_connectivity_clearance()
             if self.ensure_host_admin_down_default:
                 for fabric in self.fabrics:
                     self.host_admin_default(fabric)
                 if self.apply:
                     # Compliance polling can take several collector cycles;
                     # require fresh alarm evidence after that wait too.
-                    self.remaining_connectivity_alerts = sum(
-                        not row['cleared'] and self.connectivity_warning(row)
-                        for fabric in self.fabrics for row in self.anomaly_rows(fabric))
-                    if self.remaining_connectivity_alerts:
-                        raise BaselineBlocked('CONNECTIVITY_INTERFACE_STATUS_ACTIVE')
+                    self.require_connectivity_clearance()
         except BaselineBlocked as error:
             failed, reason = True, str(error)
-        except Exception:
+        except Exception as error:
+            # The type only: messages can echo controller payloads.
+            self.decisions.append({"decision": "UNEXPECTED_ERROR", "error_type": type(error).__name__})
             failed, reason = True, "API_OR_SCHEMA_UNVERIFIED"
         return {"changed": self.changed, "failed": failed, "baseline_failed": failed, "msg": "NDP_INTERFACE_BASELINE " + reason,
                 "candidates": self.candidates, "verified": self.verified, "inspected": self.inspected,
                 "apply": self.apply, "decisions": self.decisions, "reason": reason,
+                "api_failure": self.api_failure,
                 "remaining_connectivity_alerts": self.remaining_connectivity_alerts,
+                "connectivity_alerts": self.connectivity_alerts,
+                "connectivity_alerts_truncated": self.connectivity_alerts_truncated,
                 "connectivity_verified_fabrics": self.connectivity_verified_fabrics,
-                "fabric_defaults": self.fabric_defaults, "idle_reserved_ports": self.idle_reserved_ports}
+                "fabric_defaults": self.fabric_defaults, "idle_reserved_ports": self.idle_reserved_ports,
+                "required_candidates": self.required_candidates, "required_verified": self.required_verified}
 
 
 class ActionModule(ActionBase):
@@ -985,6 +1256,12 @@ class ActionModule(ActionBase):
                                 self._connection.set_option("persistent_command_timeout", previous_local)
                             if connection is not None and previous_remote is not None and time.monotonic() < expires:
                                 connection.set_option("persistent_command_timeout", previous_remote)
+                except (bounds.CallExpired, TimeoutError) as error:
+                    raise RequestUnconfirmed("API_CALL_TIMEOUT") from error
+                except (PersistentConnectionError, AnsibleConnectionFailure) as error:
+                    # The daemon reports its command timeout as a connection error.
+                    timed_out = re.search(r"(?i)timed? ?out", str(error))
+                    raise RequestUnconfirmed("API_CALL_TIMEOUT" if timed_out else "API_TRANSPORT_UNVERIFIED") from error
                 finally:
                     self._task.no_log = old_no_log
 

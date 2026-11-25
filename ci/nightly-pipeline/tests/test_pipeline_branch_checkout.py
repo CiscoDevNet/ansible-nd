@@ -12,7 +12,8 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VARIANTS = ("Jenkinsfile_nd_jenkins_script",)
+VARIANTS = ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches",
+            "Jenkinsfile_nd_jenkins_script_comm_list")
 CANONICAL_REPO = 'REPO_URL="${ND_GIT_REPOSITORY:-https://github.com/CiscoDevNet/ansible-nd.git}"'
 
 

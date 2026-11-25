@@ -9,7 +9,8 @@ import sys
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-VARIANTS = ('Jenkinsfile_nd_jenkins_script',)
+VARIANTS = ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches",
+            "Jenkinsfile_nd_jenkins_script_comm_list")
 COMMUNITY = ("nd_manage_community_list", "nd_manage_extended_community_list")
 
 

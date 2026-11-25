@@ -105,7 +105,9 @@ def test_sync_recovery_runtime_and_control_reach_all_jobs():
     assert len(jobs) == 37
     for job in jobs:
         script = job.read_text()
-        assert script.count("booleanParam(name: 'ND_INTERFACE_BASELINE_RECOVER_SYNC', defaultValue: true,") == 1, job.name
+        assert "booleanParam(name: 'ND_INTERFACE_BASELINE_ENABLED'" not in script, job.name
+        assert "booleanParam(name: 'ND_INTERFACE_BASELINE_RECOVER_SYNC'" not in script, job.name
+        assert '${ND_INTERFACE_BASELINE_ENABLED:-true}' in script, job.name
         assert "?: EMBEDDED_INTERFACE_HELPERS[fileName.toString()]" in script, job.name
         assert "|| EMBEDDED_INTERFACE_HELPERS.containsKey(fileName.toString())" in script, job.name
         for key in ('action_plugins/nd_interface_baseline.py', 'nd_prerequisite/interface_baseline.yaml'):

@@ -124,7 +124,7 @@ def test_final_report_is_aligned_timing_txt_without_zip_or_duplicate_summary(pip
     pipeline(r'''
 def written = [:]
 def archived = []
-script.binding.env.LOG_BUNDLE_FILE = 'stale.zip'
+script.binding.env.LOG_BUNDLE_FILE = 'module_logs_build_122.zip'
 script.metaClass.writeFile = { Map options -> written[options.file.toString()] = options.text.toString() }
 script.metaClass.archiveArtifacts = { Map options -> archived.add(options.artifacts.toString()) }
 script.metaClass.sh = { Object options -> throw new IllegalStateException('ZIP_OR_CONSOLE_DOWNLOAD_MUST_NOT_RUN') }
@@ -141,7 +141,8 @@ script.SWITCH_LIFECYCLE_TIMINGS.addAll([
 script.bundleAllLogs()
 assert archived == ['pipeline_timing_build_122.txt'] : logs
 assert written.keySet().toList() == ['pipeline_timing_build_122.txt']
-assert script.binding.env.LOG_BUNDLE_FILE == ''
+// preserveModuleLogs() owns the module-log ZIP name used by the Webex link.
+assert script.binding.env.LOG_BUNDLE_FILE == 'module_logs_build_122.zip'
 def text = written.values().first()
 assert text.contains('nd_interface_port_channel_trunk_host')
 assert text.contains('00h 00m 00.125s') && text.contains('01h 00m 01.000s')
@@ -176,7 +177,7 @@ assert message.count('/artifact/') == 1
 assert !message.contains('test_output_')
 assert !message.contains('all-logs.zip') && !message.contains('All logs (zip)')
 assert !message.contains('/artifact/activity.txt') && !message.contains('/artifact/skipped_tests_build_122.txt')
-assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_FAILED:') }
+assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_RETRY') }
 ''')
 
 

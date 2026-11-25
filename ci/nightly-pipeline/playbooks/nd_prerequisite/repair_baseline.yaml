@@ -113,6 +113,12 @@
     msg: "NDP_BASELINE_REPAIR {{ _ndp_repair_stage }}: {{ (_ndp_repair_plan.stdout | from_json).operations | length }} operation(s)"
   run_once: true
 
+- name: Report non-fatal baseline repair findings
+  ansible.builtin.debug:
+    msg: "{{ (_ndp_repair_plan.stdout | from_json).warnings | default([]) | map('regex_replace', '^', 'NDP_BASELINE_REPAIR_WARNING: ') | list }}"
+  when: (_ndp_repair_plan.stdout | from_json).warnings | default([]) | length > 0
+  run_once: true
+
 - name: Apply and verify each declared baseline repair
   ansible.builtin.include_tasks: "apply_{{ _ndp_repair_operation.operation }}.yaml"
   loop: "{{ (_ndp_repair_plan.stdout | from_json).operations }}"

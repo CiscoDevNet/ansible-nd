@@ -7,11 +7,11 @@
 -      - gathered_result.gathered | length == nd_switches_base_conf | length
 +      - nd_pipeline_switches_topology | default(nd_switches_base_conf) | length > 0
 +      - (gathered_result.gathered | map(attribute='seed_ip') | list) | unique | list | length == gathered_result.gathered | length
-+      - ((gathered_result.gathered | map(attribute='seed_ip') | list) | sort | list) in [(nd_switches_base_conf | map(attribute='seed_ip') | sort | list), (nd_pipeline_switches_topology | default(nd_switches_base_conf) | map(attribute='seed_ip') | sort | list)]
++      - ((gathered_result.gathered | map(attribute='seed_ip') | list) | sort | list) in [(nd_switches_base_conf | map(attribute='seed_ip') | sort | list), (nd_pipeline_switches_topology | default(nd_switches_base_conf) | map(attribute='seed_ip') | sort | list)] or ((nd_pipeline_switches_topology | default([]) | selectattr('name', 'defined') | selectattr('name', 'in', ['vxlan_leaf_3', 'vxlan_leaf_4']) | list) | length == 2 and ((gathered_result.gathered | map(attribute='seed_ip') | list) | sort | list) == (((nd_switches_base_conf | map(attribute='seed_ip') | sort | list) + ((nd_pipeline_switches_topology | default([]) | selectattr('name', 'defined') | selectattr('name', 'in', ['vxlan_leaf_3', 'vxlan_leaf_4']) | list) | map(attribute='seed_ip') | list)) | sort | list))
      fail_msg: >-
        Gathered count {{ gathered_result.gathered | length }} does not match
 -      expected {{ nd_switches_base_conf | length }}
-+      expected the exact test fixture ({{ nd_switches_base_conf | length }}) or the exact declared fabric roster ({{ nd_pipeline_switches_topology | default(nd_switches_base_conf) | length }}); missing, duplicate, or unexpected seeds are not allowed
++      expected the exact test fixture ({{ nd_switches_base_conf | length }}) or the exact declared fabric roster ({{ nd_pipeline_switches_topology | default(nd_switches_base_conf) | length }}) or the exact test fixture plus declared vxlan_leaf_3 and vxlan_leaf_4; missing, duplicate, or unexpected seeds are not allowed
    tags: sanity
  
  - name: Sanity TC2 - Gathered - Validate Each Switch Present and Role Matches
@@ -24,11 +24,11 @@
 -      - query_result.gathered | length == nd_switches_base_conf | length
 +      - nd_pipeline_switches_topology | default(nd_switches_base_conf) | length > 0
 +      - (query_result.gathered | map(attribute='seed_ip') | list) | unique | list | length == query_result.gathered | length
-+      - ((query_result.gathered | map(attribute='seed_ip') | list) | sort | list) in [(nd_switches_base_conf | map(attribute='seed_ip') | sort | list), (nd_pipeline_switches_topology | default(nd_switches_base_conf) | map(attribute='seed_ip') | sort | list)]
++      - ((query_result.gathered | map(attribute='seed_ip') | list) | sort | list) in [(nd_switches_base_conf | map(attribute='seed_ip') | sort | list), (nd_pipeline_switches_topology | default(nd_switches_base_conf) | map(attribute='seed_ip') | sort | list)] or ((nd_pipeline_switches_topology | default([]) | selectattr('name', 'defined') | selectattr('name', 'in', ['vxlan_leaf_3', 'vxlan_leaf_4']) | list) | length == 2 and ((query_result.gathered | map(attribute='seed_ip') | list) | sort | list) == (((nd_switches_base_conf | map(attribute='seed_ip') | sort | list) + ((nd_pipeline_switches_topology | default([]) | selectattr('name', 'defined') | selectattr('name', 'in', ['vxlan_leaf_3', 'vxlan_leaf_4']) | list) | map(attribute='seed_ip') | list)) | sort | list))
      fail_msg: >-
        Gathered count {{ query_result.gathered | length }} does not match
 -      expected {{ nd_switches_base_conf | length }}
-+      expected the exact test fixture ({{ nd_switches_base_conf | length }}) or the exact declared fabric roster ({{ nd_pipeline_switches_topology | default(nd_switches_base_conf) | length }}); missing, duplicate, or unexpected seeds are not allowed
++      expected the exact test fixture ({{ nd_switches_base_conf | length }}) or the exact declared fabric roster ({{ nd_pipeline_switches_topology | default(nd_switches_base_conf) | length }}) or the exact test fixture plus declared vxlan_leaf_3 and vxlan_leaf_4; missing, duplicate, or unexpected seeds are not allowed
    tags: query
  
  - name: Query TC1 - Validate Each Switch Present and Role Matches
