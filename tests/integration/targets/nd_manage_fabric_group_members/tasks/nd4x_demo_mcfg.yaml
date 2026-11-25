@@ -1,0 +1,372 @@
+---
+- name: Require explicit multi-cluster fabric group test resources
+  ansible.builtin.assert:
+    that:
+      - test_mcfg_group is defined and test_mcfg_group | string | length > 0
+      - test_mcfg_member is defined and test_mcfg_member | string | length > 0
+      - test_mcfg_cluster is defined and test_mcfg_cluster | string | length > 0
+    fail_msg: >-
+      Configure test_mcfg_group, test_mcfg_member, and test_mcfg_cluster in
+      the private integration inventory before running the MCFG harness. The
+      harness will not select or create a multi-cluster fabric group implicitly.
+  tags:
+    - always
+
+- name: Query Nexus Dashboard version for the MCFG harness
+  cisco.nd.nd_version:
+    login_domain: mcfg
+    output_level: "{{ api_key_output_level | default('debug') }}"
+  register: nd4x_mcfg_version
+  tags:
+    - always
+
+- name: Require ND 4.x for the MCFG harness
+  ansible.builtin.assert:
+    that:
+      - nd4x_mcfg_version.current.platformVersion is version('4.0.0', '>=')
+    fail_msg: >-
+      The multi-cluster fabric group members harness requires ND 4.0.0 or
+      newer; found {{ nd4x_mcfg_version.current.platformVersion }}.
+  tags:
+    - always
+
+- name: Verify the configured session can read the OneManage fabric group
+  cisco.nd.nd_rest:
+    path: "/api/v1/oneManage/manage/fabrics/{{ test_mcfg_group }}"
+    method: get
+  register: nd4x_mcfg_group_lookup
+  ignore_errors: true
+  tags:
+    - always
+
+- name: Require successful OneManage access through the multi-cluster login domain
+  ansible.builtin.assert:
+    that:
+      - nd4x_mcfg_group_lookup is not failed
+    fail_msg: >-
+      The configured session could not read {{ test_mcfg_group }} through
+      OneManage. Confirm the group exists and the inventory credentials use
+      the multi-cluster login domain; local-domain sessions are not sufficient.
+  tags:
+    - always
+
+- name: Verify the configured OneManage resource is a multi-cluster fabric group
+  ansible.builtin.assert:
+    that:
+      - nd4x_mcfg_group_lookup.jsondata.category == 'multiClusterFabricGroup'
+    fail_msg: >-
+      {{ test_mcfg_group }} is not reported by OneManage as a
+      multiClusterFabricGroup; refusing to mutate it with the MCFG harness.
+  tags:
+    - always
+
+- name: Gather MCFG membership before resetting the harness member
+  cisco.nd.nd_manage_fabric_group_members:
+    login_domain: mcfg
+    fabric_name: "{{ test_mcfg_group }}"
+    config: []
+    state: gathered
+    output_level: "{{ api_key_output_level | default('debug') }}"
+  register: nd4x_mcfg_members_pretest
+  tags:
+    - always
+
+- name: Initialize the expected MCFG member-cluster identity list after reset
+  ansible.builtin.set_fact:
+    nd4x_mcfg_expected_after_reset_member_pairs: []
+  tags:
+    - always
+
+- name: Record pre-existing MCFG pairs that the reset must preserve
+  ansible.builtin.set_fact:
+    nd4x_mcfg_expected_after_reset_member_pairs: >-
+      {{ nd4x_mcfg_expected_after_reset_member_pairs + [[item.member_name, item.cluster_name] | to_json] }}
+  loop: "{{ nd4x_mcfg_members_pretest.gathered }}"
+  loop_control:
+    label: "{{ item.member_name }} / {{ item.cluster_name }}"
+  when: >-
+    not (item.member_name == test_mcfg_member
+    and item.cluster_name == test_mcfg_cluster)
+  tags:
+    - always
+
+- name: Remove only the configured MCFG harness member before the run
+  cisco.nd.nd_manage_fabric_group_members:
+    login_domain: mcfg
+    fabric_name: "{{ test_mcfg_group }}"
+    config:
+      - member_name: "{{ test_mcfg_member }}"
+        cluster_name: "{{ test_mcfg_cluster }}"
+    state: deleted
+    output_level: "{{ api_key_output_level | default('debug') }}"
+  register: nd4x_mcfg_pretest_reset
+  tags:
+    - always
+
+- name: Gather MCFG membership after removing the harness member
+  cisco.nd.nd_manage_fabric_group_members:
+    login_domain: mcfg
+    fabric_name: "{{ test_mcfg_group }}"
+    config: []
+    state: gathered
+    output_level: "{{ api_key_output_level | default('debug') }}"
+  register: nd4x_mcfg_members_before
+  tags:
+    - always
+
+- name: Verify the reset removed only the configured MCFG harness member
+  ansible.builtin.assert:
+    that:
+      - >-
+        nd4x_mcfg_members_before.gathered
+        | selectattr('member_name', 'equalto', test_mcfg_member)
+        | selectattr('cluster_name', 'equalto', test_mcfg_cluster)
+        | list
+        | length == 0
+    fail_msg: >-
+      Could not remove {{ test_mcfg_member }} in cluster {{ test_mcfg_cluster }}
+      from {{ test_mcfg_group }} before the MCFG harness run. Resolve the
+      membership cleanup before continuing.
+  tags:
+    - always
+
+- name: Initialize the baseline MCFG member-cluster identity list
+  ansible.builtin.set_fact:
+    nd4x_mcfg_initial_member_pairs: []
+  tags:
+    - always
+
+- name: Record every baseline MCFG member-cluster pair
+  ansible.builtin.set_fact:
+    nd4x_mcfg_initial_member_pairs: >-
+      {{ nd4x_mcfg_initial_member_pairs + [[item.member_name, item.cluster_name] | to_json] }}
+  loop: "{{ nd4x_mcfg_members_before.gathered }}"
+  loop_control:
+    label: "{{ item.member_name }} / {{ item.cluster_name }}"
+  tags:
+    - always
+
+- name: Assert the reset preserved every other MCFG member-cluster pair
+  ansible.builtin.assert:
+    that:
+      - >-
+        nd4x_mcfg_initial_member_pairs | sort
+        == nd4x_mcfg_expected_after_reset_member_pairs | sort
+    fail_msg: >-
+      Resetting {{ test_mcfg_member }} in cluster {{ test_mcfg_cluster }}
+      changed another membership in {{ test_mcfg_group }}. The post-reset set
+      must equal the pre-reset set with only the configured pair removed.
+  tags:
+    - always
+
+- name: Exercise MCFG membership with the ND 4.x harness
+  block:
+    - name: Reject an MCFG member request that omits cluster_name
+      cisco.nd.nd_manage_fabric_group_members:
+        login_domain: mcfg
+        fabric_name: "{{ test_mcfg_group }}"
+        config:
+          - member_name: "{{ test_mcfg_member }}"
+        state: merged
+        output_level: "{{ api_key_output_level | default('debug') }}"
+      register: nd4x_mcfg_missing_cluster
+      ignore_errors: true
+
+    - name: Verify missing cluster_name is rejected before mutation
+      ansible.builtin.assert:
+        that:
+          - nd4x_mcfg_missing_cluster is failed
+          - "'cluster_name' in nd4x_mcfg_missing_cluster.msg"
+          - not nd4x_mcfg_missing_cluster.changed | default(false) | bool
+        fail_msg: >-
+          OneManage requires cluster_name to identify a member. The module must
+          reject the request before issuing a membership change.
+
+    - name: Add the MCFG member through the shared harness
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_fabric_group_members
+        state: merged
+        common_args:
+          fabric_name: "{{ test_mcfg_group }}"
+          output_level: "{{ api_key_output_level | default('debug') }}"
+        config:
+          - member_name: "{{ test_mcfg_member }}"
+            cluster_name: "{{ test_mcfg_cluster }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries:
+          - name: Snapshot all OneManage members before the MCFG merge
+            path: "/api/v1/oneManage/manage/fabrics/{{ test_mcfg_group }}/members"
+            expected_status: 200
+            unordered_paths:
+              - /fabrics
+        nd_queries:
+          - name: Verify the exact MCFG member and cluster after merge
+            path: "/api/v1/oneManage/manage/fabrics/{{ test_mcfg_group }}/members"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.fabrics[?(@.name == '{{ test_mcfg_member }}' &
+                  @.clusterName == '{{ test_mcfg_cluster }}')]
+                exists: true
+      register: nd4x_mcfg_merge
+
+    - name: Verify MCFG merge and idempotency phase results
+      ansible.builtin.assert:
+        that:
+          - nd4x_mcfg_merge.first_run_result.changed | bool
+          - not nd4x_mcfg_merge.second_run_result.changed | bool
+
+    - name: Gather MCFG members and verify the cluster identity
+      cisco.nd.nd_manage_fabric_group_members:
+        login_domain: mcfg
+        fabric_name: "{{ test_mcfg_group }}"
+        config: []
+        state: gathered
+        output_level: "{{ api_key_output_level | default('debug') }}"
+      register: nd4x_mcfg_gathered
+
+    - name: Initialize the post-merge MCFG member-cluster identity list
+      ansible.builtin.set_fact:
+        nd4x_mcfg_after_merge_member_pairs: []
+
+    - name: Record all MCFG member-cluster pairs after merge
+      ansible.builtin.set_fact:
+        nd4x_mcfg_after_merge_member_pairs: >-
+          {{ nd4x_mcfg_after_merge_member_pairs + [[item.member_name, item.cluster_name] | to_json] }}
+      loop: "{{ nd4x_mcfg_gathered.gathered }}"
+      loop_control:
+        label: "{{ item.member_name }} / {{ item.cluster_name }}"
+
+    - name: Assert merge preserved existing pairs and added exactly the requested pair
+      ansible.builtin.assert:
+        that:
+          - nd4x_mcfg_gathered is not changed
+          - >-
+            nd4x_mcfg_after_merge_member_pairs | sort
+            == (nd4x_mcfg_initial_member_pairs + [[test_mcfg_member, test_mcfg_cluster] | to_json]) | sort
+
+    - name: Delete the MCFG member through the shared harness
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_fabric_group_members
+        state: deleted
+        common_args:
+          fabric_name: "{{ test_mcfg_group }}"
+          output_level: "{{ api_key_output_level | default('debug') }}"
+        config:
+          - member_name: "{{ test_mcfg_member }}"
+            cluster_name: "{{ test_mcfg_cluster }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries:
+          - name: Snapshot all OneManage members before the MCFG delete
+            path: "/api/v1/oneManage/manage/fabrics/{{ test_mcfg_group }}/members"
+            expected_status: 200
+            unordered_paths:
+              - /fabrics
+        nd_queries:
+          - name: Verify the exact MCFG member-cluster pair is absent
+            path: "/api/v1/oneManage/manage/fabrics/{{ test_mcfg_group }}/members"
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: >-
+                  $.current.fabrics[?(@.name == '{{ test_mcfg_member }}' &
+                  @.clusterName == '{{ test_mcfg_cluster }}')]
+                exists: false
+      register: nd4x_mcfg_delete
+
+    - name: Verify MCFG delete and idempotency phase results
+      ansible.builtin.assert:
+        that:
+          - nd4x_mcfg_delete.first_run_result.changed | bool
+          - not nd4x_mcfg_delete.second_run_result.changed | bool
+
+    - name: Gather MCFG members after delete
+      cisco.nd.nd_manage_fabric_group_members:
+        login_domain: mcfg
+        fabric_name: "{{ test_mcfg_group }}"
+        config: []
+        state: gathered
+        output_level: "{{ api_key_output_level | default('debug') }}"
+      register: nd4x_mcfg_after_delete
+
+    - name: Initialize the post-delete MCFG member-cluster identity list
+      ansible.builtin.set_fact:
+        nd4x_mcfg_after_delete_member_pairs: []
+
+    - name: Record all MCFG member-cluster pairs after delete
+      ansible.builtin.set_fact:
+        nd4x_mcfg_after_delete_member_pairs: >-
+          {{ nd4x_mcfg_after_delete_member_pairs + [[item.member_name, item.cluster_name] | to_json] }}
+      loop: "{{ nd4x_mcfg_after_delete.gathered }}"
+      loop_control:
+        label: "{{ item.member_name }} / {{ item.cluster_name }}"
+
+    - name: Assert delete restored the original MCFG member-cluster pairs
+      ansible.builtin.assert:
+        that:
+          - nd4x_mcfg_after_delete_member_pairs | sort == nd4x_mcfg_initial_member_pairs | sort
+
+  always:
+    - name: Remove only the MCFG member tuple owned by this harness run
+      cisco.nd.nd_manage_fabric_group_members:
+        login_domain: mcfg
+        fabric_name: "{{ test_mcfg_group }}"
+        config:
+          - member_name: "{{ test_mcfg_member }}"
+            cluster_name: "{{ test_mcfg_cluster }}"
+        state: deleted
+        output_level: "{{ api_key_output_level | default('debug') }}"
+      register: nd4x_mcfg_cleanup
+
+    - name: Verify the harness MCFG member is absent after cleanup
+      ansible.builtin.assert:
+        that:
+          - nd4x_mcfg_cleanup is not failed
+      when: nd4x_mcfg_cleanup is defined
+
+    - name: Gather MCFG members after cleanup
+      cisco.nd.nd_manage_fabric_group_members:
+        login_domain: mcfg
+        fabric_name: "{{ test_mcfg_group }}"
+        config: []
+        state: gathered
+        output_level: "{{ api_key_output_level | default('debug') }}"
+      register: nd4x_mcfg_after_cleanup
+
+    - name: Initialize the post-cleanup MCFG member-cluster identity list
+      ansible.builtin.set_fact:
+        nd4x_mcfg_after_cleanup_member_pairs: []
+
+    - name: Record all MCFG member-cluster pairs after cleanup
+      ansible.builtin.set_fact:
+        nd4x_mcfg_after_cleanup_member_pairs: >-
+          {{ nd4x_mcfg_after_cleanup_member_pairs + [[item.member_name, item.cluster_name] | to_json] }}
+      loop: "{{ nd4x_mcfg_after_cleanup.gathered }}"
+      loop_control:
+        label: "{{ item.member_name }} / {{ item.cluster_name }}"
+
+    - name: Assert cleanup restored the original MCFG member-cluster pairs
+      ansible.builtin.assert:
+        that:
+          - nd4x_mcfg_after_cleanup_member_pairs | sort == nd4x_mcfg_initial_member_pairs | sort
+  tags:
+    - nd4x_demo_mcfg
