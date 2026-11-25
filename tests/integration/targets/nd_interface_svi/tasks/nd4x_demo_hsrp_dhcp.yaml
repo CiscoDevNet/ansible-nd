@@ -1,0 +1,245 @@
+---
+- name: "HSRP/DHCP SAFETY: Refuse pre-existing reserved SVI state"
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_assert_reserved_absent.yaml
+  vars:
+    nd4x_reserved_fabric_name: "{{ test_fabric_name }}"
+    nd4x_reserved_switch_id: "{{ test_switch_id }}"
+    nd4x_reserved_interface_names:
+      - vlan500
+      - vlan501
+
+- name: Run nd_interface_svi HSRP and DHCP harness tests
+  block:
+    - name: "HSRP/DHCP SETUP: Remove reserved test SVIs"
+      cisco.nd.nd_interface_svi:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan500
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan501
+        state: deleted
+
+    - name: "HSRP CREATE: Create vlan500 with the HSRP block"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ svi_500_hsrp }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate HSRP vlan500 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan500
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: vlan500
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.99.150.1"
+              - jsonpath: "$.current.configData.networkOS.policy.hsrpVip"
+                equals: "10.99.150.254"
+              - jsonpath: "$.current.configData.networkOS.policy.hsrpPriority"
+                equals: 110
+      register: hsrp_create
+
+    - name: "HSRP CREATE: Verify HSRP fields and idempotency"
+      vars:
+        vlan500_after: >-
+          {{
+            hsrp_create.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan500')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - hsrp_create.check_mode_result.changed | bool
+          - hsrp_create.first_run_result.changed | bool
+          - vlan500_after.config_data.network_os.policy.hsrp == true
+          - vlan500_after.config_data.network_os.policy.hsrp_group == 5
+          - vlan500_after.config_data.network_os.policy.hsrp_version == 2
+          - vlan500_after.config_data.network_os.policy.hsrp_vip == "10.99.150.254"
+          - vlan500_after.config_data.network_os.policy.hsrp_priority == 110
+          - not hsrp_create.second_run_result.changed | bool
+
+    - name: "HSRP IDEMPOTENT: Re-apply vlan500 HSRP configuration"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ svi_500_hsrp }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+      register: hsrp_idempotent
+
+    - name: "HSRP IDEMPOTENT: Verify no change"
+      ansible.builtin.assert:
+        that:
+          - not hsrp_idempotent.check_mode_result.changed | bool
+          - not hsrp_idempotent.first_run_result.changed | bool
+
+    - name: "HSRP UPDATE: Change vlan500 priority"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ svi_500_hsrp_updated }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate updated HSRP priority
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan500
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.configData.networkOS.policy.hsrpPriority"
+                equals: 200
+      register: hsrp_update
+
+    - name: "HSRP UPDATE: Verify priority change"
+      vars:
+        vlan500_after: >-
+          {{
+            hsrp_update.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan500')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - hsrp_update.first_run_result.changed | bool
+          - vlan500_after.config_data.network_os.policy.hsrp_priority == 200
+          - not hsrp_update.second_run_result.changed | bool
+
+    - name: "DHCP CREATE: Create vlan501 with DHCP relay servers"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ svi_501_dhcp }}"
+        expected:
+          check_mode:
+            changed: true
+            failed: false
+          apply:
+            changed: true
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+        nd_queries:
+          - name: Validate DHCP relay vlan501 from ND API
+            path: >-
+              /api/v1/manage/fabrics/{{ test_fabric_name
+              }}/switches/{{ test_switch_id }}/interfaces/vlan501
+            method: get
+            expected_status: 200
+            expect:
+              - jsonpath: "$.current.interfaceName"
+                equals: vlan501
+              - jsonpath: "$.current.configData.networkOS.policy.ip"
+                equals: "10.99.151.1"
+      register: dhcp_create
+
+    - name: "DHCP CREATE: Verify relay configuration and idempotency"
+      vars:
+        vlan501_after: >-
+          {{
+            dhcp_create.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'vlan501')
+            | first
+          }}
+      ansible.builtin.assert:
+        that:
+          - dhcp_create.first_run_result.changed | bool
+          - vlan501_after.config_data.network_os.policy.dhcp_server_address1
+            == "10.10.10.10"
+          - vlan501_after.config_data.network_os.policy.dhcp_server_address2
+            == "10.10.10.11"
+          - not dhcp_create.second_run_result.changed | bool
+
+    - name: "DHCP IDEMPOTENT: Re-apply vlan501 DHCP relay configuration"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_svi
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ svi_501_dhcp }}"
+        expected:
+          check_mode:
+            changed: false
+            failed: false
+          apply:
+            changed: false
+            failed: false
+          idempotency:
+            changed: false
+            failed: false
+        check_mode_queries: "{{ nd4x_fabric_check_mode_queries }}"
+      register: dhcp_idempotent
+
+    - name: "DHCP IDEMPOTENT: Verify no change"
+      ansible.builtin.assert:
+        that:
+          - not dhcp_idempotent.check_mode_result.changed | bool
+          - not dhcp_idempotent.first_run_result.changed | bool
+
+  always:
+    - name: "HSRP/DHCP CLEANUP: Remove vlan500 and vlan501"
+      cisco.nd.nd_interface_svi:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan500
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: vlan501
+        state: deleted

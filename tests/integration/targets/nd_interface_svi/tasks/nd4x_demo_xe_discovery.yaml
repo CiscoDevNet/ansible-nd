@@ -1,0 +1,34 @@
+---
+# Poll each IOS-XE interface directly. This avoids relying on the ordering or
+# completeness of the paginated /interfaces collection endpoint.
+
+- name: "XE DISCOVERY WAIT: Wait for IOS-XE SVI discovery"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ nd4x_xe_discovery_fabric_name
+      }}/switches/{{ nd4x_xe_discovery_switch_id }}/interfaces/{{ item }}
+    method: get
+  register: nd4x_xe_discovery_interface
+  until:
+    - >-
+      (
+        nd4x_xe_discovery_allow_absent | default(false) | bool
+        and nd4x_xe_discovery_interface.status | default(0) | int == 404
+      )
+      or (
+        not nd4x_xe_discovery_interface.failed | default(false) | bool
+        and (
+          nd4x_xe_discovery_interface.jsondata | default({})
+        ).get('operData', {}).get('operationalStatus', 'unknown') != 'unknown'
+      )
+  retries: 60
+  delay: 10
+  loop: "{{ nd4x_xe_discovery_interfaces }}"
+  loop_control:
+    label: "{{ item }}"
+  failed_when: >-
+    nd4x_xe_discovery_interface.failed | default(false) | bool
+    and not (
+      nd4x_xe_discovery_allow_absent | default(false) | bool
+      and nd4x_xe_discovery_interface.status | default(0) | int == 404
+    )

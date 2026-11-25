@@ -1,0 +1,30 @@
+---
+# Safe harness scenarios must not delete a pre-existing SVI. They use reserved
+# VLAN names, but a failed previous run or an incorrectly selected fabric can
+# still leave real state behind. Abort before setup if any reserved endpoint is
+# present; cleanup remains responsible only for state created by this scenario.
+
+- name: "SAFETY: Check reserved SVI endpoints before setup"
+  cisco.nd.nd_rest:
+    path: >-
+      /api/v1/manage/fabrics/{{ nd4x_reserved_fabric_name }}/switches/{{
+      nd4x_reserved_switch_id }}/interfaces/{{ item }}
+    method: get
+  loop: "{{ nd4x_reserved_interface_names }}"
+  loop_control:
+    label: "{{ item }}"
+  register: nd4x_reserved_interface_checks
+  changed_when: false
+  failed_when: false
+
+- name: "SAFETY: Require reserved SVI endpoints to be absent"
+  ansible.builtin.assert:
+    that:
+      - item.status | default(0) | int == 404
+    fail_msg: >-
+      Refusing to run the safe harness scenario because reserved interface
+      {{ item.item }} already exists on switch {{ nd4x_reserved_switch_id }}.
+      Remove it deliberately or choose a dedicated test fabric.
+  loop: "{{ nd4x_reserved_interface_checks.results }}"
+  loop_control:
+    label: "{{ item.item }}"

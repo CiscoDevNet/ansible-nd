@@ -1,0 +1,23 @@
+---
+- name: "NEGATIVE: Reject non-ASCII SVI description"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: vlan333
+        config_data:
+          network_os:
+            policy:
+              description: "non-ascii em — dash"
+    state: merged
+  register: negative_non_ascii_description
+  ignore_errors: true
+
+- name: "NEGATIVE: Verify the non-ASCII validation failure"
+  ansible.builtin.assert:
+    that:
+      - negative_non_ascii_description.failed | bool
+      - >-
+        'description must contain only ASCII'
+        in negative_non_ascii_description.msg
