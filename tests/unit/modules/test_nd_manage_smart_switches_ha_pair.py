@@ -29,6 +29,7 @@ def invoke_ha_module(monkeypatch, capsys, responses=(), **module_args):
     """Run the Ansible entry point and record every scripted controller call."""
     params = {"fabric_name": "HA/Fabric", "cluster_name": "remote & west", **module_args}
     monkeypatch.setattr(basic, "_ANSIBLE_ARGS", json.dumps({"ANSIBLE_MODULE_ARGS": params}).encode())
+    monkeypatch.setattr(basic, "_ANSIBLE_PROFILE", "legacy", raising=False)
     sender = RecordingHaSender(responses)
     monkeypatch.setattr(ha_module, "Sender", lambda: sender)
     with pytest.raises(SystemExit) as module_exit:

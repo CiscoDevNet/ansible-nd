@@ -1,8 +1,6 @@
 # Copyright: (c) 2026, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from pathlib import Path
-from runpy import run_path
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
@@ -10,16 +8,17 @@ import pytest
 from ansible.errors import AnsibleActionFail
 from ansible.plugins.action import ActionBase
 
-TARGET = Path(__file__).resolve().parents[3] / "integration" / "targets" / "nd_manage_smart_switches_ha_pair"
-PLUGIN = TARGET / "action_plugins" / "nd_smart_switch_ha_pair_observe.py"
+from ansible_collections.cisco.nd.tests.integration.targets.nd_manage_smart_switches_ha_pair.action_plugins import (
+    nd_smart_switch_ha_pair_observe as observer_plugin,
+)
+
 INVENTORY = "/api/v1/manage/fabrics/ha%2Ftest/smartSwitches/haPairs?clusterName=remote%20west"
 
 
 @pytest.fixture
 def observer(monkeypatch):
     monkeypatch.setattr(ActionBase, "run", lambda *args: {})
-    plugin_class = run_path(str(PLUGIN))["ActionModule"]
-    plugin = object.__new__(plugin_class)
+    plugin = object.__new__(observer_plugin.ActionModule)
     plugin._task = SimpleNamespace(args={"path": INVENTORY}, check_mode=True)
     plugin._execute_module = Mock()
     return plugin
@@ -144,7 +143,7 @@ def test_observer_rejects_a_filtered_inventory(observer):
 
 
 def test_observer_requires_an_empty_terminal_page_at_the_page_limit(observer, monkeypatch):
-    monkeypatch.setitem(observer._read_inventory_pages.__func__.__globals__, "PAGE_LIMIT", 1)
+    monkeypatch.setattr(observer_plugin, "PAGE_LIMIT", 1)
     observer._execute_module.return_value = inventory_page(ha_row("A"))
 
     with pytest.raises(AnsibleActionFail, match="without an empty terminal page"):
