@@ -68,13 +68,6 @@ options:
         type: str
         default: essentials
         choices: [ essentials, advantage, premier ]
-      alert_suspend:
-        description:
-        - The alert suspension state for the fabric.
-        - Optional filter for O(state=gathered).
-        type: str
-        default: disabled
-        choices: [ enabled, disabled ]
       telemetry_collection:
         description:
         - Controls whether collection type, streaming protocol, and in-band source settings take effect.
@@ -87,7 +80,7 @@ options:
         - Applies when O(config.telemetry_collection=true).
         - The telemetry collection type.
         type: str
-        default: inBand
+        default: outOfBand
         choices: [ inBand, outOfBand ]
       telemetry_streaming_protocol:
         description:
@@ -100,12 +93,14 @@ options:
         description:
         - Applies when O(config.telemetry_collection=true) and O(config.telemetry_collection_type=inBand).
         - The telemetry source interface.
+        - With O(config.telemetry_collection_type=outOfBand), ND controls this value, and differences in this parameter do not trigger an update.
         type: str
         default: loopback0
       telemetry_source_vrf:
         description:
         - Applies when O(config.telemetry_collection=true) and O(config.telemetry_collection_type=inBand).
         - The telemetry source VRF.
+        - With O(config.telemetry_collection_type=outOfBand), ND controls this value, and differences in this parameter do not trigger an update.
         type: str
         default: default
       security_domain:
@@ -201,7 +196,7 @@ options:
           ipv6_multicast_group_subnet:
             description:
             - Applies when O(config.management.replication_mode=multicast) and O(config.management.underlay_ipv6=true).
-            - The IPv6 multicast group subnet.
+            - IPv6 multicast group subnet with a prefix length from C(112) through C(128). A bare IPv6 address is accepted as C(/128).
             type: str
             default: "ff1e::/121"
           auto_generate_multicast_group_address:
@@ -282,27 +277,27 @@ options:
           anycast_rendezvous_point_ip_range:
             description:
             - The IPv4 anycast rendezvous point pool applies to IPv4 multicast underlay operation.
-            - The anycast rendezvous point IP address pool.
+            - IPv4 anycast rendezvous point address pool in CIDR notation; an explicit prefix is required.
             type: str
             default: "10.254.254.0/24"
           ipv6_anycast_rendezvous_point_ip_range:
             description:
             - The IPv6 anycast rendezvous point pool applies to IPv6 multicast underlay operation when O(config.management.underlay_ipv6=true).
-            - The IPv6 anycast rendezvous point IP address pool.
+            - IPv6 anycast rendezvous point address pool in CIDR notation. A bare IPv6 address is accepted as C(/128).
             type: str
             default: "fd00::254:254:0/118"
           l3vni_multicast_group:
             description:
             - Choose the address from O(config.management.multicast_group_subnet).
             - Used for IPv4 multicast of overlay VRF traffic.
-            - Default underlay multicast group IPv4 address assigned for every overlay VRF.
+            - Default underlay multicast group IPv4 address assigned for every overlay VRF. Supply a bare IPv4 address without a CIDR prefix.
             type: str
             default: "239.1.1.0"
           l3_vni_ipv6_multicast_group:
             description:
             - Choose the address from O(config.management.ipv6_multicast_group_subnet).
             - Used for IPv6 multicast of overlay VRF traffic.
-            - Default underlay multicast group IPv6 address assigned for every overlay VRF.
+            - Default underlay multicast group IPv6 address assigned for every overlay VRF. Supply a bare IPv6 address without a CIDR prefix.
             type: str
             default: "ff1e::"
           mvpn_vrf_route_import_id:
@@ -501,6 +496,7 @@ options:
             description:
             - Applies when O(config.management.bgp_authentication=true).
             - The BGP authentication key.
+            - On ND 4.3.1 or later, the value must not contain whitespace.
             type: str
           bfd:
             description:
@@ -548,6 +544,7 @@ options:
             description:
             - Applies when O(config.management.bfd_authentication=true).
             - The BFD authentication key.
+            - On ND 4.3.1 or later, the value must not contain whitespace.
             type: str
           ospf_authentication:
             description:
@@ -566,6 +563,7 @@ options:
             description:
             - Applies when O(config.management.ospf_authentication=true).
             - The OSPF authentication key.
+            - On ND 4.3.1 or later, the value must not contain whitespace.
             type: str
           pim_hello_authentication:
             description:
@@ -577,6 +575,7 @@ options:
             description:
             - Applies when O(config.management.pim_hello_authentication=true).
             - The PIM hello authentication key.
+            - On ND 4.3.1 or later, the value must not contain whitespace.
             type: str
           isis_level:
             description:
@@ -608,6 +607,7 @@ options:
             description:
             - Applies when O(config.management.isis_authentication=true).
             - The IS-IS authentication keychain name.
+            - On ND 4.3.1 or later, the value must not contain whitespace.
             type: str
           isis_authentication_keychain_key_id:
             description:
@@ -619,6 +619,7 @@ options:
             description:
             - Applies when O(config.management.isis_authentication=true).
             - The IS-IS authentication key.
+            - On ND 4.3.1 or later, the value must not contain whitespace.
             type: str
           isis_overload:
             description:
@@ -632,6 +633,431 @@ options:
             - The IS-IS overload elapse time in seconds.
             type: int
             default: 60
+
+          bfd_min_rx_interval:
+            description:
+            - BFD minimum receive interval in milliseconds (10 to 999).
+            - Available in ND 4.3.1 or later.
+            type: int
+            default: 50
+          bfd_multiplier:
+            description:
+            - BFD detection multiplier (1 to 50).
+            - Available in ND 4.3.1 or later.
+            type: int
+            default: 3
+          bfd_tx_interval:
+            description:
+            - BFD transmit interval in milliseconds (10 to 999).
+            - Available in ND 4.3.1 or later.
+            type: int
+            default: 50
+
+          # Authentication
+          isis_auth_use_key_entries:
+            description:
+            - Use the configured IS-IS key entries for authentication.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: false
+          isis_border_level12:
+            description:
+            - Apply IS-IS level 1-2 to border devices.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: false
+          isis_keys:
+            description:
+            - IS-IS keychain entries.
+            - Available in ND 4.3.1 or later.
+            type: list
+            elements: dict
+            suboptions:
+              key_id:
+                description:
+                - Key identifier (0 to 65535).
+                - Available in ND 4.3.1 or later.
+                type: int
+                required: true
+              key_type:
+                description:
+                - "Key type: 6 or 7."
+                - Available in ND 4.3.1 or later.
+                type: str
+                default: "7"
+                choices: [ '6', '7' ]
+              key_string:
+                description:
+                - Key material.
+                - Available in ND 4.3.1 or later.
+                type: str
+                required: true
+              crypto_algorithm:
+                description:
+                - Cryptographic algorithm.
+                - Available in ND 4.3.1 or later.
+                type: str
+                choices: [ '3des', 'aes', 'hmac-sha-1', 'hmac-sha-256', 'hmac-sha-384', 'hmac-sha-512', 'md5' ]
+              accept_lifetime_start:
+                description:
+                - Accept lifetime start time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_start_date:
+                description:
+                - Accept lifetime start date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_end_mode:
+                description:
+                - Accept lifetime end mode.
+                - Available in ND 4.3.1 or later.
+                type: str
+                choices: [ duration, endTime, infinite ]
+              accept_lifetime_duration:
+                description:
+                - Accept lifetime duration in seconds.
+                - Available in ND 4.3.1 or later.
+                type: int
+              accept_lifetime_end:
+                description:
+                - Accept lifetime end time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_end_date:
+                description:
+                - Accept lifetime end date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_local:
+                description:
+                - Interpret the accept lifetime in local time.
+                - Available in ND 4.3.1 or later.
+                type: bool
+                default: false
+              send_lifetime_start:
+                description:
+                - Send lifetime start time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_start_date:
+                description:
+                - Send lifetime start date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_end_mode:
+                description:
+                - Send lifetime end mode.
+                - Available in ND 4.3.1 or later.
+                type: str
+                choices: [ duration, endTime, infinite ]
+              send_lifetime_duration:
+                description:
+                - Send lifetime duration in seconds.
+                - Available in ND 4.3.1 or later.
+                type: int
+              send_lifetime_end:
+                description:
+                - Send lifetime end time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_end_date:
+                description:
+                - Send lifetime end date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_local:
+                description:
+                - Interpret the send lifetime in local time.
+                - Available in ND 4.3.1 or later.
+                type: bool
+                default: false
+          ntp_auth_algorithm:
+            description:
+            - NTP authentication algorithm.
+            - Available in ND 4.3.1 or later.
+            type: str
+            default: "aes128cmac"
+            choices: [ aes128cmac, md5 ]
+          ntp_auth_enable:
+            description:
+            - Enable NTP authentication.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: false
+          ntp_auth_key:
+            description:
+            - NTP authentication key.
+            - The input must contain 1 to 32 characters for O(config.management.ntp_auth_key_type=7),
+              or 1 to 128 characters for O(config.management.ntp_auth_key_type=6), with no whitespace.
+            - Available in ND 4.3.1 or later.
+            type: str
+          ntp_auth_key_id:
+            description:
+            - NTP authentication key identifier (1 to 65535).
+            - Available in ND 4.3.1 or later.
+            type: int
+            default: 1
+          ntp_auth_key_type:
+            description:
+            - NTP authentication key type.
+            - Available in ND 4.3.1 or later.
+            type: str
+            default: '7'
+            choices: [ '6', '7' ]
+          ospf_auth_keychain_name:
+            description:
+            - OSPF authentication keychain name.
+            - Available in ND 4.3.1 or later.
+            type: str
+          ospf_auth_use_keychain:
+            description:
+            - Use an OSPF authentication keychain.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: false
+          ospf_auto_cost_ref_bw:
+            description:
+            - OSPF auto-cost reference bandwidth (1 to 4000).
+            - Available in ND 4.3.1 or later.
+            type: int
+            default: 40
+          ospf_keys:
+            description:
+            - OSPF keychain entries.
+            - Available in ND 4.3.1 or later.
+            type: list
+            elements: dict
+            suboptions:
+              key_id:
+                description:
+                - Key identifier (0 to 65535).
+                - Available in ND 4.3.1 or later.
+                type: int
+                required: true
+              key_type:
+                description:
+                - "Key type: 6 or 7."
+                - Available in ND 4.3.1 or later.
+                type: str
+                default: "7"
+                choices: [ '6', '7' ]
+              key_string:
+                description:
+                - Key material.
+                - Available in ND 4.3.1 or later.
+                type: str
+                required: true
+              crypto_algorithm:
+                description:
+                - Cryptographic algorithm.
+                - Available in ND 4.3.1 or later.
+                type: str
+                choices: [ '3des', 'aes', 'hmac-sha-1', 'hmac-sha-256', 'hmac-sha-384', 'hmac-sha-512', 'md5' ]
+              accept_lifetime_start:
+                description:
+                - Accept lifetime start time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_start_date:
+                description:
+                - Accept lifetime start date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_end_mode:
+                description:
+                - Accept lifetime end mode.
+                - Available in ND 4.3.1 or later.
+                type: str
+                choices: [ duration, endTime, infinite ]
+              accept_lifetime_duration:
+                description:
+                - Accept lifetime duration in seconds.
+                - Available in ND 4.3.1 or later.
+                type: int
+              accept_lifetime_end:
+                description:
+                - Accept lifetime end time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_end_date:
+                description:
+                - Accept lifetime end date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_local:
+                description:
+                - Interpret the accept lifetime in local time.
+                - Available in ND 4.3.1 or later.
+                type: bool
+                default: false
+              send_lifetime_start:
+                description:
+                - Send lifetime start time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_start_date:
+                description:
+                - Send lifetime start date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_end_mode:
+                description:
+                - Send lifetime end mode.
+                - Available in ND 4.3.1 or later.
+                type: str
+                choices: [ duration, endTime, infinite ]
+              send_lifetime_duration:
+                description:
+                - Send lifetime duration in seconds.
+                - Available in ND 4.3.1 or later.
+                type: int
+              send_lifetime_end:
+                description:
+                - Send lifetime end time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_end_date:
+                description:
+                - Send lifetime end date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_local:
+                description:
+                - Interpret the send lifetime in local time.
+                - Available in ND 4.3.1 or later.
+                type: bool
+                default: false
+          ospf_log_adj_changes:
+            description:
+            - Log OSPF adjacency changes.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: false
+          ospf_max_metric_startup_wait:
+            description:
+            - Maximum OSPF metric startup wait in seconds (5 to 86400).
+            - Available in ND 4.3.1 or later.
+            - The Pydantic model default is 600 on ND 4.3.1 or later; merged updates that omit this field preserve the existing value.
+            type: int
+            default: 600
+          pim_auth_keychain_name:
+            description:
+            - PIM authentication keychain name.
+            - Available in ND 4.3.1 or later.
+            type: str
+          pim_auth_use_keychain:
+            description:
+            - Use a PIM authentication keychain.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: false
+          pim_keys:
+            description:
+            - PIM keychain entries.
+            - Available in ND 4.3.1 or later.
+            type: list
+            elements: dict
+            suboptions:
+              key_id:
+                description:
+                - Key identifier (0 to 65535).
+                - Available in ND 4.3.1 or later.
+                type: int
+                required: true
+              key_type:
+                description:
+                - "Key type: 6 or 7."
+                - Available in ND 4.3.1 or later.
+                type: str
+                default: "7"
+                choices: [ '6', '7' ]
+              key_string:
+                description:
+                - Key material.
+                - Available in ND 4.3.1 or later.
+                type: str
+                required: true
+              crypto_algorithm:
+                description:
+                - Cryptographic algorithm.
+                - Available in ND 4.3.1 or later.
+                type: str
+                choices: [ '3des', 'aes', 'hmac-sha-1', 'hmac-sha-256', 'hmac-sha-384', 'hmac-sha-512', 'md5' ]
+              accept_lifetime_start:
+                description:
+                - Accept lifetime start time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_start_date:
+                description:
+                - Accept lifetime start date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_end_mode:
+                description:
+                - Accept lifetime end mode.
+                - Available in ND 4.3.1 or later.
+                type: str
+                choices: [ duration, endTime, infinite ]
+              accept_lifetime_duration:
+                description:
+                - Accept lifetime duration in seconds.
+                - Available in ND 4.3.1 or later.
+                type: int
+              accept_lifetime_end:
+                description:
+                - Accept lifetime end time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_end_date:
+                description:
+                - Accept lifetime end date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              accept_lifetime_local:
+                description:
+                - Interpret the accept lifetime in local time.
+                - Available in ND 4.3.1 or later.
+                type: bool
+                default: false
+              send_lifetime_start:
+                description:
+                - Send lifetime start time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_start_date:
+                description:
+                - Send lifetime start date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_end_mode:
+                description:
+                - Send lifetime end mode.
+                - Available in ND 4.3.1 or later.
+                type: str
+                choices: [ duration, endTime, infinite ]
+              send_lifetime_duration:
+                description:
+                - Send lifetime duration in seconds.
+                - Available in ND 4.3.1 or later.
+                type: int
+              send_lifetime_end:
+                description:
+                - Send lifetime end time in HH:MM:SS format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_end_date:
+                description:
+                - Send lifetime end date in MMM DD YYYY format.
+                - Available in ND 4.3.1 or later.
+                type: str
+              send_lifetime_local:
+                description:
+                - Interpret the send lifetime in local time.
+                - Available in ND 4.3.1 or later.
+                type: bool
+                default: false
 
           # Security
           security_group_tag:
@@ -758,7 +1184,7 @@ options:
           key_management_entity_server_ip:
             description:
             - Applies when O(config.management.quantum_key_distribution=true).
-            - The key management entity server IP address.
+            - The key management entity server IPv4 address.
             type: str
           key_management_entity_server_port:
             description:
@@ -883,7 +1309,7 @@ options:
             description:
             - Enable NX-API over HTTP.
             type: bool
-            default: false
+            default: true
           nxapi_http_port:
             description:
             - Applies when O(config.management.nxapi_http=true).
@@ -930,6 +1356,8 @@ options:
             description:
             - Applies when O(config.management.aiml_qos=true).
             - DSCP for RDMA traffic. Numeric (0-63) with ranges/comma, or named values.
+            - When omitted, the Pydantic model leaves this value unset.
+            - Controller template defaults are C(26) on ND 4.2.1 and C(24-31) on ND 4.3.1.
             type: str
           cnp:
             description:
@@ -1059,7 +1487,7 @@ options:
           stp_bridge_priority:
             description:
             - Applies when O(config.management.stp_root_option) is C(rpvst+) or C(mst).
-            - The STP bridge priority.
+            - The STP bridge priority. Supported values are 0 and multiples of 4096 through 61440.
             type: int
             default: 0
           mpls_handoff:
@@ -1083,7 +1511,7 @@ options:
           mpls_loopback_ip_range:
             description:
             - Applies when O(config.management.mpls_handoff=true).
-            - The MPLS loopback IP address pool.
+            - IPv4 MPLS loopback address pool in CIDR notation; an explicit prefix is required.
             type: str
             default: "10.101.0.0/25"
           private_vlan:
@@ -1175,6 +1603,37 @@ options:
             type: bool
             default: false
 
+          ai_load_sharing_opcode:
+            description:
+            - Use the RoCEv2 opcode for AI load-sharing hash selection.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: false
+          ai_load_sharing_packet_sequence_number:
+            description:
+            - Use the RoCEv2 packet sequence number for AI load-sharing hash selection; may cause packet reordering.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: false
+          ai_load_sharing_queuepair:
+            description:
+            - Use the RoCEv2 source and receiver queue pair for AI load-sharing hash selection.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: false
+          dlb_all_interfaces:
+            description:
+            - Apply dynamic load balancing to all supported interfaces.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: true
+          system_qos_classification:
+            description:
+            - Enable system QoS classification.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: true
+
           # Freeform
           extra_config_leaf:
             description:
@@ -1221,36 +1680,36 @@ options:
             default: false
           bgp_loopback_ip_range:
             description:
-            - The BGP loopback IP address pool.
+            - IPv4 BGP loopback address pool in CIDR notation; an explicit prefix is required.
             type: str
             default: "10.2.0.0/22"
           nve_loopback_ip_range:
             description:
-            - The NVE loopback IP address pool.
+            - IPv4 NVE loopback address pool in CIDR notation; an explicit prefix is required.
             type: str
             default: "10.3.0.0/22"
           bgp_loopback_ipv6_range:
             description:
             - Applies when O(config.management.underlay_ipv6=true).
-            - The BGP loopback IPv6 address pool.
+            - IPv6 BGP loopback address pool in CIDR notation. A bare IPv6 address is accepted as C(/128).
             type: str
             default: "fd00::a02:0/119"
           nve_loopback_ipv6_range:
             description:
             - Applies when O(config.management.underlay_ipv6=true).
-            - The NVE loopback IPv6 address pool.
+            - IPv6 NVE loopback address pool in CIDR notation. A bare IPv6 address is accepted as C(/128).
             type: str
             default: "fd00::a03:0/118"
           intra_fabric_subnet_range:
             description:
-            - The intra-fabric subnet IP address pool.
+            - IPv4 intra-fabric subnet pool in CIDR notation; an explicit prefix is required.
             type: str
             default: "10.4.0.0/16"
           ipv6_subnet_range:
             description:
             - Applies when O(config.management.underlay_ipv6=true) and O(config.management.ipv6_link_local=false).
             - Applies when O(config.management.underlay_ipv6=true).
-            - The IPv6 subnet range.
+            - IPv6 subnet pool in CIDR notation. A bare IPv6 address is accepted as C(/128).
             type: str
             default: "fd00::a04:0/112"
           router_id_range:
@@ -1346,7 +1805,7 @@ options:
           per_vrf_loopback_ip_range:
             description:
             - Applies when O(config.management.per_vrf_loopback_auto_provision=true).
-            - The per-VRF loopback IP address pool.
+            - IPv4 per-VRF loopback address pool in CIDR notation; an explicit prefix is required.
             type: str
             default: "10.5.0.0/22"
           per_vrf_loopback_auto_provision_ipv6:
@@ -1357,7 +1816,7 @@ options:
           per_vrf_loopback_ipv6_range:
             description:
             - Applies when O(config.management.per_vrf_loopback_auto_provision_ipv6=true).
-            - The per-VRF loopback IPv6 address pool.
+            - IPv6 per-VRF loopback address pool in CIDR notation. A bare IPv6 address is accepted as C(/128).
             type: str
             default: "fd00::a05:0/112"
           per_vrf_unique_loopback_auto_provision:
@@ -1370,7 +1829,7 @@ options:
           per_vrf_unique_loopback_ip_range:
             description:
             - Applies when O(config.management.per_vrf_unique_loopback_auto_provision=true).
-            - Prefix pool to assign unique IPv4 addresses to loopbacks on VTEPs on a per VRF basis.
+            - IPv4 CIDR prefix pool to assign unique addresses to loopbacks on VTEPs on a per VRF basis.
             type: str
             default: "10.6.0.0/22"
           per_vrf_unique_loopback_auto_provision_v6:
@@ -1381,7 +1840,7 @@ options:
           per_vrf_unique_loopback_ipv6_range:
             description:
             - Applies when O(config.management.per_vrf_unique_loopback_auto_provision_v6=true).
-            - Prefix pool to assign unique IPv6 addresses to loopbacks on VTEPs on a per VRF basis.
+            - IPv6 CIDR prefix pool to assign unique addresses to loopbacks on VTEPs on a per VRF basis.
             type: str
             default: "fd00::a06:0/112"
           ip_service_level_agreement_id_range:
@@ -1431,6 +1890,7 @@ options:
           ntp_server_collection:
             description:
             - The list of NTP server IP addresses.
+            - Each entry must contain 1 to 80 characters.
             type: list
             elements: str
             default: []
@@ -1444,6 +1904,7 @@ options:
           dns_collection:
             description:
             - The list of DNS server IP addresses.
+            - Each entry must be an IPv4 or IPv6 address literal containing 3 to 40 characters.
             type: list
             elements: str
             default: []
@@ -1451,12 +1912,14 @@ options:
             description:
             - VRF entries correspond to servers in O(config.management.dns_collection).
             - The list of VRFs for DNS servers.
+            - Each entry must contain 1 to 80 characters.
             type: list
             elements: str
             default: []
           syslog_server_collection:
             description:
             - The list of syslog server IP addresses.
+            - Each entry must contain 1 to 199 characters.
             type: list
             elements: str
             default: []
@@ -1471,6 +1934,7 @@ options:
             description:
             - Severity entries correspond to servers in O(config.management.syslog_server_collection).
             - The list of syslog severity levels (0-7).
+            - Each entry must be an integer from 0 to 7.
             type: list
             elements: int
             default: []
@@ -1490,23 +1954,63 @@ options:
           connectivity_domain_name:
             description:
             - Applies to smart switches onboarded using O(config.management.allow_smart_switch_onboarding=true).
-            - Domain name to connect to Hypershield.
+            - Domain name to connect to Hypershield (1 to 63 characters; valid DNS name).
             type: str
-          hypershield_connectivity_proxy_server:
-            description:
-            - Applies to smart switches onboarded using O(config.management.allow_smart_switch_onboarding=true).
-            - IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication.
-            type: str
-          hypershield_connectivity_proxy_server_port:
-            description:
-            - Used with O(config.management.hypershield_connectivity_proxy_server) for smart switch onboarding.
-            - Proxy port number for communication with Hypershield.
-            type: int
           hypershield_connectivity_source_intf:
             description:
             - Applies to smart switches onboarded using O(config.management.allow_smart_switch_onboarding=true).
             - Loopback interface on smart switch for communication with Hypershield.
             type: str
+
+          allow_smart_switch_ha:
+            description:
+            - Enable Hypershield high availability for smart switches.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: false
+          auto_smart_switch_vpc_pair_ha:
+            description:
+            - Automatically configure high availability for smart-switch vPC pairs.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: false
+          hypershield_ha_peer_link_subnet:
+            description:
+            - IPv4 CIDR subnet pool for Hypershield HA peer-link connectivity.
+            - Available in ND 4.3.1 or later.
+            type: str
+            default: "10.12.0.0/22"
+          hypershield_ha_peer_link_subnet_granularity:
+            description:
+            - Hypershield HA peer-link subnet prefix size.
+            - Available in ND 4.3.1 or later.
+            type: str
+            default: "/30"
+            choices: [ '/30', '/31' ]
+          hypershield_ha_source_intf:
+            description:
+            - Loopback interface used as the Hypershield HA source interface.
+            - Available in ND 4.3.1 or later.
+            type: str
+            default: "loopback1023"
+          hypershield_ha_source_subnet:
+            description:
+            - IPv4 CIDR subnet pool for the Hypershield HA source loopback.
+            - Available in ND 4.3.1 or later.
+            type: str
+            default: "10.11.0.0/23"
+          hypershield_ha_vlan:
+            description:
+            - VLAN used for Hypershield high availability (2 to 4094).
+            - Available in ND 4.3.1 or later.
+            type: int
+            default: 3601
+          use_hypershield_source_loopback_for_ha:
+            description:
+            - Reuse the Hypershield source loopback for high availability.
+            - Available in ND 4.3.1 or later.
+            type: bool
+            default: false
 
           # Bootstrap
           day0_bootstrap:
@@ -1534,10 +2038,9 @@ options:
             - Applies to local DHCP scopes when O(config.management.local_dhcp_server=true) and
               O(config.management.day0_bootstrap=true).
             - The DHCP start address for bootstrap.
-            - Use an IPv4 address without a prefix length with O(config.management.dhcp_protocol_version=dhcpv4) on ND 4.2 or later.
-            - An IPv6 address without a prefix length requires ND 4.3.1 or later,
-              O(config.management.dhcp_protocol_version=dhcpv6), and a V6 controller installation.
-            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject DHCPv6.
+            - IPv4 and IPv6 addresses without a prefix length are supported on ND 4.2.1 or later.
+            - Use O(config.management.dhcp_protocol_version=dhcpv4) for IPv4 or O(config.management.dhcp_protocol_version=dhcpv6) for IPv6.
+            - Local DHCPv6 requires a V6 controller installation.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           dhcp_end_address:
@@ -1545,21 +2048,18 @@ options:
             - Applies to local DHCP scopes when O(config.management.local_dhcp_server=true) and
               O(config.management.day0_bootstrap=true).
             - The DHCP end address for bootstrap.
-            - Use an IPv4 address without a prefix length with O(config.management.dhcp_protocol_version=dhcpv4) on ND 4.2 or later.
-            - An IPv6 address without a prefix length requires ND 4.3.1 or later,
-              O(config.management.dhcp_protocol_version=dhcpv6), and a V6 controller installation.
-            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject DHCPv6.
+            - IPv4 and IPv6 addresses without a prefix length are supported on ND 4.2.1 or later.
+            - Use O(config.management.dhcp_protocol_version=dhcpv4) for IPv4 or O(config.management.dhcp_protocol_version=dhcpv6) for IPv6.
+            - Local DHCPv6 requires a V6 controller installation.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_gateway:
             description:
             - Applies to bootstrap addressing when O(config.management.day0_bootstrap=true), including external DHCP.
             - The management gateway for bootstrap.
-            - Use an IPv4 address without a prefix length on ND 4.2 or later.
-            - An IPv6 address without a prefix length is accepted as module config on ND 4.3.1 or later.
-            - With local DHCP, O(config.management.dhcp_protocol_version=dhcpv6) requires a V6 controller installation.
-            - With external DHCP, controller acceptance of an IPv6 gateway alone has not been verified.
-            - ND 4.3.1 alone does not establish V6 installation support; the controller may reject local DHCPv6.
+            - IPv4 and IPv6 addresses without a prefix length are supported on ND 4.2.1 or later.
+            - With local DHCP and an IPv6 gateway, select O(config.management.dhcp_protocol_version=dhcpv6).
+            - Local DHCPv6 requires a V6 controller installation.
             - Omit on create to leave it unset; omission from a partial O(state=merged) update preserves the existing value.
             type: str
           management_ipv4_prefix:
@@ -1589,6 +2089,7 @@ options:
             - When O(state=replaced), omitting this option resets the collection to its default empty value.
             type: list
             elements: dict
+            default: []
             suboptions:
               start_ip:
                 description:
@@ -1696,6 +2197,7 @@ options:
                 - List of netflow exporters.
                 type: list
                 elements: dict
+                default: []
                 suboptions:
                   exporter_name:
                     description:
@@ -1727,6 +2229,7 @@ options:
                 - List of netflow records.
                 type: list
                 elements: dict
+                default: []
                 suboptions:
                   record_name:
                     description:
@@ -1735,7 +2238,8 @@ options:
                     required: true
                   record_template:
                     description:
-                    - Template type for the record.
+                    - In ND 4.2.1, one of `netflowIpv4Record` or `netflowLayer2Record`.
+                    - In ND 4.3.1 or later, a string value is accepted.
                     type: str
                     required: true
                   layer2_record:
@@ -1750,6 +2254,7 @@ options:
                 - List of netflow monitors.
                 type: list
                 elements: dict
+                default: []
                 suboptions:
                   monitor_name:
                     description:
@@ -1776,7 +2281,7 @@ options:
                     default: ""
       telemetry_settings:
         description:
-        - Telemetry analysis, flow, microburst, NAS export, and energy settings.
+        - Telemetry analysis, flow, microburst, and NAS export settings.
         type: dict
         suboptions:
           analysis_settings:
@@ -1789,16 +2294,6 @@ options:
                 - Enable telemetry analysis.
                 type: bool
                 default: false
-          energy_management:
-            description:
-            - Telemetry energy-management settings.
-            type: dict
-            suboptions:
-              cost:
-                description:
-                - Energy cost per unit owned by the module.
-                type: float
-                default: 1.2
           flow_collection:
             description:
             - Telemetry flow-collection settings.
@@ -1812,7 +2307,7 @@ options:
                 - compatibility
                 - disabled
                 - enabled
-                default: enabled
+                default: disabled
               traffic_analytics_scope:
                 description:
                 - Traffic analytics scope.
@@ -1829,7 +2324,7 @@ options:
                 choices:
                 - disabled
                 - enabled
-                default: enabled
+                default: disabled
           microburst:
             description:
             - Microburst-detection settings.
@@ -1858,7 +2353,7 @@ options:
             suboptions:
               server:
                 description:
-                - NAS server address.
+                - Name of the configured NAS server for flow collection.
                 type: str
                 default: ""
               export_settings:
@@ -1978,7 +2473,6 @@ EXAMPLES = r"""
           latitude: 37.7749
           longitude: -122.4194
         license_tier: premier
-        alert_suspend: disabled
         security_domain: all
         telemetry_collection: false
         management:
@@ -2065,7 +2559,6 @@ EXAMPLES = r"""
           latitude: 37.7749
           longitude: -122.4194
         license_tier: premier
-        alert_suspend: disabled
         security_domain: all
         telemetry_collection: false
         management:
@@ -2155,7 +2648,6 @@ EXAMPLES = r"""
           latitude: 40.7128
           longitude: -74.0060
         license_tier: premier
-        alert_suspend: disabled
         security_domain: all
         telemetry_collection: false
         management:
@@ -2178,7 +2670,6 @@ EXAMPLES = r"""
           latitude: 34.0522
           longitude: -118.2437
         license_tier: premier
-        alert_suspend: disabled
         security_domain: all
         telemetry_collection: false
         management:
@@ -2333,14 +2824,30 @@ api_payload:
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import FabricIbgpModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ibgp_vxlan import ManageIbgpFabricOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
-from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import parse_config_actions
-from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import FABRIC_CONFIG_ACTIONS
-from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import get_raw_module_args
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
+    NDStateMachine,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import (
+    FabricIbgpModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ibgp_vxlan import (
+    ManageIbgpFabricOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
+    NDStateMachineError,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    require_pydantic,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.parser import (
+    parse_config_actions,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies import (
+    FABRIC_CONFIG_ACTIONS,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.config_actions.raw_args import (
+    get_raw_module_args,
+)
 
 
 def main():

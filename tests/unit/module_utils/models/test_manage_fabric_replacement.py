@@ -33,7 +33,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
 )
 
 FABRIC_CASES = (
-    (FabricExternalConnectivityModel, "externalConnectivity", "aiMonitoring", True),
+    (FabricExternalConnectivityModel, "externalConnectivity", "hypershieldConnectivityProxyServer", "proxy.example.test"),
     (FabricIbgpModel, "vxlanIbgp", "borderCount", 0),
     (FabricEbgpModel, "vxlanEbgp", "borderCount", 0),
     (FabricAiIbgpVxlanModel, "aimlVxlanIbgp", "borderCount", 0),
@@ -145,9 +145,9 @@ def test_manage_fabric_replacement_00025() -> None:
     """
     # Summary
 
-    Verify hidden authentication fields are preserved without entering normal
-    output, their nested string values are available to Ansible's no-log
-    scrubber, and arbitrary response metadata is not replayed.
+    Verify public authentication fields reset when omitted from an exact
+    replacement, remain masked in normalized existing output, and register
+    their values with Ansible's no-log scrubber. Response metadata is not replayed.
 
     ## Classes and Methods
 
@@ -157,18 +157,22 @@ def test_manage_fabric_replacement_00025() -> None:
     response = _fabric_response(
         "vxlanIbgp",
         ntpAuthKey="encrypted-ntp-secret",
-        ospfKeys=[{"id": 1, "key": "encrypted-ospf-secret"}],
+        ospfKeys=[{"keyId": 1, "keyString": "encrypted-ospf-secret", "keyType": "7"}],
         responseStatus="READY",
     )
     existing = FabricIbgpModel.from_response(response)
     candidate = FabricIbgpModel.from_config(_fabric_config()).prepare_for_replacement(existing)
 
     management_payload = candidate.to_payload()["management"]
-    assert management_payload["ntpAuthKey"] == "encrypted-ntp-secret"
-    assert management_payload["ospfKeys"] == [{"id": 1, "key": "encrypted-ospf-secret"}]
+    assert "ntpAuthKey" not in management_payload
+    assert "ospfKeys" not in management_payload
     assert "responseStatus" not in management_payload
-    assert "ntpAuthKey" not in candidate.to_config()["management"]
-    assert candidate.collect_replacement_secret_values() == {
+    assert "ntp_auth_key" not in candidate.to_config()["management"]
+    assert "ospf_keys" not in candidate.to_config()["management"]
+    existing_config = existing.to_config()["management"]
+    assert existing_config["ntp_auth_key"] == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+    assert existing_config["ospf_keys"][0]["key_string"] == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+    assert existing.collect_replacement_secret_values() == {
         "encrypted-ntp-secret",
         "encrypted-ospf-secret",
     }
@@ -277,9 +281,9 @@ def test_manage_fabric_replacement_00050(model_class, fabric_type) -> None:
     response = _fabric_response(fabric_type)
     response["telemetrySettings"] = {
         "flowCollection": {
-            "trafficAnalytics": "enabled",
+            "trafficAnalytics": "disabled",
             "trafficAnalyticsScope": "intraFabric",
-            "udpCategorization": "enabled",
+            "udpCategorization": "disabled",
             "operatingMode": "flowTelemetry",
             "trafficAnalyticsCompatibilityProtocol": "netflow",
             "flowCollectionCapabilities": {"trafficAnalyticsMode": "full"},
@@ -370,7 +374,7 @@ def test_manage_fabric_replacement_00060() -> None:
     response = _fabric_response("vxlanIbgp")
     response["telemetrySettings"] = {
         "flowCollection": {
-            "trafficAnalytics": "disabled",
+            "trafficAnalytics": "enabled",
             "flowCollectionModes": {"netFlow": True},
         }
     }
@@ -378,13 +382,13 @@ def test_manage_fabric_replacement_00060() -> None:
     candidate = FabricIbgpModel.from_config(_fabric_config()).prepare_for_replacement(existing)
     flow_payload = candidate.to_payload()["telemetrySettings"]["flowCollection"]
 
-    assert flow_payload["trafficAnalytics"] == "enabled"
+    assert flow_payload["trafficAnalytics"] == "disabled"
     assert flow_payload["flowCollectionModes"] == {"netFlow": True}
     assert existing.get_diff(candidate, exclude_unset=False) is False
 
 
 def test_manage_fabric_replacement_00070() -> None:
-    """Verify External-only netflow sampler state is preserved but remains private."""
+    """Verify omitted public External NetFlow samplers reset during exact replacement."""
     existing = FabricExternalConnectivityModel.from_response(
         _fabric_response(
             "externalConnectivity",
@@ -396,13 +400,13 @@ def test_manage_fabric_replacement_00070() -> None:
     )
     candidate = FabricExternalConnectivityModel.from_config(_fabric_config()).prepare_for_replacement(existing)
 
-    sampler = [{"samplerName": "sampler-1", "numSamples": 10, "samplingRate": 1000}]
-    assert candidate.to_payload()["management"]["netflowSettings"]["netflowSamplerCollection"] == sampler
-    assert "netflowSamplerCollection" not in candidate.to_config()["management"]["netflow_settings"]
-    assert "netflowSamplerCollection" not in candidate.to_gathered_config()["management"]["netflow_settings"]
+    assert "netflowSamplerCollection" not in candidate.to_payload()["management"]["netflowSettings"]
+    assert existing.to_gathered_config()["management"]["netflow_settings"]["netflow_sampler_collection"] == [
+        {"sampler_name": "sampler-1", "num_samples": 10, "sampling_rate": 1000}
+    ]
     netflow_spec = FabricExternalConnectivityModel.get_argument_spec()["config"]["options"]["management"]["options"]["netflow_settings"]["options"]
-    assert "netflow_sampler_collection" not in netflow_spec
-    assert existing.get_diff(candidate, exclude_unset=False) is True
+    assert "netflow_sampler_collection" in netflow_spec
+    assert existing.get_diff(candidate, exclude_unset=False) is False
 
 
 @pytest.mark.parametrize("model_class,fabric_type", IBGP_CASES)
@@ -419,12 +423,12 @@ def test_manage_fabric_replacement_00080(model_class, fabric_type) -> None:
 
 @pytest.mark.parametrize("model_class,fabric_type", EBGP_CASES)
 def test_manage_fabric_replacement_00090(model_class, fabric_type) -> None:
-    """Verify the controller-forced nxapiHttp value is normalized for both eBGP families."""
+    """Retain the native NX-API HTTP default in both payload and ordinary comparison state."""
     existing = model_class.from_response(_fabric_response(fabric_type, nxapiHttp=True))
     proposed = model_class.from_config(_fabric_config())
     candidate = proposed.prepare_for_replacement(existing)
 
-    assert "nxapiHttp" not in existing.to_diff_dict()["management"]
-    assert "nxapiHttp" not in candidate.to_diff_dict()["management"]
-    assert candidate.to_payload()["management"]["nxapiHttp"] is False
+    assert existing.to_diff_dict()["management"]["nxapiHttp"] is True
+    assert candidate.to_diff_dict()["management"]["nxapiHttp"] is True
+    assert candidate.to_payload()["management"]["nxapiHttp"] is True
     assert existing.get_diff(candidate, exclude_unset=False) is True

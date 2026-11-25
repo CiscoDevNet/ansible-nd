@@ -108,17 +108,29 @@ def test_manage_fabric_campus_ibgp_vxlan_00050(site_id: str) -> None:
         FabricCampusIbgpVxlanModel.from_config(_config(site_id=site_id))
 
 
-def test_manage_fabric_campus_ibgp_vxlan_00060() -> None:
-    """Anycast MAC validation follows the dotted ND wire format and normalizes case."""
-    model = FabricCampusIbgpVxlanModel.from_config(_config(anycast_gateway_mac="AABB.CCDD.EEFF"))
+@pytest.mark.parametrize(
+    "mac",
+    (
+        "AABB.CCDD.EEFF",
+        "aa:bb:cc:dd:ee:ff",
+        "aa-bb-cc-dd-ee-ff",
+        "aabbccddeeff",
+    ),
+)
+def test_manage_fabric_campus_ibgp_vxlan_00060(mac: str) -> None:
+    """Anycast MAC spellings normalize to lowercase dotted wire notation."""
+    model = FabricCampusIbgpVxlanModel.from_config(_config(anycast_gateway_mac=mac))
 
     assert model.management is not None
     assert model.management.anycast_gateway_mac == "aabb.ccdd.eeff"
     assert model.to_payload()["management"]["anycastGatewayMac"] == "aabb.ccdd.eeff"
 
-    for invalid in ("aa:bb:cc:dd:ee:ff", "aabb.ccdd.eefg", "aabb.ccdd.eeff.0000"):
-        with pytest.raises(ValidationError, match="MAC address"):
-            FabricCampusIbgpVxlanModel.from_config(_config(anycast_gateway_mac=invalid))
+
+@pytest.mark.parametrize("invalid", ("aa:bb:cc:dd:ee:fg", "aabb.ccdd.eef", "aabb.ccdd.eeff.0000", "aa:bb-cc:dd:ee:ff"))
+def test_manage_fabric_campus_ibgp_vxlan_00061(invalid: str) -> None:
+    """Malformed or incomplete anycast MAC addresses are rejected."""
+    with pytest.raises(ValidationError, match="MAC address"):
+        FabricCampusIbgpVxlanModel.from_config(_config(anycast_gateway_mac=invalid))
 
 
 def test_manage_fabric_campus_ibgp_vxlan_00070() -> None:
@@ -139,7 +151,6 @@ def test_manage_fabric_campus_ibgp_vxlan_00070() -> None:
             "managementGateway",
             "scheduledBackupTime",
             "iosXeLeafFreeform",
-            "netflowSettings",
         }
         & payload.keys()
     )
@@ -166,9 +177,10 @@ def test_manage_fabric_campus_ibgp_vxlan_00080() -> None:
 
 
 def test_manage_fabric_campus_ibgp_vxlan_00090() -> None:
-    """The supported ND 4.3 field is optional and /31 remains live-rejected."""
+    """The native ND 4.3 default is false and /31 remains live-rejected."""
     omitted = FabricCampusIbgpVxlanModel.from_config(_config()).to_payload()["management"]
-    assert "bgpFastConvergence" not in omitted
+    # Release preflight removes this omitted newer default on older controllers.
+    assert omitted["bgpFastConvergence"] is False
 
     enabled = FabricCampusIbgpVxlanModel.from_config(_config(bgp_fast_convergence=True, management_ipv4_prefix=30)).to_payload()["management"]
     assert enabled["bgpFastConvergence"] is True
@@ -204,6 +216,7 @@ def test_manage_fabric_campus_ibgp_vxlan_00110() -> None:
     assert management_options["bgp_asn"] == {"type": "str"}
     assert management_options["bgp_fast_convergence"] == {"type": "bool"}
     assert management_options["management_ipv4_prefix"] == {"type": "int"}
+    assert "netflow_settings" not in management_options
     assert management_options["vlan_trunking_protocol_mode"] == {
         "type": "str",
         "choices": ["off", "transparent"],

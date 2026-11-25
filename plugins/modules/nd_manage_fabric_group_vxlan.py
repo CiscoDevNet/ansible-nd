@@ -43,11 +43,13 @@ options:
           l2_vni_range:
             description:
             - The Layer 2 VNI range (minimum 1, maximum 16777214).
+            - Accepts comma-separated integers or ascending integer ranges.
             type: str
             default: "30000-49000"
           l3_vni_range:
             description:
             - The Layer 3 VNI range (minimum 1, maximum 16777214).
+            - Accepts comma-separated integers or ascending integer ranges.
             type: str
             default: "50000-59000"
           downstream_vni:
@@ -58,6 +60,7 @@ options:
           downstream_l2_vni_range:
             description:
             - Unique Range for L2VNI when downstream VNI is enabled (min 1, max 16777214).
+            - Accepts comma-separated integers or ascending integer ranges.
             - Applies when O(config.management.downstream_vni=true).
             - Should not conflict with any VNI already used in member fabric.
             type: str
@@ -65,6 +68,7 @@ options:
           downstream_l3_vni_range:
             description:
             - Unique Range for L3VNI when downstream VNI is enabled (min 1, max 16777214).
+            - Accepts comma-separated integers or ascending integer ranges.
             - Applies when O(config.management.downstream_vni=true).
             - Should not conflict with any VNI already used in member fabric.
             type: str
@@ -74,8 +78,6 @@ options:
             - Enable IPv6 underlay. If not enabled, IPv4 underlay is used.
             type: bool
             default: false
-
-          # Templates
           vrf_template:
             description:
             - Default overlay VRF template for leafs.
@@ -98,8 +100,6 @@ options:
             - Default overlay network template for borders.
             type: str
             default: Default_Network_Extension_Universal
-
-          # PVLAN
           private_vlan:
             description:
             - Enable PVLAN on switches except spines and super spines.
@@ -111,16 +111,24 @@ options:
             - Used when O(config.management.private_vlan=true).
             type: str
             default: Pvlan_Secondary_Network
-
-          # Anycast Gateway
           anycast_gateway_mac:
             description:
-            - Shared anycast gateway MAC address for all VTEPs in xxxx.xxxx.xxxx format.
+            - Shared anycast gateway MAC address for all VTEPs. Accepts dotted, colon-separated, hyphen-separated, or unseparated 48-bit hexadecimal notation and normalizes to lowercase dotted notation.
             - Must match the corresponding value in a fabric before that fabric can join the group.
             type: str
             default: 2020.0000.00aa
+          multisite_loopback_id:
+            description:
+            - Loopback ID for multi-site, typically Loopback100 (0-1023).
+            type: int
+            default: 100
+          border_gateway_routing_tag:
+            description:
+            - Routing tag associated with IP address of loopback and DCI interfaces (0-4294967295).
+            type: int
+            default: 54321
 
-          # Multi-Site Overlay
+          # DCI
           multisite_overlay_inter_connect_type:
             description:
             - Type of Multi-Site Overlay Interconnect.
@@ -146,6 +154,7 @@ options:
               route_server_asn:
                 description:
                 - Autonomous system number (1-4294967295 or dotted notation).
+                - An optional leading C(+) on decimal ASNs is normalized to unsigned API notation.
                 - Required for each O(config.management.route_server_collection) entry.
                 type: str
                 required: true
@@ -170,8 +179,6 @@ options:
               is C(routeServer) or C(directPeering); changes do not affect existing links.
             type: bool
             default: true
-
-          # Multi-Site Underlay
           auto_multisite_underlay_inter_connect:
             description:
             - Auto-configures Multi-Site underlay Inter-Fabric links.
@@ -214,22 +221,18 @@ options:
             choices: [ 3des, type6, type7 ]
           multisite_inter_connect_bgp_key:
             description:
-            - Encrypted BGP authentication key based on type.
+            - Encrypted BGP authentication key based on type (1-164 characters).
+            - On ND 4.3.1 and later, the key must not contain whitespace.
             - Used when O(config.management.multisite_inter_connect_bgp_authentication=true);
               its format depends on O(config.management.multisite_inter_connect_bgp_auth_key_type).
             type: str
-          multisite_loopback_id:
+          tenant_routed_multicast_v4_v6:
             description:
-            - Loopback ID for multi-site, typically Loopback100 (0-1023).
-            type: int
-            default: 100
-          border_gateway_routing_tag:
-            description:
-            - Routing tag associated with IP address of loopback and DCI interfaces (0-4294967295).
-            type: int
-            default: 54321
+            - If enabled, MVPN VRI IDs are tracked in MSD fabric to ensure uniqueness within MSD.
+            type: bool
+            default: false
 
-          # Multi-Site IP Ranges
+          # Resources
           multisite_loopback_ip_range:
             description:
             - Typically Loopback100 IP Address Range.
@@ -269,14 +272,7 @@ options:
             type: int
             default: 126
 
-          # Tenant Routed Multicast
-          tenant_routed_multicast_v4_v6:
-            description:
-            - If enabled, MVPN VRI IDs are tracked in MSD fabric to ensure uniqueness within MSD.
-            type: bool
-            default: false
-
-          # Security Groups
+          # Security
           security_group_tag:
             description:
             - Security Group Tag enforcement. If set to C(strict), only security groups enabled child fabrics will be allowed.
@@ -300,6 +296,7 @@ options:
           security_group_tag_id_range:
             description:
             - Security group tag (SGT) identifier range (min 16, max 65535).
+            - Accepts comma-separated integers or ascending integer ranges.
             - Used when O(config.management.security_group_tag) is not C(off).
             type: str
             default: "10000-14000"
@@ -309,8 +306,6 @@ options:
             - Used when O(config.management.security_group_tag) is not C(off).
             type: bool
             default: false
-
-          # CloudSec
           auto_configure_cloud_sec:
             description:
             - Auto Config CloudSec on Border Gateways.
@@ -355,6 +350,7 @@ options:
             - Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59).
             - Applies when O(config.management.scheduled_backup=true).
             type: str
+
   state:
     description:
     - The desired state of the fabric group resources on the Cisco Nexus Dashboard.

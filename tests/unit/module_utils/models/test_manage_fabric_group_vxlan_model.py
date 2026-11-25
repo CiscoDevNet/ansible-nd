@@ -184,6 +184,31 @@ def test_manage_fabric_group_vxlan_00140():
 # =============================================================================
 
 
+@pytest.mark.parametrize("mac", ("2020.0000.00aa", "20:20:00:00:00:aa", "20-20-00-00-00-aa", "2020000000aa"))
+def test_manage_fabric_group_vxlan_anycast_mac_normalization(mac: str) -> None:
+    """Equivalent anycast MAC input formats serialize to lowercase dotted notation."""
+    model = _model({"anycast_gateway_mac": mac})
+    response = FabricGroupVxlanModel.from_response(
+        {
+            "name": "MSD1",
+            "category": "fabricGroup",
+            "management": {"type": "vxlan", "anycastGatewayMac": mac},
+        }
+    )
+
+    assert model.management.anycast_gateway_mac == "2020.0000.00aa"
+    assert model.to_payload()["management"]["anycastGatewayMac"] == "2020.0000.00aa"
+    assert response.management.anycast_gateway_mac == "2020.0000.00aa"
+    assert model.get_diff(response) is True
+
+
+@pytest.mark.parametrize("invalid", ("20:20:00:00:00:zz", "2020.0000.00a", "2020.0000.00aa.0000", "20:20-00:00:00:aa"))
+def test_manage_fabric_group_vxlan_rejects_invalid_anycast_mac(invalid: str) -> None:
+    """Malformed, mixed-separator, and incomplete anycast MACs are rejected."""
+    with pytest.raises(ValidationError, match="MAC address"):
+        _model({"anycast_gateway_mac": invalid})
+
+
 @pytest.mark.parametrize(
     "management",
     [
@@ -263,7 +288,7 @@ def test_manage_fabric_group_vxlan_00310():
     assert secret not in str(exc.value)
 
 
-@pytest.mark.parametrize("length", [1, 80, 160])
+@pytest.mark.parametrize("length", [1, 80, 160, 161, 164])
 def test_manage_fabric_group_vxlan_00320(length):
     """
     # Summary
@@ -272,13 +297,13 @@ def test_manage_fabric_group_vxlan_00320(length):
 
     ## Test
 
-    - Keys of 1..160 characters are accepted
+    - Keys of 1..164 characters are accepted, matching the native templates
     """
     model = _model({"multisite_inter_connect_bgp_key": "a" * length})
     assert len(model.management.multisite_inter_connect_bgp_key.get_secret_value()) == length
 
 
-@pytest.mark.parametrize("length", [161, 164, 256])
+@pytest.mark.parametrize("length", [165, 256, 257])
 def test_manage_fabric_group_vxlan_00330(length):
     """
     # Summary
@@ -287,9 +312,8 @@ def test_manage_fabric_group_vxlan_00330(length):
 
     ## Test
 
-    - Keys longer than 160 characters raise ValidationError. ND itself rejects
-      anything over 164 with an opaque HTTP 500 on both 4.2.1 and 4.3.1, so this
-      is enforced client-side to fail fast with a clear message.
+    - Keys longer than the native templates' limit of 164 characters raise
+      ValidationError before they reach the controller.
     """
     with pytest.raises(ValidationError):
         _model({"multisite_inter_connect_bgp_key": "a" * length})

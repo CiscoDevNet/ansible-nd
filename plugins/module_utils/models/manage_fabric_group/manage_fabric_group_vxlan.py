@@ -14,6 +14,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.config_actions.policies i
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import IPv4CIDR, IPv6CIDR, NdFabricName
+from ansible_collections.cisco.nd.plugins.module_utils.utils import NO_LOG_PLACEHOLDER
 from ansible_collections.cisco.nd.plugins.module_utils.common.validators import validate_ip_address
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
@@ -41,7 +42,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     serialize_secret_value,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
-    BGP_ASN_RE,
+    normalize_anycast_gateway_mac,
+    validate_bgp_asn_template_value,
+    validate_bounded_integer_range,
+    validate_secret_string_constraints,
 )
 
 """
@@ -88,7 +92,7 @@ class RouteServerModel(NDNestedModel):
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow", hide_input_in_errors=True)
 
     route_server_ip: str = Field(alias="routeServerIp", description="Route Server IP Address")
-    route_server_asn: str = Field(alias="routeServerAsn", description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]")
+    route_server_asn: str = Field(alias="routeServerAsn", description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]", min_length=1, max_length=11)
 
     @field_validator("route_server_ip")
     @classmethod
@@ -100,9 +104,11 @@ class RouteServerModel(NDNestedModel):
     @field_validator("route_server_asn")
     @classmethod
     def validate_asn(cls, value: str) -> str:
-        if not BGP_ASN_RE.match(value):
-            raise ValueError(f"Invalid BGP ASN format: {value}")
-        return value
+        """Normalize native decimal plus notation to the unsigned API spelling."""
+        if value.startswith("+") and not value[1:].isdigit():
+            raise ValueError("A leading plus sign is only supported for decimal BGP ASNs")
+        validate_bgp_asn_template_value(value)
+        return value[1:] if value.startswith("+") else value
 
 
 class VxlanFabricGroupManagementModel(NDNestedModel):
@@ -143,11 +149,13 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
         alias="l2VniRange",
         description="Overlay network identifier range (minimum: 1, maximum: 16777214)",
         default="30000-49000",
+        json_schema_extra={"nd_integer_range": {"minimum": 1, "maximum": 16777214}},
     )
     l3_vni_range: str = Field(
         alias="l3VniRange",
         description="Overlay VRF identifier range (minimum: 1, maximum: 16777214)",
         default="50000-59000",
+        json_schema_extra={"nd_integer_range": {"minimum": 1, "maximum": 16777214}},
     )
     downstream_vni: bool = Field(
         alias="downstreamVni",
@@ -158,11 +166,13 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
         alias="downstreamL2VniRange",
         description="Unique Range for L2VNI when downstream VNI is enabled (min: 1, max: 16777214)",
         default="10030000-10049000",
+        json_schema_extra={"nd_integer_range": {"minimum": 1, "maximum": 16777214}},
     )
     downstream_l3_vni_range: str = Field(
         alias="downstreamL3VniRange",
         description="Unique Range for L3VNI when downstream VNI is enabled (min: 1, max: 16777214)",
         default="10050000-10059000",
+        json_schema_extra={"nd_integer_range": {"minimum": 1, "maximum": 16777214}},
     )
 
     # Underlay
@@ -280,17 +290,18 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
         description="BGP key encryption type: 3 - 3DES, 6 - Cisco type 6, 7 - Cisco type 7",
         default=BgpAuthenticationKeyTypeEnum.THREE_DES,
     )
-    # The OpenAPI ``bgpAuthenticationKey`` schema advertises maxLength 256, but both ND
-    # 4.2.1 and 4.3.1 reject anything longer than 164 characters with an opaque HTTP 500
-    # ("Error in validating provided name value pair"). 160 is the documented key length,
-    # so it is enforced here to fail fast client-side with a clear message.
+    # Follow the audited native templates' 164-character public input limit;
+    # OpenAPI advertises 256. Controller-returned encrypted material is preserved
+    # as response state rather than revalidated as plaintext input.
     multisite_inter_connect_bgp_key: SecretStr | None = Field(
         alias="multisiteInterConnectBgpKey",
         description="Encrypted BGP authentication key based on type",
         default=None,
-        min_length=1,
-        max_length=160,
-        json_schema_extra={"secret": True},
+        json_schema_extra={
+            "secret": True,
+            "nd_string_constraints": {"min_length": 1, "max_length": 164},
+            "nd_release_constraints": [{"minimum_version": "4.3.1", "pattern": r"^\S+$"}],
+        },
     )
     multisite_loopback_id: int = Field(
         alias="multisiteLoopbackId",
@@ -373,6 +384,7 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
         alias="securityGroupTagIdRange",
         description="Security group tag (SGT) identifier range (min: 16, max: 65535)",
         default="10000-14000",
+        json_schema_extra={"nd_integer_range": {"minimum": 16, "maximum": 65535}},
     )
     security_group_tag_preprovision: bool = Field(
         alias="securityGroupTagPreprovision",
@@ -386,16 +398,16 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
         description="Auto Config CloudSec on Border Gateways",
         default=False,
     )
+    cloud_sec_algorithm: CloudSecAlgorithmEnum = Field(
+        alias="cloudSecAlgorithm",
+        description="CloudSec Encryption Algorithm",
+        default=CloudSecAlgorithmEnum.AES_128_CMAC,
+    )
     cloud_sec_key: SecretStr | None = Field(
         alias="cloudSecKey",
         description="Cisco Type 7 Encrypted Octet String",
         default=None,
         json_schema_extra={"secret": True},
-    )
-    cloud_sec_algorithm: CloudSecAlgorithmEnum = Field(
-        alias="cloudSecAlgorithm",
-        description="CloudSec Encryption Algorithm",
-        default=CloudSecAlgorithmEnum.AES_128_CMAC,
     )
     cloud_sec_enforcement: CloudSecEnforcementEnum = Field(
         alias="cloudSecEnforcement",
@@ -426,37 +438,52 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
     @field_validator("anycast_gateway_mac")
     @classmethod
     def validate_mac(cls, value: str) -> str:
-        if not re.match(r"^[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}$", value):
-            raise ValueError(f"Invalid MAC address format, expected xxxx.xxxx.xxxx, got: {value}")
-        return value.lower()
+        return normalize_anycast_gateway_mac(value)
+
+    @field_validator("l2_vni_range", "l3_vni_range", "downstream_l2_vni_range", "downstream_l3_vni_range", "security_group_tag_id_range")
+    @classmethod
+    def validate_native_integer_ranges(cls, value: str, info: ValidationInfo) -> str:
+        """Apply the exact native template's per-field integer-range bounds."""
+        bounds = cls.model_fields[info.field_name].json_schema_extra["nd_integer_range"]
+        return validate_bounded_integer_range(value, bounds["minimum"], bounds["maximum"], info.field_name)
+
+    @field_validator("multisite_inter_connect_bgp_key", mode="before")
+    @classmethod
+    def validate_bgp_key_input(cls, value: Any, info: ValidationInfo) -> Any:
+        """Validate user-provided plaintext without rejecting controller ciphertext."""
+        if (info.context or {}).get("mode") == "response":
+            return value
+        constraints = cls.model_fields[info.field_name].json_schema_extra["nd_string_constraints"]
+        return validate_secret_string_constraints(value, info.field_name, constraints)
+
+    @field_validator("multisite_inter_connect_bgp_key", "cloud_sec_key", mode="before")
+    @classmethod
+    def omit_masked_response_keys(cls, value: Any, info: ValidationInfo) -> Any:
+        """A known response mask cannot be recovered or replayed as a secret value."""
+        if (info.context or {}).get("mode") == "response":
+            raw = value.get_secret_value() if isinstance(value, SecretStr) else value
+            if raw in ("********", NO_LOG_PLACEHOLDER):
+                return None
+        return value
 
     @field_validator("cloud_sec_key")
     @classmethod
-    def validate_cloud_sec_key(cls, value: SecretStr | None) -> SecretStr | None:
+    def validate_cloud_sec_key(cls, value: SecretStr | None, info: ValidationInfo) -> SecretStr | None:
         # Generic message only; never echo the secret value.
-        if value is None:
+        if value is None or (info.context or {}).get("mode") == "response":
             return value
         raw = value.get_secret_value()
         if raw == "":
             return value
-        if not re.match(r"^[a-fA-F0-9]{1,130}$", raw):
+        if not re.fullmatch(r"[a-fA-F0-9]{1,130}", raw):
             raise ValueError("cloud_sec_key must be a hexadecimal string of 1-130 characters ([a-fA-F0-9]).")
-        return value
-
-    @model_validator(mode="after")
-    def validate_cloud_sec_key_length(self) -> "VxlanFabricGroupManagementModel":
         # ND enforces an exact key length per algorithm; fail fast without echoing the secret.
-        if self.cloud_sec_key is None:
-            return self
-        raw = self.cloud_sec_key.get_secret_value()
-        if raw == "":
-            return self
-        algo = self.cloud_sec_algorithm
+        algo = info.data.get("cloud_sec_algorithm", CloudSecAlgorithmEnum.AES_128_CMAC)
         algo_str = algo.value if hasattr(algo, "value") else str(algo)
         expected = {"AES_128_CMAC": 66, "AES_256_CMAC": 130}.get(algo_str)
         if expected is not None and len(raw) != expected:
             raise ValueError(f"cloud_sec_key must be exactly {expected} hexadecimal characters for {algo_str}.")
-        return self
+        return value
 
     @field_serializer("multisite_inter_connect_bgp_key", "cloud_sec_key")
     def serialize_secret_key(self, value: SecretStr | None, info: FieldSerializationInfo) -> str | None:
@@ -526,8 +553,21 @@ class FabricGroupVxlanModel(NDBaseModel):
     def to_gathered_config(self, **kwargs) -> dict:
         """Return configuration limited recursively to public Ansible options."""
         config = self.to_config(**kwargs)
+        management = config.get("management")
+        if isinstance(management, dict):
+            for name in type(self.management).secret_field_keys():
+                management.pop(name, None)
         options = type(self).get_argument_spec()["config"]["options"]
         return _project_config_to_argument_spec(config, options)
+
+    def collect_replacement_secret_values(self) -> set[str]:
+        """Register controller-returned public group keys with Ansible's scrubber."""
+        values = super().collect_replacement_secret_values()
+        for name in type(self.management).secret_field_keys():
+            value = getattr(self.management, name, None)
+            if isinstance(value, SecretStr) and value.get_secret_value():
+                values.add(value.get_secret_value())
+        return values
 
 
 # Export all models for external use
