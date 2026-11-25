@@ -445,9 +445,9 @@ def test_iosxe_numbered_is_supported():
 
 def test_unsupported_policy_read_does_not_raise_and_is_flagged():
     """A valid but unmodeled controller policy is preserved as an opaque record."""
-    link = NDLinkModel.from_response(_response_link("ipfmNumbered", {"srcIp": "9.9.9.9", "interfaceVrf": "default", "mtu": 1500}))
+    link = NDLinkModel.from_response(_response_link("sonicNumbered", {"srcIp": "9.9.9.9", "interfaceVrf": "default", "mtu": 1500}))
     assert link.is_unsupported_policy is True
-    assert link.config_data.policy_type == "ipfmNumbered"
+    assert link.config_data.policy_type == "sonicNumbered"
     raw = link.config_data.template_inputs.model_dump(by_alias=True)
     assert raw.get("srcIp") == "9.9.9.9"
     assert raw.get("interfaceVrf") == "default"
@@ -479,16 +479,16 @@ def test_unsupported_policy_rejected_on_write():
                 "dst_switch_name": "b",
                 "src_interface_name": "Ethernet1/1",
                 "dst_interface_name": "Ethernet1/1",
-                "config_data": {"policy_type": "ipfmNumbered", "template_inputs": {"srcIp": "9.9.9.9"}},
+                "config_data": {"policy_type": "sonicNumbered", "template_inputs": {"srcIp": "9.9.9.9"}},
             },
             context={"state": "merged"},
         )
 
 
 def test_describe_unsupported_policy_message():
-    link = NDLinkModel.from_response(_response_link("routedFabric", {"srcEbgpAsn": "1"}, link_id="LINK-UUID-77"))
+    link = NDLinkModel.from_response(_response_link("sonicRoutedFabric", {"srcEbgpAsn": "1"}, link_id="LINK-UUID-77"))
     msg = link.describe_unsupported_policy()
-    assert "LINK-UUID-77" in msg and "routedFabric" in msg
+    assert "LINK-UUID-77" in msg and "sonicRoutedFabric" in msg
 
 
 def test_collection_read_tolerates_unsupported_alongside_supported():
@@ -498,7 +498,7 @@ def test_collection_read_tolerates_unsupported_alongside_supported():
 
     response = [
         _response_link("numbered", {"srcIp": "1.1.1.1", "dstIp": "1.1.1.2"}, link_id="L1", iface="Ethernet1/1"),
-        _response_link("ipfmNumbered", {"srcIp": "9.9.9.9"}, link_id="L2", iface="Ethernet1/2"),
+        _response_link("sonicNumbered", {"srcIp": "9.9.9.9"}, link_id="L2", iface="Ethernet1/2"),
     ]
     coll = NDConfigCollection.from_api_response(response_data=response, model_class=NDLinkModel)
     items = list(coll)
@@ -528,7 +528,7 @@ def test_override_preserves_unsupported_controller_link():
     from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 
     existing = NDConfigCollection.from_api_response(
-        response_data=[_response_link("ipfmNumbered", {"srcIp": "9.9.9.9"}, link_id="L-opaque")],
+        response_data=[_response_link("sonicNumbered", {"srcIp": "9.9.9.9"}, link_id="L-opaque")],
         model_class=NDLinkModel,
     )
     state_machine = object.__new__(NDStateMachine)
@@ -548,7 +548,7 @@ def test_explicit_delete_rejects_unsupported_controller_link():
     from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 
     existing = NDConfigCollection.from_api_response(
-        response_data=[_response_link("ipfmNumbered", {"srcIp": "9.9.9.9"}, link_id="L-opaque")],
+        response_data=[_response_link("sonicNumbered", {"srcIp": "9.9.9.9"}, link_id="L-opaque")],
         model_class=NDLinkModel,
     )
     proposed = NDConfigCollection.from_ansible_config(
