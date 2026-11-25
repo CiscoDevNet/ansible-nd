@@ -21,13 +21,13 @@ The framework does not replace module-specific test design. Contributors remain 
 The shared execution logic is implemented by:
 
 ```text
-plugins/action/nd4x_module_test.py
+tests/integration/targets/nd4x_test_helpers/action_plugins/nd4x_module_test.py
 ```
 
 The documentation-only module containing the concise Ansible interface is:
 
 ```text
-plugins/modules/nd4x_module_test.py
+tests/integration/targets/nd4x_test_helpers/library/nd4x_module_test.py
 ```
 
 Runnable integration scenarios are target-local and must live under:
@@ -57,7 +57,7 @@ Do not maintain duplicate executable scenarios under both `playbooks/` and `targ
 
 ### Responsibilities handled by the action plugin
 
-The `cisco.nd.nd4x_module_test` action plugin handles:
+The `nd4x_module_test` action plugin handles:
 
 - Validating supported top-level arguments.
 - Rejecting unknown arguments.
@@ -984,7 +984,7 @@ Do not require contributors to manually keep a management IP and switch ID synch
         state: deleted
 
     - name: "MERGED APPLY: Run module through the shared harness"
-      cisco.nd.nd4x_module_test:
+      nd4x_module_test:
         module: cisco.nd.example_module
         state: merged
 
@@ -1118,7 +1118,7 @@ Example structure:
 - name: Test complete resource lifecycle
   block:
     - name: "CREATE: Run merged state through the harness"
-      cisco.nd.nd4x_module_test:
+      nd4x_module_test:
         module: cisco.nd.example_module
         state: merged
         common_args: "{{ example_common_args }}"
@@ -1135,7 +1135,7 @@ Example structure:
           - create_result.second_run_result.changed == false
 
     - name: "UPDATE: Run replaced state through the harness"
-      cisco.nd.nd4x_module_test:
+      nd4x_module_test:
         module: cisco.nd.example_module
         state: replaced
         common_args: "{{ example_common_args }}"
@@ -1152,7 +1152,7 @@ Example structure:
           - update_result.second_run_result.changed == false
 
     - name: "DELETE: Run deleted state through the harness"
-      cisco.nd.nd4x_module_test:
+      nd4x_module_test:
         module: cisco.nd.example_module
         state: deleted
         common_args: "{{ example_common_args }}"
@@ -1449,7 +1449,7 @@ A negative test must verify the intended failure reason.
 
 ```yaml
 - name: Run expected negative scenario
-  cisco.nd.nd4x_module_test:
+  nd4x_module_test:
     module: cisco.nd.example_module
     state: merged
     check_mode: false
@@ -1587,6 +1587,44 @@ ansible-test network-integration nd_interface_ethernet_access \
 For dynamically included tasks, every fine-grained tag must be present on the `include_tasks` task. Otherwise, Ansible will not load the included file when that tag is selected.
 
 Ensure cleanup remains selected for every mutating fine-grained execution.
+
+## Standalone playbook execution
+
+`ansible-test network-integration` handles integration-target discovery. When
+running a target directly with `ansible-playbook`, set
+`ANSIBLE_ROLES_PATH` so Ansible can find the target role and load its
+`nd4x_test_helpers` dependency.
+
+Create a local wrapper playbook that includes the consumer target as a role.
+For example:
+
+```yaml
+---
+- name: Run the ND Interface Group integration target
+  hosts: nd
+  gather_facts: false
+  roles:
+    - role: nd_manage_interface_group
+```
+
+Run the playbook from the collection root, using the same inventory and
+testbed variables as the `ansible-test` command:
+
+```bash
+cd /path/to/ansible-nd
+export ANSIBLE_ROLES_PATH="$PWD/tests/integration/targets${ANSIBLE_ROLES_PATH:+:$ANSIBLE_ROLES_PATH}"
+
+ansible-playbook \
+  --inventory /absolute/path/to/inventory.networking \
+  /absolute/path/to/run-nd-interface-group.yml \
+  --tags nd4x_demo \
+  --skip-tags nd4x_demo_overridden \
+  -vv
+```
+
+Including the consumer target as a role lets Ansible process its
+`meta/main.yml` dependency and discover `nd4x_test_helpers`. Use the same
+safety checks and destructive-test opt-ins documented for `ansible-test` runs.
 
 ## Exact commands for current migrated targets
 
@@ -1915,7 +1953,7 @@ tests/integration/targets/nd_interface_ethernet_access/
 Use the documentation-only module for the concise action-plugin interface:
 
 ```text
-plugins/modules/nd4x_module_test.py
+tests/integration/targets/nd4x_test_helpers/library/nd4x_module_test.py
 ```
 
 Use this guide for:
