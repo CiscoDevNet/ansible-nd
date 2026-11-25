@@ -1,0 +1,97 @@
+---
+- name: "{{ nd4x_rest_assert_label }}: Build exact REST scoped identities"
+  ansible.builtin.set_fact:
+    nd4x_rest_expected_identity_keys: >-
+      {%- set keys = [] -%}
+      {%- for link in nd4x_rest_expected_links -%}
+        {%- set key = [
+          link.src_cluster_name | default('', true),
+          link.dst_cluster_name | default('', true),
+          link.src_fabric_name,
+          link.dst_fabric_name,
+          link.src_switch_name,
+          link.dst_switch_name,
+          link.src_interface_name,
+          link.dst_interface_name
+        ] | to_json -%}
+        {%- if key not in keys -%}
+          {%- set _ = keys.append(key) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ keys }}
+    nd4x_rest_scope_endpoint_keys: >-
+      {%- set keys = [] -%}
+      {%- for link in nd4x_rest_scope_links -%}
+        {%- set source_key = [
+          link.src_cluster_name | default('', true),
+          link.src_fabric_name,
+          link.src_switch_name,
+          link.src_interface_name
+        ] | to_json -%}
+        {%- set destination_key = [
+          link.dst_cluster_name | default('', true),
+          link.dst_fabric_name,
+          link.dst_switch_name,
+          link.dst_interface_name
+        ] | to_json -%}
+        {%- if source_key not in keys -%}
+          {%- set _ = keys.append(source_key) -%}
+        {%- endif -%}
+        {%- if destination_key not in keys -%}
+          {%- set _ = keys.append(destination_key) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ keys }}
+
+- name: "{{ nd4x_rest_assert_label }}: Build actual REST scoped identities"
+  ansible.builtin.set_fact:
+    nd4x_rest_actual_identity_keys: >-
+      {%- set keys = [] -%}
+      {%- for query in nd4x_rest_query_results -%}
+        {%- for link in query.result.current.links | default([]) -%}
+          {%- set source_key = [
+            link.srcClusterName | default('', true),
+            link.srcFabricName,
+            link.srcSwitchName,
+            link.srcInterfaceName
+          ] | to_json -%}
+          {%- set destination_key = [
+            link.dstClusterName | default('', true),
+            link.dstFabricName,
+            link.dstSwitchName,
+            link.dstInterfaceName
+          ] | to_json -%}
+          {%- if source_key in nd4x_rest_scope_endpoint_keys
+                or destination_key in nd4x_rest_scope_endpoint_keys -%}
+            {%- set identity_key = [
+              link.srcClusterName | default('', true),
+              link.dstClusterName | default('', true),
+              link.srcFabricName,
+              link.dstFabricName,
+              link.srcSwitchName,
+              link.dstSwitchName,
+              link.srcInterfaceName,
+              link.dstInterfaceName
+            ] | to_json -%}
+            {%- if identity_key not in keys -%}
+              {%- set _ = keys.append(identity_key) -%}
+            {%- endif -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ keys }}
+
+- name: "{{ nd4x_rest_assert_label }}: Reject unexpected REST scoped identities"
+  ansible.builtin.assert:
+    that:
+      - nd4x_rest_actual_identity_keys | length == nd4x_rest_expected_identity_keys | length
+      - >-
+        (nd4x_rest_actual_identity_keys | difference(nd4x_rest_expected_identity_keys) | length) == 0
+      - >-
+        (nd4x_rest_expected_identity_keys | difference(nd4x_rest_actual_identity_keys) | length) == 0
+    fail_msg: >-
+      {{ nd4x_rest_assert_label }} returned an unexpected REST scoped link
+      collection. Expected exactly {{ nd4x_rest_expected_identity_keys | length }}
+      link(s), got {{ nd4x_rest_actual_identity_keys | length }}. Expected:
+      {{ nd4x_rest_expected_identity_keys }}; actual:
+      {{ nd4x_rest_actual_identity_keys }}.

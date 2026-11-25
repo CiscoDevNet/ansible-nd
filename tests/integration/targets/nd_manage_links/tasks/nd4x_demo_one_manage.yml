@@ -1,0 +1,11 @@
+---
+- name: Run One Manage nd_manage_links policy lifecycles
+  ansible.builtin.include_tasks:
+    file: nd4x_demo_extended_policy_case.yml
+  loop: "{{ nd4x_one_manage_cases }}"
+  loop_control:
+    loop_var: nd4x_extended_case
+    label: "{{ nd4x_extended_case.name }}"
+  when:
+    - nd4x_links_supported | default(false) | bool
+    - nd4x_extended_case.enabled | bool

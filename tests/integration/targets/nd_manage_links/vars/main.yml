@@ -1,0 +1,30 @@
+---
+# Reserved scope for the ND 4.x nd_manage_links harness. These interfaces must
+# belong to a dedicated integration-test environment.
+# The harness also requires nd_test_nd4x_links_scope_owner and
+# nd_test_nd4x_links_scope_isolated=true. The former is recorded in the local
+# run lock; the latter is an operator confirmation that the fabrics, switches,
+# and reserved interfaces are dedicated to this run.
+nd4x_links_reserved_interfaces:
+  numbered: [Ethernet1/30, Ethernet1/31, Ethernet1/32]
+  unnumbered: [Ethernet1/30, Ethernet1/31, Ethernet1/32]
+  preprovision: [Ethernet1/30, Ethernet1/31, Ethernet1/32]
+  layer2Dci: [Ethernet1/30, Ethernet1/31]
+  multisiteOverlay: [Ethernet1/40, Ethernet1/41]
+  multisiteUnderlay: [Ethernet1/42, Ethernet1/43]
+  ebgpVrfLite: [Ethernet1/30, Ethernet1/31]
+  ipv6LinkLocal: [Ethernet1/50, Ethernet1/51]
+  layer3DciVrfLite: [Ethernet1/50, Ethernet1/51]
+  mplsUnderlay: [Ethernet1/52, Ethernet1/53]
+  mplsOverlay: [loopback100, loopback101]
+  userDefined: [Ethernet1/54, Ethernet1/55]
+  iosXeNumbered: [Ethernet1/56, Ethernet1/57]
+  vpcPeerKeepalive: [mgmt0]
+  oneManage: [Ethernet1/40]
+
+# Fabric-wide overridden tests are destructive and must never be enabled by
+# default. Request the coverage with nd_test_nd4x_links_run_overridden=true and
+# separately opt in with nd_test_nd4x_links_destructive_tests=true on a
+# dedicated testbed.
+nd4x_links_destructive_tests_enabled: >-
+  {{ nd_test_nd4x_links_destructive_tests | default(false) | bool }}
