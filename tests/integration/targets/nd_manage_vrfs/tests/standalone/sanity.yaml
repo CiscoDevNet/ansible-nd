@@ -67,7 +67,6 @@
         netflow_enable: false
         attach: "{{ nd_vrf_sanity_attach_block }}"
         deploy: "{{ nd_vrf_sanity_attach_block | length > 0 }}"
-        deploy_type: switch
       - vrf_name: ansible-nd-vrf-sanity-b
         vrf_id: "{{ nd_vrf_base_id + 41 }}"
         l3vni_wo_vlan: true

@@ -58,10 +58,11 @@ VPC_PAIR_CONFIG_ACTIONS = ConfigActionsPolicy(
 RESOURCE_CONFIG_ACTIONS = ConfigActionsPolicy(
     name="resource",
     supported=frozenset({"deploy", "type"}),
-    defaults=ConfigActionsDefaults(deploy=True, type="switch"),
+    defaults=ConfigActionsDefaults(deploy=True, type="resource"),
     allowed_types=frozenset({"switch", "resource"}),
     deploy_requires_save=False,
     resource_interaction="type_resource_gated",
+    resource_requires_switch_targets=True,
 )
 
 LEGACY_CONFIG_ACTIONS = ConfigActionsPolicy(
