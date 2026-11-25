@@ -1,8 +1,26 @@
 ---
 # Integration tests for nd_interface_ethernet_access gathered state.
 #
-# These tests run AFTER merged.yaml has seeded the fabric with known access host
-# interface configurations from vars/main.yaml.
+# These tests run after overridden.yaml, which leaves only the Ethernet1/45-47 fan-out
+# interfaces configured. The SETUP task below seeds Ethernet1/41 through Ethernet1/43 from
+# vars/main.yaml so the filters have known access host interfaces to match, whatever the
+# preceding state files leave behind. deleted.yaml removes them again.
+
+- name: "SETUP: Seed Ethernet1/41 and Ethernet1/42-43 for gathered tests"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_41 }}"
+      - "{{ ethernet_42_43 }}"
+    state: merged
+  register: nm_gathered_seed
+
+- name: "SETUP: Verify the gathered seed interfaces are present"
+  ansible.builtin.assert:
+    that:
+      - nm_gathered_seed.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | list | length == 1
+      - nm_gathered_seed.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | list | length == 1
 
 - name: "GATHERED: Read all accessHost interfaces in the fabric"
   cisco.nd.nd_interface_ethernet_access:

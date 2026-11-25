@@ -7,7 +7,8 @@
 # --- SETUP ---
 # At this point Ethernet1/45, Ethernet1/46, Ethernet1/47 exist with fan-out
 # config from overridden tests. Delete resets them to the int_trunk_host
-# template defaults.
+# template defaults. Ethernet1/41, Ethernet1/42, Ethernet1/43 are also configured,
+# from the gathered tests' seed task.
 #
 # Note: trunkHost is the fabric-default policyType, so "deleted" interfaces
 # remain visible in this module's query filter but as defaults.
