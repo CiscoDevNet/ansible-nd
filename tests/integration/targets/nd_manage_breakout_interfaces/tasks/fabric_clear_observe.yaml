@@ -1,0 +1,6 @@
+---
+- name: Observe every owned fabric-clear fixture independently
+  ansible.builtin.include_tasks: fabric_clear_observe_one.yaml
+  loop: "{{ range(0, breakout_fabric_fixtures | length) | list }}"
+  loop_control:
+    loop_var: breakout_fabric_index

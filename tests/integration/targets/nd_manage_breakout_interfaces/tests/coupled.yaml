@@ -1,0 +1,109 @@
+---
+# Real controller requests only. The production module, never this test, sends
+# the inverse under test. Independent observation happens BEFORE cleanup.
+- name: COUPLED - Explain missing optional hardware coverage
+  ansible.builtin.debug:
+    msg: >-
+      SKIP coupled recovery tests: test_breakout_coupled_switch_id is empty.
+      Supply a reserved coupled footprint to enable real recovery coverage.
+  when: test_breakout_coupled_switch_id | default('') | trim | length == 0
+
+- name: COUPLED - Exercise the explicitly supplied reserved switch
+  when: test_breakout_coupled_switch_id | default('') | trim | length > 0
+  block:
+    - name: Validate optional fixture and capture the native pre-mutation baseline
+      ansible.builtin.include_tasks: ../tasks/coupled_preflight.yaml
+
+    - name: Exercise native-to-coupled creation and inverse removal
+      ansible.builtin.include_tasks: ../tasks/coupled_case.yaml
+      loop:
+        - {id: S01, title: "merged control detects unexpected sibling", initial: native, state: merged, selector: control, expect: recovery, after: native}
+        - {id: S02, title: "repeat incompatible creation recovers again", initial: native, state: merged, selector: control, expect: recovery, after: native}
+        - {id: S03, title: "override creation fails before cleanup", initial: native, state: overridden, selector: control, expect: recovery, after: native}
+        - {id: S04, title: "verification-disabled creation allows coupling", initial: native, state: merged, selector: control, verify: false, expect: success, after: map_a}
+      loop_control:
+        loop_var: coupled_case
+        label: "{{ coupled_case.id }} - {{ coupled_case.title }}"
+
+    - name: Exercise unbreakout collateral and original-profile recreation
+      ansible.builtin.include_tasks: ../tasks/coupled_case.yaml
+      loop:
+        - {id: S06, title: "delete control restores retained sibling", initial: map_a, state: deleted, selector: control, expect: recovery, after: map_a}
+        - {id: S07, title: "delete sibling restores retained control", initial: map_a, state: deleted, selector: sibling, expect: recovery, after: map_a}
+        - {id: S08, title: "delete actual non-first control child recovers whole group", initial: map_a, state: deleted, selector: control_child, expect: recovery, after: map_a}
+        - {id: S09, title: "delete actual non-first sibling child recovers whole group", initial: map_a, state: deleted, selector: sibling_child, expect: recovery, after: map_a}
+        - {id: S10, title: "override omitted sibling recovery preserves desired control", initial: map_a, state: overridden, selector: control, expect: recovery, after: map_a}
+        - {id: S11, title: "override omitted control recovery preserves desired sibling", initial: map_a, state: overridden, selector: sibling, expect: recovery, after: map_a}
+        - {id: S21, title: "recovery retains original map despite different requested map on retained parent", initial: map_a, state: overridden, selector: control, requested_map: different-map-noop-only, expect: recovery, after: map_a}
+        - {id: S12, title: "all-listed merged is already a no-op", initial: map_a, state: merged, selector: all, expect: noop, after: map_a}
+        - {id: S13, title: "all-listed overridden is already a no-op", initial: map_a, state: overridden, selector: all, expect: noop, after: map_a}
+        - {id: S15, title: "verification-disabled deletion allows coupling", initial: map_a, state: deleted, selector: control, verify: false, expect: success, after: native}
+        - {id: S16, title: "native parent deletion is a no-op", initial: native, state: deleted, selector: control, expect: noop, after: native}
+        - {id: S17, title: "former child deletion is a no-op with native proof", initial: native, state: deleted, selector: former_child, expect: noop, after: native}
+      loop_control:
+        loop_var: coupled_case
+        label: "{{ coupled_case.id }} - {{ coupled_case.title }}"
+
+    - name: Exercise disappeared native-port selectors without writes
+      ansible.builtin.include_tasks: ../tasks/coupled_case.yaml
+      loop:
+        - {id: S18, title: "disappeared native port is not a native no-op", initial: map_a, state: deleted, selector: missing, expect: preflight_error, after: map_a}
+        - {id: S19, title: "invented child of disappeared native port is rejected", initial: map_a, state: deleted, selector: missing_child, expect: preflight_error, after: map_a}
+      loop_control:
+        loop_var: coupled_case
+        label: "{{ coupled_case.id }} - {{ coupled_case.title }}"
+      when: coupled_disappeared_parents | length > 0
+
+    - name: Explain missing independent parent for phase-preservation coverage
+      ansible.builtin.debug:
+        msg: "SKIP S20: supply test_breakout_coupled_independent_fixture to validate preservation of an earlier creation phase."
+      when: not coupled_has_independent
+
+    - name: Exercise phase-local recovery without undoing earlier valid creation
+      ansible.builtin.include_tasks: ../tasks/coupled_case.yaml
+      vars:
+        coupled_case:
+          id: S20
+          title: "override recovery preserves newly created independent family"
+          initial: map_a
+          state: overridden
+          selector: control_plus_independent
+          expect: recovery
+          after: map_with_independent
+      when: coupled_has_independent
+
+    - name: Explain missing second switch for recovery isolation coverage
+      ansible.builtin.debug:
+        msg: "SKIP S22: supply test_breakout_coupled_safe_fixture on another switch in the same fabric to validate cross-switch recovery isolation."
+      when: not coupled_has_safe_switch
+
+    - name: Exercise safe progress on another switch while only the coupled switch recovers
+      ansible.builtin.include_tasks: ../tasks/coupled_cross_switch.yaml
+      when:
+        - coupled_has_safe_switch
+        - not coupled_stop_writes
+
+    # These deliberately expose redundant-item controller limitations. Run
+    # them last so an ambiguous result cannot suppress earlier recovery cases;
+    # any failure remains a genuine suite failure and never permits replay.
+    - name: Require strict complete outcomes when every coupled parent is listed
+      ansible.builtin.include_tasks: ../tasks/coupled_case.yaml
+      loop:
+        - {id: S05, title: "all-listed bulk creation retains strict API outcomes", initial: native, state: merged, selector: all, expect: success, after: map_a}
+        - {id: S14, title: "all-listed bulk removal retains strict API outcomes", initial: map_a, state: deleted, selector: all, expect: success, after: native}
+      loop_control:
+        loop_var: coupled_case
+        label: "{{ coupled_case.id }} - {{ coupled_case.title }}"
+
+    - name: Show original outcomes and independently verified recovery results
+      ansible.builtin.debug:
+        var: coupled_case_records
+
+    - name: Require every executed special-switch case to pass
+      ansible.builtin.assert:
+        that:
+          - coupled_case_failures | length == 0
+          - not coupled_stop_writes
+        fail_msg: >-
+          Coupled integration failures: {{ coupled_case_failures }}.
+          Original module and observer evidence: {{ coupled_case_records }}.

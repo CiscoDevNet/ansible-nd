@@ -1,0 +1,64 @@
+---
+# This helper never uses global overridden. A confirmed original removal is
+# never replayed through another alias; uncertain completion blocks new writes.
+- name: Observe fresh owned topology before considering scoped fabric-test teardown
+  ansible.builtin.include_tasks: fabric_clear_observe.yaml
+  vars:
+    breakout_fabric_observe_only: true
+
+- name: Initialize fresh explicitly scoped cleanup targets
+  ansible.builtin.set_fact:
+    breakout_fabric_cleanup_config: []
+
+- name: Select only currently broken parents in the original owned fixtures
+  ansible.builtin.set_fact:
+    breakout_fabric_cleanup_config: >-
+      {{ breakout_fabric_cleanup_config + [{'switch_id': item.switch_id,
+          'interface_names': [item.control_parent]}] }}
+  loop: "{{ breakout_fabric_fixtures }}"
+  loop_control:
+    index_var: fabric_cleanup_index
+    label: "{{ item.switch_id }}/{{ item.control_parent }}"
+  when: breakout_fabric_snapshots[fabric_cleanup_index | string].families[item.control_parent].children | length > 0
+
+- name: Refuse inverse replay after a failed, uncertain or already attempted unbreakout
+  ansible.builtin.assert:
+    that:
+      - breakout_fabric_last_action == 'breakout'
+      - not (breakout_fabric_last_result.failed | default(true) | bool)
+      - not (breakout_fabric_last_result.may_have_changed | default(true) | bool)
+      - breakout_fabric_last_result.recovery | default([]) | length == 0
+      - breakout_fabric_last_result.api_outcomes | default([]) | length == breakout_fabric_fixtures | length
+      - >-
+        breakout_fabric_last_result.api_outcomes | default([]) |
+        map(attribute='outcome') | reject('in', ['success', 'noop']) | list | length == 0
+    fail_msg: >-
+      Fabric-test teardown is read-only after an attempted or uncertain clear.
+      No global clear or unbreakout replay will be issued. Fresh owned targets:
+      {{ breakout_fabric_cleanup_config }}. Original result: {{ breakout_fabric_last_result }}.
+  when: breakout_fabric_cleanup_config | length > 0
+
+- name: Remove only freshly observed owned parents after confirmed creation
+  cisco.nd.nd_manage_breakout_interfaces:
+    fabric_name: "{{ test_fabric_name }}"
+    state: deleted
+    config: "{{ breakout_fabric_cleanup_config }}"
+    verify:
+      enabled: false
+  check_mode: false
+  register: breakout_fabric_cleanup_result
+  when: breakout_fabric_cleanup_config | length > 0
+
+- name: Require explicit scoped cleanup outcomes without retrying uncertain requests
+  ansible.builtin.assert:
+    that:
+      - not (breakout_fabric_cleanup_result.failed | default(false) | bool)
+      - >-
+        breakout_fabric_cleanup_result.api_outcomes | map(attribute='outcome') |
+        reject('in', ['success', 'noop']) | list | length == 0
+  when: breakout_fabric_cleanup_config | length > 0
+
+- name: Independently prove all reserved footprints native after teardown
+  ansible.builtin.include_tasks: fabric_clear_observe.yaml
+  vars:
+    breakout_fabric_profiles: "{{ ['native'] * (breakout_fabric_fixtures | length) }}"

@@ -1,0 +1,143 @@
+---
+# Explicitly destructive coverage, never inferred from an empty fixture list.
+# The isolated fabric must be reserved against concurrent configuration actors.
+- name: Report destructive fabric-wide clear coverage disabled by default
+  ansible.builtin.debug:
+    msg: SKIP fabric-wide overridden clear; test_breakout_allow_fabric_clear is false.
+  when: not (test_breakout_allow_fabric_clear | bool)
+
+- name: Exercise explicit-empty and omitted desired configuration on an isolated fabric
+  when: test_breakout_allow_fabric_clear | bool
+  block:
+    - name: Require explicit reserved fixtures when fabric-wide clear is enabled
+      ansible.builtin.assert:
+        that:
+          - test_breakout_bulk_fixtures is sequence and test_breakout_bulk_fixtures is not string and test_breakout_bulk_fixtures is not mapping
+          - test_breakout_bulk_fixtures | length > 0
+        fail_msg: Fabric-clear opt-in requires at least one complete reserved independent bulk fixture; missing fixtures are an error, not a skip.
+
+    - name: Initialize isolated-fabric test ownership and safety state locally
+      ansible.builtin.set_fact:
+        breakout_bulk_fixtures: []
+        breakout_fabric_fixtures: []
+        breakout_fabric_create_config: []
+        breakout_fabric_owned_keys: []
+        breakout_fabric_switches: []
+        breakout_fabric_profiles: []
+        breakout_fabric_baselines: {}
+        breakout_fabric_snapshots: {}
+        breakout_fabric_last_result: {}
+        breakout_fabric_last_action: none
+        breakout_fabric_failure: {}
+        breakout_fabric_mutation_started: false
+
+    - name: Validate every provided fixture schema locally before inventory or writes
+      ansible.builtin.include_tasks: ../tasks/validate_bulk_fixture.yaml
+      loop: "{{ test_breakout_bulk_fixtures }}"
+      loop_control:
+        loop_var: breakout_bulk_candidate
+        label: "{{ breakout_bulk_candidate.control_parent | default('invalid') }}"
+
+    - name: Require independently acting single-family fixtures rather than hidden coupling
+      ansible.builtin.assert:
+        that:
+          - item.native_interfaces | length == 1
+          - item.profiles.map_a.child_lanes | length == 1
+          - item.control_parent in item.profiles.map_a.child_lanes
+        fail_msg: Fabric-clear fixtures must be independent; coupled behavior is exercised in its dedicated suite.
+      loop: "{{ breakout_bulk_fixtures }}"
+      loop_control:
+        label: "{{ item.switch_id }}/{{ item.control_parent }}"
+
+    - name: Build explicit canonical owned scope and per-parent creation arguments
+      ansible.builtin.set_fact:
+        breakout_fabric_fixtures: "{{ breakout_bulk_fixtures }}"
+        breakout_fabric_owned_keys: "{{ breakout_fabric_owned_keys + [item.switch_id ~ '/' ~ item.control_parent] }}"
+        breakout_fabric_switches: "{{ (breakout_fabric_switches + [item.switch_id]) | unique | list }}"
+        breakout_fabric_create_config: >-
+          {{ breakout_fabric_create_config + [{'switch_id': item.switch_id,
+             'interface_names': [item.control_parent],
+             'breakout_map': item.profiles.map_a.breakout_map | trim | lower}] }}
+      loop: "{{ breakout_bulk_fixtures }}"
+      loop_control:
+        label: "{{ item.switch_id }}/{{ item.control_parent }}"
+
+    - name: Capture complete fabric-wide Ethernet inventory before authorizing writes
+      ansible.builtin.include_tasks: ../tasks/fabric_clear_read.yaml
+
+    - name: Reject any existing breakout family outside the explicitly reserved fixtures
+      ansible.builtin.assert:
+        that:
+          - breakout_fabric_broken_keys | difference(breakout_fabric_owned_keys) | length == 0
+        fail_msg: >-
+          Fabric-clear opt-in does not authorize removing pre-existing non-test families.
+          Unowned breakouts: {{ breakout_fabric_broken_keys | difference(breakout_fabric_owned_keys) }}.
+          No test mutation has been sent.
+
+    - name: Declare initially native expected profiles
+      ansible.builtin.set_fact:
+        breakout_fabric_profiles: "{{ ['native'] * (breakout_fabric_fixtures | length) }}"
+
+    - name: Capture independent per-switch outside baselines before the first mutation
+      ansible.builtin.include_tasks: ../tasks/fabric_clear_observe.yaml
+      vars:
+        breakout_fabric_observe_only: true
+
+    - name: Save immutable per-fixture pre-mutation baselines
+      ansible.builtin.set_fact:
+        breakout_fabric_baselines: "{{ breakout_fabric_snapshots }}"
+
+    - name: Prove every explicitly reserved fixture is initially native
+      ansible.builtin.include_tasks: ../tasks/fabric_clear_observe.yaml
+
+    - name: Run destructive cases only after complete global and local safety checks
+      block:
+        - name: Mark test ownership before the first potentially mutating invocation
+          ansible.builtin.set_fact:
+            breakout_fabric_mutation_started: true
+
+        - name: Prepare owned breakouts for explicit empty-config clearing
+          ansible.builtin.include_tasks: ../tasks/fabric_clear_create.yaml
+
+        - name: Clear fabric using explicit empty configuration and repeat for idempotency
+          ansible.builtin.include_tasks: ../tasks/fabric_clear_case.yaml
+          loop:
+            - {id: FC01, explicit: true, changed: true}
+            - {id: FC02, explicit: true, changed: false}
+          loop_control:
+            loop_var: breakout_fabric_case
+            label: "{{ breakout_fabric_case.id }}"
+
+        - name: Recreate owned breakouts before testing omitted configuration
+          ansible.builtin.include_tasks: ../tasks/fabric_clear_create.yaml
+
+        - name: Clear fabric with config omitted and repeat for idempotency
+          ansible.builtin.include_tasks: ../tasks/fabric_clear_case.yaml
+          loop:
+            - {id: FC03, explicit: false, changed: true}
+            - {id: FC04, explicit: false, changed: false}
+          loop_control:
+            loop_var: breakout_fabric_case
+            label: "{{ breakout_fabric_case.id }}"
+
+      rescue:
+        - name: Preserve the original fabric-wide test failure before scoped teardown
+          ansible.builtin.set_fact:
+            breakout_fabric_failure:
+              task: "{{ ansible_failed_task.name }}"
+              result: "{{ ansible_failed_result }}"
+
+      always:
+        - name: Preserve original failure evidence independently of cleanup outcome
+          ansible.builtin.debug:
+            var: breakout_fabric_failure
+          when: breakout_fabric_failure | length > 0
+
+        - name: Teardown only fresh confirmed owned parents, never using global clear
+          ansible.builtin.include_tasks: ../tasks/fabric_clear_cleanup.yaml
+          when: breakout_fabric_mutation_started | bool
+
+        - name: Re-raise any original regression after successful scoped teardown
+          ansible.builtin.assert:
+            that: breakout_fabric_failure | length == 0
+            fail_msg: "Original fabric-clear scenario failure: {{ breakout_fabric_failure }}"
