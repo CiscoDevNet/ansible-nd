@@ -445,6 +445,47 @@ def test_subinterface_unmanaged_interface_00401(monkeypatch) -> None:
         orchestrator.create_bulk(models)
 
 
+def test_subinterface_unmanaged_interface_00402(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `create_bulk` queues a deploy for the accepted subset when the bulk POST answers a mixed HTTP 207.
+
+    ## Test
+
+    - switches-list succeeds
+    - Two interfaces on one switch go out in one grouped POST
+    - The 207 reports `Ethernet1/3.20` as `success` and `Ethernet1/3.21` as `failed`
+    - `RuntimeError` matches `Bulk create failed` and names the accepted interface
+    - `_pending_deploys` holds only the accepted interface
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.create_bulk()
+    - NDBaseInterfaceOrchestrator._post_bulk_create_group()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}b")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen)
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send)
+    models = [
+        SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20"),
+        SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.21"),
+    ]
+
+    match = r"Bulk create failed.*accepted \['Ethernet1/3\.20'\] from the same request"
+    with pytest.raises(RuntimeError, match=match):
+        orchestrator.create_bulk(models)
+
+    assert orchestrator._pending_deploys == [("Ethernet1/3.20", "FDO12345ABC")]
+
+
 # =============================================================================
 # Test: delete_bulk
 # =============================================================================
