@@ -1,0 +1,221 @@
+---
+- name: Verify a staged HA transition through explicit switch deployment
+  vars:
+    ss_ha_cycle: "{{ ss_ha_staged_case[0] }}"
+    ss_ha_stage_state: "{{ ss_ha_staged_case[1] }}"
+    ss_ha_first_pair: ["{{ ss_ha_pairs_by_topology[ss_ha_cycle.first] }}"]
+    ss_ha_second_pair: ["{{ ss_ha_pairs_by_topology[ss_ha_cycle.second] }}"]
+    ss_ha_stage_cases:
+      replaced:
+        before: []
+        config: "{{ ss_ha_first_pair }}"
+        after: "{{ ss_ha_first_pair }}"
+        switches: "{{ ss_ha_ids_by_topology[ss_ha_cycle.first] }}"
+      overridden:
+        before: "{{ ss_ha_first_pair }}"
+        config: "{{ ss_ha_second_pair }}"
+        after: "{{ ss_ha_second_pair }}"
+        switches: "{{ ss_ha_owned_ids }}"
+      deleted:
+        before: "{{ ss_ha_second_pair }}"
+        config: "{{ ss_ha_second_pair }}"
+        after: []
+        switches: "{{ ss_ha_ids_by_topology[ss_ha_cycle.second] }}"
+    ss_ha_stage: "{{ ss_ha_stage_cases[ss_ha_stage_state] }}"
+    ss_ha_staging_args:
+      config_actions: {save: "{{ ss_ha_cycle.save }}", deploy: false}
+  block:
+    # Predictive checks and ownership guard
+    - name: Preview creations for both topologies from the empty baseline
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: replaced
+        config: "{{ ss_ha_fixture_pairs }}"
+        common_args: "{{ ss_ha_common_args }}"
+        check_mode_only: true
+        check_mode_queries: "{{ ss_ha_check_mode_queries }}"
+        idempotency: false
+        expected:
+          check_mode: {changed: true, failed: false}
+      register: ss_ha_both_topologies
+      when: ss_ha_staged_index == 0
+
+    - name: Check both exact creates were predicted without writes
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ ss_ha_both_topologies.check_mode_result }}"
+        ss_ha_result_status: planned
+        ss_ha_expected_before: []
+        ss_ha_expected_after: "{{ ss_ha_fixture_pairs }}"
+      when: ss_ha_staged_index == 0
+
+    - name: Predict staged intent without changing controller or device state
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: "{{ ss_ha_stage_state }}"
+        config: "{{ ss_ha_stage.config }}"
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_staging_args }}"
+        check_mode_only: true
+        check_mode_queries: "{{ ss_ha_check_mode_queries }}"
+        idempotency: false
+        expected:
+          check_mode: {changed: true, failed: false}
+      register: ss_ha_stage_preview
+
+    - name: Check the exact predicted pair and save operations
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ ss_ha_stage_preview.check_mode_result }}"
+        ss_ha_result_status: planned
+        ss_ha_expected_before: "{{ ss_ha_stage.before }}"
+        ss_ha_expected_after: "{{ ss_ha_stage.after }}"
+        ss_ha_expected_config_steps: "{{ ['save'] if ss_ha_cycle.save else [] }}"
+
+    - name: Guard fabric-wide override using the complete association set
+      when: ss_ha_stage_state == 'overridden'
+      block:
+        - name: Read current associations immediately before the override
+          nd_smart_switch_ha_pair_observe:
+            path: "{{ ss_ha_inventory_path }}"
+          register: ss_ha_staged_override_scope
+
+        - name: Require the single expected fixture-owned association
+          ansible.builtin.assert:
+            that: ss_ha_staged_override_scope.present_pairs == ss_ha_stage.before
+
+    # Controller intent and idempotency before any explicit deployment
+    - name: Reserve the affected switches for cleanup
+      ansible.builtin.set_fact:
+        ss_ha_cleanup_pending_ids: "{{ (ss_ha_cleanup_pending_ids + ss_ha_stage.switches) | unique(case_sensitive=true) | list }}"
+
+    - name: Stage HA intent once with deployment disabled
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: "{{ ss_ha_stage_state }}"
+        config: "{{ ss_ha_stage.config }}"
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_staging_args }}"
+        check_mode: false
+        idempotency: false
+        expected:
+          apply: {changed: true, failed: false}
+      register: ss_ha_staged_apply
+
+    - name: Verify accepted intent and the exact save and deploy behavior
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ ss_ha_staged_apply.first_run_result }}"
+        ss_ha_result_status: confirmed
+        ss_ha_expected_before: "{{ ss_ha_stage.before }}"
+        ss_ha_expected_after: "{{ ss_ha_stage.after }}"
+        ss_ha_expected_config_steps: "{{ ['save'] if ss_ha_cycle.save else [] }}"
+
+    - name: Wait for read-only inventory to match the accepted intent
+      ansible.builtin.include_tasks: wait_for_intent.yaml
+      vars:
+        ss_ha_intent_pairs: "{{ ss_ha_stage.after }}"
+
+    - name: Gather the accepted associations before deployment
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: gathered
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ {'config': []} if ss_ha_stage_state != 'replaced' else {} }}"
+        check_mode: false
+        idempotency: false
+        expected:
+          apply: {changed: false, failed: false}
+      register: ss_ha_staged_gather
+
+    - name: Verify gathered reports the staged intent without actions
+      ansible.builtin.assert:
+        that:
+          - ss_ha_staged_gather.first_run_result.gathered == ss_ha_stage.after
+          - ss_ha_staged_gather.first_run_result.config_actions_result is not defined
+          - >-
+            ss_ha_staged_gather.first_run_result.api_verbs | default([]) | map('upper') | reject('equalto', 'GET') | list == []
+
+    - name: Repeat once now that the controller reports the staged intent
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: "{{ ss_ha_stage_state }}"
+        config: "{{ ss_ha_stage.config }}"
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_staging_args }}"
+        check_mode: "{{ ss_ha_stage_state == 'overridden' }}"
+        check_mode_queries: "{{ ss_ha_check_mode_queries if ss_ha_stage_state == 'overridden' else [] }}"
+        idempotency: false
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+      register: ss_ha_stage_repeat
+
+    - name: Verify the repeat triggered no pair, unpair, save, or deploy
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ ss_ha_stage_repeat.first_run_result }}"
+        ss_ha_result_status: confirmed
+        ss_ha_expected_before: "{{ ss_ha_stage.after }}"
+        ss_ha_expected_after: "{{ ss_ha_stage.after }}"
+
+    # Explicit save and switch deployment
+    - name: Read synchronization before the explicit save or deployment
+      ansible.builtin.include_tasks: read_switch_sync.yaml
+      vars:
+        ss_ha_sync_ids: "{{ ss_ha_stage.switches }}"
+
+    - name: Keep the pre-deployment sync evidence
+      ansible.builtin.set_fact:
+        ss_ha_sync_before_deploy: "{{ ss_ha_sync_by_id }}"
+
+    - name: Recalculate explicitly when staging skipped save
+      when: not ss_ha_cycle.save
+      block:
+        - name: Request a separate fabric save
+          cisco.nd.nd_rest:
+            method: post
+            path: "{{ ss_ha_fabric_path }}/actions/configSave{{ ss_ha_cluster_query }}"
+          register: ss_ha_explicit_save
+          failed_when: ss_ha_explicit_save.status | default(0) | int != 200
+
+        - name: Read synchronization again after the explicit save
+          ansible.builtin.include_tasks: read_switch_sync.yaml
+          vars:
+            ss_ha_sync_ids: "{{ ss_ha_stage.switches }}"
+
+        - name: Keep the post-save sync evidence
+          ansible.builtin.set_fact:
+            ss_ha_sync_after_save: "{{ ss_ha_sync_by_id }}"
+
+    - name: Explicitly deploy only the affected switches
+      cisco.nd.nd_rest:
+        method: post
+        path: "{{ ss_ha_fabric_path }}/switchActions/deploy{{ ss_ha_cluster_query }}"
+        content:
+          switchIds: "{{ ss_ha_stage.switches }}"
+      register: ss_ha_staged_deploy
+      failed_when: ss_ha_staged_deploy.status | default(0) | int != 207
+
+    - name: Verify the deployment response for every peer
+      ansible.builtin.include_tasks: assert_switch_deployment.yaml
+      vars:
+        ss_ha_deployment_ids: "{{ ss_ha_stage.switches }}"
+        ss_ha_deployment_rows: "{{ ss_ha_staged_deploy.current.switchIds }}"
+
+    - name: Confirm exact on-switch HA and synchronization
+      ansible.builtin.include_tasks: confirm_deployment.yaml
+      vars:
+        ss_ha_confirm_pairs: "{{ ss_ha_stage.after }}"
+        ss_ha_confirm_ids: "{{ ss_ha_stage.switches }}"
+
+    - name: Record the staging and deployment audit
+      ansible.builtin.debug:
+        msg:
+          before_explicit_save_or_deploy: "{{ ss_ha_sync_before_deploy }}"
+          pending_before_explicit_save_or_deploy: >-
+            {{ ss_ha_sync_before_deploy | dict2items | selectattr('value', 'in', ['pending', 'outOfSync']) | map(attribute='key') | list }}
+          after_explicit_save: "{{ {} if ss_ha_cycle.save else ss_ha_sync_after_save }}"
+          deployment_results: "{{ ss_ha_staged_deploy.current.switchIds }}"
+          after_deployment: "{{ ss_ha_sync_by_id }}"
+        verbosity: 1

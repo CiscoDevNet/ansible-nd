@@ -1,0 +1,10 @@
+---
+nd_test_smart_switch_ha_isolated_fabric: false
+nd_test_smart_switch_ha_fabric_name: ""
+nd_test_smart_switch_ha_cluster_name: ""
+nd_test_smart_switch_ha_vpc_management_ips: []
+nd_test_smart_switch_ha_standalone_management_ips: []
+nd_test_smart_switch_ha_allow_override: false
+nd_test_smart_switch_ha_global_deploy: false
+nd_test_smart_switch_ha_poll_attempts: 20
+nd_test_smart_switch_ha_poll_delay: 5

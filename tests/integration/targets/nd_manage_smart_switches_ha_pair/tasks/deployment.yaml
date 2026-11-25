@@ -1,0 +1,126 @@
+---
+- name: Exercise the module's default switch-scoped deployment
+  tags: [nd4x_demo_overridden]
+  block:
+    - name: Establish an unpaired baseline for the reserved fixture
+      ansible.builtin.include_tasks: cleanup.yaml
+      when: ss_ha_baseline_cleanup_needed
+
+    - name: Reserve the peers used for setup
+      ansible.builtin.set_fact:
+        ss_ha_cleanup_pending_ids: "{{ ss_ha_vpc_ids }}"
+
+    - name: Establish a deployed vPC association
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: replaced
+        config: ["{{ ss_ha_vpc_pair }}"]
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_switch_deploy_args }}"
+        check_mode: false
+        idempotency: false
+        expected:
+          apply: {changed: true, failed: false}
+
+    - name: Wait for the prerequisite associations to be deployed
+      ansible.builtin.include_tasks: confirm_deployment.yaml
+      vars:
+        ss_ha_confirm_pairs: ["{{ ss_ha_vpc_pair }}"]
+        ss_ha_confirm_ids: "{{ ss_ha_vpc_ids }}"
+
+    - name: Preview replacing vPC HA with the standalone pair
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: overridden
+        config: ["{{ ss_ha_standalone_pair }}"]
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_switch_deploy_args }}"
+        check_mode_only: true
+        check_mode_queries: "{{ ss_ha_check_mode_queries }}"
+        idempotency: false
+        expected:
+          check_mode: {changed: true, failed: false}
+      register: ss_ha_deploy_preview
+
+    - name: Verify the exact predicted operations and configuration actions
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ ss_ha_deploy_preview.check_mode_result }}"
+        ss_ha_result_status: planned
+        ss_ha_expected_before: ["{{ ss_ha_vpc_pair }}"]
+        ss_ha_expected_after: ["{{ ss_ha_standalone_pair }}"]
+        ss_ha_expected_config_steps: [save, deploy]
+
+    - name: Re-read the full fabric scope immediately before the override
+      nd_smart_switch_ha_pair_observe:
+        path: "{{ ss_ha_inventory_path }}"
+      register: ss_ha_override_inventory
+
+    - name: Require the exact fixture-owned associations before applying
+      ansible.builtin.assert:
+        that: ss_ha_override_inventory.present_pairs == [ss_ha_vpc_pair]
+        fail_msg: The override requires the exact fixture associations in the isolated fabric.
+
+    - name: Reserve both pairs for cleanup
+      ansible.builtin.set_fact:
+        ss_ha_cleanup_pending_ids: "{{ ss_ha_owned_ids }}"
+
+    - name: Deploy to both peers of the created and removed associations
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: overridden
+        config: ["{{ ss_ha_standalone_pair }}"]
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_switch_deploy_args }}"
+        check_mode: false
+        idempotency: false
+        expected:
+          apply: {changed: true, failed: false}
+      register: ss_ha_switch_deployed
+
+    - name: Check the accepted HA operations and save and deploy steps
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ ss_ha_switch_deployed.first_run_result }}"
+        ss_ha_result_status: confirmed
+        ss_ha_expected_before: ["{{ ss_ha_vpc_pair }}"]
+        ss_ha_expected_after: ["{{ ss_ha_standalone_pair }}"]
+        ss_ha_expected_config_steps: [save, deploy]
+
+    - name: Verify one deployment result per affected switch
+      ansible.builtin.include_tasks: assert_switch_deployment.yaml
+      vars:
+        ss_ha_deployment_ids: "{{ ss_ha_owned_ids }}"
+        ss_ha_deployment_rows: "{{ ss_ha_switch_deployed.first_run_result.config_actions_result.actions[-1].response.switchIds }}"
+
+    - name: Wait for the intended associations and switch synchronization
+      ansible.builtin.include_tasks: confirm_deployment.yaml
+      vars:
+        ss_ha_confirm_pairs: ["{{ ss_ha_standalone_pair }}"]
+        ss_ha_confirm_ids: "{{ ss_ha_owned_ids }}"
+
+    - name: Require a repeat to skip both save and deploy
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: overridden
+        config: ["{{ ss_ha_standalone_pair }}"]
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_switch_deploy_args }}"
+        check_mode: true
+        check_mode_queries: "{{ ss_ha_check_mode_queries }}"
+        idempotency: false
+        expected:
+          check_mode: {changed: false, failed: false}
+          apply: {changed: false, failed: false}
+      register: ss_ha_repeated
+
+    - name: Check the repeat preserved intent and triggered no actions
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ ss_ha_repeated.first_run_result }}"
+        ss_ha_result_status: confirmed
+        ss_ha_expected_before: ["{{ ss_ha_standalone_pair }}"]
+        ss_ha_expected_after: ["{{ ss_ha_standalone_pair }}"]
+  always:
+    - name: Restore the owned fixture
+      ansible.builtin.include_tasks: cleanup.yaml

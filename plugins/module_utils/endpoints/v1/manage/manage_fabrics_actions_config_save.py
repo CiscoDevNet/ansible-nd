@@ -14,17 +14,29 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
+    ClusterNameMixin,
     FabricNameMixin,
     FromClusterMixin,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
     BasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
-# API path covered by this file:
-# /api/v1/manage/fabrics/{fabricName}/actions/configSave
 COMMON_CONFIG = ConfigDict(validate_assignment=True)
+
+
+# Config save query parameters
+
+
+class FabricConfigSaveQueryParams(ClusterNameMixin, EndpointQueryParams):
+    """Cluster routing for the fabric recalculation endpoint."""
+
+    model_config = COMMON_CONFIG
+
+
+# Fabric config save action
 
 
 class EpFabricConfigSavePost(
@@ -40,12 +52,15 @@ class EpFabricConfigSavePost(
     api_version: Literal["v1"] = Field(default="v1")
     min_controller_version: str = Field(default="3.0.0")
     class_name: Literal["EpFabricConfigSavePost"] = Field(default="EpFabricConfigSavePost")
+    endpoint_params: FabricConfigSaveQueryParams = Field(default_factory=FabricConfigSaveQueryParams)
 
     @property
     def path(self) -> str:
         if self.fabric_name is None:
             raise ValueError("fabric_name is required")
-        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "actions", "configSave")
+        path = BasePath.path("fabrics", quote(self.fabric_name, safe=""), "actions", "configSave")
+        query_string = self.endpoint_params.to_query_string()
+        return f"{path}?{query_string}" if query_string else path
 
     @property
     def verb(self) -> HttpVerbEnum:

@@ -1,0 +1,121 @@
+---
+ss_ha_fabric_path: "/api/v1/manage/fabrics/{{ nd_test_smart_switch_ha_fabric_name | urlencode | replace('/', '%2F') }}"
+ss_ha_cluster_query: >-
+  {{ '?clusterName=' ~ (nd_test_smart_switch_ha_cluster_name | urlencode | replace('/', '%2F'))
+     if nd_test_smart_switch_ha_cluster_name else '' }}
+ss_ha_inventory_path: "{{ ss_ha_fabric_path }}/smartSwitches/haPairs{{ ss_ha_cluster_query }}"
+ss_ha_switch_inventory_path: "{{ ss_ha_fabric_path }}/switches{{ ss_ha_cluster_query }}"
+ss_ha_minimum_nd_version: "4.3.1"
+ss_ha_common_args: >-
+  {{ {'fabric_name': nd_test_smart_switch_ha_fabric_name}
+     | combine({'cluster_name': nd_test_smart_switch_ha_cluster_name} if nd_test_smart_switch_ha_cluster_name else {}) }}
+ss_ha_switch_deploy_args:
+  config_actions: {save: true, deploy: true}
+
+# The isolated fabric contains two reserved vPC and two reserved standalone peers.
+# Setup resolves their management IPs to serials; cleanup uses those same serials.
+ss_ha_fixture_ips: "{{ (nd_test_smart_switch_ha_vpc_management_ips | list) + (nd_test_smart_switch_ha_standalone_management_ips | list) }}"
+ss_ha_vpc_ids: "{{ nd_test_smart_switch_ha_vpc_management_ips | map('extract', ss_ha_serials_by_ip) | sort(case_sensitive=true) }}"
+ss_ha_standalone_ids: "{{ nd_test_smart_switch_ha_standalone_management_ips | map('extract', ss_ha_serials_by_ip) | sort(case_sensitive=true) }}"
+ss_ha_owned_ids: "{{ (ss_ha_vpc_ids + ss_ha_standalone_ids) | sort(case_sensitive=true) }}"
+ss_ha_vpc_pair:
+  switch_id: "{{ ss_ha_vpc_ids[0] }}"
+  peer_switch_id: "{{ ss_ha_vpc_ids[1] }}"
+ss_ha_standalone_pair:
+  switch_id: "{{ ss_ha_standalone_ids[0] }}"
+  peer_switch_id: "{{ ss_ha_standalone_ids[1] }}"
+ss_ha_fixture_pairs: "{{ [ss_ha_vpc_pair, ss_ha_standalone_pair] | sort(attribute='switch_id', case_sensitive=true) }}"
+ss_ha_pairs_by_topology:
+  vpc: "{{ ss_ha_vpc_pair }}"
+  standalone: "{{ ss_ha_standalone_pair }}"
+ss_ha_ids_by_topology:
+  vpc: "{{ ss_ha_vpc_ids }}"
+  standalone: "{{ ss_ha_standalone_ids }}"
+
+ss_ha_inventory_snapshot:
+  name: Complete Smart Switch HA inventory
+  path: "{{ ss_ha_inventory_path }}"
+  expected_status: 200
+  pagination:
+    # The generic snapshot paginator stops after a short page.
+    page_size: 1
+    collection_key: rows
+    max_pages: 100
+  unordered_paths: [/rows]
+
+# Each cycle creates its first pair, overrides it with the second, then deletes the second.
+ss_ha_staged_cycles:
+  - {save: false, first: vpc, second: standalone}
+  - {save: false, first: standalone, second: vpc}
+  - {save: true, first: vpc, second: standalone}
+  - {save: true, first: standalone, second: vpc}
+
+# Failure cases share an isolated fixture and assert the exact diagnostic.
+ss_ha_missing_peer_id: ANSIBLE-HA-NOT-PRESENT
+ss_ha_cross_pair:
+  switch_id: "{{ ss_ha_vpc_pair.switch_id }}"
+  peer_switch_id: "{{ ss_ha_standalone_pair.switch_id }}"
+ss_ha_unknown_pair:
+  switch_id: "{{ ss_ha_standalone_pair.switch_id }}"
+  peer_switch_id: "{{ ss_ha_missing_peer_id }}"
+ss_ha_failure_cases:
+  - label: missing write config
+    state: replaced
+    message: "missing: config"
+  - label: self-pair
+    state: replaced
+    config:
+      - switch_id: "{{ ss_ha_vpc_pair.switch_id }}"
+        peer_switch_id: "{{ ss_ha_vpc_pair.switch_id }}"
+    message: distinct
+  - label: reversed duplicate pair
+    state: replaced
+    config:
+      - "{{ ss_ha_vpc_pair }}"
+      - switch_id: "{{ ss_ha_vpc_pair.peer_switch_id }}"
+        peer_switch_id: "{{ ss_ha_vpc_pair.switch_id }}"
+    message: multiple configured HA pairs
+  - label: overlapping pairs
+    state: deleted
+    config: ["{{ ss_ha_standalone_pair }}", "{{ ss_ha_cross_pair }}"]
+    message: multiple configured HA pairs
+  - label: nonempty gathered config
+    state: gathered
+    config: ["{{ ss_ha_vpc_pair }}"]
+    message: gather-all
+  - label: save requested on gathered
+    state: gathered
+    module_args:
+      config_actions: {save: true}
+    message: "not allowed"
+  - label: deploy requested without save
+    state: replaced
+    config: ["{{ ss_ha_vpc_pair }}"]
+    module_args:
+      config_actions: {deploy: true}
+    message: requires
+  - label: wrong physical vPC peer
+    state: replaced
+    config: ["{{ ss_ha_cross_pair }}"]
+    predictive: true
+    message: must be paired with its physical vPC peer
+  - label: valid and unknown peers in the same batch
+    state: replaced
+    config: ["{{ ss_ha_vpc_pair }}", "{{ ss_ha_unknown_pair }}"]
+    predictive: true
+    message: is not in the HA inventory
+  - label: reassignment of a paired switch
+    state: replaced
+    config: ["{{ ss_ha_cross_pair }}"]
+    seed_pairs: "{{ ss_ha_fixture_pairs }}"
+    predictive: true
+    message: is already paired
+
+# The override case is selected separately and requires the destructive-test opt-in.
+ss_ha_override_failure:
+  label: failed override preserves the omitted vPC pair
+  state: overridden
+  config: ["{{ ss_ha_unknown_pair }}"]
+  seed_pairs: ["{{ ss_ha_vpc_pair }}"]
+  predictive: true
+  message: is not in the HA inventory

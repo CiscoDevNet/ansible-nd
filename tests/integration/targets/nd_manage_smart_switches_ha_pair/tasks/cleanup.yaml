@@ -1,0 +1,91 @@
+---
+- name: Recover the complete controller state before attempting cleanup
+  nd_smart_switch_ha_pair_observe:
+    path: "{{ ss_ha_inventory_path }}"
+  register: ss_ha_cleanup_inventory
+  until: ss_ha_cleanup_inventory is succeeded
+  retries: "{{ nd_test_smart_switch_ha_poll_attempts }}"
+  delay: "{{ nd_test_smart_switch_ha_poll_delay }}"
+
+- name: Verify cleanup is limited to fixture-owned peers
+  ansible.builtin.assert:
+    that:
+      - >-
+        ss_ha_cleanup_inventory.present_pairs | rejectattr('switch_id', 'in', ss_ha_owned_ids) | list == []
+      - >-
+        ss_ha_cleanup_inventory.present_pairs | rejectattr('peer_switch_id', 'in', ss_ha_owned_ids) | list == []
+      - ss_ha_owned_ids | difference(ss_ha_cleanup_inventory.switches.keys() | list) | length == 0
+      - >-
+        ss_ha_cleanup_inventory.switches | dict2items | selectattr('key', 'in', ss_ha_owned_ids)
+        | rejectattr('value.peer_id', 'none') | rejectattr('value.peer_id', 'in', ss_ha_owned_ids) | list == []
+    fail_msg: Cleanup stopped because the controller did not prove fixture ownership.
+
+- name: Read owned switch synchronization before cleanup
+  ansible.builtin.include_tasks: read_switch_sync.yaml
+  vars:
+    ss_ha_sync_ids: "{{ ss_ha_owned_ids }}"
+
+- name: Identify exact owned associations and switches needing scoped cleanup
+  ansible.builtin.set_fact:
+    ss_ha_cleanup_pairs: "{{ ss_ha_cleanup_inventory.present_pairs }}"
+    ss_ha_cleanup_ids: >-
+      {{ (ss_ha_cleanup_pending_ids +
+          (ss_ha_cleanup_inventory.present_pairs | map(attribute='switch_id') | list) +
+          (ss_ha_cleanup_inventory.present_pairs | map(attribute='peer_switch_id') | list) +
+          (ss_ha_cleanup_inventory.switches | dict2items | selectattr('key', 'in', ss_ha_owned_ids)
+           | rejectattr('value.state', 'equalto', 'unpaired') | map(attribute='key') | list) +
+          (ss_ha_sync_by_id | dict2items | rejectattr('value', 'equalto', 'inSync') | map(attribute='key') | list))
+         | unique(case_sensitive=true) | sort(case_sensitive=true) }}
+
+- name: Delete exactly the observed fixture associations
+  cisco.nd.nd4x_module_test:
+    module: cisco.nd.nd_manage_smart_switches_ha_pair
+    state: deleted
+    config: "{{ ss_ha_cleanup_pairs }}"
+    common_args: "{{ ss_ha_common_args }}"
+    check_mode: false
+    idempotency: false
+    expected:
+      apply: {changed: true, failed: false}
+  when: ss_ha_cleanup_pairs | length > 0
+
+- name: Wait for accepted cleanup to be visible before applying it
+  ansible.builtin.include_tasks: wait_for_intent.yaml
+  vars:
+    ss_ha_intent_pairs: []
+  when: ss_ha_cleanup_pairs | length > 0
+
+- name: Recalculate and deploy only affected fixture peers
+  when: ss_ha_cleanup_ids | length > 0
+  block:
+    - name: Recalculate the owned cleanup intent
+      cisco.nd.nd_rest:
+        method: post
+        path: "{{ ss_ha_fabric_path }}/actions/configSave{{ ss_ha_cluster_query }}"
+      register: ss_ha_cleanup_save
+      failed_when: ss_ha_cleanup_save.status | default(0) | int != 200
+
+    - name: Deploy to the affected fixture switches
+      cisco.nd.nd_rest:
+        method: post
+        path: "{{ ss_ha_fabric_path }}/switchActions/deploy{{ ss_ha_cluster_query }}"
+        content:
+          switchIds: "{{ ss_ha_cleanup_ids }}"
+      register: ss_ha_cleanup_deploy
+      failed_when: ss_ha_cleanup_deploy.status | default(0) | int != 207
+
+    - name: Verify cleanup deployment accounted for every requested switch
+      ansible.builtin.include_tasks: assert_switch_deployment.yaml
+      vars:
+        ss_ha_deployment_ids: "{{ ss_ha_cleanup_ids }}"
+        ss_ha_deployment_rows: "{{ ss_ha_cleanup_deploy.current.switchIds }}"
+
+- name: Confirm all four fixture peers have returned to baseline
+  ansible.builtin.include_tasks: confirm_deployment.yaml
+  vars:
+    ss_ha_confirm_pairs: []
+    ss_ha_confirm_ids: "{{ ss_ha_owned_ids }}"
+
+- name: Record the verified unpaired baseline for subsequent scenarios
+  ansible.builtin.set_fact:
+    ss_ha_baseline_cleanup_needed: false

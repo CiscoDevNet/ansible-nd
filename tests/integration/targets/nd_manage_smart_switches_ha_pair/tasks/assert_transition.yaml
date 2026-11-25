@@ -1,0 +1,99 @@
+---
+- name: Verify the expected HA transition and configuration actions
+  vars:
+    ss_ha_before_ordered: "{{ ss_ha_expected_before | sort(attribute='switch_id', case_sensitive=true) }}"
+    ss_ha_after_ordered: "{{ ss_ha_expected_after | sort(attribute='switch_id', case_sensitive=true) }}"
+    ss_ha_expected_added_pairs: "{{ ss_ha_after_ordered | reject('in', ss_ha_before_ordered) | list }}"
+    ss_ha_expected_removed_pairs: "{{ ss_ha_before_ordered | reject('in', ss_ha_after_ordered) | list }}"
+    ss_ha_expected_changed_pairs: "{{ ss_ha_expected_added_pairs + ss_ha_expected_removed_pairs }}"
+    ss_ha_expected_creates: >-
+      {{ ss_ha_expected_added_pairs | map(attribute='switch_id')
+         | zip(ss_ha_expected_added_pairs | map(attribute='peer_switch_id')) | map('list') | list }}
+    ss_ha_expected_deletes: >-
+      {{ ss_ha_expected_removed_pairs | map(attribute='switch_id')
+         | zip(ss_ha_expected_removed_pairs | map(attribute='peer_switch_id')) | map('list') | list }}
+    ss_ha_affected_ids: >-
+      {{ ((ss_ha_expected_changed_pairs | map(attribute='switch_id') | list)
+          + (ss_ha_expected_changed_pairs | map(attribute='peer_switch_id') | list))
+         | unique(case_sensitive=true) | sort(case_sensitive=true) }}
+    ss_ha_config_steps: "{{ ss_ha_expected_config_steps | default([]) }}"
+    ss_ha_is_preview: "{{ ss_ha_result_status == 'planned' }}"
+    ss_ha_step_status: "{{ 'planned' if ss_ha_is_preview else 'completed' }}"
+    ss_ha_action_details: "{{ ss_ha_result.config_actions_result | default({}) }}"
+    ss_ha_api_paths: "{{ ss_ha_result.api_paths | default([]) }}"
+  block:
+    - name: Compare exact controller intent and operation identities
+      ansible.builtin.assert:
+        that:
+          - ss_ha_result.after_status == ss_ha_result_status
+          - ss_ha_result.reconciliation_complete
+          - ss_ha_result.before | sort(attribute='switch_id', case_sensitive=true) == ss_ha_before_ordered
+          - ss_ha_result.after | sort(attribute='switch_id', case_sensitive=true) == ss_ha_after_ordered
+          - ss_ha_result.planned_operations | length == ss_ha_expected_changed_pairs | length
+          - >-
+            ss_ha_result.planned_operations | selectattr('operation', 'equalto', 'create')
+            | map(attribute='identifier') | sort == ss_ha_expected_creates
+          - >-
+            ss_ha_result.planned_operations | selectattr('operation', 'equalto', 'delete')
+            | map(attribute='identifier') | sort == ss_ha_expected_deletes
+          - >-
+            ss_ha_result.planned_operations | rejectattr('outcome', 'equalto', 'not_attempted' if ss_ha_is_preview else 'succeeded')
+            | list == []
+
+    - name: Verify predictive execution performed no actions
+      ansible.builtin.assert:
+        that:
+          - ss_ha_result.action_results == []
+          - ss_ha_result.api_verbs | default([]) | map('upper') | reject('equalto', 'GET') | list == []
+      when: ss_ha_is_preview
+
+    - name: Verify the accepted operations match the expected journal
+      ansible.builtin.assert:
+        that:
+          - ss_ha_result.action_results | length == ss_ha_expected_changed_pairs | length
+          - ss_ha_result.action_results | rejectattr('outcome', 'equalto', 'succeeded') | list == []
+          - ss_ha_result.action_results | rejectattr('effect_confirmed') | list == []
+          - >-
+            ss_ha_result.action_results | selectattr('operation', 'equalto', 'create')
+            | map(attribute='identifier') | sort == ss_ha_expected_creates
+          - >-
+            ss_ha_result.action_results | selectattr('operation', 'equalto', 'delete')
+            | map(attribute='identifier') | sort == ss_ha_expected_deletes
+      when: not ss_ha_is_preview
+
+    - name: Check save and deployment order, status, and targets
+      ansible.builtin.assert:
+        that:
+          - ss_ha_action_details.status == ss_ha_step_status
+          - ss_ha_action_details.actions | map(attribute='action') | list == ss_ha_config_steps
+          - ss_ha_action_details.actions | rejectattr('status', 'equalto', ss_ha_step_status) | list == []
+          - ss_ha_action_details.actions | rejectattr('target', 'equalto', nd_test_smart_switch_ha_fabric_name) | list == []
+          - ss_ha_action_details.targets.switches | sort(case_sensitive=true) == ss_ha_affected_ids
+          - "'deploy' not in ss_ha_config_steps or ss_ha_action_details.actions[-1].scope == (ss_ha_expected_scope | default('switch'))"
+      when: ss_ha_config_steps | length > 0
+
+    - name: Verify the transition produced no save or deploy result
+      ansible.builtin.assert:
+        that: ss_ha_result.config_actions_result is not defined
+      when: ss_ha_config_steps | length == 0
+
+    - name: Audit the exact write endpoints at verbose output
+      ansible.builtin.assert:
+        that:
+          - ss_ha_api_paths | select('search', '/smartSwitches/actions/haPair([?]|$)') | list | length == ss_ha_expected_added_pairs | length
+          - >-
+            ss_ha_api_paths | select('search', '/smartSwitches/actions/haUnpair([?]|$)') | list | length
+            == (1 if ss_ha_expected_removed_pairs else 0)
+          - ss_ha_api_paths | select('search', '/actions/configSave([?]|$)') | list | length == (1 if 'save' in ss_ha_config_steps else 0)
+          - >-
+            ss_ha_api_paths | select('search', '/(switchActions|actions)/deploy([?]|$)') | list | length
+            == (1 if 'deploy' in ss_ha_config_steps else 0)
+      when: not ss_ha_is_preview and ansible_verbosity | int >= 2
+
+    - name: Check the cluster route on each reported endpoint
+      ansible.builtin.assert:
+        that: ss_ha_cluster_query[1:] in ss_ha_api_path
+      loop: "{{ ss_ha_api_paths }}"
+      loop_control:
+        loop_var: ss_ha_api_path
+      when: nd_test_smart_switch_ha_cluster_name | length > 0

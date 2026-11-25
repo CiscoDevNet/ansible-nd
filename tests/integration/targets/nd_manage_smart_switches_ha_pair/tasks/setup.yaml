@@ -1,0 +1,127 @@
+---
+- name: Require one isolated fabric, one host, and four fixture management addresses
+  ansible.builtin.assert:
+    that:
+      - not ansible_check_mode
+      - ansible_play_hosts_all | length == 1
+      - nd_test_smart_switch_ha_isolated_fabric is sameas true
+      - nd_test_smart_switch_ha_fabric_name | trim | length > 0
+      - nd_test_smart_switch_ha_vpc_management_ips is sequence
+      - nd_test_smart_switch_ha_vpc_management_ips is not string and nd_test_smart_switch_ha_vpc_management_ips is not mapping
+      - nd_test_smart_switch_ha_vpc_management_ips | length == 2
+      - nd_test_smart_switch_ha_standalone_management_ips is sequence
+      - nd_test_smart_switch_ha_standalone_management_ips is not string and nd_test_smart_switch_ha_standalone_management_ips is not mapping
+      - nd_test_smart_switch_ha_standalone_management_ips | length == 2
+      - nd_test_smart_switch_ha_poll_attempts | int > 0
+      - nd_test_smart_switch_ha_poll_delay | int >= 0
+    fail_msg: Supply the isolated-fabric opt-in and the management IPs of two vPC and two standalone fixture switches.
+
+- name: Verify the fixture management addresses are distinct strings
+  ansible.builtin.assert:
+    that:
+      - ss_ha_fixture_ips | reject('string') | list == []
+      - ss_ha_fixture_ips | reject('equalto', '') | list | length == 4
+      - ss_ha_fixture_ips | unique(case_sensitive=true) | length == 4
+
+- name: Read the local Nexus Dashboard release
+  cisco.nd.nd_version:
+  register: ss_ha_version
+  when: not nd_test_smart_switch_ha_cluster_name
+
+- name: Require Smart Switch HA support on the local controller
+  ansible.builtin.assert:
+    that: ss_ha_version.current.platformVersion is version(ss_ha_minimum_nd_version, '>=')
+  when: not nd_test_smart_switch_ha_cluster_name
+
+- name: Read all fabric switches on the selected cluster
+  nd_smart_switch_ha_pair_observe:
+    path: "{{ ss_ha_switch_inventory_path }}"
+  register: ss_ha_discovery
+
+- name: Require each reserved management IP to identify exactly one fabric switch
+  ansible.builtin.assert:
+    that:
+      - ss_ha_matches | length == 1
+      - ss_ha_matches[0].key is match('^\S{1,32}$')
+    fail_msg: "Management address {{ item }} must identify exactly one fabric switch with a valid serial."
+  loop: "{{ ss_ha_fixture_ips }}"
+  vars:
+    ss_ha_matches: "{{ ss_ha_discovery.fabric_switches | dict2items | selectattr('value', 'equalto', item) | list }}"
+
+- name: Record the current fixture serials by management IP
+  ansible.builtin.set_fact:
+    ss_ha_serials_by_ip: >-
+      {{ dict(ss_ha_fixture_switches | map(attribute='value') | zip(ss_ha_fixture_switches | map(attribute='key'))) }}
+  vars:
+    ss_ha_fixture_switches: "{{ ss_ha_discovery.fabric_switches | dict2items | selectattr('value', 'in', ss_ha_fixture_ips) | list }}"
+
+- name: Read the complete HA inventory and confirm support on the selected cluster
+  nd_smart_switch_ha_pair_observe:
+    path: "{{ ss_ha_inventory_path }}"
+  register: ss_ha_initial
+
+- name: Require fixture HA inventory and exclusive ownership before cleanup
+  ansible.builtin.assert:
+    that:
+      - ss_ha_initial.present_pairs | reject('in', ss_ha_fixture_pairs) | list == []
+      - ss_ha_owned_ids | difference(ss_ha_initial.switches.keys() | list) | length == 0
+      - >-
+        ss_ha_initial.switches | dict2items | rejectattr('key', 'in', ss_ha_owned_ids)
+        | rejectattr('value.state', 'equalto', 'unpaired') | list == []
+    fail_msg: Require all four fixture switches and only exact fixture HA associations, with no pending HA on foreign switches.
+
+- name: Verify the expected physical vPC peers and stable HA state
+  ansible.builtin.assert:
+    that:
+      - ss_ha_initial.switches[item].topology == 'vpc'
+      - ss_ha_initial.switches[item].state == ('paired' if ss_ha_vpc_pair in ss_ha_initial.present_pairs else 'unpaired')
+      - ss_ha_initial.switches[item].peer_id == (ss_ha_vpc_ids | reject('equalto', item) | first)
+  loop: "{{ ss_ha_vpc_ids }}"
+
+- name: Verify standalone peers are unpaired or in the exact deployed fixture pair
+  ansible.builtin.assert:
+    that:
+      - ss_ha_initial.switches[item].topology == 'nonVpc'
+      - ss_ha_initial.switches[item].state == ('paired' if ss_ha_standalone_paired else 'unpaired')
+      - ss_ha_initial.switches[item].peer_id == ((ss_ha_standalone_ids | reject('equalto', item) | first) if ss_ha_standalone_paired else none)
+  loop: "{{ ss_ha_standalone_ids }}"
+  vars:
+    ss_ha_standalone_paired: "{{ ss_ha_standalone_pair in ss_ha_initial.present_pairs }}"
+
+- name: Verify the owned switches are in sync before establishing the baseline
+  ansible.builtin.include_tasks: read_switch_sync.yaml
+  vars:
+    ss_ha_sync_ids: "{{ ss_ha_owned_ids }}"
+    ss_ha_sync_expected: [inSync]
+
+- name: Initialize cleanup tracking and the predictive inventory snapshot
+  ansible.builtin.set_fact:
+    ss_ha_cleanup_pending_ids: []
+    ss_ha_check_mode_queries: "{{ [ss_ha_inventory_snapshot] }}"
+    ss_ha_baseline_cleanup_needed: "{{ ss_ha_initial.present_pairs | length > 0 }}"
+
+- name: Read eligible standalone peers before the first scenario
+  cisco.nd.nd_rest:
+    method: get
+    path: >-
+      {{ ss_ha_fabric_path }}/smartSwitches/{{ ss_ha_standalone_ids[0] | urlencode | replace('/', '%2F')
+      }}/haPairRecommendations{{ ss_ha_cluster_query }}
+  register: ss_ha_recommendations
+  when: ss_ha_standalone_pair not in ss_ha_initial.present_pairs
+
+- name: Verify the standalone peers have a discovered eligible link
+  ansible.builtin.assert:
+    that:
+      - ss_ha_recommendations.status | int == 200
+      - >-
+        ss_ha_recommendations.current.rows | selectattr('pairingType', 'equalto', 'nonVpc')
+        | selectattr('switchInfo.id', 'equalto', ss_ha_standalone_ids[1]) | list | length == 1
+  when: ss_ha_standalone_pair not in ss_ha_initial.present_pairs
+
+- name: Add the fixture switch to predictive snapshots
+  ansible.builtin.set_fact:
+    ss_ha_check_mode_queries: >-
+      {{ ss_ha_check_mode_queries + [{'name': 'Switch ' ~ item ~ ' configuration state',
+                                     'path': ss_ha_fabric_path ~ '/switches/' ~ (item | urlencode | replace('/', '%2F')) ~ ss_ha_cluster_query,
+                                     'expected_status': 200}] }}
+  loop: "{{ ss_ha_owned_ids }}"

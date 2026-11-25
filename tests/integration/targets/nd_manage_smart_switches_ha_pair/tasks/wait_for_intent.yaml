@@ -1,0 +1,10 @@
+---
+- name: Wait for the complete controller HA intent to match
+  nd_smart_switch_ha_pair_observe:
+    path: "{{ ss_ha_inventory_path }}"
+  register: ss_ha_observed_intent
+  until:
+    - ss_ha_observed_intent is succeeded
+    - ss_ha_observed_intent.present_pairs | default(none) == (ss_ha_intent_pairs | sort(attribute='switch_id', case_sensitive=true))
+  retries: "{{ nd_test_smart_switch_ha_poll_attempts }}"
+  delay: "{{ nd_test_smart_switch_ha_poll_delay }}"

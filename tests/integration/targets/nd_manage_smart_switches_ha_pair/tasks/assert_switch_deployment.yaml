@@ -1,0 +1,16 @@
+---
+- name: Require one result for each requested switch and no other results
+  ansible.builtin.assert:
+    that:
+      - ss_ha_deployment_rows | length == ss_ha_deployment_ids | length
+      - ss_ha_deployment_rows | map(attribute='switchId') | sort(case_sensitive=true) == (ss_ha_deployment_ids | sort(case_sensitive=true))
+
+- name: Require an accepted deployment result for every switch
+  ansible.builtin.assert:
+    that:
+      - >-
+        (item.status | trim | lower) in ['success', 'completed', 'started', 'warning']
+        or ((item.status | trim | lower) == 'notexecuted' and (item.message | default('') | trim | lower) == 'no commands to execute')
+  loop: "{{ ss_ha_deployment_rows }}"
+  loop_control:
+    label: "{{ item.switchId }}"

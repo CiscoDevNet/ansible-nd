@@ -1,0 +1,226 @@
+---
+- name: Exercise the pending unpair behavior for one topology
+  vars:
+    ss_ha_pending_pair: ["{{ ss_ha_pairs_by_topology[ss_ha_pending_topology] }}"]
+    ss_ha_pending_ids: "{{ ss_ha_ids_by_topology[ss_ha_pending_topology] }}"
+    ss_ha_pending_args:
+      config_actions: {save: true, deploy: false}
+  block:
+    - name: Establish an unpaired baseline for the reserved fixture
+      ansible.builtin.include_tasks: cleanup.yaml
+      when: ss_ha_baseline_cleanup_needed
+
+    - name: Reserve the affected peers for cleanup
+      ansible.builtin.set_fact:
+        ss_ha_cleanup_pending_ids: "{{ ss_ha_pending_ids }}"
+
+    - name: Establish a deployed HA association
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: replaced
+        config: "{{ ss_ha_pending_pair }}"
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_switch_deploy_args }}"
+        check_mode: false
+        idempotency: false
+        expected:
+          apply: {changed: true, failed: false}
+
+    - name: Confirm both peers started paired and in sync
+      ansible.builtin.include_tasks: confirm_deployment.yaml
+      vars:
+        ss_ha_confirm_pairs: "{{ ss_ha_pending_pair }}"
+        ss_ha_confirm_ids: "{{ ss_ha_pending_ids }}"
+
+    - name: Mark the peers for cleanup before staging deletion
+      ansible.builtin.set_fact:
+        ss_ha_cleanup_pending_ids: "{{ ss_ha_pending_ids }}"
+
+    - name: Stage removal of HA without deploying it
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: deleted
+        config: "{{ ss_ha_pending_pair }}"
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_pending_args }}"
+        check_mode_queries: "{{ ss_ha_check_mode_queries }}"
+        idempotency: false
+        expected:
+          check_mode: {changed: true, failed: false}
+          apply: {changed: true, failed: false}
+      register: ss_ha_pending_delete
+
+    - name: Verify unpair and save were the only staged operations
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ item.result }}"
+        ss_ha_result_status: "{{ item.status }}"
+        ss_ha_expected_before: "{{ ss_ha_pending_pair }}"
+        ss_ha_expected_after: []
+        ss_ha_expected_config_steps: [save]
+      loop:
+        - {status: planned, result: "{{ ss_ha_pending_delete.check_mode_result }}"}
+        - {status: confirmed, result: "{{ ss_ha_pending_delete.first_run_result }}"}
+      loop_control:
+        label: "{{ item.status }}"
+
+    - name: Wait for the controller to reflect the staged deletion
+      ansible.builtin.include_tasks: wait_for_intent.yaml
+      vars:
+        ss_ha_intent_pairs: []
+
+    - name: Gather associations while the unpair is awaiting deployment
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: gathered
+        config: []
+        common_args: "{{ ss_ha_common_args }}"
+        check_mode: false
+        idempotency: false
+        expected:
+          apply: {changed: false, failed: false}
+      register: ss_ha_pending_gather
+
+    - name: Verify gathered excludes the removed association
+      ansible.builtin.assert:
+        that:
+          - ss_ha_pending_gather.first_run_result.gathered == []
+          - ss_ha_pending_gather.first_run_result.config_actions_result is not defined
+          - ss_ha_pending_gather.first_run_result.api_verbs | default([]) | map('upper') | reject('equalto', 'GET') | list == []
+
+    - name: Verify a second staged deletion is unchanged
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_manage_smart_switches_ha_pair
+        state: deleted
+        config: "{{ ss_ha_pending_pair }}"
+        common_args: "{{ ss_ha_common_args }}"
+        module_args: "{{ ss_ha_pending_args }}"
+        check_mode: false
+        idempotency: false
+        expected:
+          apply: {changed: false, failed: false}
+      register: ss_ha_pending_repeat
+
+    - name: Check the repeated deletion triggered no actions
+      ansible.builtin.include_tasks: assert_transition.yaml
+      vars:
+        ss_ha_result: "{{ ss_ha_pending_repeat.first_run_result }}"
+        ss_ha_result_status: confirmed
+        ss_ha_expected_before: []
+        ss_ha_expected_after: []
+
+    - name: Observe the current states before trying to pair again
+      nd_smart_switch_ha_pair_observe:
+        path: "{{ ss_ha_inventory_path }}"
+      register: ss_ha_pending_inventory
+
+    - name: Record the two peer states for the pending test
+      ansible.builtin.debug:
+        msg: "{{ ss_ha_pending_ids | map('extract', ss_ha_pending_inventory.switches) | list }}"
+
+    - name: Check reversal of a pending vPC unpair when observed
+      when:
+        - ss_ha_pending_topology == 'vpc'
+        - ss_ha_pending_inventory.switches[ss_ha_vpc_pair.switch_id].state == 'unpairPending'
+      block:
+        - name: Reverse the pending unpair and deploy the restored vPC pair
+          cisco.nd.nd4x_module_test:
+            module: cisco.nd.nd_manage_smart_switches_ha_pair
+            state: replaced
+            config: "{{ ss_ha_pending_pair }}"
+            common_args: "{{ ss_ha_common_args }}"
+            module_args: "{{ ss_ha_switch_deploy_args }}"
+            check_mode_queries: "{{ ss_ha_check_mode_queries }}"
+            idempotency: false
+            expected:
+              check_mode: {changed: true, failed: false}
+              apply: {changed: true, failed: false}
+          register: ss_ha_reversal
+
+        - name: Confirm predicted and accepted reversal
+          ansible.builtin.include_tasks: assert_transition.yaml
+          vars:
+            ss_ha_result: "{{ item.result }}"
+            ss_ha_result_status: "{{ item.status }}"
+            ss_ha_expected_before: []
+            ss_ha_expected_after: "{{ ss_ha_pending_pair }}"
+            ss_ha_expected_config_steps: [save, deploy]
+          loop:
+            - {status: planned, result: "{{ ss_ha_reversal.check_mode_result }}"}
+            - {status: confirmed, result: "{{ ss_ha_reversal.first_run_result }}"}
+          loop_control:
+            label: "{{ item.status }}"
+
+        - name: Verify both vPC deployment results
+          ansible.builtin.include_tasks: assert_switch_deployment.yaml
+          vars:
+            ss_ha_deployment_ids: "{{ ss_ha_pending_ids }}"
+            ss_ha_deployment_rows: "{{ ss_ha_reversal.first_run_result.config_actions_result.actions[-1].response.switchIds }}"
+
+        - name: Confirm the reversed association and switch synchronization
+          ansible.builtin.include_tasks: confirm_deployment.yaml
+          vars:
+            ss_ha_confirm_pairs: "{{ ss_ha_pending_pair }}"
+            ss_ha_confirm_ids: "{{ ss_ha_pending_ids }}"
+
+        - name: Repeat the deployed reversal and require no change
+          cisco.nd.nd4x_module_test:
+            module: cisco.nd.nd_manage_smart_switches_ha_pair
+            state: replaced
+            config: "{{ ss_ha_pending_pair }}"
+            common_args: "{{ ss_ha_common_args }}"
+            module_args: "{{ ss_ha_switch_deploy_args }}"
+            check_mode: false
+            idempotency: false
+            expected:
+              apply: {changed: false, failed: false}
+          register: ss_ha_reversal_repeat
+
+        - name: Check repetition triggered no actions
+          ansible.builtin.include_tasks: assert_transition.yaml
+          vars:
+            ss_ha_result: "{{ ss_ha_reversal_repeat.first_run_result }}"
+            ss_ha_result_status: confirmed
+            ss_ha_expected_before: "{{ ss_ha_pending_pair }}"
+            ss_ha_expected_after: "{{ ss_ha_pending_pair }}"
+
+    - name: Check re-pair rejection during an observed standalone unpair
+      when:
+        - ss_ha_pending_topology == 'standalone'
+        - >-
+          'unpairPending' in (ss_ha_pending_ids | map('extract', ss_ha_pending_inventory.switches)
+          | map(attribute='state') | list)
+      block:
+        - name: Reject standalone re-pair while the previous unpair is pending
+          cisco.nd.nd4x_module_test:
+            module: cisco.nd.nd_manage_smart_switches_ha_pair
+            state: replaced
+            config: "{{ ss_ha_pending_pair }}"
+            common_args: "{{ ss_ha_common_args }}"
+            check_mode: false
+            idempotency: false
+            expected:
+              apply: {changed: false, failed: true}
+          register: ss_ha_pending_rejection
+
+        - name: Verify the standalone failure reason and absence of writes
+          ansible.builtin.assert:
+            that:
+              - ss_ha_pending_rejection.first_run_result.msg is search('must be standalone and unpaired')
+              - ss_ha_pending_rejection.first_run_result.action_results | default([]) == []
+              - not (ss_ha_pending_rejection.first_run_result.may_have_changed | default(false))
+              - ss_ha_pending_rejection.first_run_result.config_actions_result is not defined
+
+        - name: Read the controller after the failed standalone re-pair
+          nd_smart_switch_ha_pair_observe:
+            path: "{{ ss_ha_inventory_path }}"
+          register: ss_ha_pending_after
+
+        - name: Verify the pending state is unchanged after rejection
+          ansible.builtin.assert:
+            that:
+              - ss_ha_pending_after.present_pairs == ss_ha_pending_inventory.present_pairs
+              - ss_ha_pending_after.switches == ss_ha_pending_inventory.switches
+  always:
+    - name: Restore the owned fixture
+      ansible.builtin.include_tasks: cleanup.yaml

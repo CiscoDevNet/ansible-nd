@@ -1,0 +1,37 @@
+---
+- name: Read configuration synchronization from the affected switches
+  cisco.nd.nd_rest:
+    method: get
+    path: "{{ ss_ha_fabric_path }}/switches/{{ ss_ha_sync_id | urlencode | replace('/', '%2F') }}{{ ss_ha_cluster_query }}"
+  register: ss_ha_sync_reads
+  loop: "{{ ss_ha_sync_ids }}"
+  loop_control:
+    loop_var: ss_ha_sync_id
+  vars:
+    ss_ha_switch_body: "{{ ss_ha_sync_reads.current | default({}) }}"
+    ss_ha_switch_sync: >-
+      {{ (ss_ha_switch_body.additionalData | default({}, true)).configSyncStatus | default(none)
+         or (ss_ha_switch_body.additionalSwitchData | default({}, true)).configSyncStatus | default(none) }}
+  until:
+    - ss_ha_sync_reads is succeeded
+    - ss_ha_sync_reads.status | default(0) | int == 200
+    - ss_ha_switch_body.switchId | default(none) == ss_ha_sync_id
+    - ss_ha_switch_sync is string and ss_ha_switch_sync | length > 0
+    - not (ss_ha_sync_expected | default([])) or ss_ha_switch_sync in ss_ha_sync_expected
+  retries: "{{ nd_test_smart_switch_ha_poll_attempts }}"
+  delay: "{{ nd_test_smart_switch_ha_poll_delay }}"
+
+- name: Initialize synchronization evidence
+  ansible.builtin.set_fact:
+    ss_ha_sync_by_id: {}
+
+- name: Record synchronization by exact switch serial
+  ansible.builtin.set_fact:
+    ss_ha_sync_by_id: "{{ ss_ha_sync_by_id | combine({item.ss_ha_sync_id: ss_ha_recorded_sync}) }}"
+  vars:
+    ss_ha_recorded_sync: >-
+      {{ (item.current.additionalData | default({}, true)).configSyncStatus | default(none)
+         or (item.current.additionalSwitchData | default({}, true)).configSyncStatus | default(none) }}
+  loop: "{{ ss_ha_sync_reads.results }}"
+  loop_control:
+    label: "{{ item.ss_ha_sync_id }}"

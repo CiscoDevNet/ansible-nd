@@ -1,0 +1,42 @@
+---
+- name: Initialize expected on-switch HA observations
+  ansible.builtin.set_fact:
+    ss_ha_expected_switches: {}
+
+- name: Record the expected association and state of both fixture peers
+  ansible.builtin.set_fact:
+    ss_ha_expected_switches: >-
+      {{ ss_ha_expected_switches | combine({
+           item.switch_id: {'state': ss_ha_expected_state, 'topology': ss_ha_topology,
+                            'peer_id': item.peer_switch_id if ss_ha_has_peer else none},
+           item.peer_switch_id: {'state': ss_ha_expected_state, 'topology': ss_ha_topology,
+                                 'peer_id': item.switch_id if ss_ha_has_peer else none}
+         }) }}
+  loop: "{{ ss_ha_fixture_pairs }}"
+  vars:
+    ss_ha_topology: "{{ 'vpc' if item == ss_ha_vpc_pair else 'nonVpc' }}"
+    ss_ha_expected_state: "{{ 'paired' if item in ss_ha_confirm_pairs else 'unpaired' }}"
+    ss_ha_has_peer: "{{ ss_ha_topology == 'vpc' or item in ss_ha_confirm_pairs }}"
+
+- name: Wait for each exact fixture peer relationship to converge
+  nd_smart_switch_ha_pair_observe:
+    path: "{{ ss_ha_inventory_path }}"
+  register: ss_ha_deployed_intent
+  until:
+    - ss_ha_deployed_intent is succeeded
+    - ss_ha_deployed_intent.present_pairs | default(none) == (ss_ha_confirm_pairs | sort(attribute='switch_id', case_sensitive=true))
+    - >-
+      (ss_ha_deployed_intent.switches | default({}) | dict2items
+       | selectattr('key', 'in', ss_ha_owned_ids) | items2dict) == ss_ha_expected_switches
+  retries: "{{ nd_test_smart_switch_ha_poll_attempts }}"
+  delay: "{{ nd_test_smart_switch_ha_poll_delay }}"
+
+- name: Wait for device configuration synchronization independently of HA intent
+  ansible.builtin.include_tasks: read_switch_sync.yaml
+  vars:
+    ss_ha_sync_ids: "{{ ss_ha_confirm_ids }}"
+    ss_ha_sync_expected: [inSync]
+
+- name: Clear the pending cleanup scope for verified switches
+  ansible.builtin.set_fact:
+    ss_ha_cleanup_pending_ids: "{{ ss_ha_cleanup_pending_ids | difference(ss_ha_confirm_ids) }}"
