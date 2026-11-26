@@ -7,7 +7,8 @@ ND Policy Resource Module.
 Provides all business logic for switch policy management on ND:
     - Policy CRUD (create, read, update, delete)
     - Idempotency diff calculation for merged, deleted states
-    - Deploy orchestration (pushConfig for create/update, switchActions/deploy for delete)
+    - Deploy orchestration (switch deploy for accepted updates/removals;
+      policy pushes for clean creations and unchanged targets)
     - Conditional delete flow:
       deploy=true  → markDelete → optional direct-DELETE fallback → switchActions/deploy
       deploy=false → markDelete only for standard templates; optional direct-DELETE
@@ -141,6 +142,10 @@ def _looks_like_ipv4(value) -> bool:
     return all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
 
 
+class _PolicyDeploymentPlanningError(NDModuleError):
+    """Initial inventory cannot safely determine a merged deployment route."""
+
+
 class NDPolicyModule:
     """Specialized module for switch policy lifecycle management.
 
@@ -149,7 +154,7 @@ class NDPolicyModule:
           templateName/source/markDeleted filtered in code)
         - Idempotent diff calculation across 16 merged / 16 deleted cases
         - Create, update, delete_and_create actions
-        - Bulk deploy via pushConfig (create/update) or switchActions/deploy (delete)
+        - Batched switch deployment for updates/removals; policy pushes when no cleanup is needed
         - Conditional delete flow:
           deploy=true  → markDelete → optional direct-DELETE fallback → switchActions/deploy
           deploy=false → markDelete only for standard templates; optional direct-DELETE
@@ -260,6 +265,15 @@ class NDPolicyModule:
         self._policies_by_switch_cache: dict[str, list[dict]] = {}
         # Composite (switchId, templateName) index for O(1) Case B/C lookups.
         self._policies_by_switch_template_cache: dict[tuple[str, str], list[dict]] = {}
+        # Routing-only indexes from the same initial GET. Hidden removal rows
+        # never participate in active policy selection or configuration diffs.
+        self._pending_policy_owners: set[tuple[str, str]] = set()
+        self._pending_recreation_owners: dict[tuple[str, str, str], set[str]] = {}
+        self._policy_inventory_issue: str | None = None
+        self._merged_changed_switches: set[str] = set()
+        self._merged_created_ids: set[str] = set()
+        self._planning_error: str | None = None
+        self._deployment_error: NDModuleError | None = None
 
         # NDOutput wrapper used by exit_module() to assemble the standard
         # collection-wide output shape (changed/failed/before/after/diff/
@@ -361,7 +375,11 @@ class NDPolicyModule:
 
         if True in self.results.failed:
             self.module.fail_json(
-                msg="Policy operation failed. See task results for details.",
+                msg=(
+                    self._planning_error
+                    or (self._deployment_error.msg if self._deployment_error is not None else None)
+                    or "Policy operation failed. See task results for details."
+                ),
                 **final,
             )
         self.module.exit_json(**final)
@@ -386,6 +404,8 @@ class NDPolicyModule:
             kwargs["gathered"] = self._gathered
         if self.module.params.get("output_level") in ("info", "debug"):
             kwargs["proposed"] = self._proposed
+        if failed and self._deployment_error is not None and self.module.params.get("output_level") == "debug":
+            kwargs["error_details"] = self._deployment_error.to_dict()
         return kwargs
 
     def _capture_reporting_baseline(self, policies: list[dict]) -> None:
@@ -997,7 +1017,21 @@ class NDPolicyModule:
         # Phase 0: Prefetch all fabric policies in a single GET call.
         # Subsequent _build_have() calls will use the in-memory cache
         # instead of making per-entry HTTP GETs.
-        self._prefetch_all_policies(config_entries=self.config)
+        try:
+            self._prefetch_all_policies(config_entries=self.config)
+        except _PolicyDeploymentPlanningError as error:
+            self._planning_error = error.msg
+            self._register_result(
+                action="policy_merged",
+                operation_type=OperationType.QUERY,
+                return_code=error.status or -1,
+                message=error.msg,
+                data=copy.deepcopy(error.response_payload or {}),
+                success=False,
+                found=False,
+                diff={"action": "fail", "error": error.msg},
+            )
+            return
 
         # Phase 1: Build want and have for each config entry
         diff_results = []
@@ -1042,6 +1076,11 @@ class NDPolicyModule:
 
             # Phase 2: Compute diff
             diff_entry = self._get_diff_merged_single(want, have_list)
+            if self.deploy:
+                try:
+                    diff_entry["deploy_switch"] = self._merged_deploy_switch(diff_entry, len(have_list))
+                except _PolicyDeploymentPlanningError as error:
+                    diff_entry["routing_error"] = error.msg
             if diff_entry.get("action") == "update" and want.get("policyId") and template_inputs and diff_entry.get("have"):
                 # ID resolution supplies the real template only after the
                 # template-name validation above. Validate the effective PUT
@@ -1058,43 +1097,31 @@ class NDPolicyModule:
             diff_results.append(diff_entry)
 
         self.log.info(f"Computed {len(diff_results)} diff results")
+        routing_errors = [entry for entry in diff_results if entry.get("routing_error")]
+        if routing_errors:
+            self._capture_reporting_baseline([entry["have"] for entry in diff_results if entry.get("have")])
+            self._planning_error = routing_errors[0]["routing_error"]
+            for entry in routing_errors:
+                self._clear_call()
+                self._register_result(
+                    action="policy_merged",
+                    operation_type=OperationType.QUERY,
+                    return_code=-1,
+                    message=entry["routing_error"],
+                    success=False,
+                    found=bool(entry.get("have")),
+                    diff={"action": "fail", "want": entry["want"], "error": entry["routing_error"]},
+                )
+            return
 
         # Phase 3: Execute actions
-        policy_ids_to_deploy = self._execute_merged(diff_results)
+        policy_ids_to_deploy, switch_ids_to_deploy = self._execute_merged(diff_results)
 
         # Phase 4: Deploy if requested
-        if self.deploy and policy_ids_to_deploy:
-            # Determine if any actual changes occurred (create/update)
-            # vs only no-diff deploys.  No-diff deploys should not mark changed.
-            has_actual_changes = self._accepted_config_change or True in self.results.changed
-            self.log.info(f"Deploying {len(policy_ids_to_deploy)} policies (has_actual_changes={has_actual_changes})")
-            deploy_success = self._deploy_policies(policy_ids_to_deploy, changed=has_actual_changes)
-            if not deploy_success:
-                self.log.error(
-                    "pushConfig failed for one or more policies after "
-                    "create/update. Policies exist on the controller but "
-                    "have not been deployed to the switch."
-                )
-                self._register_result(
-                    action="policy_deploy_failed",
-                    operation_type=OperationType.UPDATE,
-                    return_code=-1,
-                    message=(
-                        "pushConfig failed for one or more policies. "
-                        "Policies were created/updated on the controller but "
-                        "not deployed to the switch. Fix device connectivity "
-                        "and re-run with deploy=true."
-                    ),
-                    success=False,
-                    found=True,
-                    diff={
-                        "action": "deploy_failed",
-                        "policy_ids": policy_ids_to_deploy,
-                        "reason": "pushConfig per-policy failure",
-                    },
-                )
-        elif not self.deploy:
-            self.log.info("Deploy not requested, skipping pushConfig")
+        if self.deploy:
+            self._deploy_merged_targets(policy_ids_to_deploy, switch_ids_to_deploy)
+        else:
+            self.log.info("Deploy not requested, skipping deployment")
 
         self.log.debug("EXIT: _handle_merged_state()")
 
@@ -1572,6 +1599,8 @@ class NDPolicyModule:
         self._policies_cache = []
         excluded = 0
         for p in raw:
+            if self.state == "merged" and self.deploy and not isinstance(p, dict):
+                raise _PolicyDeploymentPlanningError(msg="Policy discovery returned a malformed policy record; cannot safely plan deployment.")
             if p.get("source", "") != "":
                 excluded += 1
                 continue
@@ -1594,6 +1623,9 @@ class NDPolicyModule:
                 tn = p.get("templateName")
                 if tn:
                     self._policies_by_switch_template_cache.setdefault((sw, tn), []).append(p)
+
+        if self.state == "merged" and self.deploy:
+            self._index_pending_policy_removals(raw)
 
         self.log.info(
             f"Policy cache populated: {len(self._policies_cache)} active policies "
@@ -1683,12 +1715,112 @@ class NDPolicyModule:
 
         self._record_call(ep, None)
         data = self.nd.request(ep.path, ep.verb)
+        if self.state == "merged" and self.deploy:
+            if not isinstance(data, dict) or not isinstance(data.get("policies"), list):
+                raise _PolicyDeploymentPlanningError(msg="Policy discovery returned no valid policies list; cannot safely plan deployment.")
+            policies = data["policies"]
+            self._policy_inventory_issue = None
+            meta = data.get("meta")
+            counts = meta.get("counts") if isinstance(meta, dict) else None
+            if "meta" in data and not isinstance(meta, dict):
+                self._policy_inventory_issue = "invalid policy inventory metadata"
+            elif isinstance(meta, dict) and "counts" in meta and not isinstance(counts, dict):
+                self._policy_inventory_issue = "invalid policy inventory counts"
+            elif isinstance(counts, dict):
+                for key in ("remaining", "total"):
+                    if key not in counts:
+                        continue
+                    value = counts.get(key)
+                    if isinstance(value, bool) or not str(value).isdigit():
+                        self._policy_inventory_issue = "invalid policy inventory counts"
+                        break
+                    if (key == "remaining" and int(value) != 0) or (key == "total" and int(value) != len(policies)):
+                        self._policy_inventory_issue = "incomplete policy inventory"
+                        break
+            if (
+                not self._policy_inventory_issue
+                and len(policies) >= 10000
+                and not (isinstance(counts, dict) and any(key in counts for key in ("remaining", "total")))
+            ):
+                self._policy_inventory_issue = "policy inventory reached the unpaginated limit"
         if isinstance(data, dict):
             policies = data.get("policies", [])
             self.log.debug(f"Raw query returned {len(policies)} policies")
             return policies
         self.log.debug("Query returned non-dict response, returning empty list")
         return []
+
+    def _index_pending_policy_removals(self, policies: list[dict]) -> None:
+        """Index hidden removal ownership without changing the active cache."""
+        # TODO(4.2.1) policy-pushconfig-pending-removal (ND issue: TBD).
+        # Retain ownership for switch-level cleanup of removals left pending by
+        # pushConfig. Revisit when policy-scoped cleanup is verified for both
+        # unchanged policies and recreation after staged deletion.
+        self._pending_policy_owners.clear()
+        self._pending_recreation_owners.clear()
+        for policy in policies:
+            if policy.get("markDeleted") is not None and not isinstance(policy["markDeleted"], bool):
+                self._policy_inventory_issue = self._policy_inventory_issue or "invalid pending policy deletion flag"
+            if policy.get("markDeleted") is not True:
+                continue
+            inputs = policy.get("templateInputs") or {}
+            if not isinstance(inputs, dict):
+                continue
+            owner = inputs.get("ORIG_POLICY_ID") or policy.get("policyId")
+            switch = policy.get("switchId") or policy.get("serialNumber")
+            if not isinstance(owner, str) or not owner.startswith("POLICY-") or owner.startswith("POLICY-GROUP-"):
+                continue
+            if not isinstance(switch, str) or not switch:
+                self._policy_inventory_issue = self._policy_inventory_issue or "invalid pending policy switch"
+                continue
+            # A source link is only usable with the same explicit original ID.
+            # Group children and other unproven internal records cannot select
+            # a standalone policy's deployment route.
+            source = policy.get("source", "")
+            if source != "" and (source != owner or inputs.get("ORIG_POLICY_ID") != owner):
+                continue
+            self._pending_policy_owners.add((switch, owner))
+            if owner in self._policies_by_id_cache or source != "":
+                continue
+            template = policy.get("templateName")
+            description = policy.get("description")
+            if isinstance(template, str) and isinstance(description, str) and template and description:
+                self._pending_recreation_owners.setdefault((switch, template, description), set()).add(owner)
+
+    def _merged_deploy_switch(self, entry: dict, active_match_count: int) -> str | None:
+        """Choose an eligible entry's switch using only initial discovery."""
+        action, want = entry["action"], entry["want"]
+        have = entry.get("have") or {}
+        switch = have.get("switchId") or have.get("serialNumber")
+        if action == "update":
+            # TODO(4.2.1) policy-pushconfig-pending-removal (ND issue: TBD).
+            # Updates can stage old-configuration removals that pushConfig leaves
+            # pending. Retain switch deployment until policy-scoped deployment is
+            # verified to apply both the update and its associated removals.
+            if not switch:
+                raise _PolicyDeploymentPlanningError(msg=f"Policy {entry.get('policy_id')} has no resolved switch for deployment.")
+            return switch
+        if action == "skip" and have:
+            if (switch, have.get("policyId")) in self._pending_policy_owners:
+                return switch
+        elif action == "create" and active_match_count == 0 and want.get("description"):
+            switch = want["switchId"]
+        else:
+            return None
+        if self._policy_inventory_issue:
+            raise _PolicyDeploymentPlanningError(
+                msg=f"Cannot determine pending policy cleanup from {self._policy_inventory_issue}; narrow the requested switch scope."
+            )
+        if action == "create":
+            owners = self._pending_recreation_owners.get((switch, want.get("templateName"), want["description"]), set())
+            if len(owners) == 1:
+                return switch
+            if len(owners) > 1:
+                self._warnings.append(
+                    f"Pending deletion for {want['description']!r} on {switch} matches multiple policies; "
+                    "creating and pushing the new policy without selecting pending cleanup."
+                )
+        return None
 
     # =========================================================================
     # Core: Build want / have
@@ -2134,7 +2266,7 @@ class NDPolicyModule:
     # Execute: Merged State
     # =========================================================================
 
-    def _execute_merged(self, diff_results: list[dict]) -> list[str]:
+    def _execute_merged(self, diff_results: list[dict]) -> tuple[list[str], list[str]]:
         """Execute the computed actions for all config entries using bulk APIs.
 
         Instead of making one API call per entry, this method collects all
@@ -2151,11 +2283,16 @@ class NDPolicyModule:
             diff_results: list of diff result dicts from _get_diff_merged_single.
 
         Returns:
-            List of policy IDs to deploy (if deploy=true).
+            Policy IDs to push and final switch IDs to deploy. A final switch
+            deployment covers all accepted policies on that switch.
         """
         self.log.debug("ENTER: _execute_merged()")
         self.log.debug(f"Processing {len(diff_results)} diff entries")
         policy_ids_to_deploy = []
+        policy_switch_map: dict[str, str] = {}
+        switch_ids_to_deploy: dict[str, None] = {}
+        self._merged_changed_switches.clear()
+        self._merged_created_ids.clear()
         self._capture_reporting_baseline([entry["have"] for entry in diff_results if entry.get("have")])
 
         # Batches for bulk execution
@@ -2198,6 +2335,9 @@ class NDPolicyModule:
                         existing_pid = have.get("policyId")
                         if existing_pid:
                             policy_ids_to_deploy.append(existing_pid)
+                            policy_switch_map[existing_pid] = have.get("switchId") or have.get("serialNumber")
+                            if diff_entry.get("deploy_switch"):
+                                switch_ids_to_deploy[diff_entry["deploy_switch"]] = None
                             self.log.info(f"No diff but deploy=true: will deploy existing policy {existing_pid}")
                 diff_payload = {"action": action, "want": want}
                 if error_msg:
@@ -2250,6 +2390,9 @@ class NDPolicyModule:
                     found=False,
                     diff={"action": "create", "want": want, "diff": diff_entry["diff"]},
                 )
+                if self.deploy and diff_entry.get("deploy_switch"):
+                    switch_ids_to_deploy[diff_entry["deploy_switch"]] = None
+                    self._merged_changed_switches.add(diff_entry["deploy_switch"])
 
             for diff_entry in update_batch:
                 want, have = diff_entry["want"], diff_entry["have"]
@@ -2277,6 +2420,9 @@ class NDPolicyModule:
                         "policy_id": diff_entry["policy_id"],
                     },
                 )
+                if self.deploy and diff_entry.get("deploy_switch"):
+                    switch_ids_to_deploy[diff_entry["deploy_switch"]] = None
+                    self._merged_changed_switches.add(diff_entry["deploy_switch"])
 
             for diff_entry in delete_and_create_batch:
                 want, have = diff_entry["want"], diff_entry["have"]
@@ -2308,7 +2454,10 @@ class NDPolicyModule:
 
             self.log.info("Check mode: all batches registered")
             self.log.debug("EXIT: _execute_merged()")
-            return policy_ids_to_deploy
+            return (
+                [pid for pid in dict.fromkeys(policy_ids_to_deploy) if policy_switch_map.get(pid) not in switch_ids_to_deploy],
+                list(switch_ids_to_deploy),
+            )
 
         # ── Phase 3: Execute delete_and_create removals ─────────────────
         #
@@ -2472,6 +2621,11 @@ class NDPolicyModule:
                     continue
 
                 policy_ids_to_deploy.append(created_id)
+                policy_switch_map[created_id] = want["switchId"]
+                self._merged_created_ids.add(created_id)
+                self._merged_changed_switches.add(want["switchId"])
+                if self.deploy and diff_entry.get("deploy_switch"):
+                    switch_ids_to_deploy[diff_entry["deploy_switch"]] = None
                 after_proj = {**self._create_policy_model(want).to_request_dict(), "policyId": created_id}
                 self._after.append(after_proj)
 
@@ -2546,7 +2700,11 @@ class NDPolicyModule:
                 )
                 continue
 
-            policy_ids_to_deploy.append(policy_id)
+            # Only accepted PUTs select switch deployment. A rejected update
+            # must not suppress a successful sibling's policy push.
+            if self.deploy:
+                switch_ids_to_deploy[diff_entry["deploy_switch"]] = None
+                self._merged_changed_switches.add(diff_entry["deploy_switch"])
 
             after_merged = self._strip_internal({**have, **self._update_policy_payload(want, have), "policyId": policy_id})
             self._after.append(after_merged)
@@ -2571,7 +2729,10 @@ class NDPolicyModule:
 
         self.log.info(f"Merged execute complete: {len(policy_ids_to_deploy)} policies to deploy")
         self.log.debug("EXIT: _execute_merged()")
-        return policy_ids_to_deploy
+        return (
+            [pid for pid in dict.fromkeys(policy_ids_to_deploy) if policy_switch_map.get(pid) not in switch_ids_to_deploy],
+            list(switch_ids_to_deploy),
+        )
 
     # =========================================================================
     # Diff: Deleted State (16 cases)
@@ -2900,8 +3061,66 @@ class NDPolicyModule:
         self.log.debug("EXIT: _execute_deleted()")
 
     # =========================================================================
-    # Deploy: pushConfig
+    # Deploy: merged switch cleanup and policy pushes
     # =========================================================================
+
+    def _deploy_merged_targets(self, policy_ids: list[str], switch_ids: list[str]) -> None:
+        """Attempt independent final batches, registering each error in place.
+
+        Registration must precede the next request: otherwise rest_send's
+        current response can associate a later batch's diagnostics with the
+        original exception. Configuration acceptance remains in the ledger.
+        """
+        for kind, targets in (("switch", switch_ids), ("policy", policy_ids)):
+            if not targets:
+                continue
+            changed_targets = self._merged_changed_switches if kind == "switch" else self._merged_created_ids
+            changed = any(target in changed_targets for target in targets)
+            try:
+                if kind == "switch":
+                    self._deploy_policy_switches(targets, changed=changed)
+                else:
+                    self._deploy_policies(targets, changed=changed)
+            except NDModuleError as error:
+                if self._deployment_error is None:
+                    self._deployment_error = error
+                try:
+                    response_snapshot = copy.deepcopy(self.nd.rest_send.response_current)
+                except (AttributeError, ValueError):
+                    response_snapshot = None
+                self._register_result(
+                    action="policy_switch_deploy" if kind == "switch" else "policy_deploy",
+                    operation_type=OperationType.UPDATE,
+                    return_code=error.status or -1,
+                    message=error.msg,
+                    data=copy.deepcopy(error.response_payload or {}),
+                    success=False,
+                    found=True,
+                    diff={"action": "deploy_failed", f"{kind}_ids": targets, "error": error.msg},
+                    response_snapshot=response_snapshot,
+                )
+
+    def _deploy_policy_switches(self, switch_ids: list[str], *, changed: bool) -> None:
+        """Deploy merged switch intent with existing response compatibility."""
+        ep = self._wouldbe_switch_deploy_ep()
+        payload = SwitchIds(switch_ids=switch_ids).to_request_dict()
+        self._record_call(ep, payload)
+        if self.check_mode:
+            response = {"RETURN_CODE": 200, "MESSAGE": "OK (check_mode)", "DATA": {}}
+        else:
+            data = self._api_deploy_switches(switch_ids)
+            self._log_deploy_status(data, "merged policy deployment")
+            response = copy.deepcopy(self.nd.rest_send.response_current)
+        self.results.action = "policy_switch_deploy"
+        self.results.state = "merged"
+        self.results.check_mode = self.check_mode
+        self.results.operation_type = OperationType.UPDATE
+        self.results.response_current = response
+        self.results.result_current = {"success": True, "found": True, "changed": changed}
+        self.results.diff_current = {"action": "switch_deploy", "switch_ids": switch_ids, "deploy_success": True}
+        self._apply_stashed_call()
+        self.results.verbosity_level_current = 2
+        self.results.register_api_call()
 
     def _deploy_policies(
         self,
@@ -3331,10 +3550,9 @@ class NDPolicyModule:
     def _api_deploy_switches(self, switch_ids: list[str]) -> dict:
         """Deploy fabric config to specific switches.
 
-        Used after direct DELETE of PYTHON content-type policies to push
-        the config removal to the actual devices.  Unlike ``pushConfig``
-        (which operates on policy IDs), this endpoint operates on switch
-        serial numbers.
+        Used for accepted policy updates and pending configuration removals.
+        Unlike ``pushConfig`` (which operates on policy IDs), this endpoint
+        operates on switch serial numbers and applies all their pending intent.
 
         API: ``POST /fabrics/{fabricName}/switchActions/deploy``
 
@@ -3954,6 +4172,7 @@ class NDPolicyModule:
         diff: dict,
         data: Any = None,
         state: str | None = None,
+        response_snapshot: dict | None = None,
     ) -> None:
         """Register a single task result into the Results aggregator.
 
@@ -3971,6 +4190,8 @@ class NDPolicyModule:
             diff: Diff payload dict.
             data: Optional response data.
             state: Override state (defaults to self.state).
+            response_snapshot: Original failed REST response captured before
+                another independent deployment request can replace it.
 
         Returns:
             None.
@@ -3985,11 +4206,15 @@ class NDPolicyModule:
         self.results.state = state or self.state
         self.results.check_mode = self.check_mode
         self.results.operation_type = operation_type
-        self.results.response_current = {
-            "RETURN_CODE": return_code,
-            "MESSAGE": message,
-            "DATA": data if data is not None else {},
-        }
+        self.results.response_current = (
+            response_snapshot
+            if response_snapshot is not None
+            else {
+                "RETURN_CODE": return_code,
+                "MESSAGE": message,
+                "DATA": data if data is not None else {},
+            }
+        )
         result_dict = {"success": success, "found": found}
         if not success:
             result_dict["changed"] = False

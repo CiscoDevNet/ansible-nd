@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModuleError
+from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule, NDModuleError
 from ansible_collections.cisco.nd.plugins.modules import nd_manage_policy
 
 POLICY_ID = "POLICY-101"
@@ -143,6 +143,29 @@ class Controller:
         return [call for call in self.calls if call[0] != "GET"]
 
 
+class ControllerSender:
+    """Fake only HTTP delivery, leaving request and response handling real."""
+
+    def __init__(self, controller):
+        self.controller = controller
+        self.path = ""
+        self.verb = None
+        self.payload = None
+        self.response = {}
+
+    def commit(self):
+        method = self.verb.value
+        data = self.controller.request(method, self.path, self.payload)
+        deployment = method == "POST" and urlsplit(self.path).path.endswith("/switchActions/deploy")
+        self.response = {
+            "RETURN_CODE": 207 if deployment else 200,
+            "METHOD": method,
+            "REQUEST_PATH": self.path,
+            "MESSAGE": "Multi-Status" if deployment else "OK",
+            "DATA": data,
+        }
+
+
 @pytest.fixture
 def invoke(monkeypatch):
     """Drive actual main() with a reusable stateful controller."""
@@ -151,6 +174,7 @@ def invoke(monkeypatch):
         def __init__(self, params, check_mode, verbosity):
             self.params = deepcopy(params)
             self.check_mode = check_mode
+            self._debug = False
             self._verbosity = verbosity
             self.warnings = []
             self.no_log_values = set()
@@ -214,6 +238,9 @@ def invoke(monkeypatch):
         use_description_as_key=False,
         output_level="normal",
         verbosity=0,
+        cluster_name=None,
+        ticket_id=None,
+        real_http=False,
     ):
         module = Module(
             {
@@ -222,15 +249,23 @@ def invoke(monkeypatch):
                 "deploy": deploy,
                 "config": entries,
                 "use_description_as_key": use_description_as_key,
-                "ticket_id": None,
-                "cluster_name": None,
+                "ticket_id": ticket_id,
+                "cluster_name": cluster_name,
                 "output_level": output_level,
             },
             check_mode,
             verbosity,
         )
         monkeypatch.setattr(nd_manage_policy, "AnsibleModule", lambda **_kwargs: module)
-        monkeypatch.setattr(nd_manage_policy, "NDModule", lambda _module: FakeND(module, controller))
+        if real_http:
+            nd = NDModule(module)
+            rest_send = nd.get_rest_send()
+            rest_send.sender = ControllerSender(controller)
+            rest_send.unit_test = True
+            rest_send.timeout = 1
+            monkeypatch.setattr(nd_manage_policy, "NDModule", lambda _module: nd)
+        else:
+            monkeypatch.setattr(nd_manage_policy, "NDModule", lambda _module: FakeND(module, controller))
         with pytest.raises(ModuleResult) as captured:
             nd_manage_policy.main()
         return captured.value.result
@@ -555,9 +590,9 @@ def test_bulk_create_partial_failure_keeps_successful_sibling_only(invoke):
     assert len(controller.writes()) == 1
 
 
-def test_update_accepted_but_push_rejected_keeps_accepted_after(invoke):
+def test_update_accepted_but_switch_deploy_rejected_keeps_accepted_after(invoke):
     controller = Controller([policy()])
-    controller.reject_push.add(POLICY_ID)
+    controller.reject_switch_deploy = True
     result = invoke(controller, [config(priority=600)], deploy=True, verbosity=3)
 
     assert result["failed"] is True
@@ -566,6 +601,83 @@ def test_update_accepted_but_push_rejected_keeps_accepted_after(invoke):
     assert result["after"][0]["priority"] == controller.policies[POLICY_ID]["priority"] == 600
     assert result["after"][0]["templateInputs"] == controller.policies[POLICY_ID]["templateInputs"]
     assert [call[0] for call in controller.writes()] == ["PUT", "POST"]
+    assert controller.writes()[-1][1].endswith("/switchActions/deploy")
+
+
+@pytest.mark.parametrize(
+    "switch_statuses",
+    [
+        pytest.param({SWITCH_ID: "failed"}, id="failed-switch"),
+        pytest.param({SWITCH_ID: "success", "SERIAL_B": "failed"}, id="mixed-switches"),
+        pytest.param({SWITCH_ID: "success", "SERIAL_B": "success"}, id="successful-switches"),
+    ],
+)
+def test_accepted_updates_retain_real_207_switch_deployment_outcomes(invoke, switch_statuses):
+    """Real 207 classification preserves accepted PUTs without false deploy success."""
+
+    class Deployment207Controller(Controller):
+        def request(self, verb, path, payload=None):
+            data = super().request(verb, path, payload)
+            if verb == "POST" and urlsplit(path).path.endswith("/switchActions/deploy"):
+                for row in data["switchIds"]:
+                    row["status"] = switch_statuses[row["switchId"]]
+                    row["message"] = "Deployment rejected" if row["status"] == "failed" else "Deployment completed"
+            return data
+
+    originals = [policy(pid, switchId=switch) for pid, switch in zip((POLICY_ID, SECOND_ID), switch_statuses)]
+    controller = Deployment207Controller(originals)
+    entries = [config(row["policyId"], switch=[{"serial_number": row["switchId"]}], priority=600) for row in originals]
+
+    result = invoke(controller, entries, deploy=True, verbosity=3, real_http=True)
+
+    failed_switches = [switch for switch, status in switch_statuses.items() if status == "failed"]
+    assert bool(result.get("failed")) is bool(failed_switches)
+    assert result["changed"] is True
+    assert result["before"] == originals
+    after = {row["policyId"]: row for row in result["after"]}
+    assert set(after) == set(controller.policies)
+    for original in originals:
+        policy_id = original["policyId"]
+        assert after[policy_id] == controller.policies[policy_id]
+        assert after[policy_id]["priority"] == 600
+        assert original["priority"] == 725
+
+    writes = controller.writes()
+    assert [call[0] for call in writes] == ["PUT"] * len(originals) + ["POST"]
+    deploy_path = writes[-1][1]
+    assert urlsplit(deploy_path).path.endswith("/switchActions/deploy")
+    assert writes[-1][2] == {"switchIds": sorted(switch_statuses)}
+    contexts = [
+        (response, outcome, diff)
+        for path, response, outcome, diff in zip(result["api_paths"], result["api_response"], result["api_result"], result["api_diff"])
+        if path == deploy_path
+    ]
+    assert len(contexts) == 1
+    response, outcome, diff = contexts[0]
+    assert {key: value for key, value in response.items() if key != "sequence_number"} == {
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": deploy_path,
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "switchIds": [
+                {
+                    "switchId": switch,
+                    "status": switch_statuses[switch],
+                    "message": "Deployment rejected" if switch_statuses[switch] == "failed" else "Deployment completed",
+                }
+                for switch in sorted(switch_statuses)
+            ]
+        },
+    }
+    assert outcome["success"] is (not failed_switches)
+    assert diff["action"] == ("deploy_failed" if failed_switches else "switch_deploy")
+    if failed_switches:
+        assert "Deployment rejected" in result["msg"]
+        assert all(switch in result["msg"] for switch in failed_switches)
+        assert "deploy_success" not in diff
+    else:
+        assert diff["deploy_success"] is True
 
 
 def test_replacement_remove_rejected_preserves_original_and_skips_create(invoke):
@@ -1101,10 +1213,12 @@ def test_policy_id_noop_and_valid_update_preserve_progress(invoke, separate_id, 
     assert len([call for call in controller.calls if "/parameters" in call[1]]) == 1
     puts = [call for call in controller.writes() if call[0] == "PUT"]
     pushes = [call for call in controller.writes() if call[1].endswith("/pushConfig")]
+    switch_deploys = [call for call in controller.writes() if call[1].endswith("/switchActions/deploy")]
     assert [path.rsplit("/", 1)[-1] for _verb, path, _payload in puts] == ([] if check_mode else [SECOND_ID])
-    assert len(pushes) == int(deploy and not check_mode)
-    if pushes:
-        assert set(pushes[0][2]["policyIds"]) == {POLICY_ID, SECOND_ID}
+    assert pushes == []
+    assert len(switch_deploys) == int(deploy and not check_mode)
+    if switch_deploys:
+        assert switch_deploys[0][2] == {"switchIds": [SWITCH_ID]}
     if check_mode:
         assert controller.writes() == []
         assert controller.policies == original
@@ -1194,3 +1308,838 @@ def test_policy_id_noop_deployment_failure_preserves_unchanged_state(invoke, sep
     assert not any("/parameters" in call[1] for call in controller.calls)
     assert len(controller.writes()) == int(not check_mode)
     assert all(verb == "POST" and path.endswith("/pushConfig") for verb, path, _payload in controller.writes())
+
+
+# Merged deployment routing reuses the initial raw inventory.
+
+
+_UNSET = object()
+
+
+class RoutingController(Controller):
+    """Expose inventory and deployment variants at the existing HTTP boundary."""
+
+    def __init__(self, policies=None):
+        super().__init__(policies)
+        self.inventory_response = _UNSET
+        self.inventory_error = None
+        self.switch_response = _UNSET
+        self.push_transport_error = False
+
+    def request(self, verb, path, payload=None):
+        resource = urlsplit(path).path
+        if verb == "GET" and resource.endswith("/policies") and self.inventory_error is not None:
+            self.calls.append((verb, path, deepcopy(payload)))
+            raise self.inventory_error
+        if verb == "GET" and resource.endswith("/policies") and self.inventory_response is not _UNSET:
+            self.calls.append((verb, path, deepcopy(payload)))
+            return deepcopy(self.inventory_response)
+        if verb == "POST" and resource.endswith("/pushConfig") and self.push_transport_error:
+            self.calls.append((verb, path, deepcopy(payload)))
+            raise NDModuleError(msg="simulated push transport failure", status=502, response_payload={"message": "push transport rejected"})
+        if verb == "POST" and resource.endswith("/switchActions/deploy") and self.switch_response is not _UNSET:
+            self.calls.append((verb, path, deepcopy(payload)))
+            return deepcopy(self.switch_response)
+        return super().request(verb, path, payload)
+
+
+def pending_policy(pid="POLICY-901", owner=None, **overrides):
+    """Return a standalone staged deletion or a removal clone of its owner."""
+    inputs = {"featureName": "bfd"}
+    if owner is not None:
+        inputs["ORIG_POLICY_ID"] = owner
+    return policy(pid, markDeleted=True, priority=-725, templateInputs=inputs, **overrides)
+
+
+def deployment_calls(controller, suffix):
+    """Select actual requests to one deployment endpoint."""
+    return [call for call in controller.writes() if urlsplit(call[1]).path.endswith(suffix)]
+
+
+def assert_one_initial_policy_read(controller):
+    """Deployment routing must not add a refresh or a policy-specific GET."""
+    reads = [call for call in controller.calls if call[0] == "GET" and "/policies" in urlsplit(call[1]).path]
+    assert len(reads) == 1
+    assert urlsplit(reads[0][1]).path.endswith("/policies")
+    assert controller.calls.index(reads[0]) < min(
+        (i for i, call in enumerate(controller.calls) if call[0] != "GET"),
+        default=len(controller.calls),
+    )
+
+
+@pytest.mark.parametrize("separate_id", [False, True])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("deploy", [False, True])
+@pytest.mark.parametrize("change", ["priority", "description", "inputs"])
+def test_accepted_update_switch_deploys_without_pending_record_or_refresh(invoke, separate_id, check_mode, deploy, change):
+    controller = RoutingController([policy()])
+    original = deepcopy(controller.policies)
+    desired = {
+        "priority": {"priority": 600},
+        "description": {"description": "renamed"},
+        "inputs": {"template_inputs": {"featureName": "lldp"}},
+    }[change]
+    result = invoke(controller, [_policy_id_entry(POLICY_ID, separate_id, **desired)], deploy=deploy, check_mode=check_mode)
+
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    assert result["before"] == list(original.values())
+    assert result["after"][0]["policyId"] == POLICY_ID
+    assert result["after"][0]["priority"] == (600 if change == "priority" else 725)
+    assert result["after"][0]["description"] == ("renamed" if change == "description" else "feature intent")
+    assert result["after"][0]["templateInputs"]["featureName"] == ("lldp" if change == "inputs" else "lacp")
+    assert deployment_calls(controller, "/pushConfig") == []
+    switches = deployment_calls(controller, "/switchActions/deploy")
+    assert len(switches) == int(deploy and not check_mode)
+    if switches:
+        assert switches[0][2] == {"switchIds": [SWITCH_ID]}
+    assert_one_initial_policy_read(controller)
+    if check_mode:
+        assert controller.writes() == []
+        assert controller.policies == original
+
+
+@pytest.mark.parametrize("separate_id", [False, True])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("deploy", [False, True])
+@pytest.mark.parametrize("has_pending", [False, True])
+def test_noop_routes_only_from_initial_pending_owner_and_preserves_snapshots(invoke, separate_id, check_mode, deploy, has_pending):
+    original = policy()
+    rows = [original]
+    if has_pending:
+        rows.append(pending_policy(owner=POLICY_ID, description="old description"))
+    controller = RoutingController(rows)
+    result = invoke(controller, [_policy_id_entry(POLICY_ID, separate_id)], deploy=deploy, check_mode=check_mode)
+
+    assert not result.get("failed"), result
+    assert result["changed"] is False
+    assert result["before"] == result["after"] == [original]
+    assert all(call[0] != "PUT" for call in controller.writes())
+    expected = int(deploy and not check_mode)
+    switches = deployment_calls(controller, "/switchActions/deploy")
+    pushes = deployment_calls(controller, "/pushConfig")
+    assert len(switches) == (expected if has_pending else 0)
+    assert len(pushes) == (0 if has_pending else expected)
+    if switches:
+        assert switches[0][2] == {"switchIds": [SWITCH_ID]}
+    if pushes:
+        assert pushes[0][2] == {"policyIds": [POLICY_ID]}
+    assert_one_initial_policy_read(controller)
+
+
+@pytest.mark.parametrize("separate_id", [False, True])
+@pytest.mark.parametrize("unrelated", ["owner", "switch", "active", "description_only", "group_child"])
+def test_noop_does_not_inherit_unrelated_pending_deletions(invoke, separate_id, unrelated):
+    row = pending_policy(owner=POLICY_ID)
+    if unrelated == "owner":
+        row["templateInputs"]["ORIG_POLICY_ID"] = SECOND_ID
+    elif unrelated == "switch":
+        row["switchId"] = "SERIAL_B"
+    elif unrelated == "active":
+        row["markDeleted"] = False
+    elif unrelated == "description_only":
+        row["templateInputs"].pop("ORIG_POLICY_ID")
+    else:
+        row.update(source="POLICY-GROUP-999")
+        row["templateInputs"]["ORIG_POLICY_ID"] = "POLICY-GROUP-999"
+    controller = RoutingController([policy(), row])
+    result = invoke(controller, [_policy_id_entry(POLICY_ID, separate_id)], deploy=True)
+
+    assert not result.get("failed"), result
+    assert result["changed"] is False
+    assert result["before"] == result["after"] == [policy()]
+    assert deployment_calls(controller, "/switchActions/deploy") == []
+    assert deployment_calls(controller, "/pushConfig")[0][2] == {"policyIds": [POLICY_ID]}
+    assert_one_initial_policy_read(controller)
+
+
+@pytest.mark.parametrize("separate_id", [False, True])
+def test_pending_noop_uses_resolved_owner_instead_of_caller_switch(invoke, separate_id):
+    controller = RoutingController([policy(), pending_policy(owner=POLICY_ID)])
+    entry = _policy_id_entry(POLICY_ID, separate_id, switch=[{"serial_number": "SERIAL_B"}])
+    result = invoke(controller, [entry], deploy=True)
+
+    assert not result.get("failed"), result
+    assert result["changed"] is False
+    assert result["after"] == [policy()]
+    assert deployment_calls(controller, "/switchActions/deploy")[0][2] == {"switchIds": [SWITCH_ID]}
+    assert deployment_calls(controller, "/pushConfig") == []
+    assert_one_initial_policy_read(controller)
+
+
+@pytest.mark.parametrize("use_description_as_key", [False, True])
+@pytest.mark.parametrize("check_mode", [False, True])
+@pytest.mark.parametrize("deploy", [False, True])
+@pytest.mark.parametrize("old_shape", ["root", "two_clones"])
+def test_unique_recreation_deploys_old_removal_and_new_policy_together(invoke, use_description_as_key, check_mode, deploy, old_shape):
+    old = [pending_policy()]
+    if old_shape == "two_clones":
+        old = [pending_policy("POLICY-902", owner="POLICY-900"), pending_policy("POLICY-903", owner="POLICY-900")]
+    controller = RoutingController(old)
+    original = deepcopy(controller.policies)
+    result = invoke(
+        controller,
+        [config("feature_enable", description="feature intent", priority=600, template_inputs={"featureName": "lldp"})],
+        use_description_as_key=use_description_as_key,
+        check_mode=check_mode,
+        deploy=deploy,
+    )
+
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    assert result["before"] == []
+    assert len(result["after"]) == 1
+    assert result["after"][0]["templateInputs"]["featureName"] == "lldp"
+    assert result["after"][0]["priority"] == 600
+    assert all(row.get("policyId") not in {"POLICY-901", "POLICY-902", "POLICY-903"} for row in result["after"])
+    assert deployment_calls(controller, "/pushConfig") == []
+    switches = deployment_calls(controller, "/switchActions/deploy")
+    assert len(switches) == int(deploy and not check_mode)
+    if switches:
+        assert switches[0][2] == {"switchIds": [SWITCH_ID]}
+    assert_one_initial_policy_read(controller)
+    if check_mode:
+        assert controller.writes() == []
+        assert controller.policies == original
+        assert "policyId" not in result["after"][0]
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    ["switch", "template", "missing_description", "empty_description", "internal", "active_owner_renamed", "active_owner_other_template", "multiple_owners"],
+)
+def test_nonunique_or_unrelated_creation_keeps_policy_push(invoke, mismatch):
+    row = pending_policy()
+    rows = [row]
+    entry = config("feature_enable", description="feature intent", template_inputs={"featureName": "lldp"})
+    if mismatch == "switch":
+        row["switchId"] = "SERIAL_B"
+    elif mismatch == "template":
+        row["templateName"] = "feature_disable"
+    elif mismatch == "missing_description":
+        entry.pop("description")
+    elif mismatch == "empty_description":
+        entry["description"] = row["description"] = ""
+    elif mismatch == "internal":
+        row["source"] = "POLICY-GROUP-900"
+    elif mismatch.startswith("active_owner"):
+        row["templateInputs"]["ORIG_POLICY_ID"] = POLICY_ID
+        active = policy(description="renamed")
+        if mismatch == "active_owner_other_template":
+            active["templateName"] = "feature_disable"
+        rows.append(active)
+    else:
+        rows.append(pending_policy("POLICY-902"))
+    controller = RoutingController(rows)
+    result = invoke(controller, [entry], deploy=True)
+
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    assert deployment_calls(controller, "/switchActions/deploy") == []
+    assert deployment_calls(controller, "/pushConfig")[0][2] == {"policyIds": ["POLICY-200"]}
+    assert_one_initial_policy_read(controller)
+    if mismatch == "multiple_owners":
+        assert result.get("warnings_nd"), result
+
+
+@pytest.mark.parametrize("active_count", [1, 2])
+@pytest.mark.parametrize("additional", [None, False, True])
+def test_creation_beside_active_matches_never_inherits_their_pending_identity(invoke, active_count, additional):
+    active = [policy()]
+    if active_count == 2:
+        active.append(policy(SECOND_ID))
+    rows = [*active, pending_policy(owner=POLICY_ID)]
+    controller = RoutingController(rows)
+    entry = config("feature_enable", description="feature intent", template_inputs={"featureName": "lldp"})
+    if additional is not None:
+        entry["create_additional_policy"] = additional
+    result = invoke(controller, [entry], deploy=True)
+
+    assert not result.get("failed"), result
+    assert_one_initial_policy_read(controller)
+    assert deployment_calls(controller, "/switchActions/deploy") == []
+    if active_count == 2 and additional is False:
+        assert result["changed"] is False
+        assert controller.writes() == []
+    else:
+        assert result["changed"] is True
+        assert deployment_calls(controller, "/pushConfig")[0][2] == {"policyIds": ["POLICY-200"]}
+
+
+@pytest.mark.parametrize("separate_id", [False, True])
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_missing_active_id_remains_failure_even_when_marked_record_exists(invoke, separate_id, check_mode):
+    controller = RoutingController([pending_policy(POLICY_ID)])
+    result = invoke(controller, [_policy_id_entry(POLICY_ID, separate_id)], deploy=True, check_mode=check_mode)
+
+    assert result["failed"] is True
+    assert result["changed"] is False
+    assert result["before"] == result["after"] == []
+    assert controller.writes() == []
+    assert_one_initial_policy_read(controller)
+
+
+@pytest.mark.parametrize("same_switch", [False, True])
+@pytest.mark.parametrize("reject_update", [False, True])
+def test_mixed_create_update_batches_only_accepted_switch_owners(invoke, same_switch, reject_update):
+    controller = RoutingController([policy()])
+    if reject_update:
+        controller.reject_updates.add(POLICY_ID)
+    created_switch = SWITCH_ID if same_switch else "SERIAL_B"
+    result = invoke(
+        controller,
+        [
+            config(priority=600),
+            config("feature_disable", description="new feature", switch=[{"serial_number": created_switch}]),
+        ],
+        deploy=True,
+        verbosity=3,
+    )
+
+    assert bool(result.get("failed")) is reject_update
+    assert result["changed"] is True
+    after = {row["policyId"]: row for row in result["after"]}
+    assert after[POLICY_ID]["priority"] == (725 if reject_update else 600)
+    assert after["POLICY-200"]["switchId"] == created_switch
+    switches = deployment_calls(controller, "/switchActions/deploy")
+    pushes = deployment_calls(controller, "/pushConfig")
+    assert len(switches) == int(not reject_update)
+    if switches:
+        assert switches[0][2] == {"switchIds": [SWITCH_ID]}
+    assert len(pushes) == int(reject_update or not same_switch)
+    if pushes:
+        assert pushes[0][2] == {"policyIds": ["POLICY-200"]}
+    assert_one_initial_policy_read(controller)
+
+
+@pytest.mark.parametrize("reject_switch", [False, True])
+@pytest.mark.parametrize("reject_push", [False, True])
+@pytest.mark.parametrize("push_transport", [False, True])
+def test_independent_deploy_batches_preserve_each_error_context_and_accepted_state(invoke, reject_switch, reject_push, push_transport):
+    controller = RoutingController([policy()])
+    controller.reject_switch_deploy = reject_switch
+    if reject_push:
+        if push_transport:
+            controller.push_transport_error = True
+        else:
+            controller.reject_push.add("POLICY-200")
+    result = invoke(
+        controller,
+        [config(priority=600), config("feature_disable", description="new feature", switch=[{"serial_number": "SERIAL_B"}])],
+        deploy=True,
+        verbosity=3,
+    )
+
+    assert bool(result.get("failed")) is (reject_switch or reject_push)
+    assert result["changed"] is True
+    after = {row["policyId"]: row for row in result["after"]}
+    assert after[POLICY_ID]["priority"] == 600
+    assert after["POLICY-200"]["switchId"] == "SERIAL_B"
+    assert len(deployment_calls(controller, "/switchActions/deploy")) == 1
+    assert len(deployment_calls(controller, "/pushConfig")) == 1
+    contexts = list(zip(result["api_paths"], result["api_response"]))
+    switch_responses = [response for path, response in contexts if "/switchActions/deploy" in str(path)]
+    push_responses = [response for path, response in contexts if "/pushConfig" in str(path)]
+    if reject_switch:
+        assert "deploy rejected" in str(switch_responses)
+        assert "push transport rejected" not in str(switch_responses)
+        assert "push rejected" not in str(switch_responses)
+    if reject_push:
+        assert ("push transport rejected" if push_transport else "push rejected") in str(push_responses)
+        assert "deploy rejected" not in str(push_responses)
+    assert_one_initial_policy_read(controller)
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_pending_noop_switch_deploy_failure_keeps_unchanged_state(invoke, check_mode):
+    controller = RoutingController([policy(), pending_policy(owner=POLICY_ID)])
+    controller.reject_switch_deploy = True
+    result = invoke(controller, [config()], deploy=True, check_mode=check_mode, verbosity=3)
+
+    assert bool(result.get("failed")) is (not check_mode)
+    assert result["changed"] is False
+    assert result["before"] == result["after"] == [policy()]
+    assert deployment_calls(controller, "/pushConfig") == []
+    assert len(deployment_calls(controller, "/switchActions/deploy")) == int(not check_mode)
+    assert_one_initial_policy_read(controller)
+
+
+@pytest.mark.parametrize("response", [{}, {"status": "Configuration deployment completed"}, None])
+@pytest.mark.parametrize("noop", [False, True])
+def test_switch_routing_preserves_existing_aggregate_and_empty_success_responses(invoke, response, noop):
+    rows = [policy(), pending_policy(owner=POLICY_ID)] if noop else [policy()]
+    controller = RoutingController(rows)
+    controller.switch_response = response
+    result = invoke(controller, [config() if noop else config(priority=600)], deploy=True)
+
+    assert not result.get("failed"), result
+    assert result["changed"] is (not noop)
+    if noop:
+        assert result["before"] == result["after"] == [policy()]
+    else:
+        assert result["after"][0]["priority"] == 600
+    assert len(deployment_calls(controller, "/switchActions/deploy")) == 1
+    assert deployment_calls(controller, "/pushConfig") == []
+    assert_one_initial_policy_read(controller)
+
+
+@pytest.mark.parametrize("same_switch", [False, True])
+def test_replacement_precreate_deploy_does_not_cover_the_new_replacement(invoke, same_switch):
+    update_switch = SWITCH_ID if same_switch else "SERIAL_B"
+    second = policy(SECOND_ID, switchId=update_switch, description="second feature")
+    controller = RoutingController([policy(), second])
+    result = invoke(
+        controller,
+        [
+            config("feature_disable", description="feature intent"),
+            config(SECOND_ID, priority=600, switch=[{"serial_number": update_switch}]),
+        ],
+        deploy=True,
+        use_description_as_key=True,
+    )
+
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    assert {row["policyId"] for row in result["after"]} == {SECOND_ID, "POLICY-200"}
+    writes = controller.writes()
+    mark_index = next(i for i, call in enumerate(writes) if urlsplit(call[1]).path.endswith("/markDelete"))
+    switch_indexes = [i for i, call in enumerate(writes) if urlsplit(call[1]).path.endswith("/switchActions/deploy")]
+    create_index = next(i for i, call in enumerate(writes) if call[0] == "POST" and urlsplit(call[1]).path.endswith("/policies"))
+    assert len(switch_indexes) == 2
+    assert mark_index < switch_indexes[0] < create_index < switch_indexes[1]
+    assert writes[switch_indexes[0]][2] == {"switchIds": [SWITCH_ID]}
+    assert writes[switch_indexes[1]][2] == {"switchIds": [update_switch]}
+    pushes = deployment_calls(controller, "/pushConfig")
+    assert len(pushes) == int(not same_switch)
+    if pushes:
+        assert pushes[0][2] == {"policyIds": ["POLICY-200"]}
+    assert_one_initial_policy_read(controller)
+
+
+@pytest.mark.parametrize(
+    "counts",
+    [
+        {"remaining": 1, "total": 2},
+        {"remaining": 0, "total": 2},
+    ],
+)
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_known_incomplete_inventory_cannot_decide_noop_absence(invoke, counts, check_mode):
+    controller = RoutingController([policy()])
+    controller.inventory_response = {"policies": [policy()], "meta": {"counts": counts}}
+    result = invoke(controller, [config()], deploy=True, check_mode=check_mode, verbosity=3)
+
+    assert result.get("failed") is True
+    assert result["changed"] is False
+    assert result["before"] == result["after"] == [policy()]
+    assert result["api_result"] and all(row.get("success") is False for row in result["api_result"])
+    assert controller.writes() == []
+    assert controller.policies == {POLICY_ID: policy()}
+    assert_one_initial_policy_read(controller)
+
+
+@pytest.mark.parametrize("response", [None, {}, {"policies": [], "meta": {"counts": {"remaining": 1, "total": 1}}}])
+def test_untrusted_initial_inventory_cannot_establish_unique_recreation(invoke, response):
+    controller = RoutingController()
+    controller.inventory_response = response
+    result = invoke(controller, [config("feature_enable", description="recreation")], deploy=True)
+
+    assert result.get("failed") is True
+    assert result["changed"] is False
+    assert controller.writes() == []
+    assert controller.policies == {}
+    assert_one_initial_policy_read(controller)
+
+
+@pytest.mark.parametrize("deploy", [False, True])
+def test_accepted_update_does_not_need_complete_pending_discovery(invoke, deploy):
+    controller = RoutingController([policy()])
+    controller.inventory_response = {"policies": [policy()], "meta": {"counts": {"remaining": 5, "total": 6}}}
+    result = invoke(controller, [config(priority=600)], deploy=deploy)
+
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    assert result["after"][0]["priority"] == 600
+    assert len(deployment_calls(controller, "/switchActions/deploy")) == int(deploy)
+    assert deployment_calls(controller, "/pushConfig") == []
+    assert_one_initial_policy_read(controller)
+
+
+def test_many_accepted_updates_use_one_initial_read_and_one_switch_deployment(invoke):
+    originals = [policy(f"POLICY-{1000 + i}", description=f"feature {i}") for i in range(50)]
+    controller = RoutingController(originals)
+    result = invoke(controller, [config(row["policyId"], priority=600) for row in originals], deploy=True)
+
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    assert len(result["before"]) == len(result["after"]) == 50
+    assert {row["policyId"] for row in result["after"]} == {row["policyId"] for row in originals}
+    assert all(row["priority"] == 600 for row in result["after"])
+    assert len([call for call in controller.writes() if call[0] == "PUT"]) == 50
+    assert len(deployment_calls(controller, "/switchActions/deploy")) == 1
+    assert deployment_calls(controller, "/pushConfig") == []
+    assert_one_initial_policy_read(controller)
+    assert len([call for call in controller.calls if call[0] == "GET"]) == 1
+
+
+def test_routed_update_preserves_cluster_and_ticket_scope(invoke):
+    controller = RoutingController([policy()])
+    result = invoke(controller, [config(priority=600)], deploy=True, cluster_name="CLUSTER_A", ticket_id="CHG-1")
+
+    assert not result.get("failed"), result
+    puts = [call for call in controller.writes() if call[0] == "PUT"]
+    switches = deployment_calls(controller, "/switchActions/deploy")
+    assert len(puts) == len(switches) == 1
+    assert "CLUSTER_A" in puts[0][1]
+    assert "CHG-1" in puts[0][1]
+    assert "CLUSTER_A" in switches[0][1]
+    assert "CHG-1" not in switches[0][1]
+    assert_one_initial_policy_read(controller)
+
+
+def test_retained_pending_inventory_does_not_leak_into_gathered_results(invoke):
+    controller = RoutingController([policy(), pending_policy(owner=POLICY_ID), policy("POLICY-950", source="POLICY-GROUP-900")])
+    result = invoke(controller, [config("feature_enable")], state="gathered")
+
+    assert not result.get("failed"), result
+    assert result["changed"] is False
+    assert [row["policy_id"] for row in result["gathered"]] == [POLICY_ID]
+    assert controller.writes() == []
+    assert_one_initial_policy_read(controller)
+
+
+@pytest.mark.parametrize("source", ["", POLICY_ID, "POLICY-999", "POLICY-GROUP-999"])
+def test_pending_source_must_not_contradict_original_owner(invoke, source):
+    controller = RoutingController([policy(), pending_policy(owner=POLICY_ID, source=source)])
+    result = invoke(controller, [config()], deploy=True)
+
+    assert not result.get("failed"), result
+    assert result["changed"] is False
+    related = source in {"", POLICY_ID}
+    assert len(deployment_calls(controller, "/switchActions/deploy")) == int(related)
+    assert len(deployment_calls(controller, "/pushConfig")) == int(not related)
+    assert_one_initial_policy_read(controller)
+
+
+@pytest.mark.parametrize("followup", ["identical", "priority", "description"])
+def test_staged_input_update_is_recovered_by_a_later_merged_task(invoke, followup):
+    class PendingOnUpdateController(RoutingController):
+        """Persist a linked old-config clone when an input update is accepted."""
+
+        def request(self, verb, path, payload=None):
+            resource = urlsplit(path).path
+            if verb != "PUT" or "/policies/" not in resource:
+                return super().request(verb, path, payload)
+            pid = resource.rsplit("/", 1)[-1]
+            before = deepcopy(self.policies[pid])
+            data = super().request(verb, path, payload)
+            if before["templateInputs"] != payload["templateInputs"]:
+                self.policies["POLICY-901"] = {
+                    **before,
+                    "policyId": "POLICY-901",
+                    "markDeleted": True,
+                    "templateInputs": {**before["templateInputs"], "ORIG_POLICY_ID": pid},
+                }
+            return data
+
+    controller = PendingOnUpdateController([policy()])
+    staged = invoke(controller, [config(template_inputs={"featureName": "lldp"})], deploy=False)
+    assert not staged.get("failed"), staged
+    assert staged["changed"] is True
+    assert len(controller.writes()) == 1
+    assert controller.writes()[0][0] == "PUT"
+    assert controller.policies["POLICY-901"]["templateInputs"]["ORIG_POLICY_ID"] == POLICY_ID
+    assert_one_initial_policy_read(controller)
+    controller.calls.clear()
+
+    desired = {
+        "identical": {"template_inputs": {"featureName": "lldp"}},
+        "priority": {"priority": 600},
+        "description": {"description": "renamed"},
+    }[followup]
+    result = invoke(controller, [config(**desired)], deploy=True)
+    assert not result.get("failed"), result
+    assert result["changed"] is (followup != "identical")
+    assert result["after"][0]["templateInputs"]["featureName"] == "lldp"
+    assert len([call for call in controller.writes() if call[0] == "PUT"]) == int(followup != "identical")
+    assert len(deployment_calls(controller, "/switchActions/deploy")) == 1
+    assert deployment_calls(controller, "/pushConfig") == []
+    assert_one_initial_policy_read(controller)
+    if followup == "identical":
+        assert result["after"] == result["before"]
+
+
+@pytest.mark.parametrize("check_mode", [False, True])
+def test_invalid_sibling_does_not_mark_pending_noop_deployment_changed(invoke, check_mode):
+    controller = RoutingController([policy(), pending_policy(owner=POLICY_ID)])
+    result = invoke(controller, [config(), config("POLICY-999")], deploy=True, check_mode=check_mode)
+
+    assert result["failed"] is True
+    assert result["changed"] is False
+    assert result["before"] == result["after"] == [policy()]
+    assert len(deployment_calls(controller, "/switchActions/deploy")) == int(not check_mode)
+    assert deployment_calls(controller, "/pushConfig") == []
+    assert_one_initial_policy_read(controller)
+
+
+@pytest.mark.parametrize("verbosity", [0, 2, 3])
+@pytest.mark.parametrize("noop", [False, True])
+def test_switch_deployment_preserves_api_diagnostic_gates(invoke, verbosity, noop):
+    controller = RoutingController([policy(), pending_policy(owner=POLICY_ID)] if noop else [policy()])
+    result = invoke(controller, [config() if noop else config(priority=600)], deploy=True, verbosity=verbosity, output_level="info")
+
+    assert not result.get("failed"), result
+    assert result["changed"] is (not noop)
+    assert ("api_paths" in result) is (verbosity >= 2)
+    assert ("api_diff" in result) is (verbosity >= 3)
+    assert "proposed" in result
+    if verbosity >= 2:
+        assert any("/switchActions/deploy" in path for path in result["api_paths"])
+    assert_one_initial_policy_read(controller)
+
+
+@pytest.mark.parametrize(
+    "meta",
+    [
+        None,
+        [],
+        "unexpected metadata",
+        {"counts": None},
+        {"counts": []},
+        {"counts": "unexpected counts"},
+        {"counts": {"remaining": "unknown", "total": 1}},
+        {"counts": {"remaining": 0, "total": "unknown"}},
+    ],
+)
+def test_malformed_present_metadata_cannot_establish_absence(invoke, meta):
+    controller = RoutingController([policy()])
+    controller.inventory_response = {"policies": [policy()], "meta": meta}
+    result = invoke(controller, [config()], deploy=True, verbosity=3)
+
+    assert result.get("failed") is True
+    assert result["changed"] is False
+    assert result["before"] == result["after"] == [policy()]
+    assert result["api_result"] and all(row.get("success") is False for row in result["api_result"])
+    assert controller.writes() == []
+    assert_one_initial_policy_read(controller)
+
+
+@pytest.mark.parametrize("include_empty_counts", [False, True])
+def test_at_limit_inventory_needs_completion_evidence_without_extra_get(invoke, include_empty_counts):
+    controller = RoutingController([policy()])
+    rows = [policy(f"POLICY-{i + 1}") for i in range(10000)]
+    controller.inventory_response = {"policies": rows}
+    if include_empty_counts:
+        controller.inventory_response["meta"] = {"counts": {}}
+    result = invoke(controller, [config()], deploy=True, verbosity=3)
+
+    assert result.get("failed") is True
+    assert result["changed"] is False
+    assert result["before"] == result["after"] == [policy()]
+    assert result["api_result"] and all(row.get("success") is False for row in result["api_result"])
+    assert controller.writes() == []
+    assert_one_initial_policy_read(controller)
+
+
+def test_positive_pending_owner_match_does_not_require_negative_discovery_proof(invoke):
+    controller = RoutingController([policy(), pending_policy(owner=POLICY_ID)])
+    controller.inventory_response = {
+        "policies": list(controller.policies.values()),
+        "meta": {"counts": {"remaining": 2, "total": 4}},
+    }
+    result = invoke(controller, [config()], deploy=True)
+
+    assert not result.get("failed"), result
+    assert result["changed"] is False
+    assert result["before"] == result["after"] == [policy()]
+    assert len(deployment_calls(controller, "/switchActions/deploy")) == 1
+    assert deployment_calls(controller, "/pushConfig") == []
+    assert_one_initial_policy_read(controller)
+
+
+def test_mixed_stale_noop_and_new_create_report_batch_local_changes(invoke):
+    controller = RoutingController([policy(), pending_policy(owner=POLICY_ID)])
+    result = invoke(
+        controller,
+        [config(), config("feature_disable", description="new feature", switch=[{"serial_number": "SERIAL_B"}])],
+        deploy=True,
+        verbosity=3,
+    )
+
+    assert not result.get("failed"), result
+    assert result["changed"] is True
+    after = {row["policyId"]: row for row in result["after"]}
+    assert after[POLICY_ID] == policy()
+    assert after["POLICY-200"]["switchId"] == "SERIAL_B"
+    deployment_results = [
+        (path, api_result)
+        for path, api_result in zip(result["api_paths"], result["api_result"])
+        if "/switchActions/deploy" in str(path) or "/pushConfig" in str(path)
+    ]
+    switch_results = [api_result for path, api_result in deployment_results if "/switchActions/deploy" in path]
+    push_results = [api_result for path, api_result in deployment_results if "/pushConfig" in path]
+    assert len(switch_results) == len(push_results) == 1
+    assert switch_results[0]["changed"] is False
+    assert push_results[0]["changed"] is True
+    assert_one_initial_policy_read(controller)
+
+
+def test_failed_initial_inventory_is_not_reported_as_a_successful_api_result(invoke):
+    controller = RoutingController([policy()])
+    controller.inventory_error = NDModuleError(
+        msg="simulated policy inventory failure",
+        status=503,
+        response_payload={"message": "inventory rejected"},
+    )
+    result = invoke(controller, [config()], deploy=True, verbosity=3)
+
+    assert result.get("failed") is True
+    assert result["changed"] is False
+    assert result["before"] == result["after"] == []
+    assert "simulated policy inventory failure" in str(result)
+    assert "inventory rejected" in str(result["api_response"])
+    assert result["api_result"] and all(row.get("success") is False for row in result["api_result"])
+    assert controller.writes() == []
+    assert_one_initial_policy_read(controller)
+
+
+class DeploymentExceptionController(RoutingController):
+    """Raise distinct deployment errors while retaining real request context."""
+
+    def __init__(self, policies=None, *, errors):
+        super().__init__(policies)
+        self.error_statuses = errors
+        self.deployment_errors = {}
+
+    def request(self, verb, path, payload=None):
+        resource = urlsplit(path).path
+        kind = None
+        if verb == "POST" and resource.endswith("/switchActions/deploy"):
+            kind = "switch"
+        elif verb == "POST" and resource.endswith("/pushConfig"):
+            kind = "policy"
+        if kind in self.error_statuses:
+            self.calls.append((verb, path, deepcopy(payload)))
+            error = NDModuleError(
+                msg=f"original {kind} deployment transport error",
+                status=self.error_statuses[kind],
+                request_payload=deepcopy(payload),
+                response_payload={"message": f"{kind} endpoint unavailable", "endpoint": kind},
+                raw=f"raw {kind} endpoint response",
+            )
+            self.deployment_errors[kind] = error
+            raise error
+        return super().request(verb, path, payload)
+
+
+@pytest.mark.parametrize("output_level", ["normal", "info", "debug"])
+@pytest.mark.parametrize("status", [502, None])
+@pytest.mark.parametrize("operation", ["create", "update", "noop"])
+def test_deployment_exception_preserves_original_failure_contract(invoke, output_level, status, operation):
+    """Local batch handling retains the previous top-level NDModuleError output."""
+    kind = "policy" if operation == "create" else "switch"
+    originals = [] if operation == "create" else [policy()]
+    if operation == "noop":
+        originals.append(pending_policy(owner=POLICY_ID))
+    controller = DeploymentExceptionController(originals, errors={kind: status})
+    entry = {
+        "create": config("feature_disable", description="new policy"),
+        "update": config(priority=600),
+        "noop": config(),
+    }[operation]
+    result = invoke(controller, [entry], deploy=True, output_level=output_level, verbosity=3)
+
+    assert result["failed"] is True
+    assert result["msg"] == f"original {kind} deployment transport error"
+    assert result["changed"] is (operation != "noop")
+    assert ("error_details" in result) is (output_level == "debug")
+    if output_level == "debug":
+        assert result["error_details"] == controller.deployment_errors[kind].to_dict()
+    if operation == "create":
+        assert result["before"] == []
+        assert [row["policyId"] for row in result["after"]] == ["POLICY-200"]
+        assert result["after"][0] == controller.policies["POLICY-200"]
+    elif operation == "update":
+        assert result["before"] == [policy()]
+        assert result["after"][0]["policyId"] == POLICY_ID
+        assert result["after"][0]["priority"] == 600
+        assert controller.policies[POLICY_ID]["priority"] == 600
+    else:
+        assert result["before"] == result["after"] == [policy()]
+
+    suffix = "/pushConfig" if kind == "policy" else "/switchActions/deploy"
+    requests = deployment_calls(controller, suffix)
+    assert len(requests) == 1
+    contexts = [(path, response) for path, response in zip(result["api_paths"], result["api_response"]) if suffix in str(path)]
+    assert len(contexts) == 1
+    path, response = contexts[0]
+    assert path == requests[0][1]
+    assert response["METHOD"] == requests[0][0] == "POST"
+    assert response["REQUEST_PATH"] == requests[0][1]
+    assert response["RETURN_CODE"] == status
+    assert response["MESSAGE"] == result["msg"]
+    assert response["DATA"] == controller.deployment_errors[kind].response_payload
+    assert_one_initial_policy_read(controller)
+
+
+@pytest.mark.parametrize("output_level", ["normal", "info", "debug"])
+@pytest.mark.parametrize(
+    "errors",
+    [
+        pytest.param({"switch": 502}, id="switch-502-policy-success"),
+        pytest.param({"switch": None}, id="switch-no-status-policy-success"),
+        pytest.param({"policy": 502}, id="switch-success-policy-502"),
+        pytest.param({"policy": None}, id="switch-success-policy-no-status"),
+        pytest.param({"switch": 502, "policy": 502}, id="both-502"),
+        pytest.param({"switch": None, "policy": None}, id="both-no-status"),
+        pytest.param({"switch": None, "policy": 502}, id="first-no-status-second-502"),
+        pytest.param({"switch": 502, "policy": None}, id="first-502-second-no-status"),
+    ],
+)
+def test_mixed_deployment_exceptions_keep_first_error_and_each_response(invoke, output_level, errors):
+    """Later success or failure cannot replace an earlier failed batch's context."""
+    controller = DeploymentExceptionController([policy()], errors=errors)
+    result = invoke(
+        controller,
+        [config(priority=600), config("feature_disable", description="new feature", switch=[{"serial_number": "SERIAL_B"}])],
+        deploy=True,
+        verbosity=3,
+        output_level=output_level,
+    )
+
+    first_kind = "switch" if "switch" in errors else "policy"
+    first_error = controller.deployment_errors[first_kind]
+    assert result["failed"] is True
+    assert result["msg"] == first_error.msg
+    assert result["changed"] is True
+    assert ("error_details" in result) is (output_level == "debug")
+    if output_level == "debug":
+        assert result["error_details"] == first_error.to_dict()
+    assert result["before"] == [policy()]
+    after = {row["policyId"]: row for row in result["after"]}
+    assert set(after) == {POLICY_ID, "POLICY-200"}
+    assert after[POLICY_ID]["priority"] == controller.policies[POLICY_ID]["priority"] == 600
+    assert after["POLICY-200"] == controller.policies["POLICY-200"]
+    assert after["POLICY-200"]["switchId"] == "SERIAL_B"
+
+    contexts = list(zip(result["api_paths"], result["api_response"], result["api_result"]))
+    for kind, suffix in [("switch", "/switchActions/deploy"), ("policy", "/pushConfig")]:
+        requests = deployment_calls(controller, suffix)
+        assert len(requests) == 1
+        matching = [(path, response, outcome) for path, response, outcome in contexts if suffix in str(path)]
+        assert len(matching) == 1
+        path, response, outcome = matching[0]
+        assert path == response["REQUEST_PATH"] == requests[0][1]
+        assert response["METHOD"] == requests[0][0] == "POST"
+        assert outcome["success"] is (kind not in errors)
+        if kind in errors:
+            error = controller.deployment_errors[kind]
+            assert response["RETURN_CODE"] == errors[kind]
+            assert response["MESSAGE"] == error.msg
+            assert response["DATA"] == error.response_payload
+            assert outcome["changed"] is False
+        else:
+            assert response["RETURN_CODE"] == 200
+            assert response["MESSAGE"] == "OK"
+            assert outcome["changed"] is True
+    assert_one_initial_policy_read(controller)

@@ -194,11 +194,17 @@ options:
     - When set to V(false), controller-side changes are staged without deploying
       the corresponding config changes to devices.
     - Deployment is opt-in. Set O(deploy=true) explicitly to push changes to devices.
-    - For C(merged), create/update deploy uses the resource-level policy deploy
-      operation scoped to the affected policy IDs. Entries that already match the
-      controller are also deployed when O(deploy=true), but this no-diff deploy does
+    - For C(merged), successfully updated policies use switch-level deploy.
+      New policies use policy-level deploy, except when recreating a uniquely
+      matching pending-deleted policy on the same switch with the same template
+      and explicitly supplied non-empty description. That recreation uses
+      switch-level deploy to apply the previous removal and new configuration.
+    - Resolved existing policies that already match the controller are also deployed when
+      O(deploy=true). They use switch-level deploy when a matching pending removal
+      exists; otherwise, they use policy-level deploy. This no-diff deployment does
       not by itself mark the task changed.
-    - If policy deploy fails after create or update, the policy record may already
+    - Policies covered by a switch-level deployment are not also pushed separately.
+    - If deployment fails after create or update, the policy record may already
       exist or be updated on the controller. Fix the deploy issue and rerun with
       O(deploy=true).
     - For C(deleted), the module attempts C(markDelete) first. PYTHON content-type
