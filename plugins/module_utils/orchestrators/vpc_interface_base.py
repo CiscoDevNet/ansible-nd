@@ -35,9 +35,13 @@ import re
 from dataclasses import dataclass
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
+from urllib.parse import parse_qs, urlsplit
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_vpc_pair import EpVpcPairGet
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vpc_pairs import (
+    EpVpcPairsListGet,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDelete,
     EpManageInterfacesGet,
@@ -74,6 +78,10 @@ class VpcDeletionPreviewPeer:
     interface_name: str
     running_member_ports: tuple[str, ...]
     reset_member_ports: tuple[str, ...]
+
+
+# Page size for the fabric-wide discovered `vpcPairs` read in the pair-readiness gate (issue #648).
+_DISCOVERED_PAIR_PAGE_SIZE = 500
 
 
 class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
@@ -141,6 +149,9 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         super().model_post_init(__context)
         self._peer_serial_cache: dict[str, str] = {}
         self._peer_echo_cache: dict[str, str] = {}
+        self._discovered_pair_keys: set[frozenset[str]] | None = None
+        # None follows `self.deploy`; an aggregate workflow, whose planning orchestrators never carry `deploy`, sets it explicitly.
+        self._pair_discovery_required: bool | None = None
         self._preview_scoped_child_switches: dict[tuple[str, str], set[str]] = {}
 
     def _register_pending_preview_derived_identities(
@@ -196,12 +207,252 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         return super()._preview_scoped_unregistered_child_requires_verification(pair, submitted_pairs)
 
     def preflight_safety(self, model_instances: Sequence[ModelType]) -> None:
-        """Validate both peers and member ownership without capability API calls."""
+        """
+        # Summary
+
+        Validate both peers, pair readiness on the switches, and member ownership before any mutation.
+
+        Every proposed item must resolve a reciprocal vPC pair from the intent records. When the run deploys, that pair must also appear
+        in the fabric-wide discovered `vpcPairs` view (issue #648). A pair that exists only as ND intent has no `feature vpc` /
+        `vpc domain` on the switches yet, so the interface-scoped deploy of `vpc <id>` is rejected by NX-OS as an invalid command after the
+        create has already been accepted. Failing here keeps that run at `changed: false` with an actionable message.
+
+        A run that only stages intent (`config_actions.deploy` false) sends nothing to a switch, so it skips the discovered-pair check
+        and its read. That keeps vPC interfaces preparable on a pair whose switches cannot report it yet, such as pre-provisioned ones.
+        Check mode follows the same rule as a normal run.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Propagated from `_resolve_switch_id` / `_resolve_reciprocal_peer_switch_id` (unresolvable switch, missing or non-reciprocal pair).
+        - Via `_require_discovered_pair` if the run deploys and the pair is not discovered on the switches.
+        - Via `_validate_unique_pair_names` (see its docstring).
+        """
         super().preflight_safety(model_instances)
+        resolved_pairs = self._resolved_pairs(model_instances)
+        # Local, request-free guards run first so an input conflict is reported without the discovered-pair read.
+        self._validate_unique_pair_names(model_instances)
+        self._require_discovered_pairs(resolved_pairs)
+
+    def preflight_pair_discovery(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Run only the pair-readiness gate for `model_instances`. An aggregate workflow uses this for requested items it will deploy
+        without mutating (intent staged by an earlier run), which never reach `preflight_safety`. A no-op unless the run deploys.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Propagated from `_resolve_switch_id` / `_resolve_reciprocal_peer_switch_id` (unresolvable switch, missing or non-reciprocal pair).
+        - Via `_require_discovered_pair` if the run deploys and a pair is not discovered on the switches.
+        """
+        if not self._pair_discovery_enforced():
+            return
+        self._require_discovered_pairs(self._resolved_pairs(model_instances))
+
+    def enforce_pair_discovery(self, required: bool) -> None:
+        """
+        # Summary
+
+        Set whether the pair-readiness gate applies, overriding the `self.deploy` default. An aggregate workflow plans with orchestrators
+        that never receive `config_actions`, so it passes its own deploy decision here.
+
+        ## Raises
+
+        None
+        """
+        self._pair_discovery_required = required
+
+    def _pair_discovery_enforced(self) -> bool:
+        """
+        # Summary
+
+        Return whether this run must find each vPC pair in the discovered view: the explicit `enforce_pair_discovery` value when one was
+        set, otherwise `self.deploy`.
+
+        ## Raises
+
+        None
+        """
+        if self._pair_discovery_required is not None:
+            return self._pair_discovery_required
+        return self.deploy
+
+    def _resolved_pairs(self, model_instances: Sequence[ModelType]) -> list[tuple[str, str, str]]:
+        """
+        # Summary
+
+        Return `(switch_ip, switch_id, peer_switch_id)` for each proposed item, resolved from the reciprocal intent pair records.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Propagated from `_resolve_switch_id` / `_resolve_reciprocal_peer_switch_id` (unresolvable switch, missing or non-reciprocal pair).
+        """
+        resolved_pairs: list[tuple[str, str, str]] = []
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
-        self._validate_unique_pair_names(model_instances)
+            peer_switch_id = self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
+            resolved_pairs.append((model_instance.switch_ip, switch_id, peer_switch_id))
+        return resolved_pairs
+
+    def _require_discovered_pairs(self, resolved_pairs: Sequence[tuple[str, str, str]]) -> None:
+        """
+        # Summary
+
+        Apply `_require_discovered_pair` to every resolved pair when the run deploys; a staging-only run issues no read and never raises.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `_require_discovered_pair` if the run deploys and a pair is not discovered on the switches.
+        """
+        if not self._pair_discovery_enforced():
+            return
+        for switch_ip, switch_id, peer_switch_id in resolved_pairs:
+            self._require_discovered_pair(switch_ip, switch_id, peer_switch_id)
+
+    def _require_discovered_pair(self, switch_ip: str, switch_id: str, peer_switch_id: str) -> None:
+        """
+        # Summary
+
+        Reject a vPC pair that ND holds as intent only. The discovered `vpcPairs` view (the endpoint's default view) lists the pairs the
+        switches actually report, so a pair absent from it has not been deployed via `nd_manage_vpc_pair` yet.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If `{switch_id, peer_switch_id}` is not among the discovered pairs of the fabric.
+        """
+        if frozenset({switch_id, peer_switch_id}) in self._discovered_pairs():
+            return
+        raise RuntimeError(
+            f"vPC pair for switch {switch_ip} (serial {switch_id}, peer serial {peer_switch_id}) exists in Nexus Dashboard intent but is "
+            f"not discovered on the switches (no record in GET /api/v1/manage/fabrics/{self.fabric_name}/vpcPairs); deploy the pair via "
+            "nd_manage_vpc_pair with config_actions.deploy=true before configuring vPC interfaces."
+        )
+
+    @staticmethod
+    def _coerce_nonnegative_int(value: Any) -> int | None:
+        """
+        # Summary
+
+        Return a pagination count as a non-negative integer, or None when the value is absent or unusable.
+
+        ## Raises
+
+        None
+        """
+        if isinstance(value, bool):
+            return None
+        try:
+            converted = int(value)
+        except (TypeError, ValueError):
+            return None
+        return converted if converted >= 0 else None
+
+    def _next_discovered_pair_offset(self, data: Mapping[str, Any], offset: int, page_length: int) -> int | None:
+        """
+        # Summary
+
+        Decide from one discovered `vpcPairs` page whether another page follows, and return its offset (None when the read is complete).
+        The pagination metadata is optional in the `vpcPairs` response schema on ND 4.2.1 and 4.3.1, so its absence proves nothing: the
+        order of trust is `meta.counts.total`, then `meta.counts.remaining`, then `meta.links.next`, then a full page. These are the
+        semantics the workflow coordinator applies to the same endpoint (`InterfaceWorkflowCoordinator._vpc_pair_records`).
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If `meta.links.next` is not a URL string, carries no single `offset`, or does not advance past `offset`.
+        - If `meta.links.next` is present while the counts say this page is the last one.
+        - If the page is empty while the metadata reports more records.
+        """
+        metadata = data.get("meta")
+        counts = metadata.get("counts") if isinstance(metadata, Mapping) else None
+        counts = counts if isinstance(counts, Mapping) else {}
+        links = metadata.get("links") if isinstance(metadata, Mapping) else None
+        next_link = links.get("next") if isinstance(links, Mapping) else None
+        next_offset: int | None = None
+        if next_link:
+            if not isinstance(next_link, str):
+                raise RuntimeError(f"Discovered vPC pair next link for fabric {self.fabric_name!r} must be a URL string.")
+            raw_offsets = parse_qs(urlsplit(next_link).query).get("offset", [])
+            if len(raw_offsets) != 1:
+                raise RuntimeError(f"Discovered vPC pair next link for fabric {self.fabric_name!r} lacks one offset.")
+            next_offset = self._coerce_nonnegative_int(raw_offsets[0])
+            if next_offset is None or next_offset <= offset:
+                raise RuntimeError(f"Discovered vPC pair next link for fabric {self.fabric_name!r} does not advance past offset {offset}.")
+        total = self._coerce_nonnegative_int(counts.get("total"))
+        remaining = self._coerce_nonnegative_int(counts.get("remaining"))
+        if next_offset is not None and (total is not None and offset + page_length >= total or remaining == 0):
+            raise RuntimeError(f"Discovered vPC pair next link for fabric {self.fabric_name!r} contradicts terminal counts metadata.")
+        if total is not None:
+            has_next = offset + page_length < total or next_offset is not None
+        elif remaining is not None:
+            has_next = remaining > 0 or next_offset is not None
+        else:
+            has_next = next_offset is not None or page_length >= _DISCOVERED_PAIR_PAGE_SIZE
+        if not has_next:
+            return None
+        if not page_length:
+            raise RuntimeError(f"Discovered vPC pair response for fabric {self.fabric_name!r} reports more records after empty offset {offset}.")
+        return next_offset if next_offset is not None else offset + page_length
+
+    def _discovered_pairs(self) -> set[frozenset[str]]:
+        """
+        # Summary
+
+        Return the unordered serial pairs the fabric-wide discovered `vpcPairs` view reports, fetched once per orchestrator. Every page is
+        read before the result is cached (`_next_discovered_pair_offset` decides whether one follows), so a pair on a later page is never
+        mistaken for an undiscovered one and a failed read leaves no partial set behind.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If a page does not carry a `vpcPairs` list.
+        - If a page repeats an earlier one.
+        - Propagated from `_next_discovered_pair_offset` if the pagination metadata cannot be followed or contradicts itself.
+        - Propagated from `_request` if the GET fails.
+        """
+        if self._discovered_pair_keys is not None:
+            return self._discovered_pair_keys
+        keys: set[frozenset[str]] = set()
+        seen_pages: set[tuple[tuple[Any, Any], ...]] = set()
+        offset: int | None = 0
+        while offset is not None:
+            api_endpoint = EpVpcPairsListGet()
+            api_endpoint.fabric_name = self.fabric_name
+            api_endpoint.lucene_params.max = _DISCOVERED_PAIR_PAGE_SIZE
+            api_endpoint.lucene_params.offset = offset
+            # A stable order keeps offset pagination from skipping or repeating a pair between pages.
+            api_endpoint.lucene_params.sort = "switchId:asc"
+            response = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+            data: Mapping[str, Any] = response if isinstance(response, Mapping) else {}
+            page = data.get("vpcPairs", [])
+            if not isinstance(page, list):
+                raise RuntimeError(f"Discovered vPC pair response for fabric {self.fabric_name!r} must contain a list in 'vpcPairs'; received: {data!r}")
+            signature = tuple((record.get("switchId"), record.get("peerSwitchId")) if isinstance(record, Mapping) else (None, None) for record in page)
+            if page and signature in seen_pages:
+                raise RuntimeError(f"Discovered vPC pair pagination for fabric {self.fabric_name!r} repeated a page at offset {offset}.")
+            seen_pages.add(signature)
+            for record in page:
+                if not isinstance(record, Mapping):
+                    continue
+                switch_id = record.get("switchId")
+                peer_switch_id = record.get("peerSwitchId")
+                if isinstance(switch_id, str) and isinstance(peer_switch_id, str) and switch_id and peer_switch_id:
+                    keys.add(frozenset({switch_id.strip(), peer_switch_id.strip()}))
+            offset = self._next_discovered_pair_offset(data, offset, len(page))
+        self._discovered_pair_keys = keys
+        return keys
 
     def preflight(self, model_instances: Sequence[ModelType]) -> None:
         """
@@ -395,6 +646,19 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     def share_peer_serial_cache(self, cache: dict[str, str]) -> None:
         """Use a caller-owned peer-serial cache shared by aggregate workflow orchestrators."""
         self._peer_serial_cache = cache
+
+    def share_discovered_pairs(self, keys: set[frozenset[str]]) -> None:
+        """
+        # Summary
+
+        Seed the pair-readiness gate from an authoritative fabric-wide discovered `vpcPairs` read made by an aggregate workflow, so no
+        per-orchestrator read is issued. The set is shared by reference across every vPC orchestrator of the run.
+
+        ## Raises
+
+        None
+        """
+        self._discovered_pair_keys = keys
 
     def _managed_policy_types(self) -> set[str]:
         """

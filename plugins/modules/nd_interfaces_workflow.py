@@ -831,7 +831,10 @@ request_stats:
       - The lazy link cache is shared by all routed resource and platform-reset orchestrators in one workflow, including pagination.
       type: int
     vpc_pair_gets:
-      description: Fabric vPC-pair inventory GETs.
+      description:
+      - Fabric vPC-pair inventory GET requests.
+      - A workflow with vPC resources reads the intended pairs once, plus one request per additional page.
+      - When O(config_actions.deploy=true) it also reads the pairs discovered on the switches once, plus one request per additional page.
       type: int
 workflow_contract:
   description:

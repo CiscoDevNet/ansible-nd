@@ -1503,6 +1503,64 @@ def test_vpc_pair_map_paginates_intended_pairs_and_counts_actual_gets(monkeypatc
     assert coordinator._vpc_pair_gets == 2
 
 
+def test_vpc_discovered_pair_keys_read_default_view_and_count_gets(monkeypatch):
+    """Issue #648: the pair-readiness set comes from the discovered (default) `vpcPairs` view, paginated like the intended read."""
+    responses = iter(
+        [
+            {"vpcPairs": [{"switchId": "SERIAL1", "peerSwitchId": "SERIAL2", "type": "discoveredPairs"}], "meta": {"counts": {"remaining": 1, "total": 2}}},
+            {"vpcPairs": [{"switchId": "SERIAL4", "peerSwitchId": "SERIAL3", "type": "discoveredPairs"}], "meta": {"counts": {"remaining": 0, "total": 2}}},
+        ]
+    )
+    requested_paths = []
+
+    def request(*_args, **kwargs):
+        requested_paths.append(kwargs["path"])
+        return next(responses)
+
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=True))
+    monkeypatch.setattr(coordinator, "_request", request)
+
+    keys = coordinator._vpc_discovered_pair_keys(
+        resources=[{"type": "vpc_access", "config": [{"switch_ip": "192.0.2.1"}]}],
+        fabric_context=FakeFabricContext(),
+        rest_send=object(),
+    )
+
+    assert keys == {frozenset({"SERIAL1", "SERIAL2"}), frozenset({"SERIAL3", "SERIAL4"})}
+    assert len(requested_paths) == 2
+    assert all("view=" not in path for path in requested_paths)
+    assert all("max=500" in path for path in requested_paths)
+    assert coordinator._vpc_pair_gets == 2
+
+
+def test_vpc_discovered_pair_keys_skipped_without_vpc_resources(monkeypatch):
+    coordinator = InterfaceWorkflowCoordinator(FakeModule(check_mode=True))
+    monkeypatch.setattr(coordinator, "_request", lambda *_args, **_kwargs: pytest.fail("vPC request was not expected"))
+
+    assert (
+        coordinator._vpc_discovered_pair_keys(resources=[{"type": "loopback", "config": []}], fabric_context=FakeFabricContext(), rest_send=object()) is None
+    )
+    assert coordinator._vpc_pair_gets == 0
+
+
+@pytest.mark.parametrize("check_mode", [True, False])
+def test_vpc_discovered_pair_keys_skipped_when_the_workflow_does_not_deploy(monkeypatch, check_mode):
+    """A staging-only workflow sends nothing to a switch, so it neither reads the discovered view nor gates on it, in either mode."""
+    module = FakeModule(check_mode=check_mode)
+    module.params["config_actions"] = {"deploy": False}
+    coordinator = InterfaceWorkflowCoordinator(module)
+    monkeypatch.setattr(coordinator, "_request", lambda *_args, **_kwargs: pytest.fail("vPC request was not expected"))
+
+    keys = coordinator._vpc_discovered_pair_keys(
+        resources=[{"type": "vpc_access", "config": [{"switch_ip": "192.0.2.1"}]}],
+        fabric_context=FakeFabricContext(),
+        rest_send=object(),
+    )
+
+    assert keys is None
+    assert coordinator._vpc_pair_gets == 0
+
+
 def test_vpc_pair_map_follows_short_page_next_link_without_counts(monkeypatch):
     """An optional next link is authoritative even below the requested page size."""
     responses = iter(
@@ -1672,6 +1730,7 @@ def test_authoritative_pair_inventory_seeds_one_cache_shared_by_all_vpc_orchestr
             "192.0.2.1": "SERIAL2",
             "192.0.2.2": "SERIAL1",
         },
+        vpc_discovered_pairs={frozenset({"SERIAL1", "SERIAL2"})},
     )
 
     workflow_plan = planner.plan(
