@@ -22,8 +22,9 @@ description:
 - Per-peer policy fields use the API-native C(peer1_*) / C(peer2_*) naming, where C(peer1) corresponds to the
   switch supplied in O(config[].switch_ip) and C(peer2) corresponds to the auto-resolved peer.
 - The switch supplied in O(config[].switch_ip) must already be in a vPC pair (created via M(cisco.nd.nd_manage_vpc_pair))
-  before this module can manage interfaces on it. The pair must also be deployed to the switches; a pair that exists only as
-  Nexus Dashboard intent is rejected before any change is made.
+  before this module can manage interfaces on it. To deploy with O(config_actions.deploy=true), the pair must also be deployed to
+  the switches; a pair that exists only as Nexus Dashboard intent is rejected before any change is made. With
+  O(config_actions.deploy=false) the interfaces can be staged on such a pair.
 - The trunk VLAN fields O(config[].config_data.network_os.policy.allowed_vlans) and
   O(config[].config_data.network_os.policy.native_vlan) are single user-facing values. ND requires per-peer
   C(peer1AllowedVlans)/C(peer2AllowedVlans) and C(peer1NativeVlan)/C(peer2NativeVlan) on the wire but enforces
@@ -390,8 +391,10 @@ notes:
   network_os_type C(nx-os), policy_type C(trunkVpcHost)). These values are hardcoded by the module and
   are not user-configurable.
 - The primary switch supplied in O(config[].switch_ip) must already be in a vPC pair (managed by
-  M(cisco.nd.nd_manage_vpc_pair)) that is deployed to the switches. The peer serial is auto-resolved from the pair record, and
-  a pair that exists only as Nexus Dashboard intent fails the task before any change is made.
+  M(cisco.nd.nd_manage_vpc_pair)). The peer serial is auto-resolved from the pair record.
+- When O(config_actions.deploy=true), the vPC pair must also be deployed to the switches. A pair that exists only as Nexus Dashboard
+  intent fails the task before any change is made, in check mode as well, including a task that only deploys interfaces staged earlier.
+  With O(config_actions.deploy=false) nothing is sent to a switch, so the interfaces are staged without that requirement.
 - C(peer1) refers to the switch supplied in O(config[].switch_ip); C(peer2) refers to the auto-resolved peer.
 - A vPC interface is identified by the combination of O(config[].switch_ip) and O(config[].interface_name). Two different vPC
   pairs in the same fabric may reuse the same vPC id (for example C(vpc100) on two pairs); list each under its own pair's

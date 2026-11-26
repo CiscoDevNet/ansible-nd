@@ -1543,6 +1543,24 @@ def test_vpc_discovered_pair_keys_skipped_without_vpc_resources(monkeypatch):
     assert coordinator._vpc_pair_gets == 0
 
 
+@pytest.mark.parametrize("check_mode", [True, False])
+def test_vpc_discovered_pair_keys_skipped_when_the_workflow_does_not_deploy(monkeypatch, check_mode):
+    """A staging-only workflow sends nothing to a switch, so it neither reads the discovered view nor gates on it, in either mode."""
+    module = FakeModule(check_mode=check_mode)
+    module.params["config_actions"] = {"deploy": False}
+    coordinator = InterfaceWorkflowCoordinator(module)
+    monkeypatch.setattr(coordinator, "_request", lambda *_args, **_kwargs: pytest.fail("vPC request was not expected"))
+
+    keys = coordinator._vpc_discovered_pair_keys(
+        resources=[{"type": "vpc_access", "config": [{"switch_ip": "192.0.2.1"}]}],
+        fabric_context=FakeFabricContext(),
+        rest_send=object(),
+    )
+
+    assert keys is None
+    assert coordinator._vpc_pair_gets == 0
+
+
 def test_vpc_pair_map_follows_short_page_next_link_without_counts(monkeypatch):
     """An optional next link is authoritative even below the requested page size."""
     responses = iter(

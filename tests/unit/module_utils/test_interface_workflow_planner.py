@@ -4369,3 +4369,46 @@ def test_planner_without_discovered_pairs_rejects_intent_only_vpc_pair():
                 }
             ]
         )
+
+
+def test_planner_stages_vpc_on_undiscovered_pair_when_the_workflow_does_not_deploy():
+    """A staging-only workflow passes no discovered set: the gate does not apply and no orchestrator reads the view itself."""
+    planner, recorder = _planner(
+        switches={"192.0.2.1": "SERIAL1", "192.0.2.2": "SERIAL2"},
+        vpc_pairs={"192.0.2.1": "SERIAL2", "192.0.2.2": "SERIAL1"},
+    )
+    planner.vpc_discovered_pairs = None
+
+    workflow_plan = planner.plan(
+        [
+            {
+                "type": "vpc_access",
+                "config": [{"switch_ip": "192.0.2.1", "interface_name": "vpc10", "config_data": {"network_os": {"policy": {"access_vlan": 10}}}}],
+            }
+        ]
+    )
+
+    assert workflow_plan.changed is True
+    assert workflow_plan.resources[0].orchestrator._discovered_pair_keys is None
+    assert all("vpcPairs" not in request["path"] for request in recorder.calls)
+
+
+@pytest.mark.parametrize("deploys", [True, False])
+def test_planner_gates_unchanged_staged_vpc_only_when_the_workflow_deploys(deploys: bool):
+    """A deploying workflow ships staged vPC intent it does not mutate, so an unchanged vPC on an undiscovered pair is refused too."""
+    policy = {"mode": "trunk", "allowedVlans": "10-20"}
+    planner, _recorder = _planner(
+        responses=[
+            {"interfaces": [_wire_interface("vpc10", "vpc", "trunkVpcHost", **policy)]},
+            {"interfaces": [_wire_interface("vpc10", "vpc", "trunkVpcHost", **policy)]},
+        ],
+        vpc_pairs={"192.0.2.1": ("192.0.2.1", "192.0.2.2")},
+    )
+    planner.vpc_discovered_pairs = set() if deploys else None
+    resources = [{"type": "vpc_trunk_host", "state": "merged", "config": [_vpc("192.0.2.1", trunk=True)]}]
+
+    if deploys:
+        with pytest.raises(InterfaceWorkflowValidationError, match=r"not discovered on the switches.*nd_manage_vpc_pair"):
+            planner.plan(resources)
+    else:
+        assert planner.plan(resources).changed is False

@@ -247,8 +247,15 @@ class InterfaceWorkflowCoordinator:
         fabric_context: FabricContext,
         rest_send: RestSend,
     ) -> set[frozenset[str]] | None:
-        """Return the unordered serial pairs the switches report, for the vPC pair-readiness gate (issue #648); None without vPC resources."""
+        """
+        Return the unordered serial pairs the switches report, for the vPC pair-readiness gate (issue #648).
+
+        None, with no request, when no vPC resource is requested or the workflow only stages intent (`config_actions.deploy` false):
+        nothing reaches a switch then, so a pair the switches cannot report yet (pre-provisioned switches) stays preparable.
+        """
         if not self._uses_vpc(resources):
+            return None
+        if not bool((self.module.params.get("config_actions") or {}).get("deploy", False)):
             return None
         keys: set[frozenset[str]] = set()
         for record in self._vpc_pair_records(fabric_context=fabric_context, rest_send=rest_send, view=None):

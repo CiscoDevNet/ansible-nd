@@ -2358,6 +2358,7 @@ def test_vpc_interface_base_00240(monkeypatch) -> None:
 
     ## Test
 
+    - The run deploys (`deploy` is True)
     - The pair resolves reciprocally from the intent records (stubbed)
     - The fabric-wide discovered `vpcPairs` view returns no records
     - `RuntimeError` names the pair, says it is not discovered, and points at `nd_manage_vpc_pair` with `config_actions.deploy`
@@ -2370,12 +2371,111 @@ def test_vpc_interface_base_00240(monkeypatch) -> None:
     _wire_membership_pair(monkeypatch, {_MEMBERSHIP_PRIMARY: {}, _MEMBERSHIP_PEER: {}})
     monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", lambda self, model_instances: None)
     instance = _build_orchestrator(ResponseGenerator(iter((_vpc_pairs_list_response([]),))))
+    instance.deploy = True
 
     match = r"vPC pair .*FDO11111AAA.*FDO22222BBB.*not discovered on the switches.*nd_manage_vpc_pair.*config_actions\.deploy"
     with pytest.raises(RuntimeError, match=match):
         instance.preflight_safety([_build_model()])
 
     assert instance.rest_send.response_count == 1
+
+
+def test_vpc_interface_base_00241(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `preflight_safety` accepts a vPC pair that is not discovered on the switches when the run only stages intent, so vPC
+    interfaces can be prepared on a pair the switches cannot report yet (pre-provisioned switches).
+
+    ## Test
+
+    - `deploy` keeps its default of False
+    - The response generator is empty, so any `vpcPairs` GET would fail the test
+    - `preflight_safety` does not raise
+    - No request was issued and no discovered set was cached
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.preflight_safety()
+    - VpcInterfaceBaseOrchestrator._require_discovered_pairs()
+    """
+    _wire_membership_pair(monkeypatch, {_MEMBERSHIP_PRIMARY: {}, _MEMBERSHIP_PEER: {}})
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", lambda self, model_instances: None)
+    instance = _build_orchestrator(ResponseGenerator(iter(())))
+
+    with does_not_raise():
+        instance.preflight_safety([_build_model()])
+
+    assert instance.rest_send.response_count == 0
+    assert instance._discovered_pair_keys is None
+
+
+@pytest.mark.parametrize("deploy", [False, True])
+def test_vpc_interface_base_00242(monkeypatch, deploy: bool) -> None:
+    """
+    # Summary
+
+    Verify `enforce_pair_discovery` overrides the `deploy` default in both directions. An aggregate workflow plans with orchestrators
+    that never receive `config_actions`, so its deploy decision arrives through this method.
+
+    ## Test
+
+    - `enforce_pair_discovery(True)` with `deploy` False refuses an undiscovered pair
+    - `enforce_pair_discovery(False)` with `deploy` True accepts it without a `vpcPairs` GET
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.enforce_pair_discovery()
+    - VpcInterfaceBaseOrchestrator.preflight_safety()
+    """
+    _wire_membership_pair(monkeypatch, {_MEMBERSHIP_PRIMARY: {}, _MEMBERSHIP_PEER: {}})
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", lambda self, model_instances: None)
+    instance = _build_orchestrator(ResponseGenerator(iter(() if deploy else (_vpc_pairs_list_response([]),))))
+    instance.deploy = deploy
+    instance.enforce_pair_discovery(not deploy)
+
+    if deploy:
+        with does_not_raise():
+            instance.preflight_safety([_build_model()])
+        assert instance.rest_send.response_count == 0
+    else:
+        with pytest.raises(RuntimeError, match=r"not discovered on the switches"):
+            instance.preflight_safety([_build_model()])
+        assert instance.rest_send.response_count == 1
+
+
+@pytest.mark.parametrize("deploy", [False, True])
+def test_vpc_interface_base_00243(monkeypatch, deploy: bool) -> None:
+    """
+    # Summary
+
+    Verify `preflight_pair_discovery` runs only the pair-readiness gate, and only for a run that deploys. An aggregate workflow uses it
+    for requested vPC intent an earlier run staged, which is deployed without being a mutation candidate.
+
+    ## Test
+
+    - The base `preflight_safety` fails the test if it is reached
+    - With `deploy` True an undiscovered pair is refused after one `vpcPairs` GET
+    - With `deploy` False nothing is resolved or read and nothing raises
+
+    ## Classes and Methods
+
+    - VpcInterfaceBaseOrchestrator.preflight_pair_discovery()
+    """
+    _wire_membership_pair(monkeypatch, {_MEMBERSHIP_PRIMARY: {}, _MEMBERSHIP_PEER: {}})
+    monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", lambda self, model_instances: pytest.fail("safety preflight was not expected"))
+    instance = _build_orchestrator(ResponseGenerator(iter((_vpc_pairs_list_response([]),) if deploy else ())))
+    instance.deploy = deploy
+
+    if deploy:
+        with pytest.raises(RuntimeError, match=r"not discovered on the switches.*nd_manage_vpc_pair"):
+            instance.preflight_pair_discovery([_build_model()])
+        assert instance.rest_send.response_count == 1
+    else:
+        monkeypatch.setattr(type(instance), "_resolve_switch_id", lambda self, switch_ip: pytest.fail("pair resolution was not expected"))
+        with does_not_raise():
+            instance.preflight_pair_discovery([_build_model()])
+        assert instance.rest_send.response_count == 0
 
 
 def test_vpc_interface_base_00250(monkeypatch) -> None:
@@ -2398,6 +2498,7 @@ def test_vpc_interface_base_00250(monkeypatch) -> None:
     monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", lambda self, model_instances: None)
     response = _vpc_pairs_list_response([_discovered_pair(_MEMBERSHIP_PEER, _MEMBERSHIP_PRIMARY)])
     instance = _build_orchestrator(ResponseGenerator(iter((response,))))
+    instance.deploy = True
 
     with does_not_raise():
         instance.preflight_safety([_build_model()])
@@ -2425,6 +2526,7 @@ def test_vpc_interface_base_00260(monkeypatch) -> None:
     monkeypatch.setattr(NDBaseInterfaceOrchestrator, "preflight_safety", lambda self, model_instances: None)
     response = _vpc_pairs_list_response([_discovered_pair(_MEMBERSHIP_PRIMARY, _MEMBERSHIP_PEER)])
     instance = _build_orchestrator(ResponseGenerator(iter((response,))))
+    instance.deploy = True
 
     with does_not_raise():
         instance.preflight_safety([_build_model(interface_name="vpc501"), _build_model(interface_name="vpc502")])
@@ -2456,6 +2558,7 @@ def test_vpc_interface_base_00270(monkeypatch) -> None:
         yield _vpc_pairs_list_response([_discovered_pair(_MEMBERSHIP_PRIMARY, _MEMBERSHIP_PEER)])
 
     instance = _build_orchestrator(ResponseGenerator(responses()))
+    instance.deploy = True
 
     with does_not_raise():
         instance.preflight_safety([_build_model()])
@@ -2515,6 +2618,7 @@ def test_vpc_interface_base_00271(monkeypatch) -> None:
         yield _vpc_pairs_page([_discovered_pair(_MEMBERSHIP_PRIMARY, _MEMBERSHIP_PEER)])
 
     instance = _build_orchestrator(ResponseGenerator(responses()))
+    instance.deploy = True
 
     with does_not_raise():
         instance.preflight_safety([_build_model()])
@@ -2547,6 +2651,7 @@ def test_vpc_interface_base_00272(monkeypatch) -> None:
         yield _vpc_pairs_page([_discovered_pair(_MEMBERSHIP_PRIMARY, _MEMBERSHIP_PEER)])
 
     instance = _build_orchestrator(ResponseGenerator(responses()))
+    instance.deploy = True
 
     with does_not_raise():
         instance.preflight_safety([_build_model()])
@@ -2578,6 +2683,7 @@ def test_vpc_interface_base_00273(monkeypatch) -> None:
         yield _vpc_pairs_page(_unrelated_discovered_pairs(3))
 
     instance = _build_orchestrator(ResponseGenerator(responses()))
+    instance.deploy = True
 
     with pytest.raises(RuntimeError, match=r"not discovered on the switches"):
         instance.preflight_safety([_build_model()])

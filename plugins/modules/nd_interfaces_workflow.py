@@ -833,7 +833,8 @@ request_stats:
     vpc_pair_gets:
       description:
       - Fabric vPC-pair inventory GET requests.
-      - A workflow with vPC resources reads the intended pairs and the pairs discovered on the switches once each, plus one request per additional page.
+      - A workflow with vPC resources reads the intended pairs once, plus one request per additional page.
+      - When O(config_actions.deploy=true) it also reads the pairs discovered on the switches once, plus one request per additional page.
       type: int
 workflow_contract:
   description:

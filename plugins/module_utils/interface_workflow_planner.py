@@ -360,7 +360,8 @@ class InterfaceWorkflowPlanner:
         self.rest_send_factory = rest_send_factory or RestSend
         self.vpc_pair_by_switch_ip = dict(vpc_pair_by_switch_ip or {})
         # Pairs the switches report (discovered `vpcPairs` view), shared with every vPC orchestrator's pair-readiness gate
-        # (issue #648). None means the caller made no read, and each orchestrator fetches the view itself.
+        # (issue #648). The caller reads the view only for a workflow that deploys, so None means the workflow only stages
+        # intent and the gate does not apply.
         self.vpc_discovered_pairs: set[frozenset[str]] | None = (
             {frozenset(pair) for pair in vpc_discovered_pairs} if vpc_discovered_pairs is not None else None
         )
@@ -409,6 +410,7 @@ class InterfaceWorkflowPlanner:
                 orchestrator = adapter.build_orchestrator(rest_send=rest_send, snapshot=self.snapshot, results=results)
                 if isinstance(orchestrator, VpcInterfaceBaseOrchestrator):
                     orchestrator.share_peer_serial_cache(self._shared_vpc_peer_serial_cache())
+                    orchestrator.enforce_pair_discovery(self.vpc_discovered_pairs is not None)
                     if self.vpc_discovered_pairs is not None:
                         orchestrator.share_discovered_pairs(self.vpc_discovered_pairs)
                 if isinstance(orchestrator, EthernetBaseOrchestrator):
@@ -3110,6 +3112,10 @@ class InterfaceWorkflowPlanner:
                     *resource.operations.creates,
                 ]
                 resource.orchestrator.preflight_safety(mutation_candidates)
+                if isinstance(resource.orchestrator, VpcInterfaceBaseOrchestrator):
+                    # A deploying workflow also ships requested vPC intent an earlier run staged. Those items are no mutation
+                    # candidates, so the pair-readiness gate covers the complete requested set (cached read, no request).
+                    resource.orchestrator.preflight_pair_discovery(list(resource.proposed))
                 if self.run_capability_preflight:
                     resource.orchestrator.validate_switches_capable(mutation_candidates)
                 # The removal guard compares the complete desired set, including

@@ -150,6 +150,8 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         self._peer_serial_cache: dict[str, str] = {}
         self._peer_echo_cache: dict[str, str] = {}
         self._discovered_pair_keys: set[frozenset[str]] | None = None
+        # None follows `self.deploy`; an aggregate workflow, whose planning orchestrators never carry `deploy`, sets it explicitly.
+        self._pair_discovery_required: bool | None = None
         self._preview_scoped_child_switches: dict[tuple[str, str], set[str]] = {}
 
     def _register_pending_preview_derived_identities(
@@ -210,27 +212,108 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         Validate both peers, pair readiness on the switches, and member ownership before any mutation.
 
-        Every proposed item must resolve a reciprocal vPC pair from the intent records, and that pair must also appear in the
-        fabric-wide discovered `vpcPairs` view (issue #648). A pair that exists only as ND intent has no `feature vpc` / `vpc domain`
-        on the switches yet, so the interface-scoped deploy of `vpc <id>` is rejected by NX-OS as an invalid command after the create
-        has already been accepted. Failing here keeps that run at `changed: false` with an actionable message.
+        Every proposed item must resolve a reciprocal vPC pair from the intent records. When the run deploys, that pair must also appear
+        in the fabric-wide discovered `vpcPairs` view (issue #648). A pair that exists only as ND intent has no `feature vpc` /
+        `vpc domain` on the switches yet, so the interface-scoped deploy of `vpc <id>` is rejected by NX-OS as an invalid command after the
+        create has already been accepted. Failing here keeps that run at `changed: false` with an actionable message.
+
+        A run that only stages intent (`config_actions.deploy` false) sends nothing to a switch, so it skips the discovered-pair check
+        and its read. That keeps vPC interfaces preparable on a pair whose switches cannot report it yet, such as pre-provisioned ones.
+        Check mode follows the same rule as a normal run.
 
         ## Raises
 
         ### RuntimeError
 
         - Propagated from `_resolve_switch_id` / `_resolve_reciprocal_peer_switch_id` (unresolvable switch, missing or non-reciprocal pair).
-        - Via `_require_discovered_pair` if the pair is not discovered on the switches.
+        - Via `_require_discovered_pair` if the run deploys and the pair is not discovered on the switches.
         - Via `_validate_unique_pair_names` (see its docstring).
         """
         super().preflight_safety(model_instances)
+        resolved_pairs = self._resolved_pairs(model_instances)
+        # Local, request-free guards run first so an input conflict is reported without the discovered-pair read.
+        self._validate_unique_pair_names(model_instances)
+        self._require_discovered_pairs(resolved_pairs)
+
+    def preflight_pair_discovery(self, model_instances: Sequence[ModelType]) -> None:
+        """
+        # Summary
+
+        Run only the pair-readiness gate for `model_instances`. An aggregate workflow uses this for requested items it will deploy
+        without mutating (intent staged by an earlier run), which never reach `preflight_safety`. A no-op unless the run deploys.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Propagated from `_resolve_switch_id` / `_resolve_reciprocal_peer_switch_id` (unresolvable switch, missing or non-reciprocal pair).
+        - Via `_require_discovered_pair` if the run deploys and a pair is not discovered on the switches.
+        """
+        if not self._pair_discovery_enforced():
+            return
+        self._require_discovered_pairs(self._resolved_pairs(model_instances))
+
+    def enforce_pair_discovery(self, required: bool) -> None:
+        """
+        # Summary
+
+        Set whether the pair-readiness gate applies, overriding the `self.deploy` default. An aggregate workflow plans with orchestrators
+        that never receive `config_actions`, so it passes its own deploy decision here.
+
+        ## Raises
+
+        None
+        """
+        self._pair_discovery_required = required
+
+    def _pair_discovery_enforced(self) -> bool:
+        """
+        # Summary
+
+        Return whether this run must find each vPC pair in the discovered view: the explicit `enforce_pair_discovery` value when one was
+        set, otherwise `self.deploy`.
+
+        ## Raises
+
+        None
+        """
+        if self._pair_discovery_required is not None:
+            return self._pair_discovery_required
+        return self.deploy
+
+    def _resolved_pairs(self, model_instances: Sequence[ModelType]) -> list[tuple[str, str, str]]:
+        """
+        # Summary
+
+        Return `(switch_ip, switch_id, peer_switch_id)` for each proposed item, resolved from the reciprocal intent pair records.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Propagated from `_resolve_switch_id` / `_resolve_reciprocal_peer_switch_id` (unresolvable switch, missing or non-reciprocal pair).
+        """
         resolved_pairs: list[tuple[str, str, str]] = []
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             peer_switch_id = self._resolve_reciprocal_peer_switch_id(model_instance.switch_ip, switch_id)
             resolved_pairs.append((model_instance.switch_ip, switch_id, peer_switch_id))
-        # Local, request-free guards run first so an input conflict is reported without the discovered-pair read.
-        self._validate_unique_pair_names(model_instances)
+        return resolved_pairs
+
+    def _require_discovered_pairs(self, resolved_pairs: Sequence[tuple[str, str, str]]) -> None:
+        """
+        # Summary
+
+        Apply `_require_discovered_pair` to every resolved pair when the run deploys; a staging-only run issues no read and never raises.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `_require_discovered_pair` if the run deploys and a pair is not discovered on the switches.
+        """
+        if not self._pair_discovery_enforced():
+            return
         for switch_ip, switch_id, peer_switch_id in resolved_pairs:
             self._require_discovered_pair(switch_ip, switch_id, peer_switch_id)
 
