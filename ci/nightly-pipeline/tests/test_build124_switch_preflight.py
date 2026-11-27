@@ -253,6 +253,7 @@ script.metaClass.preserveModuleLogs = { -> calls.add('archive-logs') }
 script.metaClass.foldStructuredResults = { -> calls.add('fold') }
 script.metaClass.publishModuleActivityReport = { -> calls.add('activity') }
 script.metaClass.bundleAllLogs = { -> calls.add('bundle') }
+script.metaClass.sendDetailedWebexNotification = { Object origin -> calls.add('webex:' + origin) }
 script.metaClass.cleanWs = { -> calls.add('clean') }
 '''
 
@@ -267,10 +268,14 @@ assert calls.any { it.startsWith('home:') }
 def recoveryIndex = calls.findIndexOf { it.startsWith('home:') }
 def terminalIndex = calls.findIndexOf { it.startsWith('finish:') }
 def publisherIndex = calls.indexOf('parse-and-publish')
-assert recoveryIndex < terminalIndex && terminalIndex < publisherIndex
+// Reports, then Webex, then the switches return home, then the workspace is cleaned.
+assert terminalIndex < publisherIndex
 assert publisherIndex < calls.indexOf('fold')
 assert calls.indexOf('fold') < calls.indexOf('activity')
 assert calls.indexOf('activity') < calls.indexOf('bundle')
+assert calls.indexOf('bundle') < calls.indexOf('webex:stage')
+assert calls.indexOf('webex:stage') < recoveryIndex && recoveryIndex < calls.indexOf('clean')
+assert calls.count { it.startsWith('home:') } == 1
 assert caught == null
 assert calls.contains('round:eBGP') && calls.contains('reset')
 assert calls.contains('finish:success')

@@ -740,7 +740,7 @@ def close_execution(root, job, args):
 
 
 def finish(root, config, status, home_recovery_status="unverified"):
-    if home_recovery_status not in {"confirmed", "failed", "not_required", "unverified"}:
+    if home_recovery_status not in {"confirmed", "deferred", "failed", "not_required", "unverified"}:
         raise ValueError("invalid home recovery status")
     path = root / "producer.json"
     with lock(root, "finish"):
@@ -1527,7 +1527,7 @@ def main():
     parser.add_argument("--exit-code", type=int)
     parser.add_argument("--duration-seconds", type=int)
     parser.add_argument("--status", choices=("success", "failed", "interrupted"), default="success")
-    parser.add_argument("--home-recovery-status", choices=("confirmed", "failed", "not_required", "unverified"), default="unverified")
+    parser.add_argument("--home-recovery-status", choices=("confirmed", "deferred", "failed", "not_required", "unverified"), default="unverified")
     parser.add_argument("--id")
     parser.add_argument("--seconds", type=float, default=0)
     parser.add_argument("--attempt", type=int)

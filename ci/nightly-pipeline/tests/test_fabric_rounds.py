@@ -453,12 +453,18 @@ def test_a_round_off_the_canonical_fabric_checks_its_type_then_renders_before_an
     assert run_tests.index("applyFabricRound(ndfcConfig)") < run_tests.index("generateDynamicInventory(ndfcConfig)")
 
 
-def test_the_lab_goes_home_after_the_last_reset_and_before_the_logs_are_bundled():
+def test_the_lab_goes_home_after_the_reports_and_the_webex_notification():
     text = jenkins_text()
     loop = text[text.index("for (ndfcConfig in roundConfigs) {"):text.index("bundleAllLogs()\n")]
     assert "resetFabricBetweenVersions(ndfcConfig.round_tag ?: '')" in loop
-    assert loop.index("resetFabricBetweenVersions(ndfcConfig.round_tag") < loop.index("restoreHomeFabric(roundConfigs, activeRound)")
+    # Only a non-final ND version restores inline; the last one is deferred until after Webex.
+    assert loop.index("resetFabricBetweenVersions(ndfcConfig.round_tag") < loop.index("deferredHomeRestore = [rounds: roundConfigs, active: activeRound]")
+    assert loop.index("deferredHomeRestore = [rounds:") < loop.index("restoreHomeFabric(roundConfigs, activeRound)")
+    assert "env.ND_HOME_RECOVERY_STATUS = 'deferred'" in loop
     assert "withCleanupPreservingFailure" in loop
+    tail = text[text.index("bundleAllLogs()\n"):text.index("    post {\n")]
+    assert tail.index("sendDetailedWebexNotification('stage')") < tail.index("returnSwitchesHomeAfterNotification(deferredHomeRestore)")
+    assert tail.index("returnSwitchesHomeAfterNotification(deferredHomeRestore)") < tail.index("cleanWs()")
     home = groovy_function("restoreHomeFabric")
     assert "if (env.HOME_RESTORE_REQUIRED != 'true') { return }" in home
     assert "integration_config.home.yml" in home
@@ -498,7 +504,14 @@ if (scenario == 'restore') {
     assert logs.any { it.startsWith('NDP_SWITCH_RESTORE_INCOMPLETE_CONTINUING:') }
 }
 if (scenario == 'files') { assert logs.any { it.startsWith('NDP_FABRIC_ROUND_FAILED_CONTINUING:') } }
-if (scenario == 'home') { assert calls.contains('finish:failed') }
+// The home move follows the reports and Webex; a failed move is recorded, never thrown.
+assert calls.indexOf('bundle') < calls.indexOf('webex:stage')
+assert calls.indexOf('webex:stage') < calls.findIndexOf { it.startsWith('home:') }
+if (scenario == 'home') {
+    assert calls.contains('finish:success')
+    assert context.ND_HOME_RECOVERY_STATUS == 'failed' && context.PIPELINE_FAILED == 'true'
+    assert logs.any { it.startsWith('NDP_SWITCH_HOME_RESTORE_FAILED: home failed') }
+}
 if (scenario == 'interrupt') { assert calls.contains('finish:interrupted') }
 ''')
 

@@ -33,6 +33,7 @@ def queue(tmp_path):
     ("interrupted", "unverified", "unverified"),
     ("success", "not_required", "not_required"),
     ("success", "failed", "failed"),
+    ("success", "deferred", "deferred"),
     ("success", None, "unverified"),
 ])
 def test_terminal_json_keeps_legacy_status_and_first_verified_receipt(tmp_path, execution, recovery, expected):
@@ -47,7 +48,7 @@ def test_terminal_json_keeps_legacy_status_and_first_verified_receipt(tmp_path, 
     assert json.loads((root / "producer.json").read_text()) == receipt
 
 
-@pytest.mark.parametrize("recovery,failed", [("failed", True), (None, False)])
+@pytest.mark.parametrize("recovery,failed", [("failed", True), ("deferred", False), (None, False)])
 def test_aggregate_fails_known_home_failure_without_reclassifying_unknown(tmp_path, recovery, failed):
     _, _, cli = queue(tmp_path)
     arguments = [] if recovery is None else ["--home-recovery-status", recovery]

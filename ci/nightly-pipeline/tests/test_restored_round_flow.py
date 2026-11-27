@@ -40,7 +40,8 @@ def groovy(request, tmp_path_factory):
 @pytest.mark.parametrize("scenario", ["healthy", "ibgp-test-failed", "both-tests-failed", "batch-setup-failed",
                                      "preflight-failed", "migration-unconfirmed", "standalone-move-recovers", "missing-receipt",
                                      "malformed-receipt", "restore-failed", "apply-failed", "reset-failed",
-                                     "post-restore-exception", "flow-aborted", "java-interrupted"])
+                                     "post-restore-exception", "flow-aborted", "java-interrupted",
+                                     "home-move-fallback", "home-move-failed"])
 def test_real_full_flow_continues_failures_and_only_interrupts_stop_later_rounds(groovy, scenario):
     groovy("def scenario = " + json.dumps(scenario) + "\n" + r'''
 script.binding.currentBuild.currentResult = 'SUCCESS'
@@ -80,6 +81,20 @@ script.metaClass.foldStructuredResults = { ->
 script.metaClass.applyFabricRound = { Object round ->
     calls.add('apply:' + round.round_label)
     if (scenario == 'apply-failed') { throw new IllegalStateException('apply failed') }
+    if (round.round_label == 'eBGP') { context.HOME_ROSTER_COPY_READY = 'true' }
+}
+// The Ansible home restore confirms the roster unless a home-move scenario makes it fail.
+script.metaClass.restoreHomeFabric = { Object rounds, Object active ->
+    calls.add('home:' + active.round_label)
+    if (context.HOME_RESTORE_REQUIRED != 'true') { return }
+    if (scenario in ['home-move-fallback', 'home-move-failed']) {
+        context.ND_HOME_RECOVERY_STATUS = 'failed'
+        context.ND_SWITCH_RESTORE_FAILED = 'true'
+        context.PIPELINE_FAILED = 'true'
+    } else {
+        context.ND_HOME_RECOVERY_STATUS = 'confirmed'
+        context.HOME_RESTORE_REQUIRED = 'false'
+    }
 }
 script.metaClass.resetFabricBetweenVersions = { Object label ->
     calls.add('reset')
@@ -104,6 +119,7 @@ script.metaClass.registerStructuredExecutions = { Object round, Object targets, 
 }
 script.metaClass.installEmbeddedReportingHelper = { Object name, Object target -> calls.add('install:' + name); true }
 def migrationAudits = 0
+def moveInputs = []
 def swallowed = []
 script.metaClass.catchError = { Map options, Closure work ->
     try { work.call() } catch (Exception e) {
@@ -115,10 +131,13 @@ script.metaClass.sh = { Object options ->
     def text = (options instanceof Map ? options.script : options).toString()
     if (text.contains('nd_switch_fabric_move.py" move')) {
         calls.add('standalone-move:' + context.MOVE_SRC + '->' + context.MOVE_DST + '@' + context.MOVE_ND_HOST)
+        moveInputs.add(context.MOVE_ROSTER + '|' + context.MOVE_STATE)
+        if (context.MOVE_DST == 'VXLAN_EVPN_Fabric') { return scenario == 'home-move-failed' ? 1 : 0 }
         return scenario == 'migration-unconfirmed' ? 1 : 0
     }
     if (text.contains('nd_switch_fail_on_missing=true')) {
         calls.add('migration-check:' + context.MIGRATION_ROSTER)
+        if (context.MIGRATION_ROSTER.endsWith('integration_config.home.yml')) { return 0 }
         migrationAudits++
         return scenario == 'migration-unconfirmed' || (scenario == 'standalone-move-recovers' && migrationAudits == 1) ? 2 : 0
     }
@@ -156,10 +175,33 @@ if (!(scenario in ['flow-aborted', 'java-interrupted'])) {
     def migrationChecks = calls.findAll { it.startsWith('migration-check:') }
     // A failed audit runs the standalone mover once; only its success re-audits.
     def audit = 'migration-check:/fixture/collection/integration_config.yml'
+    def homeFallback = scenario in ['home-move-fallback', 'home-move-failed']
+    def homeMove = 'standalone-move:VXLAN_EVPN_Fabric_eBGP->VXLAN_EVPN_Fabric@192.0.2.10'
     assert migrationChecks == (scenario == 'standalone-move-recovers' ? [audit, audit] :
-        (scenario in ['preflight-failed', 'migration-unconfirmed'] ? [audit] : [])) : calls
+        (scenario in ['preflight-failed', 'migration-unconfirmed'] ? [audit] :
+        (scenario == 'home-move-fallback' ? ['migration-check:/fixture/collection/integration_config.home.yml'] : []))) : calls
     assert calls.findAll { it.startsWith('standalone-move:') } == (scenario in ['migration-unconfirmed', 'standalone-move-recovers'] ?
-        ['standalone-move:VXLAN_EVPN_Fabric->VXLAN_EVPN_Fabric_eBGP@192.0.2.10'] : []) : calls
+        ['standalone-move:VXLAN_EVPN_Fabric->VXLAN_EVPN_Fabric_eBGP@192.0.2.10'] : (homeFallback ? [homeMove] : [])) : calls
+    // The switches return home only after the reports and the Webex notification.
+    def homeIndex = calls.findIndexOf { it.startsWith('home:') }
+    assert calls.indexOf('finish:success') < calls.indexOf('bundle')
+    assert calls.indexOf('bundle') < calls.indexOf('webex:stage') && calls.indexOf('webex:stage') < homeIndex : calls
+    assert calls.count { it.startsWith('home:') } == 1
+    if (homeFallback) {
+        assert calls.indexOf(homeMove) > homeIndex && calls.indexOf(homeMove) < calls.indexOf('clean') : calls
+        assert moveInputs.last() == '/fixture/collection/integration_config.home.yml|nd_switch_fabric_move_ND43_home.json'
+        assert script.SWITCH_LIFECYCLE_TIMINGS.any { it.phase == 'standalone-home-move' }
+        assert logs.any { it.startsWith('NDP_SWITCH_HOME_RESTORE_FALLBACK:') } : logs
+        def status = scenario == 'home-move-fallback' ? 'confirmed' : 'failed'
+        assert context.ND_HOME_RECOVERY_STATUS == status
+        assert logs.any { it.startsWith("NDP_SWITCH_HOME_MOVE_RESULT status=${status} method=standalone") } : logs
+        if (scenario == 'home-move-fallback') { assert context.HOME_RESTORE_REQUIRED == 'false' && context.ND_SWITCH_RESTORE_FAILED == 'false' }
+        else { assert context.PIPELINE_FAILED == 'true' && context.HOME_RESTORE_REQUIRED == 'true' }
+    } else {
+        assert context.ND_HOME_RECOVERY_STATUS == 'confirmed'
+        assert logs.any { it.startsWith('NDP_SWITCH_HOME_MOVE_RESULT status=confirmed method=ansible') } : logs
+    }
+    assert logs.any { it.startsWith('NDP_SWITCH_HOME_RESTORE_DEFERRED: eBGP roster returns to VXLAN_EVPN_Fabric') } : logs
     if (scenario in ['apply-failed', 'migration-unconfirmed']) {
         assert !calls.contains('batch:eBGP') && !calls.contains('post:eBGP') : calls
         assert calls.indexOf('record:eBGP') < calls.findIndexOf { it.startsWith('home:') }

@@ -84,6 +84,25 @@ assert !logs.any { it.startsWith('NDP_DETAILED_NOTIFICATION_RETRY') }
 ''')
 
 
+@pytest.mark.parametrize("stage_interrupted", [False, True])
+def test_stage_report_is_sent_once_before_the_home_move_and_post_only_covers_a_missed_send(groovy_runner, stage_interrupted):
+    groovy_runner(POST + "def stageInterrupted = " + json.dumps(stage_interrupted) + "\n" + r'''
+script.binding.env.ACTIVE_FABRIC_ROUNDS = 'iBGP + eBGP'
+script.metaClass.prepareDetailedWebexNotification = { ->
+    if (stageInterrupted) { stageInterrupted = false; throw new InterruptedException('aborted during the report') }
+    ['fixture detailed report']
+}
+def caught = null
+try { script.sendDetailedWebexNotification('stage') } catch (InterruptedException e) { caught = e }
+assert (caught != null) == (sent.isEmpty())
+script.run()
+assert sent == ['fixture detailed report'] : logs
+def handled = logs.any { it.startsWith('NDP_WEBEX_NOTIFICATION_ALREADY_HANDLED:') }
+assert handled == (caught == null)
+assert logs.any { it.startsWith('Post-build Webex notification block started at:') } == (caught != null)
+''')
+
+
 def test_long_report_keeps_every_module_and_link_with_bounded_note(groovy_runner):
     groovy_runner(POST + r'''
 script.binding.env.ACTIVE_FABRIC_ROUNDS = 'iBGP + eBGP'
