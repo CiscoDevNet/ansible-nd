@@ -23,6 +23,7 @@ SOURCES = {
     "action_plugins/nd_interface_baseline.py": ROOT / "playbooks/action_plugins/nd_interface_baseline.py",
     "nd_prerequisite_profiles.yaml": ROOT / "tests/nd_prerequisite_profiles.yaml",
     "nd_prerequisite_orchestrator.py": ROOT / "tests/nd_prerequisite_orchestrator.py",
+    "tools/nd_switch_fabric_move.py": ROOT / "tools/nd_switch_fabric_move.py",
 }
 ENTRY = re.compile(
     r"(?m)^(?P<prefix>\s*'(?P<key>[^']+)': \[sha256: ')[^']+"

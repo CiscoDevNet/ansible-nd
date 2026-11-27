@@ -75,7 +75,7 @@ if a['method']:
             last_action = s['rest_writes'][-1].rsplit('/', 1)[-1] if s['rest_writes'] else ''
             if last_action != 'deploy':
                 s['readiness_reads'] = s.get('readiness_reads', 0) + 1
-                rows = [{'switchId':'FIXTURE'+str(index+1).zfill(4),
+                rows = [{'switchId':'FIXTURE'+str(index+1).zfill(4), 'switchRole':s.get('roles', {}).get('FIXTURE'+str(index+1).zfill(4), 'leaf'),
                          'additionalData':{'systemMode':'normal','configSyncStatus':'inSync'}}
                         for index, address in enumerate(s['original']) if address in s['present']]
                 if scenario in ('startup_active_then_idle', 'startup_active_forever'):
@@ -97,7 +97,7 @@ if a['method']:
             if scenario == 'predelete_call_timeout':
                 import time
                 time.sleep(3)
-            rows = [{'switchId':'FIXTURE'+str(index+1).zfill(4),
+            rows = [{'switchId':'FIXTURE'+str(index+1).zfill(4), 'switchRole':s.get('roles', {}).get('FIXTURE'+str(index+1).zfill(4), 'leaf'),
                      'additionalData':{'systemMode':'normal','configSyncStatus':'inSync'}}
                     for index, address in enumerate(s['original']) if address in s['present']]
             if scenario == 'leaf_tor_retry_pending' and s['selected_calls']:
@@ -123,6 +123,13 @@ if a['method']:
     s['rest_writes'].append(a['path'])
     forced = a['path'].endswith('/switchActions/remove?force=true')
     if not a['path'].endswith('/switchActions/remove') and not forced:
+        if a['path'].endswith('/switchActions/changeRoles'):
+            requested = a['content']['switchRoles']
+            s.setdefault('role_requests', []).append(requested)
+            refused = scenario == 'leaf_tor_role_change_refused' and len(s['role_requests']) == 1
+            if not refused:
+                s.setdefault('roles', {}).update({item['switchId']: item['role'] for item in requested})
+            finish(changed=True, status=207, current={'items':[{'switchId':item['switchId'], 'status':'failed' if refused else 'success', 'message':'password=DO_NOT_PRINT_ME'} for item in requested]})
         if '/switchActions/changeSystemMode?' in a['path']:
             assert a['content']['mode'] == 'normal' and not s.get('last_active')
             requested = a['content']['switchIds']
@@ -205,8 +212,14 @@ if a['method']:
     first_refusal = 2 if scenario == 'leaf_tor_multi_fabric' else 1
     if scenario.startswith('leaf_tor_') and (attempt == first_refusal or scenario == 'leaf_tor_forever'):
         refused = set(requested[-2:])
-    if forced and scenario == 'leaf_tor_force_refused':
+    if scenario in ('leaf_tor_stale_pair', 'leaf_tor_role_change_refused', 'leaf_tor_bypass_never_absent'):
+        # ND's leaf-only orphaned Leaf-ToR check: refused, even with force, until the role is not leaf.
+        refused = {identity for identity in requested if identity in ('FIXTURE0005', 'FIXTURE0006')
+                   and s.get('roles', {}).get(identity, 'leaf') == 'leaf'}
+    if scenario == 'leaf_tor_bypass_refused' and attempt > 1:
         refused = set(requested)
+    if scenario == 'leaf_tor_bypass_http_500' and attempt > 1:
+        fail(status=500, msg='Temporary retried remove failure')
     items = [{'switchId': identity, 'status':'failed' if identity in refused else 'success',
               'errorCode':'ND-4102' if identity in refused else '0',
               'message': ('Failed to delete the switch['+identity+']. Please check Anomalies for possible reasons. password=DO_NOT_PRINT_ME') if identity in refused else 'Deleted successfully',
@@ -221,14 +234,14 @@ if a['method']:
     if scenario == 'malformed_207': items=[]
     if scenario == 'duplicate_identity': items[-1]=dict(items[0])
     if scenario == 'wrong_identity': items[-1]['switchId']='UNREQUESTED0001'
-    if forced and scenario == 'leaf_tor_force_wrong_identity': items[-1]['switchId']='UNREQUESTED0001'
+    if scenario == 'leaf_tor_bypass_wrong_identity' and attempt > 1: items[-1]['switchId']='UNREQUESTED0001'
     if scenario == 'unknown_item_status': items[-1]['status']='pending-unknown'
     if scenario == 'missing_item': items=items[:-1]
     if scenario == 'missing_response': finish(changed=True, status=207)
     body={'items':items}
     if scenario == 'bad_body': body='invalid response shape'
     if scenario == 'body_errors': body={'error':{'message':'Controller rejected operation'},'private':'RAW_PAYLOAD'}
-    accepted = not refused and scenario not in ('malformed_207','duplicate_identity','wrong_identity','unknown_item_status','missing_item','bad_body','body_errors','source_never_absent','leaf_tor_force_never_absent')
+    accepted = not refused and scenario not in ('malformed_207','duplicate_identity','wrong_identity','unknown_item_status','missing_item','bad_body','body_errors','source_never_absent','leaf_tor_bypass_never_absent')
     if accepted:
         s['present'] = [address for index, address in enumerate(s['original'])
                         if address in s['present'] and 'FIXTURE'+str(index+1).zfill(4) not in requested]
@@ -474,7 +487,7 @@ def test_remediation_updates_host_fact_and_restores_full_absence_scope():
     ) == ["FIXTURE0005", "FIXTURE0006"]
 
     # Cleanup must restore all six even when a nested gate or removal fails.
-    set_facts(retry["always"][0])
+    set_facts(named(retry["always"], "Restore the complete move fact"))
     assert facts["nd_rehome_moves"] == moves
 
 
@@ -760,34 +773,54 @@ def test_force_exception_requires_opt_in_and_verified_forward_transfer(enabled, 
     assert result is expected
 
 
-def test_opted_in_force_retry_removes_only_the_two_verified_refusals(tmp_path):
-    completed, state = execute(tmp_path, 'leaf_tor_force_success', force=True)
+def test_opted_in_role_bypass_removes_only_the_two_verified_refusals(tmp_path):
+    # ND refused force=true live; only a temporary non-leaf role skips the orphaned Leaf-ToR check.
+    completed, state = execute(tmp_path, 'leaf_tor_stale_pair', force=True)
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert state['force_requests'] == [['FIXTURE0005', 'FIXTURE0006']]
+    assert not state.get('force_requests')
+    assert state['role_requests'] == [[{'switchId': 'FIXTURE0005', 'role': 'border'},
+                                       {'switchId': 'FIXTURE0006', 'role': 'border'}]]
     assert state['selected_calls'] == [
         ['FIXTURE0001', 'FIXTURE0002', 'FIXTURE0003', 'FIXTURE0004', 'FIXTURE0005', 'FIXTURE0006'],
         ['FIXTURE0005', 'FIXTURE0006']]
     assert state['source_gets'] > 0
-    assert 'NDP_SWITCH_REMOVE_FORCE_RETRY' in completed.stdout
+    assert 'NDP_SWITCH_REMOVE_LEAF_TOR_ROLE_BYPASS' in completed.stdout
+    assert 'NDP_SWITCH_REMOVE_LEAF_TOR_ROLE_RESTORED' not in completed.stdout
     assert 'DESTINATION_ADD_REACHED' in completed.stdout
-    assert 'DO_NOT_PRINT_ME' not in completed.stdout
+    assert 'DO_NOT_PRINT_ME' not in completed.stdout and 'RAW_PAYLOAD' not in completed.stdout
 
 
-@pytest.mark.parametrize('scenario', ['leaf_tor_force_refused', 'leaf_tor_force_http_500',
-                                     'leaf_tor_force_wrong_identity', 'leaf_tor_force_never_absent'])
-def test_forced_forward_retry_never_onboards_on_refusal_or_unconfirmed_absence(tmp_path, scenario):
+def test_stale_leaf_tor_pair_without_opt_in_never_changes_roles(tmp_path):
+    completed, state = execute(tmp_path, 'leaf_tor_stale_pair')
+    assert completed.returncode != 0
+    assert not state.get('role_requests')
+    assert len(state['selected_calls']) == 1
+    assert 'DESTINATION_ADD_REACHED' not in completed.stdout
+
+
+@pytest.mark.parametrize('scenario', ['leaf_tor_bypass_refused', 'leaf_tor_bypass_http_500',
+                                     'leaf_tor_bypass_wrong_identity', 'leaf_tor_role_change_refused',
+                                     'leaf_tor_bypass_never_absent'])
+def test_role_bypass_never_onboards_on_refusal_and_restores_the_leaf_role(tmp_path, scenario):
     completed, state = execute(tmp_path, scenario, force=True)
     assert completed.returncode != 0
-    assert state.get('force_requests') == [['FIXTURE0005', 'FIXTURE0006']]
+    assert not state.get('force_requests')
+    border = [{'switchId': 'FIXTURE0005', 'role': 'border'}, {'switchId': 'FIXTURE0006', 'role': 'border'}]
+    leaf = [{'switchId': 'FIXTURE0005', 'role': 'leaf'}, {'switchId': 'FIXTURE0006', 'role': 'leaf'}]
+    restored = scenario != 'leaf_tor_bypass_never_absent'
+    assert state['role_requests'] == [border] + ([leaf] if restored else [])
+    assert ('NDP_SWITCH_REMOVE_LEAF_TOR_ROLE_RESTORED' in completed.stdout) is restored
+    assert len(state['selected_calls']) == (1 if scenario == 'leaf_tor_role_change_refused' else 2)
     assert 'DESTINATION_ADD_REACHED' not in completed.stdout
+    assert 'DO_NOT_PRINT_ME' not in completed.stdout and 'RAW_PAYLOAD' not in completed.stdout
 
 
 @pytest.mark.parametrize('phase,source_type', [('home', 'vxlanIbgp'), ('post', 'vxlanIbgp'), ('pre', 'vxlanEbgp')])
 def test_force_option_cannot_mutate_outside_forward_preflight(tmp_path, phase, source_type):
-    completed, state = execute(tmp_path, 'leaf_tor_force_success', force=True, phase=phase, source_type=source_type)
+    completed, state = execute(tmp_path, 'leaf_tor_stale_pair', force=True, phase=phase, source_type=source_type)
     assert completed.returncode != 0
     assert state['selected_calls'] == []
-    assert not state.get('force_requests')
+    assert not state.get('force_requests') and not state.get('role_requests')
     assert 'NDP_SWITCH_FORCE_SCOPE_BLOCKED' in completed.stdout
 
 
@@ -796,7 +829,7 @@ def test_force_option_cannot_mutate_outside_forward_preflight(tmp_path, phase, s
 def test_force_option_never_bypasses_auth_unrelated_anomalies_identity_or_lock(tmp_path, scenario):
     completed, state = execute(tmp_path, scenario, force=True)
     assert completed.returncode != 0
-    assert not state.get('force_requests')
+    assert not state.get('force_requests') and not state.get('role_requests')
     assert 'DESTINATION_ADD_REACHED' not in completed.stdout
 
 
@@ -809,6 +842,7 @@ def test_jenkins_force_option_is_enabled_by_default_and_forward_preflight_only(v
     assert 'nd_switch_transfer_phase=${PREFLIGHT_PHASE}' in source
     assert 'nd_switch_ibgp_to_ebgp_leaf_tor_force_delete=${PREFLIGHT_FORCE_LEAF_TOR}' in source
     assert 'NDP_SWITCH_FORCE_RUNTIME_MISSING' in source
+    assert "grep -q 'NDP_SWITCH_REMOVE_LEAF_TOR_ROLE_BYPASS'" in source
 
 
 def test_destination_policy_is_checked_before_moves_and_before_missing_add_waits():

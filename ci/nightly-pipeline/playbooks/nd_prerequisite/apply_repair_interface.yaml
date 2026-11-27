@@ -12,24 +12,6 @@
     fail_msg: "Invalid baseline interface repair."
   run_once: true
 
-- name: Recapture switch identity before interface repair
-  cisco.nd.nd_rest:
-    path: "/api/v1/manage/fabrics/{{ _ndp_repair_operation.fabric_name }}/switches"
-    method: get
-  register: _ndp_repair_identity
-  no_log: true
-  run_once: true
-
-- name: Require an exact identity match before interface repair
-  ansible.builtin.assert:
-    that:
-      - >-
-        (_ndp_repair_identity.current.switches | default([])
-         | selectattr('switchId', 'equalto', _ndp_repair_operation.serial)
-         | selectattr('fabricManagementIp', 'equalto', _ndp_repair_operation.switch_ip) | list | length) == 1
-    fail_msg: "Switch identity changed after planning; refusing interface repair."
-  run_once: true
-
 - name: Recapture legacy intent to detect changes since planning
   cisco.nd.nd_rest:
     path: "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/interface?serialNumber={{ _ndp_repair_operation.serial }}&ifName={{ _ndp_repair_operation.interface | replace('/', '%2F') }}"
@@ -83,10 +65,37 @@
   no_log: true
   run_once: true
 
+# admin_up is planned for every declared endpoint; an endpoint already enabled in the
+# snapshot just read needs no identity recheck, write or verification.
+- name: Decide whether the interface repair must change the controller
+  ansible.builtin.set_fact:
+    _ndp_repair_interface_mutates: >-
+      {{ _ndp_repair_operation.action != 'admin_up'
+         or not (_ndp_repair_before.current.configData.networkOS.policy.adminState | default(false) | bool) }}
+  run_once: true
+
+- name: Recapture switch identity before interface repair
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ _ndp_repair_operation.fabric_name }}/switches"
+    method: get
+  register: _ndp_repair_identity
+  no_log: true
+  run_once: true
+  when: _ndp_repair_interface_mutates | bool
+
+- name: Require an exact identity match before interface repair
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_ndp_repair_identity.current.switches | default([])
+         | selectattr('switchId', 'equalto', _ndp_repair_operation.serial)
+         | selectattr('fabricManagementIp', 'equalto', _ndp_repair_operation.switch_ip) | list | length) == 1
+    fail_msg: "Switch identity changed after planning; refusing interface repair."
+  run_once: true
+  when: _ndp_repair_interface_mutates | bool
+
 - name: Apply a required interface repair
-  when: >-
-    _ndp_repair_operation.action != 'admin_up' or
-    not (_ndp_repair_before.current.configData.networkOS.policy.adminState | default(false) | bool)
+  when: _ndp_repair_interface_mutates | bool
   block:
     - name: Journal the complete before-image before mutation
       no_log: true
@@ -173,6 +182,8 @@
       _ndp_repair_operation.action != 'routed' or
       (_ndp_repair_verified.current.configData.networkOS.policy.policyType | default('') == 'routedHost'
        and _ndp_repair_verified.current.operData.mode | default('') | lower == 'routed')
-  when: _ndp_repair_operation.action != 'delete'
+  when:
+    - _ndp_repair_operation.action != 'delete'
+    - _ndp_repair_interface_mutates | bool
   no_log: true
   run_once: true

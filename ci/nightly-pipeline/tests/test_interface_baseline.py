@@ -12,6 +12,13 @@ import pytest
 PLUGIN = Path(__file__).resolve().parents[1] / "playbooks/action_plugins/nd_interface_baseline.py"
 
 
+def flat_tasks(tasks):
+    for task in tasks:
+        yield task
+        for section in ("block", "rescue", "always"):
+            yield from flat_tasks(task.get(section, []))
+
+
 @pytest.fixture
 def baseline():
     specification = importlib.util.spec_from_file_location("nd_interface_baseline", PLUGIN)
@@ -42,7 +49,7 @@ def test_lifecycle_baseline_enablement_and_sync_default_true_without_environment
     root = PLUGIN.parents[2]
     guard = yaml.safe_load((root / "playbooks/nd_ensure_switches.yaml").read_text())[0]
     reset = yaml.safe_load((root / "consul/reset_fabric.yaml").read_text())[0]
-    helper = yaml.safe_load((root / "playbooks/nd_prerequisite/interface_baseline.yaml").read_text())
+    helper = list(flat_tasks(yaml.safe_load((root / "playbooks/nd_prerequisite/interface_baseline.yaml").read_text())))
     recovery = next(task for task in helper if "nd_interface_baseline" in task)["nd_interface_baseline"]["recover_config_sync"]
 
     assert "default(true, true)" in guard["vars"]["nd_interface_baseline_enabled"]
@@ -63,7 +70,7 @@ def test_shared_failure_message_identifies_the_cause_without_raw_payloads(result
     from jinja2 import StrictUndefined
     from jinja2.nativetypes import NativeEnvironment
 
-    helper = yaml.safe_load((PLUGIN.parent.parent / 'nd_prerequisite/interface_baseline.yaml').read_text())
+    helper = flat_tasks(yaml.safe_load((PLUGIN.parent.parent / 'nd_prerequisite/interface_baseline.yaml').read_text()))
     task = next(row for row in helper if row['name'].startswith('Require accepted operations'))
     environment = NativeEnvironment(undefined=StrictUndefined)
     values = {
@@ -978,6 +985,83 @@ def test_unmapped_connectivity_alert_identity_is_sanitized(baseline):
     assert "PRIVATE_SERIAL" not in json.dumps(result)
 
 
+def preexisting_alarm_request(request, state, rows, after_write=False):
+    def wrapped(method, path, content, timeout):
+        reply = request(method, path, content, timeout)
+        if "anomalies/details" in path and (state["writes"] or not after_write):
+            reply["current"]["anomalies"].extend(copy.deepcopy(rows))
+        return reply
+    return wrapped
+
+
+PREEXISTING_UNTOUCHED_ALARM = {
+    "cleared": False, "switchId": "SERIAL00001", "entityName": "ethernet1/58",
+    "mnemonicTitle": "CONNECTIVITY_INTERFACE_STATUS",
+    "anomalyString": "Interface ethernet1/58 in undesired state up:down:Link not connected"}
+
+
+def test_lifecycle_preexisting_alarm_on_unwritten_port_is_advisory(baseline):
+    registry, request, state = controller_fixture()
+    result = baseline.InterfaceBaseline(
+        registry, ["fixture"], preexisting_alarm_request(request, state, [PREEXISTING_UNTOUCHED_ALARM]),
+        apply=True, switch_refs=["leaf"], interfaces=["Ethernet1/63"], poll_seconds=0,
+        preexisting_connectivity_advisory=True).run()
+    assert result["baseline_failed"] is False and result["reason"] == "BASELINE_VERIFIED"
+    assert result["verified"] == 1 and len(state["writes"]) == 2
+    assert result["remaining_connectivity_alerts"] == 1 and result["preexisting_connectivity_alerts"] == 1
+    assert result["connectivity_alerts"] == [{
+        "fabric": "fixture", "switch": "leaf", "interface": "Ethernet1/58",
+        "baseline_decision": "OUT_OF_SCOPE", "preexisting": True}]
+
+
+@pytest.mark.parametrize("problem", ["raised_after_write", "unidentified_interface"])
+def test_lifecycle_new_or_unidentified_alarm_still_blocks(baseline, problem):
+    registry, request, state = controller_fixture()
+    alarm = copy.deepcopy(PREEXISTING_UNTOUCHED_ALARM)
+    if problem == "unidentified_interface":
+        alarm.pop("entityName")
+        alarm["anomalyString"] = "Interface status in undesired state up:down:Link not connected"
+    result = baseline.InterfaceBaseline(
+        registry, ["fixture"],
+        preexisting_alarm_request(request, state, [alarm], after_write=problem == "raised_after_write"),
+        apply=True, switch_refs=["leaf"], interfaces=["Ethernet1/63"], poll_seconds=0,
+        preexisting_connectivity_advisory=True).run()
+    assert result["baseline_failed"] is True and result["reason"] == "CONNECTIVITY_INTERFACE_STATUS_ACTIVE"
+    assert result["remaining_connectivity_alerts"] == 1 and result["preexisting_connectivity_alerts"] == 0
+    assert [row["preexisting"] for row in result["connectivity_alerts"]] == [False]
+
+
+def test_preexisting_alarm_on_a_port_the_baseline_wrote_still_blocks(baseline):
+    registry, request, state = controller_fixture()
+    gate = baseline.InterfaceBaseline(registry, ["fixture"], request, apply=True, switch_refs=["leaf"],
+                                      interfaces=["Ethernet1/63"], preexisting_connectivity_advisory=True)
+    alarm = dict(PREEXISTING_UNTOUCHED_ALARM, entityName="ethernet1/63",
+                 anomalyString="Interface ethernet1/63 in undesired state up:down:Link not connected")
+    gate.preexisting_alert_keys = {gate.alert_key("fixture", alarm)}
+    assert gate.preexisting_untouched("fixture", alarm)
+    gate.checkpoint({"phase": "before_change", "fabric": "fixture", "switchId": "SERIAL00001",
+                     "interfaceName": "Ethernet1/63"})
+    assert not gate.preexisting_untouched("fixture", alarm)
+
+
+def test_lifecycle_hook_reports_preexisting_alarms_without_blocking():
+    import yaml
+    from jinja2 import Environment
+
+    helper = flat_tasks(yaml.safe_load((PLUGIN.parent.parent / 'nd_prerequisite/interface_baseline.yaml').read_text()))
+    tasks = {row['name']: row for row in helper}
+    gate = tasks['Plan or apply the bounded interface baseline']['nd_interface_baseline']
+    assert 'ND_INTERFACE_BASELINE_PREEXISTING_ALARMS_ADVISORY' in gate['preexisting_connectivity_advisory']
+    report = tasks['Report pre-existing interface alarms that do not block this lifecycle boundary']
+    result = {'baseline_failed': False, 'preexisting_connectivity_alerts': 2, 'connectivity_alerts': [
+        {'switch': 'leaf', 'interface': 'Ethernet1/58', 'preexisting': True},
+        {'switch': 'edge', 'interface': 'Ethernet1/1', 'preexisting': True}]}
+    message = Environment().from_string(report['ansible.builtin.debug']['msg']).render(
+        _nd_interface_baseline_result=result)
+    assert message.startswith('NDP_INTERFACE_BASELINE_PREEXISTING_ALARMS_ADVISORY: 2 ')
+    assert '(leaf Ethernet1/58, edge Ethernet1/1)' in message
+
+
 @pytest.mark.parametrize("counts", [
     {"total": 3, "remaining": 1}, {"total": 3, "remaining": 0},
     {"total": "2", "remaining": 0}, {"total": 2, "remaining": False},
@@ -1313,6 +1397,52 @@ def test_lifecycle_helper_recovers_config_sync_unless_disabled(tmp_path, switch_
     assert "192.0.2.10" not in completed.stdout and "SERIAL00001" not in completed.stdout
 
 
+@pytest.mark.parametrize("advisory,mode,missing,expected", [
+    (True, "drift", [], "drift"),
+    (True, "drift", ["leaf"], "full"),
+    (False, "drift", [], "full"),
+    (True, None, [], "full"),
+    (True, "skip", [], "invalid"),
+], ids=["post_recovery_drift", "onboarded_switch", "transfer_or_delete_hook", "default", "invalid"])
+def test_drift_mode_defers_the_full_baseline_only_for_a_post_recovery_audit_without_onboarding(
+        tmp_path, advisory, mode, missing, expected):
+    registry, _, state = controller_fixture()
+    registry['lab']['fabrics'] = {'advanced': {'name': 'fixture', 'type': 'vxlanIbgp', 'lifecycle': 'retained'}}
+    registry['lab']['switches']['leaf']['baseline_fabric_ref'] = 'advanced'
+    registry_path = tmp_path / "registry.yaml"
+    registry_path.write_text(json.dumps(registry))
+    ledger = tmp_path / "ledger.json"
+    ledger.write_text(json.dumps(state))
+    modules = tmp_path / "collections/ansible_collections/cisco/nd/plugins/modules"
+    modules.mkdir(parents=True)
+    (modules / "nd_rest.py").write_text(FAKE_REST)
+    values = {"ansible_python_interpreter": sys.executable, "nd_interface_baseline_registry_file": str(registry_path),
+              "nd_test_fabric_switches": {"fixture": []}, "nd_switch_apply": False,
+              "nd_interface_baseline_poll_seconds": 0, "nd_interface_baseline_audit_advisory": advisory,
+              "nd_missing_switches": missing}
+    if mode is not None:
+        values["nd_interface_baseline_audit_mode"] = mode
+    playbook = tmp_path / "play.yaml"
+    playbook.write_text(json.dumps([{"hosts": "localhost", "connection": "local", "gather_facts": False, "vars": values,
+        "tasks": [{"ansible.builtin.include_tasks": str(PLUGIN.parent.parent / "nd_prerequisite/interface_baseline.yaml")}]}]))
+    config = tmp_path / "ansible.cfg"
+    config.write_text("[defaults]\n")
+    environment = dict(os.environ, ANSIBLE_CONFIG=str(config), ANSIBLE_COLLECTIONS_PATH=str(tmp_path / "collections"),
+        ANSIBLE_COLLECTIONS_SCAN_SYS_PATH="False", ANSIBLE_ACTION_PLUGINS=str(PLUGIN.parent),
+        ANSIBLE_STDOUT_CALLBACK="default", ANSIBLE_NOCOLOR="1", BASELINE_FAKE_LEDGER=str(ledger),
+        ANSIBLE_LOCAL_TEMP=str(tmp_path / "local"), ANSIBLE_REMOTE_TEMP=str(tmp_path / "remote"),
+        OBJC_DISABLE_INITIALIZE_FORK_SAFETY="YES")
+    command = [str(Path(sys.executable).with_name("ansible-playbook")), "-i", "localhost,", str(playbook)]
+    completed = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=60)
+    output = completed.stdout + completed.stderr
+    calls = json.loads(ledger.read_text())["calls"]
+    assert (completed.returncode == 0) is (expected != "invalid"), output
+    assert ("NDP_INTERFACE_BASELINE_MODE_INVALID" in output) is (expected == "invalid")
+    assert ("NDP_INTERFACE_BASELINE_SKIPPED mode=drift" in output) is (expected == "drift")
+    assert ("reason=AUDIT_COMPLETE" in output) is (expected == "full"), output
+    assert bool(calls) is (expected == "full")
+
+
 def test_registry_loader_reports_sanitized_parse_failure(tmp_path):
     registry_path = tmp_path / "private-registry.yaml"
     registry_path.write_text("registry_secret_marker: [unterminated\n")
@@ -1531,7 +1661,7 @@ def test_real_registry_and_all_lifecycle_delivery_hooks_are_complete(baseline):
     assert "NDP_INTERFACE_BASELINE_HOOK after reset" in reset["tasks"][-1]["name"]
     assert reset["tasks"][-1]["when"][-1] == "not (nd_reset_defer_interface_baseline | default(false) | bool)"
     assert guard["vars"]["nd_switch_predelete_copy_timeout_seconds"] == 900
-    helper = yaml.safe_load((root / "playbooks/nd_prerequisite/interface_baseline.yaml").read_text())
+    helper = list(flat_tasks(yaml.safe_load((root / "playbooks/nd_prerequisite/interface_baseline.yaml").read_text())))
     recovery = next(task for task in helper if "nd_interface_baseline" in task)["nd_interface_baseline"]["recover_config_sync"]
     # Lifecycle hooks normally audit interfaces; sync recovery must not depend on interface apply.
     assert "nd_switch_apply" in recovery and "nd_prerequisite_only" in recovery
@@ -1806,6 +1936,48 @@ def test_required_port_sync_settles_before_fresh_checks_and_further_writes(
     assert '192.0.2.99' not in json.dumps(result)
 
 
+@pytest.mark.parametrize('phase,settle,blocked', [
+    ('before_write', None, True), ('before_write', 5, True), ('after_deploy', 5, False)])
+def test_idle_drift_settle_shortens_only_the_pre_write_gate(baseline, tmp_path, phase, settle, blocked):
+    # A never-converging idle switch blocks the next write after the settle. ND's
+    # normal idle pending after this baseline's own deploy still gets the full window.
+    registry, original, state, sleep = required_controller_fixture()
+    state.update(drift_reads=0, drift_started=None)
+
+    def request(method, path, content, timeout):
+        reply = original(method, path, content, timeout)
+        started = state['required_reads'] > 0 if phase == 'before_write' else len(state['mutations']) >= 2
+        if path.endswith('/switches') and started and (phase == 'before_write' or state['drift_reads'] < 12):
+            state['drift_reads'] += 1
+            state['drift_started'] = state['now'] if state['drift_started'] is None else state['drift_started']
+            reply['current']['switches'][0]['additionalData']['configSyncStatus'] = (
+                'outOfSync' if phase == 'before_write' else 'pending')
+        return reply
+
+    result = baseline.InterfaceBaseline(
+        registry, ['fixture'], request, apply=True, switch_refs=['leaf'], ensure_required_admin_up=True,
+        journal_path=str(tmp_path / 'journal.jsonl'), clock=lambda: state['now'], sleep=sleep,
+        poll_seconds=1, timeout_seconds=90, sync_attempt_seconds=40, sync_settle_seconds=5,
+        stable_drift_settle_seconds=settle).run()
+    assert result['baseline_failed'] is blocked, result
+    if blocked:
+        assert result['reason'] == 'SWITCH_READINESS_OR_IDENTITY_UNVERIFIED'
+        assert state['mutations'] == []
+        waited = state['now'] - state['drift_started']
+        assert waited < 10 if settle == 5 else waited > 30
+    else:
+        assert state['drift_reads'] == 12
+        assert result['required_verified'] == result['verified'] == 1
+        assert len(state['mutations']) == 4
+
+
+@pytest.mark.parametrize('settle', [-1, 41, float('nan')])
+def test_idle_drift_settle_must_fit_the_sync_window(baseline, settle):
+    with pytest.raises(ValueError, match='stable drift settle'):
+        baseline.InterfaceBaseline(*required_controller_fixture()[:1], ['fixture'], lambda *args: None,
+                                   sync_attempt_seconds=40, sync_settle_seconds=5, stable_drift_settle_seconds=settle)
+
+
 @pytest.mark.parametrize("deploy_body", [
     lambda names: {},
     lambda names: {"results": []},
@@ -1942,7 +2114,7 @@ def test_lifecycle_enforces_reservations_and_blocks_unverified_switch_deletion()
     import yaml
 
     root = PLUGIN.parents[2]
-    helper = yaml.safe_load((root / "playbooks/nd_prerequisite/interface_baseline.yaml").read_text())
+    helper = list(flat_tasks(yaml.safe_load((root / "playbooks/nd_prerequisite/interface_baseline.yaml").read_text())))
     action = next(task["nd_interface_baseline"] for task in helper if "nd_interface_baseline" in task)
     assert action["idle_reserved_ports"] is False
     assert action["ensure_required_admin_up"] is True

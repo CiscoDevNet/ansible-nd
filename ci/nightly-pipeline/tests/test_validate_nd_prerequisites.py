@@ -37,6 +37,7 @@ from validate_nd_prerequisites import (
 @pytest.mark.parametrize("action,outcome", [
     ("routed", "success"), ("admin_up", "success"), ("delete", "success"),
     ("routed", "write_failure"), ("routed", "unverified"), ("delete", "stale_plan"),
+    ("admin_up", "already_enabled"), ("admin_up", "identity_changed"), ("routed", "identity_changed"),
 ])
 def test_baseline_interface_repair_executes_with_mock_controller(tmp_path, action, outcome):
     module_dir = tmp_path / "collections/ansible_collections/cisco/nd/plugins/modules"
@@ -65,8 +66,11 @@ if method != "get":
         state["deleted"] = True
     state_path.write_text(json.dumps(state))
     module.exit_json(changed=True, current={})
+state["reads"].append(path)
+state_path.write_text(json.dumps(state))
 if path.endswith("/switches"):
-    module.exit_json(current={"switches": [{"switchId": "SERIAL00001", "fabricManagementIp": "192.0.2.10"}]})
+    ip = "192.0.2.99" if state["outcome"] == "identity_changed" else "192.0.2.10"
+    module.exit_json(current={"switches": [{"switchId": "SERIAL00001", "fabricManagementIp": ip}]})
 if "/interface?" in path:
     policy = "unexpected" if state["outcome"] == "stale_plan" else "int_trunk_host"
     module.exit_json(current=[] if state["deleted"] else [{"policy": policy, "interfaces": [{"nvPairs": {"ADMIN_STATE": "false"}}]}])
@@ -75,10 +79,11 @@ module.exit_json(current=state["current"])
     interface = "Ethernet1/1.100" if action == "delete" else "Ethernet1/1"
     current = {"interfaceName": interface, "interfaceType": "ethernet",
                "configData": {"mode": "trunk", "networkOS": {"networkOSType": "nx-os",
-                              "policy": {"policyType": "trunkHost", "adminState": False, "allowedVlans": "100"}}},
+                              "policy": {"policyType": "trunkHost", "adminState": outcome == "already_enabled",
+                                         "allowedVlans": "100"}}},
                "operData": {"mode": "trunk"}}
     state_file = tmp_path / "state.json"
-    state_file.write_text(json.dumps({"current": current, "deleted": False, "writes": [], "outcome": outcome}))
+    state_file.write_text(json.dumps({"current": current, "deleted": False, "writes": [], "reads": [], "outcome": outcome}))
     helper = yaml.safe_load((ROOT / "playbooks/nd_prerequisite/apply_repair_interface.yaml").read_text())
 
     def fast_tasks(tasks):
@@ -106,15 +111,23 @@ module.exit_json(current=state["current"])
                        REPAIR_TEST_STATE=str(state_file), REPAIR_TEST_JOURNAL=str(tmp_path / "baseline-repair-journal.yaml"))
     result = subprocess.run([sys.executable, "-m", "ansible.cli.playbook", "-i", "localhost,", str(playbook)],
                             env=environment, text=True, capture_output=True, timeout=60)
-    assert (result.returncode == 0) == (outcome == "success"), result.stdout + result.stderr
+    assert (result.returncode == 0) == (outcome in ("success", "already_enabled")), result.stdout + result.stderr
     state = json.loads(state_file.read_text())
-    if outcome == "stale_plan":
+    journal = tmp_path / "baseline-repair-journal.yaml"
+    if outcome == "already_enabled":
+        # One snapshot proves the endpoint is enabled; no identity read, journal, write or verify poll.
+        assert state["reads"] == [f"/api/v1/manage/fabrics/TEST/switches/SERIAL00001/interfaces/{interface.replace('/', '%2F')}"]
+        assert state["writes"] == [] and not journal.exists()
+    elif outcome == "identity_changed":
+        assert any(read.endswith("/switches") for read in state["reads"])
+        assert state["writes"] == [] and not journal.exists()
+        assert "Switch identity changed after planning" in result.stdout
+    elif outcome == "stale_plan":
         assert state["writes"] == []
     elif outcome == "write_failure":
         assert len(state["writes"]) == 1
         assert not any("deploy" in write for write in state["writes"])
     else:
-        journal = tmp_path / "baseline-repair-journal.yaml"
         assert yaml.safe_load(journal.read_text())["operations"][0]["before"] == current
         assert journal.stat().st_mode & 0o777 == 0o600
         if action == "admin_up":

@@ -58,8 +58,15 @@ def tasks(filename):
     return yaml.safe_load((PREREQUISITES / filename).read_text())
 
 
+def flat(items):
+    for item in items:
+        yield item
+        for section in ("block", "rescue", "always"):
+            yield from flat(item.get(section, []))
+
+
 def named(items, name):
-    return copy.deepcopy(next(item for item in items if item.get("name", "").startswith(name)))
+    return copy.deepcopy(next(item for item in flat(items) if item.get("name", "").startswith(name)))
 
 
 def reveal(value):
@@ -85,16 +92,21 @@ def run(tmp_path, selected, values, responses=None, replan_operations=None):
     ledger.write_text(json.dumps({"responses": responses or {}, "reads": [], "writes": [], "plans": 0,
                                   "replan_operations": replan_operations or []}))
     planner = tmp_path / "planner.py"
-    planner.write_text("""import json, os
+    planner.write_text("""import json, os, sys
 from pathlib import Path
 p=Path(os.environ['NDP_CAPTURE_FIXTURE_LEDGER']); s=json.loads(p.read_text()); s['plans']+=1
-assert '/fixture/state' in s['reads'], 'Replan must use a fresh capture'
-p.write_text(json.dumps(s)); print(json.dumps({'operations':s['replan_operations']}))
+operations = s['replan_operations']
+if '--repair-stage' in sys.argv:
+    stage = sys.argv[sys.argv.index('--repair-stage') + 1]
+    operations = operations.get(stage, []) if isinstance(operations, dict) else operations
+else:
+    assert '/fixture/state' in s['reads'], 'Replan must use a fresh capture'
+p.write_text(json.dumps(s)); print(json.dumps({'operations':operations}))
 """)
     values = {**values, "ansible_python_interpreter": sys.executable, "_ndp_argv": [sys.executable, str(planner)]}
     result_path = tmp_path / "result.json"
     selected += [{"name": "Save synthetic observed facts", "ansible.builtin.copy": {
-        "dest": str(result_path), "content": "{{ {'state': _ndp_live_state | default({}), 'done': _ndp_baseline_repair_interfaces_done | default(none), 'refresh': _ndp_reconcile_requires_refresh | default(none), 'fresh_write_count': _fixture_fresh_snapshot | default(none)} | to_json }}"}}]
+        "dest": str(result_path), "content": "{{ {'state': _ndp_live_state | default({}), 'done': _ndp_baseline_repair_interfaces_done | default(none), 'refresh': _ndp_reconcile_requires_refresh | default(none), 'fresh_write_count': _fixture_fresh_snapshot | default(none), 'passes': _fixture_passes | default([])} | to_json }}"}}]
     reveal(selected)  # Synthetic data only; production no_log remains unchanged.
     play = tmp_path / "play.yaml"
     play.write_text(yaml.safe_dump([{"hosts": "localhost", "connection": "local", "gather_facts": False,
@@ -120,10 +132,15 @@ def capture_stub(tmp_path):
     ], sort_keys=False))
 
 
-def mutation_stub(tmp_path, operation):
-    (tmp_path / ("apply_" + operation + ".yaml")).write_text(yaml.safe_dump([
-        {"name": "Apply declared synthetic change", "cisco.nd.nd_rest": {"path": "/fixture/change", "method": "post"}}
-    ], sort_keys=False))
+def mutation_stub(tmp_path, operation, journaled=False):
+    change = {"name": "Apply declared synthetic change", "cisco.nd.nd_rest": {"path": "/fixture/change", "method": "post"}}
+    if journaled:
+        # Production repair files journal the before-image only when they will mutate.
+        change = {"name": "Journal and apply declared synthetic change", "when": "_ndp_repair_operation.mutates",
+                  "block": [{"name": "Journal synthetic before-image", "ansible.builtin.set_fact": {
+                      "_ndp_baseline_repair_journal": "{{ _ndp_baseline_repair_journal + [_ndp_repair_operation] }}"}},
+                      change]}
+    (tmp_path / ("apply_" + operation + ".yaml")).write_text(yaml.safe_dump([change], sort_keys=False))
 
 
 @pytest.mark.parametrize("placement", ("same_fabric", "split_fabrics", "missing", "zero_members"))
@@ -159,25 +176,93 @@ def test_membership_reads_once_per_fabric_and_normalizes_all_members(tmp_path, p
             assert captured["one"]["sync_status"] == "inSync"
 
 
-@pytest.mark.parametrize("stage,action,expected_capture,done", (
-    ("interfaces", None, 0, True), ("interfaces", "admin_up", 1, True),
-    ("interfaces", "delete_pc", 1, False), ("switches", "move", 0, None),
-))
-def test_empty_interface_repairs_reuse_capture_but_real_repairs_refresh(tmp_path, stage, action, expected_capture, done):
+@pytest.mark.parametrize("stage,action,mutates,expected_capture,done", (
+    ("interfaces", None, True, 0, True), ("interfaces", "admin_up", False, 0, True),
+    ("interfaces", "admin_up", True, 1, True), ("interfaces", "delete_pc", True, 1, False),
+    ("switches", "move", True, 0, None),
+), ids=("no_ops", "enabled_admin_up", "disabled_admin_up", "delete_pc", "switch_stage"))
+def test_empty_interface_repairs_reuse_capture_but_real_repairs_refresh(tmp_path, stage, action, mutates,
+                                                                        expected_capture, done):
     source = tasks("repair_baseline.yaml")
-    selected = [named(source, prefix) for prefix in ("Apply and verify each declared baseline repair", "Recapture actual controller state", "Stop repair passes")]
+    selected = [named(source, prefix) for prefix in ("Mark the repair journal", "Apply and verify each declared baseline repair",
+                                                     "Recapture actual controller state", "Stop repair passes")]
     capture_stub(tmp_path)
     operation = "repair_interface" if stage == "interfaces" else "repair_switch"
-    mutation_stub(tmp_path, operation)
-    changes = [{"operation": operation, "action": action, "switch_ref": "fixture-switch"}] if action else []
-    completed, ledger, facts = run(tmp_path, selected, {"_ndp_repair_stage": stage,
+    mutation_stub(tmp_path, operation, journaled=True)
+    changes = [{"operation": operation, "action": action, "switch_ref": "fixture-switch", "mutates": mutates}] if action else []
+    completed, ledger, facts = run(tmp_path, selected, {"_ndp_repair_stage": stage, "_ndp_baseline_repair_journal": [{}],
                                                        "_ndp_repair_plan": {"stdout": json.dumps({"operations": changes})}})
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert ledger["reads"].count("/fixture/state") == expected_capture
-    assert len(ledger["writes"]) == bool(changes)
+    assert len(ledger["writes"]) == bool(changes and mutates)
     assert facts["done"] is done
     if expected_capture:
         assert int(facts["fresh_write_count"]) == 1
+
+
+@pytest.mark.parametrize("initially_done,clean_after,expected", (
+    (False, 1, ["switches", "interfaces"]),
+    (False, 2, ["switches", "interfaces", "interfaces"]),
+    (False, 9, ["switches"] + ["interfaces"] * 4),
+    (True, 1, ["switches"]),
+), ids=("clean_first_pass", "clean_second_pass", "never_clean", "already_done"))
+def test_interface_repair_passes_stop_after_the_first_clean_pass(tmp_path, initially_done, clean_after, expected):
+    # Real wrapper includes and real pass guard; only the pass body is synthetic.
+    guard = copy.deepcopy(tasks("repair_baseline.yaml")[0])
+    assert "_ndp_baseline_repair_interfaces_done" in guard["when"]
+    guard["block"] = [
+        {"name": "Count the synthetic repair pass", "ansible.builtin.set_fact": {
+            "_fixture_passes": "{{ _fixture_passes | default([]) + [_ndp_repair_stage] }}"}},
+        {"name": "Finish after the configured clean pass", "when": "_ndp_repair_stage == 'interfaces'",
+         "ansible.builtin.set_fact": {"_ndp_baseline_repair_interfaces_done": (
+             "{{ _fixture_passes | select('equalto', 'interfaces') | list | length >= " + str(clean_after) + " }}")}},
+    ]
+    (tmp_path / "repair_baseline.yaml").write_text(yaml.safe_dump([guard], sort_keys=False))
+    wrapper = tasks("nd_prerequisite_wrapper.yaml")
+    selected = [named(wrapper, prefix) for prefix in ("Repair declared switch baseline before requiring full capture",
+                                                      "Repair and recapture the declared interface baseline")]
+    completed, _, facts = run(tmp_path, selected, {
+        "nd_prerequisite_mode": "live", "nd_prerequisite_apply": True, "nd_prerequisite_repair_baseline": True,
+        "_ndp_profile": {"switches": {"members": [{"ref": "fixture-switch"}]}},
+        "_ndp_baseline_repair_interfaces_done": initially_done})
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert facts["passes"] == expected
+
+
+@pytest.mark.parametrize("switch_ops,interface_ops,expected_reads", (
+    ([], [], 1),
+    ([{"operation": "repair_switch", "action": "move", "switch_ref": "fixture-switch", "mutates": True}], [], 2),
+    ([], [{"operation": "repair_interface", "action": "delete", "switch_ref": "fixture-switch",
+           "interface": "Port-channel9", "mutates": True}], 4),
+), ids=("unchanged_switch_pass_reused", "switch_repair_rereads", "later_interface_passes_reread"))
+def test_interface_pass_zero_reuses_only_an_unchanged_switch_pass_snapshot(tmp_path, switch_ops, interface_ops,
+                                                                         expected_reads):
+    # Real wrapper includes and the real repair pass; only planner, capture and apply bodies are synthetic.
+    shutil.copy(PREREQUISITES / "repair_baseline.yaml", tmp_path / "repair_baseline.yaml")
+    capture_stub(tmp_path)
+    mutation_stub(tmp_path, "repair_switch", journaled=True)
+    mutation_stub(tmp_path, "repair_interface", journaled=True)
+    wrapper = tasks("nd_prerequisite_wrapper.yaml")
+    selected = [named(wrapper, prefix) for prefix in ("Repair declared switch baseline before requiring full capture",
+                                                      "Capture the current prerequisite state before planning",
+                                                      "Repair and recapture the declared interface baseline")]
+    fabric = "/api/v1/manage/fabrics/fixture-primary"
+    completed, ledger, _ = run(tmp_path, selected, {
+        "nd_prerequisite_mode": "live", "nd_prerequisite_apply": True, "nd_prerequisite_repair_baseline": True,
+        "_ndp_baseline_repair_lock_acquired": True, "_ndp_profile": {"switches": {"members": [{"ref": "fixture-switch"}]}},
+        "_ndp_registry": {"lab": {"fabrics": {"primary": {"name": "fixture-primary", "type": "vxlanIbgp",
+                                                          "lifecycle": "retained"}}}},
+        "_ndp_state_dir": str(tmp_path / "state"), "_ndp_state_file": str(tmp_path / "state/state.yaml"),
+        "_ndp_baseline_repair_journal": [], "_ndp_run_id": "fixture", "_ndp_execution_id": "fixture"},
+        {fabric: {"management": {"type": "vxlanIbgp"}}, fabric + "/switches": {"switches": []}},
+        {"switches": switch_ops, "interfaces": interface_ops})
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert ledger["reads"].count(fabric) == expected_reads
+    assert ledger["reads"].count(fabric + "/switches") == expected_reads
+    assert ledger["plans"] == 1 + (4 if interface_ops else 1)
+    assert ("reusing the switch-pass fabric types" in completed.stdout) is (not switch_ops)
+    assert yaml.safe_load((tmp_path / "state/repair-inventory.yaml").read_text()) == {
+        "inventory": [{"fabric_ref": "primary", "switches": []}]}
 
 
 def wrapper_tail():

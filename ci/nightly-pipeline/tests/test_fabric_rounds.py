@@ -573,6 +573,19 @@ def test_the_switch_sync_carries_the_round_roster_and_the_fabrics_to_move_betwee
     assert "nd_switch_rehome_fabrics_csv" not in guard
 
 
+@pytest.mark.parametrize("name", ("Jenkinsfile_nd_jenkins_script", "Jenkinsfile_nd_jenkins_script_temp_switches",
+                                  "Jenkinsfile_nd_jenkins_script_comm_list"))
+def test_per_module_switch_guard_defers_the_full_interface_baseline_to_round_boundaries(name):
+    text = (ROOT / name).read_text()
+    start = text.index("ensure_switches_ready() {")
+    guard = text[start:text.index("\n                                }\n", start)]
+    setup = text[text.index('SWITCH_GUARD_APPLY="true"'):start]
+    assert 'SWITCH_GUARD_INTERFACE_BASELINE="${ND_SWITCH_GUARD_INTERFACE_BASELINE:-drift}"' in setup
+    assert "full|drift) ;;" in setup and "NDP_INVALID_SWITCH_GUARD_INTERFACE_BASELINE" in setup
+    assert '-e "nd_interface_baseline_audit_mode=${SWITCH_GUARD_INTERFACE_BASELINE}"' in guard
+    assert text.count("nd_interface_baseline_audit_mode=") == 1
+
+
 def test_preflight_and_restore_failures_continue_into_the_tests_and_the_next_round():
     lifecycle = groovy_function("runNDFCVersionTests")
     assert lifecycle.index("runSwitchPreflight(ndfcConfig)") < lifecycle.index("runFabricTest(ndfcConfig)")

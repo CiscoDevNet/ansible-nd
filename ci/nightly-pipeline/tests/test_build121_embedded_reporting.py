@@ -192,7 +192,8 @@ assert requests.isEmpty()
     for installed in (workspace / 'collection').rglob('*'):
         if installed.is_file():
             relative = installed.relative_to(workspace / 'collection')
-            source = ROOT / ('tests' if relative.name == 'nd_prerequisite_orchestrator.py' else 'playbooks') / relative
+            source = ROOT / relative if relative.parts[0] == 'tools' else \
+                ROOT / ('tests' if relative.name == 'nd_prerequisite_orchestrator.py' else 'playbooks') / relative
             assert installed.read_bytes() == source.read_bytes()
 
 

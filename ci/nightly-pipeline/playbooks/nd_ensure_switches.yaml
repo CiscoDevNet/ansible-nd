@@ -41,9 +41,15 @@
 # only reports the plan (NDP_SWITCH_REHOME_PLAN). Without the variable nothing is moved.
 # A refused deletion is terminal, and the legacy force flag is rejected before any
 # switch operation, with one exception: nd_switch_ibgp_to_ebgp_leaf_tor_force_delete
-# (Jenkins enables it by default) allows a single force=true retry in the verified
-# iBGP-to-eBGP pre-flight, only for switches whose normal removal ND refused and
-# that carry a matching uncleared Leaf-ToR unpairing anomaly. Home recovery never forces.
+# (Jenkins enables it by default) allows a single Leaf-ToR role-bypass retry in the
+# verified iBGP-to-eBGP pre-flight, only for switches whose normal removal ND refused
+# and that carry a matching uncleared Leaf-ToR unpairing anomaly. ND's Easy_Fabric
+# preSwitchDelete hook refuses a leaf while an orphaned markDeleted Leaf-ToR pair
+# exists; Recalculate cannot finish that unpairing once the ToR left the fabric, and
+# force=true is refused too (verified live). The check only runs for role "leaf", so
+# the retry temporarily changes those refused leaves to border and sends a normal
+# removal; the destination add uses the roster role. A failed retry restores the
+# leaf role. Home recovery never uses this bypass.
 #
 #   ansible-playbook -i inventory.yaml playbooks/nd_ensure_switches.yaml \
 #     -e nd_switch_apply=true -e switch_username=admin -e switch_password=***
@@ -860,7 +866,7 @@
           when: nd_interface_baseline_enabled | default(false) | bool
 
         - &nd_force_direction_probe
-          name: Read fresh source and destination types for the opt-in forward force exception
+          name: Read fresh source and destination types for the opt-in forward Leaf-ToR exception
           cisco.nd.nd_rest:
             method: get
             path: "/api/v1/manage/fabrics/{{ _force_fabric }}"
@@ -877,7 +883,7 @@
           name: Require an explicitly enabled verified iBGP to eBGP preflight exception
           ansible.builtin.assert:
             that: _nd_leaf_tor_force_forward_scope | bool
-            fail_msg: "NDP_SWITCH_FORCE_SCOPE_BLOCKED: force fallback requires one verified iBGP-to-eBGP preflight transfer; no force request is allowed."
+            fail_msg: "NDP_SWITCH_FORCE_SCOPE_BLOCKED: the Leaf-ToR role-bypass fallback requires one verified iBGP-to-eBGP preflight transfer; no bypass is allowed."
           when: nd_switch_ibgp_to_ebgp_leaf_tor_force_delete | default(false) | bool
 
         - name: Require the pre-delete deployment safety gate for a membership transfer
@@ -1563,7 +1569,7 @@
                 loop_var: _leaf_tor_final
                 label: Leaf-ToR clearance
 
-            - name: Record whether verified pending unpairing requires the opt-in force retry
+            - name: Record whether verified pending unpairing requires the opt-in role-bypass retry
               ansible.builtin.set_fact:
                 _nd_predelete_leaf_tor_force_required: >-
                   {{ (_nd_predelete_leaf_tor_force_required | bool)
@@ -1641,7 +1647,7 @@
               name: Remove each switch from the fabric it is leaving
               cisco.nd.nd_rest:
                 method: post
-                path: "/api/v1/manage/fabrics/{{ _rm.key }}/switchActions/remove{{ '?force=true' if (_nd_remove_leaf_tor_force_retry | default(false) | bool) else '' }}"
+                path: "/api/v1/manage/fabrics/{{ _rm.key }}/switchActions/remove"
                 content:
                   switchIds: "{{ nd_rehome_moves | selectattr('from_fabric', 'equalto', _rm.key) | map(attribute='serial') | list }}"
               loop: "{{ dict(nd_rehome_moves | groupby('from_fabric')) | dict2items }}"
@@ -1662,7 +1668,7 @@
               until: >-
                 not (_remove_retryable | bool)
                 or (nd_rehome_removed.attempts | default(1) | int) >= (nd_switch_remove_retries | int) + 1
-              retries: "{{ 0 if (_nd_remove_leaf_tor_force_retry | default(false) | bool) else (nd_switch_remove_retries | int) }}"
+              retries: "{{ nd_switch_remove_retries | int }}"
               delay: "{{ nd_switch_remove_delay | int }}"
               failed_when: false
               no_log: true
@@ -1899,7 +1905,7 @@
 
             - name: Reconcile Leaf-ToR unpairing and retry only the refused switches once
               vars:
-                _nd_remove_leaf_tor_force_retry: >-
+                _nd_remove_leaf_tor_role_bypass: >-
                   {{ (_nd_leaf_tor_force_forward_scope | bool)
                      and (_nd_predelete_leaf_tor_force_required | default(false) | bool) }}
               block:
@@ -1907,23 +1913,133 @@
                 - name: Restrict the active move fact to verified refused switches
                   ansible.builtin.set_fact:
                     nd_rehome_moves: "{{ _nd_remove_retry_moves }}"
+                    _nd_role_bypass_ids: []
                 - *nd_predelete_gate
                 - *nd_force_direction_probe
                 - *nd_force_direction_require
-                - name: Report the single identity-scoped forced forward-transfer retry
+                - name: Read the source roles of the verified refused switches
+                  cisco.nd.nd_rest:
+                    method: get
+                    path: "/api/v1/manage/fabrics/{{ nd_rehome_moves | map(attribute='from_fabric') | first }}/switches"
+                  register: _nd_role_bypass_inventory
+                  failed_when: false
+                  when: _nd_remove_leaf_tor_role_bypass | bool
+                  no_log: true
+                # Only role "leaf" runs ND's getMarkDeletedPairs() delete check.
+                - name: Select refused leaves held by an orphaned Leaf-ToR unpairing record
+                  ansible.builtin.set_fact:
+                    _nd_role_bypass_ids: >-
+                      {%- set body = _nd_role_bypass_inventory.current | default(none) -%}
+                      {%- set ids = nd_rehome_moves | map(attribute='serial') | list -%}
+                      {%- set ns = namespace(out=[]) -%}
+                      {%- if _nd_role_bypass_inventory.status | default(0) | int == 200 and body is mapping
+                          and body.get('switches') is sequence and body.switches is not string and body.switches is not mapping -%}
+                        {%- for row in body.switches -%}
+                          {%- if row is mapping and row.get('switchId') in ids and row.get('switchId') not in ns.out
+                              and (row.get('switchRole', '') | string | lower) == 'leaf' -%}
+                            {%- set ns.out = ns.out + [row.switchId] -%}
+                          {%- endif -%}
+                        {%- endfor -%}
+                      {%- endif -%}
+                      {{- ns.out -}}
+                  when: _nd_remove_leaf_tor_role_bypass | bool
+                  no_log: true
+                - name: Report the single identity-scoped Leaf-ToR role-bypass retry
                   ansible.builtin.debug:
-                    msg: "NDP_SWITCH_REMOVE_FORCE_RETRY: one force=true request for verified refused Leaf-ToR identities in an opted-in iBGP-to-eBGP preflight; fresh source absence remains mandatory."
-                  when: _nd_remove_leaf_tor_force_retry | bool
+                    msg: >-
+                      NDP_SWITCH_REMOVE_LEAF_TOR_ROLE_BYPASS: {{ _nd_role_bypass_ids | length }} verified refused leaf switch(es)
+                      in an opted-in iBGP-to-eBGP preflight are temporarily changed to border so ND skips the
+                      leaf-only orphaned Leaf-ToR unpairing check; one normal removal follows and fresh source absence remains mandatory.
+                  when: _nd_remove_leaf_tor_role_bypass | bool
+                - name: Temporarily change the blocked leaves to border before the retry
+                  cisco.nd.nd_rest:
+                    method: post
+                    path: "/api/v1/manage/fabrics/{{ nd_rehome_moves | map(attribute='from_fabric') | first }}/switchActions/changeRoles"
+                    content:
+                      switchRoles: >-
+                        {%- set ns = namespace(out=[]) -%}
+                        {%- for identity in _nd_role_bypass_ids -%}
+                          {%- set ns.out = ns.out + [{'switchId': identity, 'role': 'border'}] -%}
+                        {%- endfor -%}
+                        {{- ns.out -}}
+                  register: _nd_role_bypass_change
+                  failed_when: false
+                  when: _nd_role_bypass_ids | length > 0
+                  no_log: true
+                - name: Remember the leaves whose role must be restored if the retry fails
+                  ansible.builtin.set_fact:
+                    _nd_role_bypass_pending: "{{ _nd_role_bypass_ids }}"
+                  when: _nd_role_bypass_ids | length > 0
+                - name: Require ND to accept every temporary role change before the retry
+                  ansible.builtin.assert:
+                    that: _role_change_accepted | bool
+                    fail_msg: >-
+                      NDP_SWITCH_REMOVE_REJECTED: ND did not accept the temporary Leaf-ToR role change
+                      (http={{ _nd_role_bypass_change.status | default(0) }}); no removal retry was sent.
+                  vars:
+                    _role_change_accepted: >-
+                      {%- set body = _nd_role_bypass_change.current | default(none) -%}
+                      {%- set items = body.get('items') if body is mapping else none -%}
+                      {%- set ns = namespace(ok=true, seen=[]) -%}
+                      {%- if _nd_role_bypass_change.status | default(0) | int not in [200, 207]
+                          or (body is mapping and (body.get('error') or body.get('errors'))) -%}
+                        {%- set ns.ok = false -%}
+                      {%- elif items is not none -%}
+                        {%- if items is string or items is mapping or items is not sequence -%}
+                          {%- set ns.ok = false -%}
+                        {%- else -%}
+                          {%- for item in items -%}
+                            {%- if item is not mapping or item.get('switchId') not in _nd_role_bypass_ids
+                                or (item.get('status', '') | string | lower) != 'success' -%}
+                              {%- set ns.ok = false -%}
+                            {%- else -%}
+                              {%- set ns.seen = ns.seen + [item.switchId] -%}
+                            {%- endif -%}
+                          {%- endfor -%}
+                          {%- if ns.seen | unique | list | length != _nd_role_bypass_ids | length -%}
+                            {%- set ns.ok = false -%}
+                          {%- endif -%}
+                        {%- endif -%}
+                      {%- elif _nd_role_bypass_change.status | default(0) | int == 207 -%}
+                        {%- set ns.ok = false -%}
+                      {%- endif -%}
+                      {{- ns.ok -}}
+                  when: _nd_role_bypass_ids | length > 0
                 - name: Retain accepted fabric outcomes before classifying the retry
                   ansible.builtin.set_fact:
                     nd_rehome_delete_reports: "{{ _nd_remove_original_reports | selectattr('classification', 'equalto', 'accepted') | list }}"
                 - *nd_normal_remove_request
                 - *nd_normal_remove_classifier
                 - *nd_normal_remove_acceptance
+                - name: Clear the role restoration scope after an accepted retry
+                  ansible.builtin.set_fact:
+                    _nd_role_bypass_pending: []
               always:
+                - name: Restore the leaf role when the bypass retry did not remove the switch
+                  cisco.nd.nd_rest:
+                    method: post
+                    path: "/api/v1/manage/fabrics/{{ _nd_remove_retry_moves | map(attribute='from_fabric') | first }}/switchActions/changeRoles"
+                    content:
+                      switchRoles: >-
+                        {%- set ns = namespace(out=[]) -%}
+                        {%- for identity in _nd_role_bypass_pending -%}
+                          {%- set ns.out = ns.out + [{'switchId': identity, 'role': 'leaf'}] -%}
+                        {%- endfor -%}
+                        {{- ns.out -}}
+                  register: _nd_role_bypass_restore
+                  failed_when: false
+                  when: _nd_role_bypass_pending | default([]) | length > 0
+                  no_log: true
+                - name: Report the leaf role restoration
+                  ansible.builtin.debug:
+                    msg: >-
+                      NDP_SWITCH_REMOVE_LEAF_TOR_ROLE_RESTORED: {{ _nd_role_bypass_pending | length }} switch(es)
+                      http={{ _nd_role_bypass_restore.status | default(0) }}; verify their role in the source fabric.
+                  when: _nd_role_bypass_pending | default([]) | length > 0
                 - name: Restore the complete move fact for source-absence verification
                   ansible.builtin.set_fact:
                     nd_rehome_moves: "{{ _nd_remove_original_moves }}"
+                    _nd_role_bypass_pending: []
 
             - name: Complete delete timing after verified anomaly remediation
               ansible.builtin.set_fact:

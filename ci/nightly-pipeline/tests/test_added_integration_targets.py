@@ -14,6 +14,7 @@ reach beyond the test objects, so the runner guards them:
 These tests pin the registry, the Jenkins wiring and the runner, and evaluate the runner's own Jinja against ND response shapes
 captured from the live lab, so every guard is proven offline.
 """
+import json
 import pathlib
 import re
 import subprocess
@@ -401,6 +402,32 @@ def test_pipeline_setup_wrapper_preserves_collection_owned_setup(setup_file, imp
         "_ndp_setup_importers": {"matched": importers},
         "nd_prerequisite_only": audit,
     }) is expected
+
+
+@pytest.mark.parametrize("present, expected", [
+    (["setup.yml", "prepare.yaml", "teardown.yaml"], ["setup.yml", "teardown.yaml"]),
+    (["setup.yml", "setup.yaml", "cleanup.yml", "cleanup.yaml", "teardown.yml"], ["setup.yaml", "cleanup.yaml"]),
+    (["prepare.yml", "main.yaml"], ["prepare.yml", ""]),
+    ([], ["", ""]),
+])
+def test_setup_and_cleanup_discovery_keeps_first_match_order_without_module_runs(tmp_path, present, expected):
+    target = tmp_path / "tests/integration/targets/fixture/tasks"
+    target.mkdir(parents=True)
+    for name in present:
+        (target / name).write_text("---\n[]\n")
+    discover = task("discover optional setup/cleanup task files")
+    assert set(discover) - {"name", "ansible.builtin.set_fact", "vars", "when"} == set()
+    result = tmp_path / "discovered.json"
+    play = [{"hosts": "localhost", "connection": "local", "gather_facts": False,
+             "vars": {"test_module": "fixture", "ansible_python_interpreter": sys.executable},
+             "tasks": [discover, {"name": "save", "ansible.builtin.copy": {
+                 "dest": str(result), "content": "{{ [_ndp_setup_file, _ndp_cleanup_file] | to_json }}"}}]}]
+    playbook = tmp_path / "play.yaml"
+    playbook.write_text(yaml.safe_dump(play, sort_keys=False))
+    completed = subprocess.run([sys.executable, "-m", "ansible.cli.playbook", "-i", "localhost,", str(playbook)],
+                               text=True, capture_output=True, timeout=60)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert json.loads(result.read_text()) == expected
 
 
 def test_the_local_user_cleanup_deletes_only_the_three_test_logins_and_only_after_a_passed_guard():

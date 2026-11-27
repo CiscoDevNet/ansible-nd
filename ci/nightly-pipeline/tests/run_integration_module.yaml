@@ -804,26 +804,17 @@
               no target lifecycle was started. Inspect ToR associations, roster roles and Leaf-ToR anomalies.
               The safety check does not change roles, force-remove switches or acknowledge anomalies.
 
+    # Controller-side existence tests: the 8 candidate names were 8 stat module runs (~9.5 s per module).
     - name: "[{{ test_module }}] discover optional setup/cleanup task files (names vary)"
-      ansible.builtin.stat:
-        path: "{{ playbook_dir }}/tests/integration/targets/{{ test_module }}/tasks/{{ item }}"
-      register: _ndp_lifecycle_probe
-      loop:
-        - setup.yaml
-        - setup.yml
-        - prepare.yaml
-        - prepare.yml
-        - cleanup.yaml
-        - cleanup.yml
-        - teardown.yaml
-        - teardown.yml
-      delegate_to: localhost
-      when: not (nd_prerequisite_only | default(false) | bool)
-
-    - name: "[{{ test_module }}] resolve first-matching setup + cleanup files"
       ansible.builtin.set_fact:
-        _ndp_setup_file: "{{ _ndp_lifecycle_probe.results | selectattr('stat.exists') | map(attribute='item') | select('match', '^(setup|prepare)[.]') | list | first | default('') }}"
-        _ndp_cleanup_file: "{{ _ndp_lifecycle_probe.results | selectattr('stat.exists') | map(attribute='item') | select('match', '^(cleanup|teardown)[.]') | list | first | default('') }}"
+        _ndp_setup_file: >-
+          {{ (['setup.yaml', 'setup.yml', 'prepare.yaml', 'prepare.yml']
+              | map('regex_replace', '^', _ndp_lifecycle_dir ~ '/') | select('exists') | map('basename') | list + ['']) | first }}
+        _ndp_cleanup_file: >-
+          {{ (['cleanup.yaml', 'cleanup.yml', 'teardown.yaml', 'teardown.yml']
+              | map('regex_replace', '^', _ndp_lifecycle_dir ~ '/') | select('exists') | map('basename') | list + ['']) | first }}
+      vars:
+        _ndp_lifecycle_dir: "{{ playbook_dir }}/tests/integration/targets/{{ test_module }}/tasks"
       when: not (nd_prerequisite_only | default(false) | bool)
 
     # A target "owns" its setup when main.yaml or any test-case already imports

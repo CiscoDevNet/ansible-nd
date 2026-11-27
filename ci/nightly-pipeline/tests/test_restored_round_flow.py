@@ -38,7 +38,7 @@ def groovy(request, tmp_path_factory):
 
 
 @pytest.mark.parametrize("scenario", ["healthy", "ibgp-test-failed", "both-tests-failed", "batch-setup-failed",
-                                     "preflight-failed", "migration-unconfirmed", "missing-receipt",
+                                     "preflight-failed", "migration-unconfirmed", "standalone-move-recovers", "missing-receipt",
                                      "malformed-receipt", "restore-failed", "apply-failed", "reset-failed",
                                      "post-restore-exception", "flow-aborted", "java-interrupted"])
 def test_real_full_flow_continues_failures_and_only_interrupts_stop_later_rounds(groovy, scenario):
@@ -47,6 +47,9 @@ script.binding.currentBuild.currentResult = 'SUCCESS'
 context.ND_RUNTIME_INPUTS_READY = 'true'
 context.ND_REPORTING_RELATIVE_ROOT = 'fixture-reports'
 context.ND_REPORTING_ROOT = '/fixture/reports'
+context.ANSIBLE_HOST = '192.0.2.10'
+// Build 203: Jenkins copied the unset NDFC_HOST_CURRENT as the string 'null'.
+context.NDFC_HOST_CURRENT = 'null'
 script.binding.setVariable('BASE_DIRECTORY', '/fixture/base')
 script.binding.setVariable('COLLECTIONS_DIRECTORY', '/fixture/collection')
 script.binding.setVariable('params', [DEBUG:false, DEBUG_MODULES:''])
@@ -87,7 +90,7 @@ script.metaClass.generateDynamicInventory = { Object round ->
 }
 script.metaClass.runSwitchPreflight = { Object round ->
     calls.add('pre:' + round.round_label)
-    if (scenario in ['preflight-failed', 'migration-unconfirmed']) { throw new IllegalStateException('preflight failed') }
+    if (scenario in ['preflight-failed', 'migration-unconfirmed', 'standalone-move-recovers']) { throw new IllegalStateException('preflight failed') }
 }
 script.metaClass.runSwitchPostRestore = { Object round ->
     calls.add('post:' + round.round_label)
@@ -99,6 +102,8 @@ script.metaClass.registerStructuredExecutions = { Object round, Object targets, 
     calls.add('register:' + round.round_label)
     return '/fixture/reports/executions/' + round.versionId + '/' + run
 }
+script.metaClass.installEmbeddedReportingHelper = { Object name, Object target -> calls.add('install:' + name); true }
+def migrationAudits = 0
 def swallowed = []
 script.metaClass.catchError = { Map options, Closure work ->
     try { work.call() } catch (Exception e) {
@@ -108,9 +113,14 @@ script.metaClass.catchError = { Map options, Closure work ->
 }
 script.metaClass.sh = { Object options ->
     def text = (options instanceof Map ? options.script : options).toString()
+    if (text.contains('nd_switch_fabric_move.py" move')) {
+        calls.add('standalone-move:' + context.MOVE_SRC + '->' + context.MOVE_DST + '@' + context.MOVE_ND_HOST)
+        return scenario == 'migration-unconfirmed' ? 1 : 0
+    }
     if (text.contains('nd_switch_fail_on_missing=true')) {
         calls.add('migration-check:' + context.MIGRATION_ROSTER)
-        return scenario == 'migration-unconfirmed' ? 2 : 0
+        migrationAudits++
+        return scenario == 'migration-unconfirmed' || (scenario == 'standalone-move-recovers' && migrationAudits == 1) ? 2 : 0
     }
     if (text.contains('NDP_MODULE_BATCH_CLOSED:')) {
         def round = context.VERSION_ID.endsWith('_EBGP') ? 'eBGP' : 'iBGP'
@@ -134,6 +144,8 @@ assert calls.contains('pre:iBGP')
 assert calls.any { it.startsWith('home:') }
 assert script.binding.currentBuild.result != 'FAILURE'
 assert swallowed.empty
+// The real runNDFCVersionTests must never export the literal "null" host.
+assert context.NDFC_HOST == '192.0.2.10' : context.NDFC_HOST
 if (!(scenario in ['flow-aborted', 'java-interrupted'])) {
     assert caught == null
     assert calls.contains('batch:iBGP') && calls.contains('post:iBGP')
@@ -142,8 +154,12 @@ if (!(scenario in ['flow-aborted', 'java-interrupted'])) {
     // read-only audit after a failed one. Unconfirmed rounds skip modules and
     // post-restore, record NOT_RUN rows and still return home.
     def migrationChecks = calls.findAll { it.startsWith('migration-check:') }
-    assert migrationChecks == (scenario in ['preflight-failed', 'migration-unconfirmed'] ?
-        ['migration-check:/fixture/collection/integration_config.yml'] : []) : calls
+    // A failed audit runs the standalone mover once; only its success re-audits.
+    def audit = 'migration-check:/fixture/collection/integration_config.yml'
+    assert migrationChecks == (scenario == 'standalone-move-recovers' ? [audit, audit] :
+        (scenario in ['preflight-failed', 'migration-unconfirmed'] ? [audit] : [])) : calls
+    assert calls.findAll { it.startsWith('standalone-move:') } == (scenario in ['migration-unconfirmed', 'standalone-move-recovers'] ?
+        ['standalone-move:VXLAN_EVPN_Fabric->VXLAN_EVPN_Fabric_eBGP@192.0.2.10'] : []) : calls
     if (scenario in ['apply-failed', 'migration-unconfirmed']) {
         assert !calls.contains('batch:eBGP') && !calls.contains('post:eBGP') : calls
         assert calls.indexOf('record:eBGP') < calls.findIndexOf { it.startsWith('home:') }
@@ -162,7 +178,8 @@ if (!(scenario in ['flow-aborted', 'java-interrupted'])) {
         'missing-receipt': 'NDP_FABRIC_ROUND_FAILED_CONTINUING:',
         'malformed-receipt': 'NDP_MODULE_BATCH_STATUS_INVALID:',
         'preflight-failed': 'NDP_FABRIC_ROUND_MIGRATION_CHECK fabric=VXLAN_EVPN_Fabric_eBGP exit_code=0 migrated=true',
-        'migration-unconfirmed': 'NDP_FABRIC_ROUND_MIGRATION_CHECK fabric=VXLAN_EVPN_Fabric_eBGP exit_code=2 migrated=false',
+        'migration-unconfirmed': 'NDP_FABRIC_ROUND_STANDALONE_MOVE_RESULT fabric=VXLAN_EVPN_Fabric_eBGP exit_code=1',
+        'standalone-move-recovers': 'NDP_FABRIC_ROUND_STANDALONE_MOVE_RESULT fabric=VXLAN_EVPN_Fabric_eBGP exit_code=0',
         'restore-failed': 'NDP_SWITCH_RESTORE_INCOMPLETE_CONTINUING:',
         'apply-failed': 'NDP_FABRIC_ROUND_APPLY_FAILED_CONTINUING:',
         'reset-failed': 'NDP_FABRIC_RESET_FAILED_CONTINUING:',

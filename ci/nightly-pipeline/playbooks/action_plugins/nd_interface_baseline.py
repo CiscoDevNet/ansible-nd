@@ -208,7 +208,8 @@ class InterfaceBaseline:
                  poll_seconds=5, clock=time.monotonic, sleep=time.sleep, switch_refs=None,
                  interfaces=None, journal_path=None, ensure_host_admin_down_default=False,
                  idle_reserved_ports=False, recover_config_sync=False, sync_attempt_seconds=420,
-                 sync_settle_seconds=60, ensure_required_admin_up=False, sync_call_timeout_seconds=180):
+                 sync_settle_seconds=60, ensure_required_admin_up=False, sync_call_timeout_seconds=180,
+                 stable_drift_settle_seconds=None, preexisting_connectivity_advisory=False):
         self.registry = registry
         self.protected = registry_reservations(registry)
         serial_names = {}
@@ -297,12 +298,27 @@ class InterfaceBaseline:
                 or not 0 < self.sync_attempt_seconds <= 900 or not 0 <= self.sync_settle_seconds <= self.sync_attempt_seconds
                 or not 0 < self.sync_call_timeout <= 600):
             raise ValueError("Invalid configuration sync recovery window")
+        # How long drift with nothing busy must persist before a pre-write gate
+        # gives up; busy switches and post-deploy waits keep sync_attempt_seconds.
+        self.stable_drift_settle = (self.sync_attempt_seconds if stable_drift_settle_seconds is None
+                                    else float(stable_drift_settle_seconds))
+        if not math.isfinite(self.stable_drift_settle) or not 0 <= self.stable_drift_settle <= self.sync_attempt_seconds:
+            raise ValueError("Invalid stable drift settle window")
         if recover_config_sync:
             owned_fabrics = {row.get("name") for row in registry["lab"].get("fabrics", {}).values()
                             if isinstance(row, dict) and row.get("lifecycle") in {"retained", "preserved"}}
             if not set(self.fabrics) <= owned_fabrics or switch_refs is None or self.journal_path is None:
                 raise ValueError("Configuration sync recovery outside the retained lab scope")
         self.recover_config_sync = recover_config_sync
+        if type(preexisting_connectivity_advisory) is not bool:
+            raise ValueError("Invalid pre-existing connectivity alarm flag")
+        # Lifecycle boundaries only: an alarm already active before this run, on a port
+        # this run never wrote, cannot have been caused by it. Report it instead of
+        # blocking. New alarms and alarms on written ports still block.
+        self.preexisting_connectivity_advisory = preexisting_connectivity_advisory
+        self.preexisting_alert_keys = None
+        self.preexisting_connectivity_alerts = None
+        self.written_interfaces = set()
         self.last_inventory_ids = set()
         self.clock, self.sleep = clock, sleep
         self.changed, self.candidates, self.verified, self.inspected = False, 0, 0, 0
@@ -316,6 +332,8 @@ class InterfaceBaseline:
         self.api_failure = None
 
     def checkpoint(self, value):
+        if isinstance(value, dict) and value.get("phase") == "before_change":
+            self.written_interfaces.add((value.get("switchId"), self.normalized_alert_interface(value.get("interfaceName"))))
         if self.journal_path is None:
             return
         secrets = [os.environ.get(key, "") for key in ("NDFC_USER", "NDFC_PASSWORD", "ANSIBLE_NXOS_SWITCH_USERNAME", "ANSIBLE_NXOS_SWITCH_PASSWORD")]
@@ -574,10 +592,13 @@ class InterfaceBaseline:
             raise BaselineBlocked("FABRIC_SYNC_ROSTER_CHANGED")
         return prefix, ready, statuses
 
-    def wait_for_stable_switches(self, fabric):
+    def wait_for_stable_switches(self, fabric, after_deploy=False):
         # Poll only: never recalculate or redeploy to make an interface write eligible.
+        # After this baseline's own deploy, idle pending/deployed is the normal settle
+        # phase, so keep the full window there; the shorter settle gates only writes.
+        settle = self.sync_attempt_seconds if after_deploy else self.stable_drift_settle
         snapshot = self.sync_snapshot(fabric)
-        snapshot = self.await_sync(fabric, set(snapshot[2]), snapshot, self.sync_attempt_seconds)
+        snapshot = self.await_sync(fabric, set(snapshot[2]), snapshot, settle)
         pending = {serial for serial, status in snapshot[2].items() if status != "inSync"}
         if pending:
             self.readiness_incomplete = True
@@ -807,22 +828,57 @@ class InterfaceBaseline:
             "baseline_decision": matching[0].get("decision") if matching else "OUT_OF_SCOPE",
         }
 
+    def alert_key(self, fabric, row):
+        text = row["anomalyString"]
+        serial = row.get("switchId") if isinstance(row.get("switchId"), str) and row.get("switchId") else None
+        if serial is None:
+            known = [value for value in self.serial_names
+                     if re.search(r"(?<![A-Za-z0-9])" + re.escape(value) + r"(?![A-Za-z0-9])", text, re.I)]
+            serial = known[0] if len(known) == 1 else None
+        interface = self.normalized_alert_interface(row.get("entityName"))
+        if interface is None:
+            found = set(re.findall(r"(?i)(?:ethernet|eth)\s*([1-9][0-9]*/[1-9][0-9]*(?:/[1-9][0-9]*)?)(?![0-9/.])", text))
+            interface = "Ethernet" + found.pop() if len(found) == 1 else None
+        return fabric, serial, interface, " ".join(text.lower().split())
+
+    def snapshot_preexisting_alerts(self):
+        self.preexisting_alert_keys = {
+            self.alert_key(fabric, row) for fabric in self.fabrics for row in self.anomaly_rows(fabric)
+            if not row["cleared"] and self.connectivity_warning(row)}
+
+    def preexisting_untouched(self, fabric, row):
+        if self.preexisting_alert_keys is None:
+            return False
+        key = self.alert_key(fabric, row)
+        # An alarm without a provable switch/interface identity keeps blocking.
+        return (key[1] is not None and key[2] is not None and key in self.preexisting_alert_keys
+                and (key[1], key[2]) not in self.written_interfaces)
+
     def require_connectivity_clearance(self):
-        counts = {}
-        details = []
+        counts, blocking = {}, {}
+        details, advisory = [], []
+        tagged = self.preexisting_alert_keys is not None
         for fabric in self.fabrics:
             active = [row for row in self.anomaly_rows(fabric)
                       if not row["cleared"] and self.connectivity_warning(row)]
             counts[fabric] = len(active)
-            for row in active[:max(0, 12 - len(details))]:
-                details.append(self.connectivity_alert_detail(fabric, row))
+            held = []
+            for row in active:
+                (advisory if self.preexisting_untouched(fabric, row) else held).append((fabric, row))
+            blocking[fabric] = len(held)
+            for _, row in held[:max(0, 12 - len(details))]:
+                detail = self.connectivity_alert_detail(fabric, row)
+                details.append(dict(detail, preexisting=False) if tagged else detail)
+        for fabric, row in advisory[:max(0, 12 - len(details))]:
+            details.append(dict(self.connectivity_alert_detail(fabric, row), preexisting=True))
         self.connectivity_verified_fabrics = list(counts)
         self.remaining_connectivity_alerts = sum(counts.values())
+        self.preexisting_connectivity_alerts = len(advisory) if tagged else None
         self.connectivity_alerts = details
         self.connectivity_alerts_truncated = self.remaining_connectivity_alerts > len(details)
-        if self.remaining_connectivity_alerts:
+        if sum(blocking.values()):
             self.decisions.extend({"fabric": fabric, "decision": "CONNECTIVITY_INTERFACE_STATUS_ACTIVE",
-                                   "remaining_alerts": count} for fabric, count in counts.items() if count)
+                                   "remaining_alerts": count} for fabric, count in blocking.items() if count)
             raise BaselineBlocked("CONNECTIVITY_INTERFACE_STATUS_ACTIVE")
 
     def warning_matches(self, warning, serial, name):
@@ -899,7 +955,7 @@ class InterfaceBaseline:
                                    "interfaceType": "ethernet", "configData": expected})
             self.call("post", prefix + "/interfaceActions/deploy",
                       {"interfaces": [{"switchId": target["serial"], "interfaceName": name}]})
-            self.wait_for_stable_switches(fabric)
+            self.wait_for_stable_switches(fabric, after_deploy=True)
             while self.clock() < self.deadline:
                 decision, current, _ = self.required_detail(prefix, target, name)
                 readback = without_readback_defaults(expected, current["configData"])
@@ -1031,7 +1087,7 @@ class InterfaceBaseline:
                 self.call('post', prefix + '/interfaceActions/deploy', {
                     'interfaces': [{'switchId': row['switchId'], 'interfaceName': row['interfaceName']}
                                    for row in content['interfaces']]})
-                self.wait_for_stable_switches(fabric)
+                self.wait_for_stable_switches(fabric, after_deploy=True)
                 self._verify_batch_configuration(expected_entries)
                 applied.extend(expected_entries)
         self._verify_batch_clearance(applied)
@@ -1077,6 +1133,9 @@ class InterfaceBaseline:
         plan = []
         required_plan = []
         try:
+            if self.apply and self.preexisting_connectivity_advisory:
+                # Before any write, including configuration sync recovery.
+                self.snapshot_preexisting_alerts()
             seen = set()
             for fabric in self.fabrics:
                 if self.recover_config_sync:
@@ -1175,7 +1234,7 @@ class InterfaceBaseline:
                 self.changed = True
                 self.call("put", path, {"switchId": target["serial"], "interfaceName": name, "interfaceType": "ethernet", "configData": expected})
                 self.call("post", prefix + "/interfaceActions/deploy", {"interfaces": [{"switchId": target["serial"], "interfaceName": name}]})
-                self.wait_for_stable_switches(fabric)
+                self.wait_for_stable_switches(fabric, after_deploy=True)
                 self.verify(path, expected, fabric, target, name)
                 self.verified += 1
             if self.apply:
@@ -1198,6 +1257,7 @@ class InterfaceBaseline:
                 "apply": self.apply, "decisions": self.decisions, "reason": reason,
                 "api_failure": self.api_failure,
                 "remaining_connectivity_alerts": self.remaining_connectivity_alerts,
+                "preexisting_connectivity_alerts": self.preexisting_connectivity_alerts,
                 "connectivity_alerts": self.connectivity_alerts,
                 "connectivity_alerts_truncated": self.connectivity_alerts_truncated,
                 "connectivity_verified_fabrics": self.connectivity_verified_fabrics,
