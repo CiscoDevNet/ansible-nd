@@ -24,10 +24,13 @@ from typing import Any, ClassVar, Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
     PrivateAttr,
+    SecretStr,
+    SerializationInfo,
+    field_serializer,
     field_validator,
     model_validator,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel, secret_plain_value, serialize_secret_value
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
     NDNestedModel,
 )
@@ -372,7 +375,7 @@ class VxlanFabricInstance(NDNestedModel):
         alias="configureStaticDefaultRoute",
         description="Flag to control static default route configuration",
     )
-    bgp_password: str | None = Field(
+    bgp_password: SecretStr | None = Field(
         default=None,
         alias="bgpPassword",
         min_length=4,
@@ -408,6 +411,10 @@ class VxlanFabricInstance(NDNestedModel):
     @classmethod
     def validate_bgp_key_type(cls, v: str | None) -> str | None:
         return VrfValidators.validate_bgp_passwd_encrypt(v)
+
+    @field_serializer("bgp_password")
+    def _serialize_bgp_password(self, value, info: SerializationInfo):
+        return serialize_secret_value(value, info)
 
 
 class SecurityGroupData(NDNestedModel):
@@ -714,6 +721,22 @@ class VrfDataModel(NDBaseModel):
                 VxlanFabricInstance.mask_secrets_in_mapping(fabric)
         return data
 
+    @field_serializer("fabric_data", mode="wrap")
+    def _serialize_fabric_data(self, value, handler, info: SerializationInfo):
+        """Mask bgpPassword in free-form ``fabric_data`` for every dump except the private payload and internal ones."""
+        data = handler(value)
+        if isinstance(data, dict) and (info.context or {}).get("mode") not in ("payload", "internal"):
+            data = dict(data)
+            VxlanFabricInstance.mask_secrets_in_mapping(data)
+        return data
+
+    def __repr_args__(self):
+        for name, value in super().__repr_args__():
+            if name == "fabric_data" and isinstance(value, dict):
+                value = dict(value)
+                VxlanFabricInstance.mask_secrets_in_mapping(value)
+            yield name, value
+
     def _fabric_bgp_password(self) -> str | None:
         """Return the BGP password from typed or dict fabric_data."""
         fabric = self.fabric_data
@@ -723,6 +746,7 @@ class VrfDataModel(NDBaseModel):
             value = fabric.get("bgp_password", fabric.get("bgpPassword"))
         else:
             return None
+        value = secret_plain_value(value)
         if value is None or value == "":
             return None
         return str(value)

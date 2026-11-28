@@ -8,6 +8,9 @@
 
 from __future__ import annotations
 
+import pytest
+
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import SecretStr, ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import (
     VrfAttachmentConfigModel,
     VrfChildConfigModel,
@@ -216,3 +219,57 @@ def test_vrf_template_config_is_hidden_in_display_kept_for_request_and_diff():
     )
     assert data.get_diff(same, exclude_unset=True)
     assert not data.get_diff(changed, exclude_unset=True)
+
+
+def _typed_password_models():
+    return [
+        VrfConfigModel.from_config({"vrf_name": "BLUE", "bgp_password": CANARY, "bgp_passwd_encrypt": "type7"}, context={"state": "merged"}),
+        VrfChildConfigModel.model_validate({"fabric_name": "AK-VXLAN", "bgp_password": CANARY, "bgp_passwd_encrypt": "type7"}),
+        # Parent validation keeps BGP settings under child_fabric_config, so build the instance directly to cover its serializer.
+        VrfParentConfigModel.model_construct(vrf_name="BLUE", bgp_password=SecretStr(CANARY), bgp_passwd_encrypt="type7"),
+        VxlanFabricInstance.model_validate({"bgpPassword": CANARY, "bgpPasswordKeyType": "type7"}),
+    ]
+
+
+@pytest.mark.parametrize("model", _typed_password_models(), ids=lambda model: type(model).__name__)
+def test_typed_password_is_safe_in_default_dumps_and_representations(model):
+    assert isinstance(model.bgp_password, SecretStr)
+    for public in (
+        repr(model),
+        str(model),
+        str(model.bgp_password),
+        str(model.model_dump()),
+        model.model_dump_json(),
+        str(model.model_dump(context={"mode": "unknown"})),
+        str(model.to_config()),
+    ):
+        assert CANARY not in public
+    assert model.model_dump()["bgp_password"] == MASK
+    assert model.model_dump(by_alias=True, context={"mode": "payload"})["bgpPassword"] == CANARY
+    assert model.model_dump(context={"mode": "internal"})["bgp_password"] == CANARY
+    assert model.collect_model_secret_values() == {CANARY}
+
+
+def test_typed_password_still_reaches_nd_payloads_and_internal_config():
+    config = VrfConfigModel.from_config({"vrf_name": "BLUE", "bgp_password": CANARY, "bgp_passwd_encrypt": "type7"}, context={"state": "merged"})
+    assert config.to_payload()["bgpPassword"] == CANARY
+    assert config.to_internal_config()["bgp_password"] == CANARY
+    data = _existing(password=CANARY)
+    assert data.to_payload()["fabricData"]["bgpPassword"] == CANARY
+    assert data._fabric_bgp_password() == CANARY  # pylint: disable=protected-access
+
+
+@pytest.mark.parametrize("password", ["zz12", "c0de 359", "abc", "a" * 33])
+def test_hex_and_length_validation_is_preserved(password):
+    with pytest.raises(ValidationError):
+        VrfConfigModel.from_config({"vrf_name": "BLUE", "bgp_password": password, "bgp_passwd_encrypt": "type7"}, context={"state": "merged"})
+    with pytest.raises(ValidationError):
+        VrfChildConfigModel.model_validate({"fabric_name": "AK-VXLAN", "bgp_password": password, "bgp_passwd_encrypt": "type7"})
+
+
+def test_free_form_fabric_data_password_is_safe_in_default_dumps_and_representations():
+    data = _existing(password=CANARY)
+    assert isinstance(data.fabric_data, dict)
+    for public in (repr(data), str(data), str(data.model_dump()), data.model_dump_json(), str(data.model_dump(context={"mode": "unknown"}))):
+        assert CANARY not in public
+    assert data.fabric_data["bgpPassword"] == CANARY

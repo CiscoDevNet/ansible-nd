@@ -33,6 +33,31 @@ def _strip_none_values(data):
     return data
 
 
+def secret_plain_value(value: Any) -> Any:
+    """Return the real value of a ``SecretStr`` (or the value unchanged), for private comparisons and requests."""
+    return value.get_secret_value() if hasattr(value, "get_secret_value") else value
+
+
+def serialize_secret_value(value: Any, info: SerializationInfo) -> Any:
+    """
+    # Summary
+
+    Field serializer for ``SecretStr`` credentials: the real value only for the private ``payload`` (ND request) and
+    ``internal`` (`to_internal_config`) dumps, ``NO_LOG_PLACEHOLDER`` for every other dump, including a dump with no
+    context or an unknown one.
+
+    ## Raises
+
+    None
+    """
+    raw = secret_plain_value(value)
+    if raw is None or raw == "":
+        return raw
+    if (info.context or {}).get("mode") in ("payload", "internal"):
+        return raw
+    return NO_LOG_PLACEHOLDER
+
+
 class NDBaseModel(BaseModel, ABC):
     """
     Base model for all Nexus Dashboard API objects.

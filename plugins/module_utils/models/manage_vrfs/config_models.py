@@ -25,11 +25,14 @@ from typing import ClassVar, Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
+    SecretStr,
+    SerializationInfo,
     ValidationInfo,
+    field_serializer,
     field_validator,
     model_validator,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel, serialize_secret_value
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
     NDNestedModel,
 )
@@ -311,12 +314,11 @@ class VrfChildConfigModel(NDNestedModel):
 
     # --- BGP authentication overrides ---
 
-    bgp_password: str | None = Field(
+    bgp_password: SecretStr | None = Field(
         default=None,
         alias="bgpPassword",
         min_length=4,
         max_length=32,
-        pattern=r"^[a-fA-F0-9]+$",
         description="Hexadecimal BGP neighbour password (4-32 characters)",
         json_schema_extra={"secret": True},
     )
@@ -372,6 +374,15 @@ class VrfChildConfigModel(NDNestedModel):
     @classmethod
     def _validate_bgp_encrypt(cls, v: str | None) -> str | None:
         return VrfValidators.validate_bgp_passwd_encrypt(v)
+
+    @field_serializer("bgp_password")
+    def _serialize_bgp_password(self, value, info: SerializationInfo):
+        return serialize_secret_value(value, info)
+
+    @field_validator("bgp_password", mode="before")
+    @classmethod
+    def _validate_bgp_password_hex(cls, v):
+        return VrfValidators.validate_hex_bgp_password(v)
 
     @field_validator(
         "import_mvpn_rt",
@@ -829,12 +840,11 @@ class VrfConfigModel(NDBaseModel):
 
     # --- BGP authentication ---
 
-    bgp_password: str | None = Field(
+    bgp_password: SecretStr | None = Field(
         default=None,
         alias="bgpPassword",
         min_length=4,
         max_length=32,
-        pattern=r"^[a-fA-F0-9]+$",
         description="Hexadecimal BGP neighbour password (4-32 characters)",
         json_schema_extra={"secret": True},
     )
@@ -954,6 +964,10 @@ class VrfConfigModel(NDBaseModel):
     def _validate_bgp_encrypt(cls, v: str | None) -> str | None:
         return VrfValidators.validate_bgp_passwd_encrypt(v)
 
+    @field_serializer("bgp_password")
+    def _serialize_bgp_password(self, value, info: SerializationInfo):
+        return serialize_secret_value(value, info)
+
     @field_validator(
         "import_vpn_rt",
         "export_vpn_rt",
@@ -966,6 +980,11 @@ class VrfConfigModel(NDBaseModel):
     @classmethod
     def _normalize_rt(cls, v: str | list[str] | None) -> list[str] | None:
         return VrfValidators.normalize_route_targets(v)
+
+    @field_validator("bgp_password", mode="before")
+    @classmethod
+    def _validate_bgp_password_hex(cls, v):
+        return VrfValidators.validate_hex_bgp_password(v)
 
     # ------------------------------------------------------------------
     # Cross-field validators
@@ -1397,7 +1416,7 @@ class VrfParentConfigModel(NDBaseModel):
 
     # --- BGP authentication ---
 
-    bgp_password: str | None = Field(
+    bgp_password: SecretStr | None = Field(
         default=None,
         alias="bgpPassword",
         min_length=4,
@@ -1539,6 +1558,10 @@ class VrfParentConfigModel(NDBaseModel):
     @classmethod
     def _validate_bgp_encrypt(cls, v: str | None) -> str | None:
         return VrfValidators.validate_bgp_passwd_encrypt(v)
+
+    @field_serializer("bgp_password")
+    def _serialize_bgp_password(self, value, info: SerializationInfo):
+        return serialize_secret_value(value, info)
 
     @field_validator(
         "import_vpn_rt",
