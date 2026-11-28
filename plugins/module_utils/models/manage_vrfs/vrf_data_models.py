@@ -755,6 +755,43 @@ class VrfDataModel(NDBaseModel):
         """True when the proposed model carries a non-empty BGP password."""
         return self._fabric_bgp_password() is not None
 
+    def prepare_for_replacement(self, existing: NDBaseModel) -> NDBaseModel:
+        """
+        # Summary
+
+        Keep the controller's BGP password when a replaced/overridden proposal omits it.
+
+        Supplying ``bgp_password`` requests that credential; omitting it preserves the one on ND, as in merged state. The
+        password and its key type are copied together so the full PUT re-sends ND's own value instead of clearing it.
+
+        ## Raises
+
+        - `TypeError` if `existing` is not a `VrfDataModel`.
+        """
+        candidate = super().prepare_for_replacement(existing)
+        password = existing._fabric_bgp_password()  # pylint: disable=protected-access
+        if password is None or candidate._has_explicit_bgp_password():  # pylint: disable=protected-access
+            return candidate
+        existing_fabric = existing.fabric_data
+        if isinstance(existing_fabric, VxlanFabricInstance):
+            key_type = existing_fabric.bgp_password_key_type
+        elif isinstance(existing_fabric, dict):
+            key_type = existing_fabric.get("bgpPasswordKeyType", existing_fabric.get("bgp_password_key_type"))
+        else:
+            key_type = None
+        fabric = candidate.fabric_data
+        if isinstance(fabric, VxlanFabricInstance):
+            fabric.bgp_password = SecretStr(password)
+            if key_type is not None:
+                fabric.bgp_password_key_type = key_type
+        else:
+            fabric = dict(fabric) if isinstance(fabric, dict) else {}
+            fabric["bgpPassword"] = password
+            if key_type is not None:
+                fabric["bgpPasswordKeyType"] = key_type
+            candidate.fabric_data = fabric
+        return candidate
+
     def get_diff(self, other: NDBaseModel, exclude_unset: bool = False) -> bool:
         """Compare public fields, then BGP passwords privately.
 
