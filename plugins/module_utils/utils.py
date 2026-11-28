@@ -21,7 +21,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 # Ansible's placeholder for masked secret values. Used to keep secret keys visible
 # in module output while hiding their values (instead of dropping the key).
-NO_LOG_PLACEHOLDER = "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+from ansible_collections.cisco.nd.plugins.module_utils.rest.redaction import NO_LOG_PLACEHOLDER
 
 
 def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remove_none_values=True):

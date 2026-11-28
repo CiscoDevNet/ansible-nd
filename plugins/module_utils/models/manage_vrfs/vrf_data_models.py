@@ -690,6 +690,11 @@ class VrfDataModel(NDBaseModel):
                 values.update(NDBaseModel._secret_strings(attach.get("freeform_config") or attach.get("extraConfig")))  # pylint: disable=protected-access
         return values
 
+    @classmethod
+    def secret_value_keys(cls) -> frozenset[str]:
+        """Include the bgpPassword keys that live inside free-form ``fabric_data``."""
+        return super().secret_value_keys() | VxlanFabricInstance.secret_value_keys()
+
     def collect_model_secret_values(self) -> set[str]:
         """Include GET-echoed bgpPassword stored in dict or nested fabric_data."""
         values = super().collect_model_secret_values()

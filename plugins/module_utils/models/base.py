@@ -302,6 +302,30 @@ class NDBaseModel(BaseModel, ABC):
         return keys
 
     @classmethod
+    def redaction_keys(cls) -> frozenset[str]:
+        """Secret and sensitive-container names, snake_case and aliases, including nested models.
+
+        Used to redact debug logs and stored public API-call copies by key, which
+        covers controller-returned values before they are registered as
+        ``no_log_values``. Models with secrets inside a free-form dict override to
+        add the keys of that dict.
+        """
+        if not cls._has_sensitive_fields():
+            return cls.secret_value_keys()
+        return cls.secret_value_keys() | frozenset(cls.sensitive_container_keys(by_alias=False) | cls.sensitive_container_keys(by_alias=True))
+
+    @classmethod
+    def secret_value_keys(cls) -> frozenset[str]:
+        """Secret field names, snake_case and aliases, whose controller-returned string values are registered as ``no_log_values``.
+
+        Sensitive containers are excluded: their contents are ordinary CLI or template text, and registering it would mask
+        matching strings throughout the module result.
+        """
+        if not cls._has_sensitive_fields():
+            return frozenset()
+        return frozenset(cls.secret_field_keys(by_alias=False) | cls.secret_field_keys(by_alias=True))
+
+    @classmethod
     def _nested_model_fields(cls):
         """Return ``(field_name, alias, nested_model_cls, is_list)`` for typed nested models."""
         return cls._sensitive_schema()["nested"]

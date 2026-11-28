@@ -21,6 +21,7 @@ from typing import Any, Optional, Union
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.response_handler import ResponseHandlerProtocol
 from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.sender import SenderProtocol
+from ansible_collections.cisco.nd.plugins.module_utils.rest.redaction import SecretRedactor, get_redactor
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.rest.read_history import compact_consumed_get_response
 
@@ -113,8 +114,10 @@ class RestSend:  # pylint: disable=too-many-public-methods
         self.log = logging.getLogger(f"nd.{self.class_name}")
 
         self.params = params
+        # Module params carry real secret values (for example a VRF bgp_password),
+        # so only the parameter names are logged.
         msg = "ENTERED RestSend(): "
-        msg += f"params: {self.params}"
+        msg += f"params keys: {sorted(self.params or {})}"
         self.log.debug(msg)
 
         self._check_mode: bool = False
@@ -148,6 +151,24 @@ class RestSend:  # pylint: disable=too-many-public-methods
         msg = "ENTERED RestSend(): "
         msg += f"check_mode: {self.check_mode}"
         self.log.debug(msg)
+
+    def _secret_redactor(self) -> SecretRedactor:
+        """
+        # Summary
+
+        Return the module run's `SecretRedactor`, found through the sender's AnsibleModule.
+
+        Senders without an AnsibleModule (unit-test file senders) get a redactor with no keys or values.
+
+        ## Raises
+
+        None
+        """
+        try:
+            module = self._sender.ansible_module if self._sender is not None else None
+        except (AttributeError, ValueError):
+            module = None
+        return get_redactor(module)
 
     def restore_settings(self) -> None:
         """
@@ -383,6 +404,7 @@ class RestSend:  # pylint: disable=too-many-public-methods
                     verb=self.verb.value, path=self.path, payload=self._payload, response=response, start_wall=start_wall, start_cpu=start_cpu
                 )
             self.response_current = response
+            self._secret_redactor().register_secret_values(response)
             # Handle controller response and derive result
             try:
                 self.response_handler.response = self.response_current
@@ -393,19 +415,20 @@ class RestSend:  # pylint: disable=too-many-public-methods
                 msg = f"{self.class_name}.{method_name}: "
                 msg += "Error building response/result. "
                 msg += f"Error detail: {error}"
-                self.log.debug(msg)
+                self.log.debug(self._secret_redactor().redact_text(msg))
                 raise ValueError(msg) from error
 
             if self.log.isEnabledFor(logging.DEBUG):
+                redactor = self._secret_redactor()
                 msg = f"{self.class_name}.{method_name}: "
                 msg += f"timeout: {timeout}. "
-                msg += f"result_current: {json.dumps(self.result_current, indent=4, sort_keys=True)}."
+                msg += f"result_current: {json.dumps(redactor.redact(self.result_current), indent=4, sort_keys=True)}."
                 self.log.debug(msg)
 
                 msg = f"{self.class_name}.{method_name}: "
                 msg += f"timeout: {timeout}. "
                 msg += "response_current: "
-                msg += f"{json.dumps(self.response_current, indent=4, sort_keys=True)}."
+                msg += f"{json.dumps(redactor.redact(self.response_current), indent=4, sort_keys=True)}."
                 self.log.debug(msg)
 
             success = self.result_current["success"]

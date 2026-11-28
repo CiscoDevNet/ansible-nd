@@ -59,6 +59,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.fabric_feat
     preflight_child_feature_tasks,
     preflight_workflow_features,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.rest.redaction import get_redactor
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
@@ -87,6 +88,9 @@ class VrfWorkflowCoordinator:
     ):
         self.module = module
         self.strategy = strategy
+        # Registered before the fabric probe so its debug log is redacted too.
+        get_redactor(module).add_keys(VrfDataModel.redaction_keys() | VrfConfigModel.redaction_keys())
+        get_redactor(module).add_secret_value_keys(VrfDataModel.secret_value_keys())
         self._trace_started_at = time.monotonic()
         self._workflow_trace: list[dict[str, Any]] = []
         if initial_workflow_trace:
@@ -257,7 +261,8 @@ class VrfWorkflowCoordinator:
             "elapsed_ms": int((time.monotonic() - self._trace_started_at) * 1000),
             "event": event,
         }
-        entry.update(details)
+        # Trace entries are returned in the module result and carry raw request payloads.
+        entry.update(get_redactor(self.module).redact(details))
         self._workflow_trace.append(entry)
 
     def _attach_workflow_trace(self, result: dict[str, Any]) -> dict[str, Any]:
@@ -918,6 +923,7 @@ class VrfWorkflowCoordinator:
             rest_send = self._new_rest_send(rest_send_params)
 
             results = Results()
+            results.redactor = get_redactor(self.module)
             orchestrator = NDVrfOrchestrator(
                 rest_send=rest_send,
                 strategy=strategy,
