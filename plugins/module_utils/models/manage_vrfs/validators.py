@@ -255,6 +255,14 @@ class VrfValidators:
         return v
 
     @staticmethod
+    def validate_hex_bgp_password(v):
+        """Require a hexadecimal BGP password. ``SecretStr`` fields cannot carry a ``pattern`` constraint."""
+        raw = v.get_secret_value() if hasattr(v, "get_secret_value") else v
+        if isinstance(raw, str) and not re.fullmatch(r"[a-fA-F0-9]+", raw):
+            raise ValueError("bgp_password must be hexadecimal (0-9, a-f)")
+        return v
+
+    @staticmethod
     def normalize_route_targets(v: str | list[str] | None) -> list[str] | None:
         """
         Normalise a route-target value to a validated list.

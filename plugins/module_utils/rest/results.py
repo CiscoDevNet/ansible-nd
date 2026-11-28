@@ -28,6 +28,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.rest.read_history import compact_consumed_get_response
+from ansible_collections.cisco.nd.plugins.module_utils.rest.redaction import SecretRedactor
 
 
 class ApiCallResult(BaseModel):
@@ -396,6 +397,10 @@ class Results:
         # Final result (built on demand)
         self._final_result: Optional[FinalResultData] = None
 
+        # Masks secret-keyed values in the stored public copies of each call's
+        # payload and response (the -vvv api_payload/api_response output).
+        self.redactor: Optional[SecretRedactor] = None
+
         msg = f"ENTERED {self.class_name}():"
         self.log.debug(msg)
 
@@ -550,6 +555,10 @@ class Results:
 
         # Add sequence_number to response, result, diff
         response = copy.deepcopy(self._current.response)
+        payload = copy.deepcopy(self._current.payload) if self._current.payload is not None else None
+        if self.redactor is not None:
+            response = self.redactor.redact_keys(response)
+            payload = self.redactor.redact_keys(payload)
         response["sequence_number"] = self.task_sequence_number
 
         result = copy.deepcopy(self._current.result)
@@ -564,7 +573,7 @@ class Results:
                 sequence_number=self.task_sequence_number,
                 path=self._current.path,
                 verb=self._current.verb,
-                payload=copy.deepcopy(self._current.payload) if self._current.payload is not None else None,
+                payload=payload,
                 verbosity_level=self._current.verbosity_level,
                 response=response,
                 result=result,

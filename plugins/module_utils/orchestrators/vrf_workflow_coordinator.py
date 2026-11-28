@@ -59,6 +59,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.fabric_feat
     preflight_child_feature_tasks,
     preflight_workflow_features,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.rest.redaction import get_redactor
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
@@ -87,6 +88,9 @@ class VrfWorkflowCoordinator:
     ):
         self.module = module
         self.strategy = strategy
+        # Registered before the fabric probe so its debug log is redacted too.
+        get_redactor(module).add_keys(VrfDataModel.redaction_keys() | VrfConfigModel.redaction_keys())
+        get_redactor(module).add_secret_value_keys(VrfDataModel.secret_value_keys())
         self._trace_started_at = time.monotonic()
         self._workflow_trace: list[dict[str, Any]] = []
         if initial_workflow_trace:
@@ -257,7 +261,8 @@ class VrfWorkflowCoordinator:
             "elapsed_ms": int((time.monotonic() - self._trace_started_at) * 1000),
             "event": event,
         }
-        entry.update(details)
+        # Trace entries are returned in the module result and carry raw request payloads.
+        entry.update(get_redactor(self.module).redact(details))
         self._workflow_trace.append(entry)
 
     def _attach_workflow_trace(self, result: dict[str, Any]) -> dict[str, Any]:
@@ -430,6 +435,11 @@ class VrfWorkflowCoordinator:
             public = VrfDataModel.from_config(effective_payload).to_gathered_config()
             public_fields = set(getattr(VrfConfigModel, "model_fields", {}))
             public = {key: value for key, value in public.items() if key in public_fields}
+            # Gathered omits the write-only password. Restore it only for the
+            # pair/dependency check so encrypt-without-password is still rejected.
+            password = effective._fabric_bgp_password()  # pylint: disable=protected-access
+            if password is not None:
+                public["bgp_password"] = password
             if "bgp_password" not in public and "bgp_passwd_encrypt" not in entry:
                 public.pop("bgp_passwd_encrypt", None)
             VrfConfigModel.from_config(public, context={"state": state})
@@ -459,6 +469,9 @@ class VrfWorkflowCoordinator:
             child_fields = set(getattr(VrfChildConfigModel, "model_fields", {}))
             public = {key: value for key, value in public.items() if key in child_fields}
             public["fabric_name"] = strategy.fabric_name
+            password = effective._fabric_bgp_password()  # pylint: disable=protected-access
+            if password is not None:
+                public["bgp_password"] = password
             if "bgp_password" not in public and "bgp_passwd_encrypt" not in entry:
                 public.pop("bgp_passwd_encrypt", None)
             VrfChildConfigModel.from_config(
@@ -479,13 +492,17 @@ class VrfWorkflowCoordinator:
         Omitted L3VNI mode stays unset until existing-state lookup distinguishes
         a new VRF's creation default from an existing VRF's current mode.
 
+        Use ``to_internal_config()`` so tagged secrets keep their real values for
+        later request building. ``to_config()`` is display-only and would replace
+        those values with the no-log placeholder.
+
         Validation errors are reported immediately via ``module.fail_json``.
         """
         parsed = []
         for idx, entry in enumerate(config):
             try:
                 model = model_cls.from_config(entry, context={"state": state, "defer_dependencies": model_cls is VrfConfigModel and state == "merged"})
-                parsed.append(model.to_config(exclude_unset=True))
+                parsed.append(model.to_internal_config(exclude_unset=True))
             except ValidationError as exc:
                 self.module.fail_json(msg=(f"config[{idx}] validation failed " f"({model_cls.__name__}, state={state!r}): {exc}"))
         return parsed
@@ -906,6 +923,7 @@ class VrfWorkflowCoordinator:
             rest_send = self._new_rest_send(rest_send_params)
 
             results = Results()
+            results.redactor = get_redactor(self.module)
             orchestrator = NDVrfOrchestrator(
                 rest_send=rest_send,
                 strategy=strategy,

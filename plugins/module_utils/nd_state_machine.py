@@ -41,6 +41,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
     ResponseType,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.rest.redaction import get_redactor
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
     ResponseHandler,
 )
@@ -105,6 +106,13 @@ class NDStateMachine:
         self.model_class = self.model_orchestrator.model_class
         self.state = self.module.params["state"]
 
+        # Debug logs and the stored -vvv copies of each API call are written before
+        # Ansible's final no_log scrub, so they are redacted by secret key name.
+        self.redactor = get_redactor(self.module)
+        self.redactor.add_keys(self.model_class.redaction_keys())
+        self.redactor.add_secret_value_keys(self.model_class.secret_value_keys())
+        self.results.redactor = self.redactor
+
         # Cached flags
         self.check_mode = self.module.check_mode
         self.ignore_errors = self.module.params.get("ignore_errors", False)
@@ -166,6 +174,7 @@ class NDStateMachine:
             # are converted above before applying the same masking pass.
             if hasattr(self.module, "no_log_values"):
                 for existing_item in self.before:
+                    self.module.no_log_values |= existing_item.collect_model_secret_values()
                     self.module.no_log_values |= existing_item.collect_replacement_secret_values()
             # Surface controller objects whose type this module does not model. They
             # are preserved as opaque read-only records (see the links tolerant read
@@ -216,6 +225,7 @@ class NDStateMachine:
             query_kwargs["gathered_filters"] = raw_config
 
         response_data = self.model_orchestrator.query_all(**query_kwargs)
+        self._register_returned_secrets(response_data)
 
         if self.gathered_filtering_enabled:
             response_data = filter_gathered_response(
@@ -226,6 +236,21 @@ class NDStateMachine:
             )
 
         return response_data
+
+    def _register_returned_secrets(self, response_data: Any) -> None:
+        """Register secrets in raw query items before model conversion or filtering.
+
+        A validation or filtering error can echo the raw controller item, and
+        ``fail_json`` only masks values already in ``no_log_values``.
+        """
+        if not hasattr(self.module, "no_log_values"):
+            return
+        items = [response_data] if isinstance(response_data, dict) else response_data
+        for item in items or []:
+            if isinstance(item, dict):
+                self.module.no_log_values |= self.model_class.collect_secret_values(item)
+            elif isinstance(item, NDBaseModel):
+                self.module.no_log_values |= item.collect_model_secret_values()
 
     # State Management (core function)
     def manage_state(self) -> None:

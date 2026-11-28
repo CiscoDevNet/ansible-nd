@@ -313,8 +313,11 @@ class ResponseHandler:
                 -   ``verb`` is not set.
         """
         method_name = "commit"
+        # The body can carry controller-returned secrets and this handler has no
+        # redaction context; RestSend logs the redacted response after commit().
         msg = f"{self.class_name}.{method_name}: "
-        msg += f"response {self.response}, verb {self.verb}"
+        msg += f"RETURN_CODE {self.response.get('RETURN_CODE')}, "
+        msg += f"MESSAGE {self.response.get('MESSAGE')}, verb {self.verb}"
         self.log.debug(msg)
         self._handle_response()
 

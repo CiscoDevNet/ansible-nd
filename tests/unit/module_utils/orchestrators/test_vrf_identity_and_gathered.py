@@ -340,3 +340,41 @@ def test_child_gathered_keeps_child_owned_values(monkeypatch):
     assert result["gathered"][0]["adv_default_routes"] is False
     assert result["gathered"][0]["static_default_route"] is True
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("version", ["4.2.1.10", "4.3.1.175"])
+@pytest.mark.parametrize("state", ["replaced", "overridden"])
+@pytest.mark.parametrize("check", [False, True])
+def test_replacement_without_password_preserves_the_controller_credential(monkeypatch, version, state, check):
+    strategy = _strategy("standalone")
+    observed = _readback(strategy)
+    observed.setdefault("fabricData", {}).update(bgpPassword="aabbccdd", bgpPasswordKeyType=7 if version.startswith("4.2.") else "type7")
+
+    coordinator, calls = _coordinator(monkeypatch, strategy, state, [observed], check=check, version=version)
+    sm = _manage(coordinator, {"vrf_name": "BLUE", "vrf_id": 50001}, state)
+    assert sm.output.format()["changed"] is False
+    assert not [call for call in calls if call["verb"].value != "GET"]
+
+    coordinator, calls = _coordinator(monkeypatch, strategy, state, [observed], check=check, version=version)
+    sm = _manage(coordinator, {"vrf_name": "BLUE", "vrf_id": 50001, "vrf_description": "new"}, state)
+    assert sm.output.format()["changed"] is True
+    writes = [call for call in calls if call["verb"].value != "GET"]
+    assert len(writes) == int(not check)
+    if writes:
+        fabric = writes[0]["data"]["fabricData"]
+        assert fabric["bgpPassword"] == "aabbccdd"
+        assert fabric["bgpPasswordKeyType"] == observed["fabricData"]["bgpPasswordKeyType"]
+
+
+@pytest.mark.parametrize("state", ["replaced", "overridden"])
+def test_replacement_with_a_new_password_rotates_the_credential(monkeypatch, state):
+    strategy = _strategy("standalone")
+    observed = _readback(strategy)
+    observed.setdefault("fabricData", {}).update(bgpPassword="aabbccdd", bgpPasswordKeyType="type7")
+
+    coordinator, calls = _coordinator(monkeypatch, strategy, state, [observed], version="4.3.1.175")
+    sm = _manage(coordinator, {"vrf_name": "BLUE", "vrf_id": 50001, "bgp_password": "11223344", "bgp_passwd_encrypt": "type7"}, state)
+    assert sm.output.format()["changed"] is True
+    writes = [call for call in calls if call["verb"].value != "GET"]
+    assert len(writes) == 1
+    assert writes[0]["data"]["fabricData"]["bgpPassword"] == "11223344"

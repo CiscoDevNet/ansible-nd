@@ -28,6 +28,7 @@ from ansible.module_utils.basic import AnsibleModule  # type: ignore
 from ansible.module_utils.connection import Connection  # type: ignore
 from ansible.module_utils.connection import ConnectionError as AnsibleConnectionError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.rest.redaction import get_redactor
 
 
 class Sender:
@@ -141,9 +142,10 @@ class Sender:
                 self.log.debug(msg)
                 response = self._connection.send_request(self.verb.value, self.path)
             else:
-                msg += ", payload: "
-                msg += f"{json.dumps(self.payload, indent=4, sort_keys=True)}"
-                self.log.debug(msg)
+                if self.log.isEnabledFor(logging.DEBUG):
+                    msg += ", payload: "
+                    msg += f"{json.dumps(get_redactor(self.ansible_module).redact(self.payload), indent=4, sort_keys=True)}"
+                    self.log.debug(msg)
                 response = self._connection.send_request(
                     self.verb.value,
                     self.path,
@@ -156,12 +158,12 @@ class Sender:
         except AnsibleConnectionError as error:
             msg = f"{self.class_name}.{method_name}: "
             msg += f"ConnectionError occurred: {error}"
-            self.log.error(msg)
+            self.log.error(get_redactor(self.ansible_module).redact_text(msg))
             raise ValueError(msg) from error
         except Exception as error:
             msg = f"{self.class_name}.{method_name}: "
             msg += f"Unexpected error occurred: {error}"
-            self.log.error(msg)
+            self.log.error(get_redactor(self.ansible_module).redact_text(msg))
             raise ValueError(msg) from error
 
     def get_version(self) -> Optional[str]:

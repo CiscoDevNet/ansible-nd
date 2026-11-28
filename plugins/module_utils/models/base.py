@@ -6,7 +6,8 @@ from __future__ import absolute_import, division, print_function
 
 from abc import ABC
 from copy import deepcopy
-from typing import Any, ClassVar, Dict, List, Literal, Optional, Set, Tuple, Union
+from typing import Any, ClassVar, Dict, List, Literal, Optional, Set, Tuple, Union, get_args, get_origin
+import types
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
@@ -30,6 +31,31 @@ def _strip_none_values(data):
     if isinstance(data, list):
         return [_strip_none_values(item) for item in data]
     return data
+
+
+def secret_plain_value(value: Any) -> Any:
+    """Return the real value of a ``SecretStr`` (or the value unchanged), for private comparisons and requests."""
+    return value.get_secret_value() if hasattr(value, "get_secret_value") else value
+
+
+def serialize_secret_value(value: Any, info: SerializationInfo) -> Any:
+    """
+    # Summary
+
+    Field serializer for ``SecretStr`` credentials: the real value only for the private ``payload`` (ND request) and
+    ``internal`` (`to_internal_config`) dumps, ``NO_LOG_PLACEHOLDER`` for every other dump, including a dump with no
+    context or an unknown one.
+
+    ## Raises
+
+    None
+    """
+    raw = secret_plain_value(value)
+    if raw is None or raw == "":
+        return raw
+    if (info.context or {}).get("mode") in ("payload", "internal"):
+        return raw
+    return NO_LOG_PLACEHOLDER
 
 
 class NDBaseModel(BaseModel, ABC):
@@ -213,20 +239,148 @@ class NDBaseModel(BaseModel, ABC):
         return result
 
     @classmethod
+    def _sensitive_schema(cls) -> dict[str, Any]:
+        """Per-class cache of secret/container names, aliases, and nested models.
+
+        Stored on ``cls.__dict__`` so a subclass does not inherit its parent's
+        field map. Values are field names and types only, never instance data.
+        """
+        cached = cls.__dict__.get("_nd_sensitive_schema")
+        if cached is not None:
+            return cached
+
+        tagged = {
+            "secret": (set(), set()),
+            "sensitive_container": (set(), set()),
+        }
+        nested = []
+        for field_name, field_info in cls.model_fields.items():
+            extra = field_info.json_schema_extra
+            if isinstance(extra, dict):
+                for tag, buckets in tagged.items():
+                    if extra.get(tag):
+                        buckets[0].add(field_name)
+                        buckets[1].add(field_info.alias or field_name)
+            nested_cls, is_list = cls._nested_model_type(field_info.annotation)
+            if nested_cls is not None:
+                nested.append((field_name, field_info.alias or field_name, nested_cls, is_list))
+
+        has_sensitive = bool(tagged["secret"][0] or tagged["sensitive_container"][0])
+        if not has_sensitive:
+            has_sensitive = any(nested_cls._has_sensitive_fields() for _name, _alias, nested_cls, _is_list in nested)  # pylint: disable=protected-access
+
+        schema = {
+            "tagged": {tag: (frozenset(snake), frozenset(alias)) for tag, (snake, alias) in tagged.items()},
+            "nested": tuple(nested),
+            "has_sensitive": has_sensitive,
+            "mask_keys": frozenset(tagged["secret"][0] | tagged["secret"][1] | tagged["sensitive_container"][0] | tagged["sensitive_container"][1]),
+        }
+        cls._nd_sensitive_schema = schema
+        return schema
+
+    @classmethod
+    def _has_sensitive_fields(cls) -> bool:
+        """True when this class or a typed nested model declares a secret or container."""
+        return cls._sensitive_schema()["has_sensitive"]
+
+    @classmethod
+    def _direct_tagged_field_keys(cls, tag: str, by_alias: bool = False) -> set[str]:
+        """Field names on this class whose ``json_schema_extra`` sets ``tag``."""
+        entry = cls._sensitive_schema()["tagged"].get(tag)
+        if entry is None:
+            return set()
+        snake, alias = entry
+        return set(alias if by_alias else snake)
+
+    @classmethod
+    def _direct_secret_field_keys(cls, by_alias: bool = False) -> set[str]:
+        """Secret field names declared on this class only (not nested models)."""
+        return cls._direct_tagged_field_keys("secret", by_alias=by_alias)
+
+    @classmethod
+    def _direct_sensitive_container_keys(cls, by_alias: bool = False) -> set[str]:
+        """CLI/template container names declared on this class only."""
+        return cls._direct_tagged_field_keys("sensitive_container", by_alias=by_alias)
+
+    @classmethod
     def secret_field_keys(cls, by_alias: bool = False) -> set[str]:
         """Names of fields tagged ``json_schema_extra={"secret": True}``.
 
         Aliases when ``by_alias`` is True (payload shape), else Python field
-        names (config/input shape). The single source of truth for which fields
-        are secret, used both to keep them out of output and to register their
-        values for ``no_log`` masking.
+        names (config/input shape). Includes nested model fields. The single
+        source of truth for which fields are secret, used both to keep them
+        out of output and to register their values for ``no_log`` masking.
         """
-        keys: set[str] = set()
-        for field_name, field_info in cls.model_fields.items():
-            extra = field_info.json_schema_extra
-            if isinstance(extra, dict) and extra.get("secret"):
-                keys.add((field_info.alias or field_name) if by_alias else field_name)
+        keys = set(cls._direct_secret_field_keys(by_alias=by_alias))
+        for _field_name, _alias, nested_cls, _is_list in cls._nested_model_fields():
+            keys.update(nested_cls.secret_field_keys(by_alias=by_alias))
         return keys
+
+    @classmethod
+    def sensitive_container_keys(cls, by_alias: bool = False) -> set[str]:
+        """Names of fields tagged ``json_schema_extra={"sensitive_container": True}``.
+
+        These are opaque CLI/template blobs, not named passwords. Display dumps
+        replace the whole value with the no-log placeholder; ``to_diff_dict()``
+        and ``to_payload()`` keep the original so a blob change is still a change.
+        """
+        keys = set(cls._direct_sensitive_container_keys(by_alias=by_alias))
+        for _field_name, _alias, nested_cls, _is_list in cls._nested_model_fields():
+            keys.update(nested_cls.sensitive_container_keys(by_alias=by_alias))
+        return keys
+
+    @classmethod
+    def redaction_keys(cls) -> frozenset[str]:
+        """Secret and sensitive-container names, snake_case and aliases, including nested models.
+
+        Used to redact debug logs and stored public API-call copies by key, which
+        covers controller-returned values before they are registered as
+        ``no_log_values``. Models with secrets inside a free-form dict override to
+        add the keys of that dict.
+        """
+        if not cls._has_sensitive_fields():
+            return cls.secret_value_keys()
+        return cls.secret_value_keys() | frozenset(cls.sensitive_container_keys(by_alias=False) | cls.sensitive_container_keys(by_alias=True))
+
+    @classmethod
+    def secret_value_keys(cls) -> frozenset[str]:
+        """Secret field names, snake_case and aliases, whose controller-returned string values are registered as ``no_log_values``.
+
+        Sensitive containers are excluded: their contents are ordinary CLI or template text, and registering it would mask
+        matching strings throughout the module result.
+        """
+        if not cls._has_sensitive_fields():
+            return frozenset()
+        return frozenset(cls.secret_field_keys(by_alias=False) | cls.secret_field_keys(by_alias=True))
+
+    @classmethod
+    def _nested_model_fields(cls):
+        """Return ``(field_name, alias, nested_model_cls, is_list)`` for typed nested models."""
+        return cls._sensitive_schema()["nested"]
+
+    @staticmethod
+    def _nested_model_type(annotation) -> tuple:
+        """Return ``(NDBaseModel subclass, is_list)`` for a field annotation, else ``(None, False)``."""
+        origin = get_origin(annotation)
+        if origin is Union or origin is getattr(types, "UnionType", None):
+            args = [arg for arg in get_args(annotation) if arg is not type(None)]
+            annotation = args[0] if len(args) == 1 else annotation
+            origin = get_origin(annotation)
+        if origin in (list, List):
+            args = get_args(annotation)
+            element = args[0] if args else None
+            try:
+                if isinstance(element, type) and issubclass(element, NDBaseModel):
+                    return element, True
+            except TypeError:
+                return None, False
+            return None, False
+        try:
+            if isinstance(annotation, type) and issubclass(annotation, NDBaseModel):
+                return annotation, False
+        except TypeError:
+            return None, False
+        return None, False
 
     @classmethod
     def collect_secret_values(cls, config_item: dict[str, Any]) -> set[str]:
@@ -237,17 +391,43 @@ class NDBaseModel(BaseModel, ABC):
         registers whatever this returns with ``module.no_log_values`` so the
         value-based scrubber strips them from the invocation echo and result.
 
-        Default: top-level fields tagged secret. Models with secrets nested in a
-        free-form dict (e.g. links ``template_inputs``) override to add those.
+        Walks typed nested models and lists of models. Collects both snake_case
+        names and API aliases. Models with secrets nested in a free-form dict
+        (e.g. links ``template_inputs``, VRF ``fabric_data``) override to add those.
+
+        Classes with no tagged secrets or containers, and no nested model that
+        has them, return immediately so interface and other unsensitive models
+        do not pay the walk.
         """
         values: set[str] = set()
-        if not isinstance(config_item, dict):
+        if not isinstance(config_item, dict) or not cls._has_sensitive_fields():
             return values
-        for key in cls.secret_field_keys(by_alias=False):
-            value = config_item.get(key)
-            if value:
-                values.add(value)
+        for key in cls._direct_secret_field_keys(by_alias=False) | cls._direct_secret_field_keys(by_alias=True):
+            cls._add_secret_value(values, config_item.get(key))
+        for key in cls._direct_sensitive_container_keys(by_alias=False) | cls._direct_sensitive_container_keys(by_alias=True):
+            values.update(cls._secret_strings(config_item.get(key)))
+        for field_name, alias, nested_cls, is_list in cls._nested_model_fields():
+            raw = config_item.get(field_name)
+            if raw is None:
+                raw = config_item.get(alias)
+            if is_list and isinstance(raw, list):
+                for item in raw:
+                    values.update(nested_cls.collect_secret_values(item) if isinstance(item, dict) else set())
+            elif isinstance(raw, dict):
+                values.update(nested_cls.collect_secret_values(raw))
         return values
+
+    @staticmethod
+    def _add_secret_value(values: set[str], value: Any) -> None:
+        """Register a non-empty secret, including controller-echoed non-string forms."""
+        if hasattr(value, "get_secret_value"):
+            value = value.get_secret_value()
+        if value is None or value == "":
+            return
+        if isinstance(value, str):
+            values.add(value)
+            return
+        values.add(str(value))
 
     def collect_replacement_secret_values(self) -> set[str]:
         """Return secret strings held in opaque replacement-preserved fields.
@@ -276,6 +456,31 @@ class NDBaseModel(BaseModel, ABC):
                 for child in value:
                     if isinstance(child, NDBaseModel):
                         values.update(child.collect_replacement_secret_values())
+        return values
+
+    def collect_model_secret_values(self) -> set[str]:
+        """Tagged secret strings held on this instance, including nested models.
+
+        Used for controller-returned values that Ansible did not see as task
+        arguments. Typed nested models are walked here; free-form dict containers
+        (VRF ``fabric_data``) are added by the resource model.
+        """
+        values: set[str] = set()
+        model_cls = type(self)
+        if not model_cls._has_sensitive_fields():
+            return values
+        for field_name in model_cls._direct_secret_field_keys(by_alias=False):
+            self._add_secret_value(values, getattr(self, field_name, None))
+        for field_name in model_cls._direct_sensitive_container_keys(by_alias=False):
+            values.update(self._secret_strings(getattr(self, field_name, None)))
+        for field_name, _alias, _nested_cls, _is_list in model_cls._nested_model_fields():
+            value = getattr(self, field_name, None)
+            if isinstance(value, NDBaseModel):
+                values.update(value.collect_model_secret_values())
+            elif isinstance(value, list):
+                for child in value:
+                    if isinstance(child, NDBaseModel):
+                        values.update(child.collect_model_secret_values())
         return values
 
     @staticmethod
@@ -340,26 +545,73 @@ class NDBaseModel(BaseModel, ABC):
         )
         return self._build_payload_nested(data)
 
+    def to_internal_config(self, **kwargs) -> Dict[str, Any]:
+        """Return the Ansible config shape with real secret values.
+
+        Coordinators and request builders must use this dump, not ``to_config()``.
+        ``to_config()`` is the user-visible copy and replaces tagged secrets with
+        ``NO_LOG_PLACEHOLDER``; feeding that placeholder back into
+        ``prepare_config_data()`` would send it to Nexus Dashboard.
+        """
+        return self._dump_config(mask_secrets=False, **kwargs)
+
     def to_config(self, **kwargs) -> Dict[str, Any]:
         """Convert model to Ansible config format (Python field names, flat structure).
 
-        Secret-tagged fields are masked to ``NO_LOG_PLACEHOLDER`` in output
-        (after/before/proposed): the key stays visible so callers see
-        the field is set, but the value is never shown. The real value remains
-        only in to_payload() (the controller request).
+        Secret-tagged fields and sensitive CLI/template containers are masked
+        to ``NO_LOG_PLACEHOLDER`` in output (after/before/proposed): the key
+        stays visible so callers see the field is set, but the value is never
+        shown. The real value remains in ``to_payload()`` and
+        ``to_internal_config()``.
         """
+        return self._dump_config(mask_secrets=True, **kwargs)
+
+    def _dump_config(self, *, mask_secrets: bool, **kwargs) -> Dict[str, Any]:
+        """Dump snake_case config; optionally replace tagged secrets for display."""
         data = self.model_dump(
             by_alias=False,
             exclude_none=True,
-            context={"mode": "config"},
+            context={"mode": "config" if mask_secrets else "internal"},
             exclude=self.config_exclude_fields or None,
             **kwargs,
         )
-        for key in self.secret_field_keys(by_alias=False):
-            if key in data:
-                data[key] = NO_LOG_PLACEHOLDER
+        if mask_secrets:
+            self._mask_secrets_in_mapping(data)
         self._apply_config_exclude_scope(data)
         return data
+
+    def _mask_secrets_in_mapping(self, data: Dict[str, Any]) -> None:
+        """Replace tagged secrets in a snake_case config mapping, including nested models."""
+        if not isinstance(data, dict) or not type(self)._has_sensitive_fields():
+            return
+        type(self).mask_secrets_in_mapping(data)
+        for field_name, _alias, nested_cls, is_list in type(self)._nested_model_fields():
+            nested = data.get(field_name)
+            value = getattr(self, field_name, None)
+            if is_list and isinstance(nested, list):
+                children = value if isinstance(value, list) else []
+                for index, child_data in enumerate(nested):
+                    if not isinstance(child_data, dict):
+                        continue
+                    child = children[index] if index < len(children) else None
+                    if isinstance(child, NDBaseModel):
+                        child._mask_secrets_in_mapping(child_data)  # pylint: disable=protected-access
+                    else:
+                        nested_cls.mask_secrets_in_mapping(child_data)
+            elif isinstance(nested, dict):
+                if isinstance(value, NDBaseModel):
+                    value._mask_secrets_in_mapping(nested)  # pylint: disable=protected-access
+                else:
+                    nested_cls.mask_secrets_in_mapping(nested)
+
+    @classmethod
+    def mask_secrets_in_mapping(cls, data: Dict[str, Any]) -> None:
+        """Mask this class's direct secret and sensitive-container keys."""
+        if not isinstance(data, dict):
+            return
+        for key in cls._sensitive_schema()["mask_keys"]:
+            if key in data and data[key] not in (None, ""):
+                data[key] = NO_LOG_PLACEHOLDER
 
     def _apply_config_exclude_scope(self, data: Dict[str, Any]) -> None:
         """Apply each nested model's config exclusions to a config-mode dump.
@@ -391,9 +643,44 @@ class NDBaseModel(BaseModel, ABC):
         Most resources use the normal Ansible config representation. Models
         containing write-only fields may override this method to omit values that
         cannot be read back from the controller and therefore cannot safely be
-        replayed as declarative input.
+        replayed as declarative input. Sensitive CLI/template containers are
+        omitted because replaying the display placeholder would send it to ND.
         """
-        return self.to_config(**kwargs)
+        data = self.to_config(**kwargs)
+        self._omit_sensitive_containers_in_mapping(data)
+        return data
+
+    def _omit_sensitive_containers_in_mapping(self, data: Dict[str, Any]) -> None:
+        """Drop sensitive CLI/template containers from a gathered mapping."""
+        if not isinstance(data, dict) or not type(self)._has_sensitive_fields():
+            return
+        type(self).omit_sensitive_containers_in_mapping(data)
+        for field_name, _alias, nested_cls, is_list in type(self)._nested_model_fields():
+            nested = data.get(field_name)
+            value = getattr(self, field_name, None)
+            if is_list and isinstance(nested, list):
+                children = value if isinstance(value, list) else []
+                for index, child_data in enumerate(nested):
+                    if not isinstance(child_data, dict):
+                        continue
+                    child = children[index] if index < len(children) else None
+                    if isinstance(child, NDBaseModel):
+                        child._omit_sensitive_containers_in_mapping(child_data)  # pylint: disable=protected-access
+                    else:
+                        nested_cls.omit_sensitive_containers_in_mapping(child_data)
+            elif isinstance(nested, dict):
+                if isinstance(value, NDBaseModel):
+                    value._omit_sensitive_containers_in_mapping(nested)  # pylint: disable=protected-access
+                else:
+                    nested_cls.omit_sensitive_containers_in_mapping(nested)
+
+    @classmethod
+    def omit_sensitive_containers_in_mapping(cls, data: Dict[str, Any]) -> None:
+        """Remove this class's sensitive-container keys from a dict."""
+        if not isinstance(data, dict):
+            return
+        for key in cls._direct_sensitive_container_keys(by_alias=False) | cls._direct_sensitive_container_keys(by_alias=True):
+            data.pop(key, None)
 
     # --- Core Deserialization ---
 

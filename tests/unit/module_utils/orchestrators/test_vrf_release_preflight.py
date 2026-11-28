@@ -314,20 +314,12 @@ def test_supported_child_payloads_keep_parent_and_child_serialization(invoke, st
 
 
 @pytest.mark.parametrize("check", [False, True])
-def test_replacement_of_existing_type6_does_not_validate_discarded_key_type(invoke, check):
+def test_replacement_validates_preserved_type6_in_effective_payload(invoke, check):
     strategy = StandaloneVrfStrategy(fabric_name="FAB", fabric_data={"managementType": "vxlanIbgp"})
     controller = _Controller(strategy)
     controller.rows["FAB"][0]["fabricData"] = {"bgpPassword": "aabbccdd", "bgpPasswordKeyType": "type6"}
     result, controller = invoke([{"vrf_name": "OLD", "deploy": False}], strategy=strategy, controller=controller, check=check)
-    assert not result.get("failed"), result
-    assert result["changed"] is True
-    if check:
-        assert controller.mutations == []
-    else:
-        assert len(controller.mutations) == 2
-        assert controller.mutations[0][1].endswith("/vrfAttachments")
-        assert controller.mutations[1][0] == "PUT"
-        assert not {"bgpPassword", "bgpPasswordKeyType"}.intersection(controller.mutations[1][2].get("fabricData", {}))
+    _assert_rejected(result, controller)
 
 
 @pytest.mark.parametrize("check", [False, True])
